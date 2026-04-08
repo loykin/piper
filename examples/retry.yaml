@@ -1,0 +1,18 @@
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: retry-test
+
+spec:
+  steps:
+  - name: flaky-step
+    run:
+      type: command
+      command: ["sh", "-c", "echo trying && exit 1"]
+
+  - name: after-fail
+    run:
+      type: command
+      command: ["echo", "this should be skipped"]
+    depends_on: [flaky-step]

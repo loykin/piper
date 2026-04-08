@@ -1,0 +1,19 @@
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: simple-test
+  description: "로컬 테스트용 간단한 파이프라인"
+
+spec:
+  steps:
+  - name: hello
+    run:
+      type: command
+      command: ["echo", "hello from piper"]
+
+  - name: world
+    run:
+      type: command
+      command: ["echo", "world!"]
+    depends_on: [hello]

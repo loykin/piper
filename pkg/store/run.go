@@ -3,11 +3,13 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
 type Run struct {
 	ID           string     `json:"id"`
+	OwnerID      string     `json:"owner_id,omitempty"`
 	PipelineName string     `json:"pipeline_name"`
 	Status       string     `json:"status"` // running | success | failed
 	StartedAt    time.Time  `json:"started_at"`
@@ -17,9 +19,9 @@ type Run struct {
 
 func (s *Store) CreateRun(r *Run) error {
 	_, err := s.db.Exec(
-		`INSERT INTO runs (id, pipeline_name, status, started_at, pipeline_yaml)
-		 VALUES (?, ?, ?, ?, ?)`,
-		r.ID, r.PipelineName, r.Status, r.StartedAt, r.PipelineYAML,
+		`INSERT INTO runs (id, owner_id, pipeline_name, status, started_at, pipeline_yaml)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		r.ID, r.OwnerID, r.PipelineName, r.Status, r.StartedAt, r.PipelineYAML,
 	)
 	return err
 }
@@ -34,19 +36,43 @@ func (s *Store) UpdateRunStatus(id, status string, endedAt *time.Time) error {
 
 func (s *Store) GetRun(id string) (*Run, error) {
 	row := s.db.QueryRow(
-		`SELECT id, pipeline_name, status, started_at, ended_at FROM runs WHERE id=?`, id,
+		`SELECT id, owner_id, pipeline_name, status, started_at, ended_at FROM runs WHERE id=?`, id,
 	)
 	return scanRun(row)
 }
 
-func (s *Store) ListRuns() ([]*Run, error) {
-	rows, err := s.db.Query(
-		`SELECT id, pipeline_name, status, started_at, ended_at FROM runs ORDER BY started_at DESC`,
-	)
+// RunFilter는 목록 필터 조건
+type RunFilter struct {
+	OwnerID      string
+	PipelineName string
+}
+
+func (s *Store) ListRuns(filter ...RunFilter) ([]*Run, error) {
+	query := `SELECT id, owner_id, pipeline_name, status, started_at, ended_at FROM runs`
+	var args []any
+	var where []string
+
+	if len(filter) > 0 {
+		f := filter[0]
+		if f.OwnerID != "" {
+			where = append(where, "owner_id=?")
+			args = append(args, f.OwnerID)
+		}
+		if f.PipelineName != "" {
+			where = append(where, "pipeline_name=?")
+			args = append(args, f.PipelineName)
+		}
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY started_at DESC"
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var runs []*Run
 	for rows.Next() {
@@ -66,7 +92,7 @@ type scanner interface {
 func scanRun(s scanner) (*Run, error) {
 	var r Run
 	var endedAt sql.NullTime
-	if err := s.Scan(&r.ID, &r.PipelineName, &r.Status, &r.StartedAt, &endedAt); err != nil {
+	if err := s.Scan(&r.ID, &r.OwnerID, &r.PipelineName, &r.Status, &r.StartedAt, &endedAt); err != nil {
 		return nil, fmt.Errorf("scan run: %w", err)
 	}
 	if endedAt.Valid {

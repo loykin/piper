@@ -22,6 +22,7 @@ import (
 type Piper struct {
 	cfg   Config
 	store *store.Store
+	queue *queue
 }
 
 func New(cfg Config) (*Piper, error) {
@@ -47,7 +48,7 @@ func New(cfg Config) (*Piper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	return &Piper{cfg: cfg, store: st}, nil
+	return &Piper{cfg: cfg, store: st, queue: newQueue(st)}, nil
 }
 
 // Close는 store를 닫는다
@@ -174,4 +175,8 @@ func (p *Piper) sourceConfig() source.Config {
 
 func (p *Piper) Config() Config {
 	return p.cfg
+}
+
+func (p *Piper) SourceConfig() source.Config {
+	return p.sourceConfig()
 }

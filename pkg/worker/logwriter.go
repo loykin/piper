@@ -34,7 +34,7 @@ func newLogWriter(stream string, tee io.Writer) *logWriter {
 func (w *logWriter) Write(p []byte) (int, error) {
 	// tee: 터미널 출력
 	if w.tee != nil {
-		w.tee.Write(p)
+		_, _ = w.tee.Write(p)
 	}
 	// 라인 단위로 파싱해서 버퍼에 저장
 	scanner := bufio.NewScanner(bytes.NewReader(p))
@@ -49,7 +49,7 @@ func (w *logWriter) Write(p []byte) (int, error) {
 }
 
 // sendLogs는 버퍼된 로그를 master로 전송한다
-func (w *Worker) sendLogs(taskID string, entries []LogEntry) {
+func (w *Worker) sendLogs(runID, stepName string, entries []LogEntry) {
 	if len(entries) == 0 {
 		return
 	}
@@ -60,7 +60,7 @@ func (w *Worker) sendLogs(taskID string, entries []LogEntry) {
 		return
 	}
 
-	url := fmt.Sprintf("%s/api/tasks/%s/logs", w.cfg.MasterURL, taskID)
+	url := fmt.Sprintf("%s/runs/%s/steps/%s/logs", w.cfg.MasterURL, runID, stepName)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		slog.Warn("log send error", "err", err)
@@ -75,7 +75,7 @@ func (w *Worker) sendLogs(taskID string, entries []LogEntry) {
 		slog.Warn("log send failed", "err", err)
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // localLogFile은 fallback으로 로컬 파일에도 로그를 저장한다

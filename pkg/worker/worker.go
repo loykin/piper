@@ -123,7 +123,7 @@ func (w *Worker) poll() (*proto.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, nil
@@ -162,7 +162,7 @@ func (w *Worker) execute(ctx context.Context, task *proto.Task) {
 	// 로컬 로그 파일 (fallback)
 	logFile := localLogFile(stepOutputDir, step.Name)
 	if logFile != nil {
-		defer logFile.Close()
+		defer func() { _ = logFile.Close() }()
 	}
 
 	stdoutW := newLogWriter("stdout", io.MultiWriter(os.Stdout, fileOrNil(logFile)))
@@ -183,7 +183,7 @@ func (w *Worker) execute(ctx context.Context, task *proto.Task) {
 
 	// 실행 후 수집된 로그 전송
 	allLogs := append(stdoutW.lines, stderrW.lines...)
-	w.sendLogs(task.ID, allLogs)
+	w.sendLogs(task.RunID, task.StepName, allLogs)
 
 	if err != nil {
 		slog.Error("task failed", "task_id", task.ID, "err", err)
@@ -222,7 +222,7 @@ func (w *Worker) report(taskID, status string, execErr error, startedAt time.Tim
 		slog.Error("report error", "err", err)
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func (w *Worker) setAuth(req *http.Request) {

@@ -13,10 +13,13 @@ type Config struct {
 	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`
 	OutputDir   string        `yaml:"output_dir"   mapstructure:"output_dir"`
 	// DB 설정 — 셋 중 하나만 지정. 우선순위: DB > DBDriver+DBDSN > DBPath
-	DBPath   string   `yaml:"db_path"   mapstructure:"db_path"`   // sqlite 파일 경로 (기본: output_dir/piper.db)
-	DBDriver string   `yaml:"db_driver" mapstructure:"db_driver"` // "postgres" 등 외부 DB 드라이버
-	DBDSN    string   `yaml:"db_dsn"    mapstructure:"db_dsn"`    // 외부 DB DSN
-	DB       *sql.DB  `yaml:"-" mapstructure:"-"`                 // 직접 주입 (*sql.DB)
+	DBPath   string  `yaml:"db_path"   mapstructure:"db_path"`   // sqlite 파일 경로 (기본: output_dir/piper.db)
+	DBDriver string  `yaml:"db_driver" mapstructure:"db_driver"` // "postgres" 등 외부 DB 드라이버
+	DBDSN    string  `yaml:"db_dsn"    mapstructure:"db_dsn"`    // 외부 DB DSN
+	DB       *sql.DB `yaml:"-" mapstructure:"-"`                 // 직접 주입 (*sql.DB)
+
+	// Hooks — 모든 확장 포인트. nil이면 no-op.
+	Hooks Hooks `yaml:"-" mapstructure:"-"`
 
 	// Git 소스
 	Git GitConfig `yaml:"git" mapstructure:"git"`
@@ -42,8 +45,8 @@ type S3Config struct {
 }
 
 type ServerConfig struct {
-	Addr    string    `yaml:"addr"    mapstructure:"addr"`
-	TLS     TLSConfig `yaml:"tls"     mapstructure:"tls"`
+	Addr string    `yaml:"addr"    mapstructure:"addr"`
+	TLS  TLSConfig `yaml:"tls"     mapstructure:"tls"`
 }
 
 type TLSConfig struct {

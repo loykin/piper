@@ -23,7 +23,12 @@ type ServeOption struct {
 // HTTP/HTTPS 모두 지원. 라이브러리 사용자는 직접 호출하거나
 // Handler()로 자신의 서버에 마운트할 수 있다.
 func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
-	handler := p.Handler(opt.Extra)
+	// 미들웨어 체인 적용 (Config.Hooks.Middleware)
+	var handler http.Handler = p.Handler(opt.Extra)
+	for i := len(p.cfg.Hooks.Middleware) - 1; i >= 0; i-- {
+		handler = p.cfg.Hooks.Middleware[i](handler)
+	}
+
 	srv := &http.Server{
 		Addr:    p.cfg.Server.Addr,
 		Handler: handler,
@@ -32,7 +37,7 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 	// graceful shutdown
 	go func() {
 		<-ctx.Done()
-		srv.Shutdown(context.Background())
+		_ = srv.Shutdown(context.Background())
 	}()
 
 	tlsCfg := p.cfg.Server.TLS

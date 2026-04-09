@@ -50,12 +50,11 @@ var migrations = []migration{
 			CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run_id);
 		`,
 	},
-	// 새 마이그레이션은 여기에 추가
-	// {
-	//     version: 2,
-	//     desc:    "add tags column to runs",
-	//     up:      `ALTER TABLE runs ADD COLUMN tags TEXT DEFAULT ''`,
-	// },
+	{
+		version: 2,
+		desc:    "add owner_id to runs",
+		up:      `ALTER TABLE runs ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
+	},
 }
 
 // migrate는 미적용 마이그레이션을 순서대로 실행한다
@@ -91,7 +90,7 @@ func migrate(db *sql.DB) error {
 		}
 
 		if _, err := tx.Exec(m.up); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("migration %d (%s): %w", m.version, m.desc, err)
 		}
 
@@ -99,7 +98,7 @@ func migrate(db *sql.DB) error {
 			`INSERT INTO schema_migrations (version, desc) VALUES (?, ?)`,
 			m.version, m.desc,
 		); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("migration %d: record: %w", m.version, err)
 		}
 
@@ -118,7 +117,7 @@ func appliedVersions(db *sql.DB) (map[int]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query migrations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	applied := make(map[int]bool)
 	for rows.Next() {

@@ -2,8 +2,13 @@ package piper
 
 // 내부 task 큐 — DAG 인식, 분산 worker 실행용.
 // Task ID: "{runID}:{stepName}" (콜론 구분자, step 이름에 콜론 없음).
+//
+// Dispatcher가 설정된 경우 task가 ready 상태가 되는 즉시 Dispatch를 호출한다.
+// (K8s Job 등 능동적 dispatch 모드)
+// Dispatcher가 nil이면 worker가 /api/tasks/next 폴링으로 task를 가져간다.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -41,13 +46,20 @@ type runEntry struct {
 }
 
 type queue struct {
-	mu   sync.Mutex
-	runs map[string]*runEntry // runID → entry
-	st   *store.Store
+	mu         sync.Mutex
+	runs       map[string]*runEntry // runID → entry
+	st         *store.Store
+	dispatcher proto.Dispatcher // nil이면 폴링 모드
 }
 
 func newQueue(st *store.Store) *queue {
 	return &queue{runs: make(map[string]*runEntry), st: st}
+}
+
+func (q *queue) setDispatcher(d proto.Dispatcher) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.dispatcher = d
 }
 
 func makeTaskID(runID, stepName string) string {
@@ -189,8 +201,26 @@ func (q *queue) promoteReady(r *runEntry) {
 		if depsAllDone(entry.step.DependsOn, done) {
 			entry.status = taskReady
 			slog.Info("task ready", "task_id", entry.task.ID)
+			q.dispatchIfNeeded(entry)
 		}
 	}
+}
+
+// dispatchIfNeeded는 Dispatcher가 설정된 경우 task를 즉시 dispatch한다.
+// lock을 보유한 상태에서 호출되므로 goroutine으로 비동기 실행한다.
+func (q *queue) dispatchIfNeeded(entry *taskEntry) {
+	if q.dispatcher == nil {
+		return
+	}
+	// 폴링 대신 즉시 dispatch — running 상태로 마킹
+	entry.status = taskRunning
+	task := entry.task
+	go func() {
+		if err := q.dispatcher.Dispatch(context.Background(), task); err != nil {
+			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
+			_ = q.complete(task.ID, "failed", err.Error(), time.Now(), time.Now(), 0)
+		}
+	}()
 }
 
 func (q *queue) skipDownstream(r *runEntry, failedStep string) {

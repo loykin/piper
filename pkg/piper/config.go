@@ -29,6 +29,10 @@ type Config struct {
 
 	// 서버 (임베딩 모드에서는 불필요)
 	Server ServerConfig `yaml:"server" mapstructure:"server"`
+
+	// K8s — 설정 시 K8s Job으로 step을 실행한다.
+	// pkg/k8s.New(cfg.K8s)로 Launcher를 생성한 뒤 p.SetDispatcher(launcher)로 등록.
+	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
 }
 
 type GitConfig struct {
@@ -53,6 +57,35 @@ type TLSConfig struct {
 	Enabled  bool   `yaml:"enabled"   mapstructure:"enabled"`
 	CertFile string `yaml:"cert_file" mapstructure:"cert_file"`
 	KeyFile  string `yaml:"key_file"  mapstructure:"key_file"`
+}
+
+// K8sConfig는 K8s Job 실행에 필요한 설정.
+// AgentImage가 비어 있으면 K8s 모드 비활성.
+type K8sConfig struct {
+	// AgentImage: piper-agent 바이너리가 포함된 이미지 (initContainer용)
+	AgentImage string `yaml:"agent_image" mapstructure:"agent_image"`
+
+	// Namespace: Job을 생성할 K8s 네임스페이스 (기본: "default")
+	Namespace string `yaml:"namespace" mapstructure:"namespace"`
+
+	// InCluster: Pod 내부 실행 시 true
+	InCluster bool `yaml:"in_cluster" mapstructure:"in_cluster"`
+
+	// Kubeconfig: out-of-cluster 실행 시 kubeconfig 파일 경로
+	Kubeconfig string `yaml:"kubeconfig" mapstructure:"kubeconfig"`
+
+	// MasterURL: K8s Pod에서 piper server에 접근할 URL
+	// 예: "http://piper-server.default.svc.cluster.local:8080"
+	MasterURL string `yaml:"master_url" mapstructure:"master_url"`
+
+	// Token: piper server 인증 토큰
+	Token string `yaml:"token" mapstructure:"token"`
+
+	// DefaultImage: step에 image가 없을 때 사용할 기본 컨테이너 이미지
+	DefaultImage string `yaml:"default_image" mapstructure:"default_image"`
+
+	// TTLAfterFinished: Job 완료 후 자동 삭제 시간(초). 0이면 자동 삭제 안 함.
+	TTLAfterFinished int32 `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
 }
 
 func DefaultConfig() Config {

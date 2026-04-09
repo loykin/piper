@@ -10,6 +10,7 @@ import (
 
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/source"
 	"github.com/piper/piper/pkg/store"
 )
@@ -171,6 +172,13 @@ func (p *Piper) sourceConfig() source.Config {
 		S3Bucket:    p.cfg.S3.Bucket,
 		S3UseSSL:    p.cfg.S3.UseSSL,
 	}
+}
+
+// SetDispatcher는 K8s Job launcher 등 외부 실행 환경을 등록한다.
+// 설정 시 task가 ready 상태가 되는 즉시 Dispatch가 호출된다.
+// nil을 설정하면 worker 폴링 모드로 돌아간다.
+func (p *Piper) SetDispatcher(d proto.Dispatcher) {
+	p.queue.setDispatcher(d)
 }
 
 func (p *Piper) Config() Config {

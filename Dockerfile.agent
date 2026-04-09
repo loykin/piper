@@ -1,0 +1,6 @@
+# 호스트에서 미리 빌드된 바이너리를 사용하는 방식.
+# 빌드 전: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/piper-agent ./cmd/agent
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY bin/piper-agent /piper-agent
+ENTRYPOINT ["/piper-agent"]

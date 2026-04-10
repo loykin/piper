@@ -1,0 +1,57 @@
+# K8s 실행 예제
+#
+# K8s dispatcher가 설정된 경우 각 step이 별도 Pod에서 실행된다.
+# step마다 다른 컨테이너 이미지를 사용할 수 있다.
+#
+# 서버 설정 (piper.yaml):
+#   k8s:
+#     agent_image: piper/agent:latest
+#     namespace: piper-jobs
+#     default_image: alpine:3.20
+#
+# 실행:
+#   piper serve --config piper.yaml
+
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: k8s-pipeline
+
+spec:
+  steps:
+  - name: extract
+    runner:
+      image: python:3.12-slim    # 이 step은 Python 이미지로 실행
+    run:
+      type: command
+      command:
+        - python3
+        - -c
+        - |
+          import json, os
+          data = [{"id": i, "value": i * 10} for i in range(5)]
+          out = os.environ["PIPER_OUTPUT_DIR"]
+          with open(f"{out}/data.json", "w") as f:
+              json.dump(data, f)
+          print(f"extracted {len(data)} records")
+    outputs:
+      - name: raw-data
+        path: data.json
+
+  - name: transform
+    runner:
+      image: alpine:3.20         # 이 step은 Alpine으로 실행
+      label: cpu
+    run:
+      type: command
+      command:
+        - sh
+        - -c
+        - |
+          echo "transforming data..."
+          cat $PIPER_INPUT_DIR/raw-data/data.json
+    depends_on: [extract]
+    inputs:
+      - name: raw-data
+        from: extract/raw-data

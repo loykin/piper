@@ -36,6 +36,8 @@ func (h *apiHandler) routes() {
 	h.mux.HandleFunc("/health", h.handleHealth)
 
 	// Worker API
+	h.mux.HandleFunc("/api/workers", h.handleWorkers)
+	h.mux.HandleFunc("/api/workers/", h.handleWorkerOp)
 	h.mux.HandleFunc("/api/tasks/next", h.handleTaskNext)
 	h.mux.HandleFunc("/api/tasks/", h.handleTaskOp)
 }
@@ -227,12 +229,63 @@ func (h *apiHandler) handleRunSub(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /api/tasks/next?label=gpu — worker가 다음 task를 폴링
+// POST /api/workers        — worker 등록
+// GET  /api/workers        — 활성 worker 목록
+func (h *apiHandler) handleWorkers(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		var info WorkerInfo
+		if err := json.NewDecoder(r.Body).Decode(&info); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if info.ID == "" {
+			jsonErr(w, "id is required", http.StatusBadRequest)
+			return
+		}
+		h.p.registry.register(info)
+		slog.Info("worker registered", "id", info.ID, "label", info.Label, "hostname", info.Hostname)
+		jsonOK(w, map[string]string{"worker_id": info.ID})
+
+	case http.MethodGet:
+		jsonOK(w, h.p.registry.list())
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// POST /api/workers/{id}/heartbeat — worker 생존 신호
+func (h *apiHandler) handleWorkerOp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// /api/workers/{id}/heartbeat
+	rest := strings.TrimPrefix(r.URL.Path, "/api/workers/")
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[1] != "heartbeat" {
+		http.NotFound(w, r)
+		return
+	}
+	workerID := parts[0]
+	if err := h.p.registry.heartbeat(workerID); err != nil {
+		// 미등록 worker — 재등록 유도
+		jsonErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// GET /api/tasks/next?worker_id=xxx&label=gpu — worker가 다음 task를 폴링
 func (h *apiHandler) handleTaskNext(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	workerID := r.URL.Query().Get("worker_id")
+	h.p.registry.touch(workerID) // 폴링 자체도 last_seen 갱신
 
 	label := r.URL.Query().Get("label")
 	task := h.p.queue.next(label)

@@ -1,0 +1,38 @@
+# Worker label 라우팅 예제
+#
+# step마다 실행할 worker를 지정한다.
+# label이 없는 step은 어느 worker든 실행 가능.
+#
+# worker 시작 예:
+#   go run ./examples/worker --label=gpu
+#   go run ./examples/worker --label=cpu
+
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: label-routing
+
+spec:
+  steps:
+  - name: preprocess
+    runner:
+      label: cpu        # CPU worker에서 실행
+    run:
+      type: command
+      command: ["sh", "-c", "echo 'preprocessing on CPU worker'"]
+
+  - name: train
+    runner:
+      label: gpu        # GPU worker에서 실행
+    run:
+      type: command
+      command: ["sh", "-c", "echo 'training on GPU worker'"]
+    depends_on: [preprocess]
+
+  - name: report
+    # label 없음 → 어느 worker든 가능
+    run:
+      type: command
+      command: ["sh", "-c", "echo 'generating report'"]
+    depends_on: [train]

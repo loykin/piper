@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/pipeline"
@@ -22,9 +23,10 @@ import (
 //	p := piper.New(piper.DefaultConfig())
 //	result, err := p.RunFile(ctx, "train.yaml")
 type Piper struct {
-	cfg   Config
-	store *store.Store
-	queue *queue
+	cfg      Config
+	store    *store.Store
+	queue    *queue
+	registry *workerRegistry
 }
 
 func New(cfg Config) (*Piper, error) {
@@ -53,7 +55,18 @@ func New(cfg Config) (*Piper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	return &Piper{cfg: cfg, store: st, queue: newQueue(st)}, nil
+	p := &Piper{cfg: cfg, store: st, queue: newQueue(st), registry: newWorkerRegistry()}
+	go p.runCleanup()
+	return p, nil
+}
+
+// runCleanup은 주기적으로 만료된 worker를 정리한다.
+func (p *Piper) runCleanup() {
+	ticker := time.NewTicker(workerTTL / 2)
+	defer ticker.Stop()
+	for range ticker.C {
+		p.registry.cleanup()
+	}
 }
 
 // Close는 store를 닫는다

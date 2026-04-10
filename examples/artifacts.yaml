@@ -1,0 +1,69 @@
+# S3 아티팩트 패싱 예제
+#
+# step 간에 파일을 S3를 통해 전달한다.
+# outputs: 로컬 파일 → S3 업로드
+# inputs:  S3 다운로드 → 로컬 파일
+#
+# 필요한 환경 변수:
+#   PIPER_S3_ENDPOINT=localhost:9000
+#   PIPER_S3_ACCESS_KEY=minioadmin
+#   PIPER_S3_SECRET_KEY=minioadmin
+#   PIPER_S3_BUCKET=piper-artifacts
+
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: artifact-passing
+
+spec:
+  steps:
+  - name: generate
+    run:
+      type: command
+      command:
+        - sh
+        - -c
+        - |
+          echo "col1,col2,col3" > $PIPER_OUTPUT_DIR/dataset.csv
+          echo "row1,10,20"     >> $PIPER_OUTPUT_DIR/dataset.csv
+          echo "row2,30,40"     >> $PIPER_OUTPUT_DIR/dataset.csv
+          echo "generated: $(wc -l < $PIPER_OUTPUT_DIR/dataset.csv) rows"
+    outputs:
+      - name: dataset
+        path: dataset.csv
+
+  - name: process
+    run:
+      type: command
+      command:
+        - sh
+        - -c
+        - |
+          echo "processing dataset..."
+          cat $PIPER_INPUT_DIR/dataset/dataset.csv
+          awk -F',' 'NR>1 {sum+=$2} END {print "sum col2:", sum}' \
+            $PIPER_INPUT_DIR/dataset/dataset.csv \
+            > $PIPER_OUTPUT_DIR/summary.txt
+          cat $PIPER_OUTPUT_DIR/summary.txt
+    depends_on: [generate]
+    inputs:
+      - name: dataset
+        from: generate/dataset   # generate step의 dataset 아티팩트
+    outputs:
+      - name: summary
+        path: summary.txt
+
+  - name: report
+    run:
+      type: command
+      command:
+        - sh
+        - -c
+        - |
+          echo "=== final report ==="
+          cat $PIPER_INPUT_DIR/summary/summary.txt
+    depends_on: [process]
+    inputs:
+      - name: summary
+        from: process/summary

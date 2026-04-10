@@ -31,7 +31,10 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			w := worker.New(cfg)
+			w, err := worker.New(cfg)
+			if err != nil {
+				return err
+			}
 			return w.Run(ctx)
 		},
 	}

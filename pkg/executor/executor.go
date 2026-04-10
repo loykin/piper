@@ -12,10 +12,22 @@ type ExecConfig struct {
 	WorkDir   string
 	InputDir  string
 	OutputDir string
+	RunID     string
+	StepName  string
 	Params    map[string]any
 	SourceCfg source.Config
 	Stdout    io.Writer // nil이면 os.Stdout
 	Stderr    io.Writer // nil이면 os.Stderr
+}
+
+// Env는 모든 executor에서 공통으로 주입할 환경변수 슬라이스를 반환한다.
+func (c ExecConfig) Env() []string {
+	return []string{
+		"PIPER_INPUT_DIR=" + c.InputDir,
+		"PIPER_OUTPUT_DIR=" + c.OutputDir,
+		"PIPER_RUN_ID=" + c.RunID,
+		"PIPER_STEP_NAME=" + c.StepName,
+	}
 }
 
 type Executor interface {

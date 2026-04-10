@@ -20,6 +20,8 @@ func New(run pipeline.Run, cfg Config) (Fetcher, error) {
 		return &GitFetcher{cfg: cfg}, nil
 	case "s3":
 		return &S3Fetcher{cfg: cfg}, nil
+	case "http", "https":
+		return &HTTPFetcher{}, nil
 	case "local", "":
 		return &LocalFetcher{}, nil
 	default:

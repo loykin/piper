@@ -7,7 +7,6 @@
 package runner
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -16,7 +15,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,8 +24,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/source"
 )
 
 // Config는 Runner 설정.
@@ -43,6 +43,10 @@ type Config struct {
 	S3SecretKey string
 	S3Bucket    string
 	S3UseSSL    bool
+
+	// 소스 fetch 설정 (notebook/python source: git|s3|http)
+	GitToken string
+	GitUser  string
 }
 
 // Runner는 단일 task를 실행한다.
@@ -132,7 +136,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 	r.reportDone(task, startedAt)
 }
 
-// ─── 커맨드 실행 ──────────────────────────────────────────────────────────────
+// ─── 실행 ─────────────────────────────────────────────────────────────────────
 
 func (r *Runner) execute(
 	ctx context.Context,
@@ -141,54 +145,54 @@ func (r *Runner) execute(
 	outputDir string,
 	logger *batchLogger,
 ) error {
-	if len(step.Run.Command) == 0 {
-		return fmt.Errorf("step %q: no command specified", step.Name)
+	// stdout/stderr를 줄 단위로 가로채는 io.Writer
+	stdoutW := &lineWriter{stream: "stdout", logger: logger, tee: os.Stdout}
+	stderrW := &lineWriter{stream: "stderr", logger: logger, tee: os.Stderr}
+
+	cfg := executor.ExecConfig{
+		WorkDir:   task.WorkDir,
+		InputDir:  filepath.Join(r.cfg.InputDir, task.RunID),
+		OutputDir: outputDir,
+		RunID:     task.RunID,
+		StepName:  step.Name,
+		Params:    step.Params,
+		Stdout:    stdoutW,
+		Stderr:    stderrW,
+		SourceCfg: source.Config{
+			GitToken:    r.cfg.GitToken,
+			GitUser:     r.cfg.GitUser,
+			S3Endpoint:  r.cfg.S3Endpoint,
+			S3AccessKey: r.cfg.S3AccessKey,
+			S3SecretKey: r.cfg.S3SecretKey,
+			S3Bucket:    r.cfg.S3Bucket,
+			S3UseSSL:    r.cfg.S3UseSSL,
+		},
 	}
 
-	c := exec.CommandContext(ctx, step.Run.Command[0], step.Run.Command[1:]...)
-	c.Env = append(os.Environ(),
-		"PIPER_OUTPUT_DIR="+outputDir,
-		"PIPER_INPUT_DIR="+filepath.Join(r.cfg.InputDir, task.RunID),
-		"PIPER_RUN_ID="+task.RunID,
-		"PIPER_STEP_NAME="+step.Name,
-	)
-	c.Dir = task.WorkDir
-
-	stdoutPipe, err := c.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderrPipe, err := c.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	if err := c.Start(); err != nil {
-		return err
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		pipeLines(stdoutPipe, "stdout", os.Stdout, logger)
-	}()
-	go func() {
-		defer wg.Done()
-		pipeLines(stderrPipe, "stderr", os.Stderr, logger)
-	}()
-	wg.Wait()
-
-	return c.Wait()
+	return executor.New(step).Execute(ctx, step, cfg)
 }
 
-func pipeLines(r io.Reader, stream string, tee io.Writer, logger *batchLogger) {
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := scanner.Text()
-		_, _ = fmt.Fprintln(tee, line)
-		logger.append(stream, line)
+// lineWriter는 io.Writer를 구현하며 줄 단위로 batchLogger에 기록한다.
+type lineWriter struct {
+	stream string
+	logger *batchLogger
+	tee    io.Writer
+	buf    []byte
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		idx := bytes.IndexByte(w.buf, '\n')
+		if idx < 0 {
+			break
+		}
+		line := string(w.buf[:idx])
+		w.buf = w.buf[idx+1:]
+		_, _ = fmt.Fprintln(w.tee, line)
+		w.logger.append(w.stream, line)
 	}
+	return len(p), nil
 }
 
 // ─── 배치 로그 ────────────────────────────────────────────────────────────────

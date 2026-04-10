@@ -38,10 +38,7 @@ func (e *PythonExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg E
 	cmd.Dir = cfg.WorkDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("PIPER_INPUT_DIR=%s", cfg.InputDir),
-		fmt.Sprintf("PIPER_OUTPUT_DIR=%s", cfg.OutputDir),
-	)
+	cmd.Env = append(os.Environ(), cfg.Env()...)
 	for k, v := range cfg.Params {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("PIPER_PARAM_%s=%v", k, v))
 	}

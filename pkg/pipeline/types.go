@@ -23,24 +23,25 @@ type Defaults struct {
 }
 
 type Step struct {
-	Name      string            `yaml:"name"`
-	Run       Run               `yaml:"run"`
-	DependsOn []string          `yaml:"depends_on"`
-	Inputs    []Artifact        `yaml:"inputs"`
-	Outputs   []Artifact        `yaml:"outputs"`
-	Params    map[string]any    `yaml:"params"`
-	Resources Resources         `yaml:"resources"`
-	Runner    RunnerSelector    `yaml:"runner"`
+	Name      string         `yaml:"name"`
+	Run       Run            `yaml:"run"`
+	DependsOn []string       `yaml:"depends_on"`
+	Inputs    []Artifact     `yaml:"inputs"`
+	Outputs   []Artifact     `yaml:"outputs"`
+	Params    map[string]any `yaml:"params"`
+	Resources Resources      `yaml:"resources"`
+	Runner    RunnerSelector `yaml:"runner"`
 }
 
 type Run struct {
-	Type    string `yaml:"type"`    // notebook | python | command
-	Source  string `yaml:"source"`  // git | s3 | local
-	Repo    string `yaml:"repo"`
-	Branch  string `yaml:"branch"`
-	Path    string `yaml:"path"`
+	Type    string   `yaml:"type"`   // notebook | python | command
+	Source  string   `yaml:"source"` // git | s3 | http | local
+	Repo    string   `yaml:"repo"`
+	Branch  string   `yaml:"branch"`
+	Path    string   `yaml:"path"`
+	URL     string   `yaml:"url"` // http/https URL (source: http)
 	Command []string `yaml:"command"`
-	Image   string `yaml:"image"`   // 이 step에서 쓸 Docker 이미지 (optional)
+	Image   string   `yaml:"image"` // 이 step에서 쓸 Docker 이미지 (optional)
 }
 
 type Artifact struct {

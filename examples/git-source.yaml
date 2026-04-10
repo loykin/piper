@@ -1,0 +1,28 @@
+# git source 예제
+#
+# GitHub 레포에서 스크립트를 직접 가져와 실행한다.
+# run.source: git  →  GitFetcher가 shallow clone 후 path 파일을 실행
+#
+# 선택적 환경 변수 (private repo):
+#   PIPER_GIT_TOKEN=<personal access token>
+#   PIPER_GIT_USER=<username>
+
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: git-source-example
+  description: "GitHub 레포에서 Python 스크립트를 가져와 실행"
+
+spec:
+  steps:
+  - name: train
+    run:
+      type: python
+      source: git
+      repo: https://github.com/loykin/piper
+      branch: master
+      path: examples/scripts/train.py
+    params:
+      epochs: 5
+      lr: 0.001

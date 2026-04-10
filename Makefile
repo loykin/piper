@@ -6,11 +6,12 @@ ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 build: ui
 	go build -o bin/piper ./cmd/piper
 
-# React UI 빌드 후 pkg/ui/dist 갱신
+# React UI 빌드 후 pkg/ui/dist 갱신 (빌드 후 git에 커밋)
 ui:
 	cd frontend && npm run build
 	rm -rf pkg/ui/dist
 	cp -r frontend/dist pkg/ui/dist
+	@echo "UI built. Commit pkg/ui/dist/ to include in go install."
 
 # piper-agent (K8s용, linux/arm64 또는 linux/amd64)
 agent:

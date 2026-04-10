@@ -22,6 +22,7 @@ import (
 	"syscall"
 
 	"github.com/piper/piper/pkg/piper"
+	"github.com/piper/piper/pkg/ui"
 )
 
 func main() {
@@ -43,12 +44,12 @@ func main() {
 	})
 
 	// piper API + UI를 /piper/ 아래에 마운트
+	// UI가 필요한 경우에만 pkg/ui를 import한다
 	piperHandler := p.Handler(nil)
-	piperUI := p.UIHandler()
 	mux.Handle("/piper/runs", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/runs/", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/api/", http.StripPrefix("/piper", piperHandler))
-	mux.Handle("/piper/", http.StripPrefix("/piper", piperUI))
+	mux.Handle("/piper/", http.StripPrefix("/piper", ui.Handler()))
 
 	srv := &http.Server{Addr: ":8080", Handler: mux}
 

@@ -1,9 +1,10 @@
 # 빌드 결과물
 bin/
-pkg/ui/dist/*
-!pkg/ui/dist/.gitkeep
 frontend/dist/
 frontend/node_modules/
+
+# pkg/ui/dist는 git에 포함 (go install 지원)
+# UI 변경 시 make ui 후 dist/ 커밋
 
 # 런타임 생성 파일
 piper-outputs/

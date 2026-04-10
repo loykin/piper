@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+
+	"github.com/piper/piper/pkg/ui"
 )
 
 // ServeOption은 Serve 동작을 커스터마이징한다
@@ -29,7 +31,7 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 	mux.Handle("/runs/", p.Handler(opt.Extra))
 	mux.Handle("/api/", p.Handler(opt.Extra))
 	mux.Handle("/health", p.Handler(opt.Extra))
-	mux.Handle("/", p.UIHandler()) // UI는 나머지 모든 경로
+	mux.Handle("/", ui.Handler()) // UI는 나머지 모든 경로
 
 	// 미들웨어 체인 적용 (Config.Hooks.Middleware)
 	var handler http.Handler = mux

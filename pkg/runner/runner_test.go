@@ -19,16 +19,32 @@ import (
 // makeTask는 테스트용 proto.Task를 생성한다.
 func makeTask(t *testing.T, step pipeline.Step) *proto.Task {
 	t.Helper()
+	return makeTaskWithRunID(t, step, "run-test")
+}
+
+// makeTaskWithRunID는 runID를 지정해 proto.Task를 생성한다.
+func makeTaskWithRunID(t *testing.T, step pipeline.Step, runID string) *proto.Task {
+	t.Helper()
 	b, err := json.Marshal(step)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &proto.Task{
 		ID:       "task-1",
-		RunID:    "run-test",
+		RunID:    runID,
 		StepName: step.Name,
 		Step:     b,
 	}
+}
+
+// fakeMasterServer는 done/failed/logs 요청을 받는 테스트용 HTTP 서버를 반환한다.
+func fakeMasterServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // ─── New ──────────────────────────────────────────────────────────────────────

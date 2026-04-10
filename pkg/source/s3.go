@@ -3,12 +3,15 @@ package source
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/piper/piper/pkg/pipeline"
 )
 
@@ -21,15 +24,7 @@ func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string)
 		return "", fmt.Errorf("s3 source: path is required")
 	}
 
-	endpoint := f.cfg.S3Endpoint
-	if endpoint == "" {
-		endpoint = "s3.amazonaws.com"
-	}
-
-	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(f.cfg.S3AccessKey, f.cfg.S3SecretKey, ""),
-		Secure: f.cfg.S3UseSSL,
-	})
+	client, err := newS3Client(f.cfg)
 	if err != nil {
 		return "", fmt.Errorf("s3 client init failed: %w", err)
 	}
@@ -44,10 +39,54 @@ func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string)
 		return "", err
 	}
 
-	if err := client.FGetObject(ctx, bucket, key, destFile, minio.GetObjectOptions{}); err != nil {
+	out, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
 		return "", fmt.Errorf("s3 download failed: %w", err)
+	}
+	defer func() { _ = out.Body.Close() }()
+
+	file, err := os.Create(destFile)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+
+	if _, err := io.Copy(file, out.Body); err != nil {
+		return "", fmt.Errorf("s3 write failed: %w", err)
 	}
 
 	slog.Info("s3 fetch done", "file", destFile)
 	return destFile, nil
+}
+
+func newS3Client(cfg Config) (*s3.Client, error) {
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			cfg.S3AccessKey, cfg.S3SecretKey, "",
+		)),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := []func(*s3.Options){
+		func(o *s3.Options) {
+			o.UsePathStyle = true
+		},
+	}
+	if cfg.S3Endpoint != "" {
+		scheme := "http"
+		if cfg.S3UseSSL {
+			scheme = "https"
+		}
+		opts = append(opts, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(scheme + "://" + cfg.S3Endpoint)
+		})
+	}
+
+	return s3.NewFromConfig(awsCfg, opts...), nil
 }

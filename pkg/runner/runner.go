@@ -22,8 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 )
@@ -47,7 +49,7 @@ type Config struct {
 type Runner struct {
 	cfg    Config
 	client *http.Client
-	s3     *minio.Client // nil이면 S3 비사용
+	s3     *s3.Client // nil이면 S3 비사용
 }
 
 // New는 Runner를 생성한다.
@@ -65,11 +67,11 @@ func New(cfg Config) (*Runner, error) {
 	}
 
 	if cfg.S3Endpoint != "" && cfg.S3Bucket != "" {
-		s3, err := newS3Client(cfg)
+		s3client, err := newS3Client(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("s3 client: %w", err)
 		}
-		r.s3 = s3
+		r.s3 = s3client
 	}
 
 	return r, nil
@@ -307,15 +309,36 @@ func (r *Runner) setAuth(req *http.Request) {
 
 // ─── S3 아티팩트 ──────────────────────────────────────────────────────────────
 
-func newS3Client(cfg Config) (*minio.Client, error) {
-	endpoint := cfg.S3Endpoint
-	if endpoint == "" {
-		endpoint = "s3.amazonaws.com"
+// newS3Client는 AWS SDK v2 기반 S3 클라이언트를 생성한다.
+// MinIO, SeaweedFS, Ceph RGW, Cloudflare R2 등 S3 호환 스토리지 모두 지원.
+func newS3Client(cfg Config) (*s3.Client, error) {
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			cfg.S3AccessKey, cfg.S3SecretKey, "",
+		)),
+	)
+	if err != nil {
+		return nil, err
 	}
-	return minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.S3AccessKey, cfg.S3SecretKey, ""),
-		Secure: cfg.S3UseSSL,
-	})
+
+	opts := []func(*s3.Options){
+		func(o *s3.Options) {
+			o.UsePathStyle = true // MinIO, SeaweedFS 등 path-style 필수
+		},
+	}
+	if cfg.S3Endpoint != "" {
+		scheme := "http"
+		if cfg.S3UseSSL {
+			scheme = "https"
+		}
+		endpoint := scheme + "://" + cfg.S3Endpoint
+		opts = append(opts, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(endpoint)
+		})
+	}
+
+	return s3.NewFromConfig(awsCfg, opts...), nil
 }
 
 // downloadInputs는 step 입력 아티팩트를 S3에서 로컬로 다운로드한다.
@@ -361,43 +384,83 @@ func (r *Runner) uploadOutputs(ctx context.Context, runID, stepName, outputDir s
 	return nil
 }
 
-func s3DownloadPrefix(ctx context.Context, client *minio.Client, bucket, prefix, destDir string) error {
+func s3DownloadPrefix(ctx context.Context, client *s3.Client, bucket, prefix, destDir string) error {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
-	for obj := range client.ListObjects(ctx, bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
-		if obj.Err != nil {
-			return obj.Err
-		}
-		rel := strings.TrimPrefix(obj.Key, prefix)
-		dest := filepath.Join(destDir, rel)
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(prefix),
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
 			return err
 		}
-		if err := client.FGetObject(ctx, bucket, obj.Key, dest, minio.GetObjectOptions{}); err != nil {
-			return fmt.Errorf("get %q: %w", obj.Key, err)
+		for _, obj := range page.Contents {
+			key := aws.ToString(obj.Key)
+			rel := strings.TrimPrefix(key, prefix)
+			dest := filepath.Join(destDir, rel)
+			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+				return err
+			}
+			if err := s3GetFile(ctx, client, bucket, key, dest); err != nil {
+				return fmt.Errorf("get %q: %w", key, err)
+			}
 		}
 	}
 	return nil
 }
 
-func s3UploadPath(ctx context.Context, client *minio.Client, bucket, localPath, s3Prefix string) error {
+func s3UploadPath(ctx context.Context, client *s3.Client, bucket, localPath, s3Prefix string) error {
 	info, err := os.Stat(localPath)
 	if err != nil {
 		return err
 	}
 	if !info.IsDir() {
-		_, err := client.FPutObject(ctx, bucket, s3Prefix+info.Name(), localPath, minio.PutObjectOptions{})
-		return err
+		return s3PutFile(ctx, client, bucket, s3Prefix+info.Name(), localPath)
 	}
 	return filepath.Walk(localPath, func(path string, fi os.FileInfo, err error) error {
 		if err != nil || fi.IsDir() {
 			return err
 		}
 		rel, _ := filepath.Rel(localPath, path)
-		_, err = client.FPutObject(ctx, bucket, s3Prefix+rel, path, minio.PutObjectOptions{})
-		return err
+		return s3PutFile(ctx, client, bucket, s3Prefix+rel, path)
 	})
+}
+
+func s3GetFile(ctx context.Context, client *s3.Client, bucket, key, destPath string) error {
+	out, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Body.Close() }()
+
+	f, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = io.Copy(f, out.Body)
+	return err
+}
+
+func s3PutFile(ctx context.Context, client *s3.Client, bucket, key, localPath string) error {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	_, err = client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   f,
+	})
+	return err
 }
 
 // ─── 유틸 ─────────────────────────────────────────────────────────────────────

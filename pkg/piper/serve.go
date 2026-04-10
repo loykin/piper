@@ -23,8 +23,16 @@ type ServeOption struct {
 // HTTP/HTTPS 모두 지원. 라이브러리 사용자는 직접 호출하거나
 // Handler()로 자신의 서버에 마운트할 수 있다.
 func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
+	// API + UI 통합 핸들러
+	mux := http.NewServeMux()
+	mux.Handle("/runs", p.Handler(opt.Extra))
+	mux.Handle("/runs/", p.Handler(opt.Extra))
+	mux.Handle("/api/", p.Handler(opt.Extra))
+	mux.Handle("/health", p.Handler(opt.Extra))
+	mux.Handle("/", p.UIHandler()) // UI는 나머지 모든 경로
+
 	// 미들웨어 체인 적용 (Config.Hooks.Middleware)
-	var handler http.Handler = p.Handler(opt.Extra)
+	var handler http.Handler = mux
 	for i := len(p.cfg.Hooks.Middleware) - 1; i >= 0; i-- {
 		handler = p.cfg.Hooks.Middleware[i](handler)
 	}

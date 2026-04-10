@@ -13,6 +13,7 @@ import (
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/source"
 	"github.com/piper/piper/pkg/store"
+	"github.com/piper/piper/pkg/ui"
 )
 
 // Piper는 라이브러리 진입점.
@@ -39,6 +40,9 @@ func New(cfg Config) (*Piper, error) {
 	}
 	if cfg.Concurrency == 0 {
 		cfg.Concurrency = def.Concurrency
+	}
+	if cfg.Server.Addr == "" {
+		cfg.Server.Addr = def.Server.Addr
 	}
 
 	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
@@ -172,6 +176,14 @@ func (p *Piper) sourceConfig() source.Config {
 		S3Bucket:    p.cfg.S3.Bucket,
 		S3UseSSL:    p.cfg.S3.UseSSL,
 	}
+}
+
+// UIHandler는 React SPA를 서빙하는 http.Handler를 반환한다.
+// 라이브러리 사용자가 자신의 라우터에 마운트할 수 있다.
+//
+//	mux.Handle("/piper/", http.StripPrefix("/piper", p.UIHandler()))
+func (p *Piper) UIHandler() http.Handler {
+	return ui.Handler()
 }
 
 // SetDispatcher는 K8s Job launcher 등 외부 실행 환경을 등록한다.

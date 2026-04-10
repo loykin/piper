@@ -1,29 +1,10 @@
-// piper-agent는 K8s Pod 내부에서 실행되는 step 실행 에이전트다.
-//
-// 역할:
-//  1. S3에서 입력 아티팩트 다운로드
-//  2. step 커맨드 실행 (stdout/stderr 캡처)
-//  3. 로그를 piper server로 배치 전송
-//  4. S3에 출력 아티팩트 업로드
-//  5. piper server에 done/failed 보고
-//
-// K8s Job에서 entrypoint로 사용:
-//
-//	/piper-tools/piper-agent exec \
-//	  --master=http://piper:8080 \
-//	  --task-id=run-123:prep \
-//	  --run-id=run-123 \
-//	  --step-name=prep \
-//	  --step=<base64 JSON> \
-//	  -- python train.py
-package main
+package cmd
 
 import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
@@ -31,18 +12,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func main() {
-	root := &cobra.Command{
-		Use:   "piper-agent",
-		Short: "piper agent — K8s Pod 내부 step 실행기",
+// newAgentCmd는 "piper agent" 커맨드를 반환한다.
+// K8s Job entrypoint로 사용: piper agent exec --master=... --step=... -- <command>
+func newAgentCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agent",
+		Short: "K8s Pod 내부 step 실행 에이전트",
 	}
-	root.AddCommand(newExecCmd())
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
-	}
+	cmd.AddCommand(newAgentExecCmd())
+	return cmd
 }
 
-type execFlags struct {
+type agentExecFlags struct {
 	master    string
 	token     string
 	taskID    string
@@ -59,18 +40,18 @@ type execFlags struct {
 	s3UseSSL    bool
 }
 
-func newExecCmd() *cobra.Command {
-	var f execFlags
+func newAgentExecCmd() *cobra.Command {
+	var f agentExecFlags
 
 	cmd := &cobra.Command{
 		Use:   "exec [flags] -- <command...>",
 		Short: "step을 실행하고 결과를 master에 보고한다",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExec(cmd.Context(), f, args)
+			return runAgentExec(cmd.Context(), f, args)
 		},
 	}
 
-	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL (필수)")
+	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL")
 	cmd.Flags().StringVar(&f.token, "token", "", "인증 토큰")
 	cmd.Flags().StringVar(&f.taskID, "task-id", "", "task ID")
 	cmd.Flags().StringVar(&f.runID, "run-id", "", "run ID")
@@ -87,8 +68,7 @@ func newExecCmd() *cobra.Command {
 	return cmd
 }
 
-func runExec(ctx context.Context, f execFlags, cmdArgs []string) error {
-	// step JSON 디코딩
+func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error {
 	var step pipeline.Step
 	if f.stepB64 != "" {
 		b, err := base64.StdEncoding.DecodeString(f.stepB64)
@@ -100,12 +80,11 @@ func runExec(ctx context.Context, f execFlags, cmdArgs []string) error {
 		}
 	}
 
-	// '--' 뒤 args로 command 오버라이드 (step.Run.Command보다 우선)
+	// '--' 뒤 args가 있으면 step.Run.Command 오버라이드
 	if len(cmdArgs) > 0 {
 		step.Run.Command = cmdArgs
 	}
 
-	// step JSON을 다시 직렬화해서 proto.Task에 넣기
 	stepJSON, err := json.Marshal(step)
 	if err != nil {
 		return fmt.Errorf("marshal step: %w", err)

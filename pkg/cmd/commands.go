@@ -25,5 +25,6 @@ func Commands(p *piper.Piper) []*cobra.Command {
 		newParseCmd(p),
 		newServerCmd(p),
 		newWorkerCmd(p),
+		newAgentCmd(),
 	}
 }

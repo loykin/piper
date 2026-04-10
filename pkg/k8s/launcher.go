@@ -77,7 +77,7 @@ func New(cfg Config) (*Launcher, error) {
 		cfg.Namespace = "default"
 	}
 	if cfg.AgentImage == "" {
-		cfg.AgentImage = "piper/agent:latest"
+		cfg.AgentImage = "piper/piper:latest"
 	}
 
 	var restCfg *rest.Config
@@ -156,7 +156,7 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 
 func (l *Launcher) buildAgentArgs(task *proto.Task, stepB64 string) []string {
 	args := []string{
-		"exec",
+		"agent", "exec",
 		"--master=" + l.cfg.MasterURL,
 		"--task-id=" + task.ID,
 		"--run-id=" + task.RunID,
@@ -212,7 +212,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 							Image:           l.cfg.AgentImage,
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							// piper/agent 이미지 내 /piper-agent 바이너리를 공유 볼륨에 복사
-							Command: []string{"cp", "/piper-agent", "/piper-tools/piper-agent"},
+							Command: []string{"cp", "/piper", "/piper-tools/piper"},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},
 							},
@@ -224,7 +224,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 							Name:            "step",
 							Image:           image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							Command:         []string{"/piper-tools/piper-agent"},
+							Command:         []string{"/piper-tools/piper"},
 							Args:            agentArgs,
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},

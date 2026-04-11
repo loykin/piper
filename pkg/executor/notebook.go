@@ -20,7 +20,7 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 		return err
 	}
 
-	notebookPath, err := fetcher.Fetch(ctx, step.Run, cfg.WorkDir)
+	notebookPath, err := fetcher.Fetch(ctx, step.Run, cfg.fetchDir(step.Run))
 	if err != nil {
 		return fmt.Errorf("fetch failed: %w", err)
 	}

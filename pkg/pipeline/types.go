@@ -39,6 +39,7 @@ type Run struct {
 	Repo    string   `yaml:"repo"`
 	Branch  string   `yaml:"branch"`
 	Path    string   `yaml:"path"`
+	Dir     string   `yaml:"dir"` // source를 풀 서브디렉토리 이름 (미설정 시 step 이름 사용)
 	URL     string   `yaml:"url"` // http/https URL (source: http)
 	Command []string `yaml:"command"`
 	Image   string   `yaml:"image"` // 이 step에서 쓸 Docker 이미지 (optional)

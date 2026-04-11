@@ -3,8 +3,9 @@ package executor
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -16,6 +17,7 @@ func cfg(t *testing.T) ExecConfig {
 		WorkDir:   t.TempDir(),
 		InputDir:  t.TempDir(),
 		OutputDir: t.TempDir(),
+		StepName:  t.Name(),
 	}
 }
 
@@ -26,14 +28,6 @@ func TestNew_command(t *testing.T) {
 	ex := New(step)
 	if _, ok := ex.(*CommandExecutor); !ok {
 		t.Errorf("want *CommandExecutor, got %T", ex)
-	}
-}
-
-func TestNew_python(t *testing.T) {
-	step := &pipeline.Step{Run: pipeline.Run{Type: "python"}}
-	ex := New(step)
-	if _, ok := ex.(*PythonExecutor); !ok {
-		t.Errorf("want *PythonExecutor, got %T", ex)
 	}
 }
 
@@ -53,7 +47,16 @@ func TestNew_defaultIsCommand(t *testing.T) {
 	}
 }
 
-// ─── CommandExecutor ─────────────────────────────────────────────────────────
+// python은 별도 타입 없음 — command로 처리
+func TestNew_pythonIsCommand(t *testing.T) {
+	step := &pipeline.Step{Run: pipeline.Run{Type: "python"}}
+	ex := New(step)
+	if _, ok := ex.(*CommandExecutor); !ok {
+		t.Errorf("type=python should map to CommandExecutor, got %T", ex)
+	}
+}
+
+// ─── CommandExecutor (source 없음) ───────────────────────────────────────────
 
 func TestCommandExecutor_success(t *testing.T) {
 	var buf bytes.Buffer
@@ -114,7 +117,7 @@ func TestCommandExecutor_nonZeroExit(t *testing.T) {
 
 func TestCommandExecutor_contextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled
+	cancel()
 
 	step := &pipeline.Step{
 		Name: "sleep",
@@ -128,7 +131,6 @@ func TestCommandExecutor_contextCancel(t *testing.T) {
 }
 
 func TestCommandExecutor_nilWriters(t *testing.T) {
-	// nil stdout/stderr should fall back to os.Stdout/Stderr without panic
 	step := &pipeline.Step{
 		Name: "ok",
 		Run:  pipeline.Run{Command: []string{"true"}},
@@ -143,58 +145,104 @@ func TestCommandExecutor_nilWriters(t *testing.T) {
 	}
 }
 
-// ─── PythonExecutor ───────────────────────────────────────────────────────────
+// ─── CommandExecutor (source: http) ──────────────────────────────────────────
 
-func TestPythonExecutor_localScript(t *testing.T) {
-	// PythonExecutor는 "python" 바이너리를 직접 호출하므로
-	// PATH에 "python"이 없으면 스킵
-	if _, err := exec.LookPath("python"); err != nil {
-		t.Skip("python not in PATH")
-	}
-
-	workDir := t.TempDir()
-	script := workDir + "/hello.py"
-	_ = os.WriteFile(script, []byte("print('hello from python')"), 0644)
+func TestCommandExecutor_httpSource_scriptPath(t *testing.T) {
+	// HTTP 서버에서 스크립트를 fetch하고 PIPER_SCRIPT_PATH가 주입되는지 확인
+	script := []byte("#!/bin/sh\necho 'from http'")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(script)
+	}))
+	defer srv.Close()
 
 	var buf bytes.Buffer
 	step := &pipeline.Step{
-		Name: "py",
-		Run:  pipeline.Run{Type: "python", Source: "local", Path: "hello.py"},
+		Name: "http-run",
+		Run: pipeline.Run{
+			Source:  "http",
+			URL:     srv.URL + "/run.sh",
+			Command: []string{"sh", "-c", "echo $PIPER_SCRIPT_PATH"},
+		},
 	}
 	c := cfg(t)
-	c.WorkDir = workDir
 	c.Stdout = &buf
 
-	ex := &PythonExecutor{}
+	ex := &CommandExecutor{}
 	if err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "hello from python") {
-		t.Errorf("stdout: %q", buf.String())
+	if !strings.Contains(buf.String(), "run.sh") {
+		t.Errorf("PIPER_SCRIPT_PATH should contain filename, got %q", buf.String())
 	}
 }
 
-func TestPythonExecutor_unknownSource(t *testing.T) {
+func TestCommandExecutor_httpSource_workDirIsFetchDir(t *testing.T) {
+	// source fetch 후 WorkDir이 fetchDir로 바뀌어 파일이 보이는지 확인
+	script := []byte("hello content")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(script)
+	}))
+	defer srv.Close()
+
+	var buf bytes.Buffer
 	step := &pipeline.Step{
-		Name: "py",
-		Run:  pipeline.Run{Type: "python", Source: "ftp"},
+		Name: "ls-run",
+		Run: pipeline.Run{
+			Source:  "http",
+			URL:     srv.URL + "/data.txt",
+			Command: []string{"sh", "-c", "cat data.txt"},
+		},
 	}
-	ex := &PythonExecutor{}
+	c := cfg(t)
+	c.Stdout = &buf
+
+	ex := &CommandExecutor{}
+	if err := ex.Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "hello content") {
+		t.Errorf("expected file content, got %q", buf.String())
+	}
+}
+
+func TestCommandExecutor_unknownSource(t *testing.T) {
+	step := &pipeline.Step{
+		Name: "bad",
+		Run:  pipeline.Run{Source: "ftp", Command: []string{"echo", "x"}},
+	}
+	ex := &CommandExecutor{}
 	err := ex.Execute(context.Background(), step, cfg(t))
 	if err == nil {
 		t.Fatal("expected error for unknown source")
 	}
 }
 
-func TestPythonExecutor_emptyPath(t *testing.T) {
+// ─── CommandExecutor (source: local) ─────────────────────────────────────────
+
+func TestCommandExecutor_localSource_usesWorkDir(t *testing.T) {
+	// source: local 이면 WorkDir 그대로 사용
+	workDir := t.TempDir()
+	_ = os.WriteFile(workDir+"/hello.sh", []byte("echo 'local script'"), 0755)
+
+	var buf bytes.Buffer
 	step := &pipeline.Step{
-		Name: "py",
-		Run:  pipeline.Run{Type: "python", Source: "local", Path: ""},
+		Name: "local-run",
+		Run: pipeline.Run{
+			Source:  "local",
+			Path:    "hello.sh",
+			Command: []string{"sh", "hello.sh"},
+		},
 	}
-	ex := &PythonExecutor{}
-	err := ex.Execute(context.Background(), step, cfg(t))
-	if err == nil {
-		t.Fatal("expected error for empty path")
+	c := cfg(t)
+	c.WorkDir = workDir
+	c.Stdout = &buf
+
+	ex := &CommandExecutor{}
+	if err := ex.Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "local script") {
+		t.Errorf("stdout: %q", buf.String())
 	}
 }
 

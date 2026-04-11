@@ -54,7 +54,7 @@ func New(cfg Config) (*Piper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	p := &Piper{cfg: cfg, store: st, queue: newQueue(st), registry: newWorkerRegistry()}
+	p := &Piper{cfg: cfg, store: st, queue: newQueue(st), registry: newWorkerRegistry(st)}
 	go p.runCleanup()
 	return p, nil
 }

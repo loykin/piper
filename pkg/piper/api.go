@@ -269,7 +269,13 @@ func (h *apiHandler) handleWorkerOp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workerID := parts[0]
-	if err := h.p.registry.heartbeat(workerID); err != nil {
+
+	var body struct {
+		InFlight int `json:"in_flight"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // 바디 없어도 허용
+
+	if err := h.p.registry.heartbeat(workerID, body.InFlight); err != nil {
 		// 미등록 worker — 재등록 유도
 		jsonErr(w, err.Error(), http.StatusNotFound)
 		return

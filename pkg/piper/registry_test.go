@@ -5,8 +5,13 @@ import (
 	"time"
 )
 
+// nil store로 생성 — DB 없이 인메모리만 테스트
+func newTestRegistry() *workerRegistry {
+	return newWorkerRegistry(nil)
+}
+
 func TestRegistry_register_and_list(t *testing.T) {
-	r := newWorkerRegistry()
+	r := newTestRegistry()
 	r.register(WorkerInfo{ID: "w1", Label: "gpu", Concurrency: 2, Hostname: "host1"})
 	r.register(WorkerInfo{ID: "w2", Label: "cpu", Concurrency: 4, Hostname: "host2"})
 
@@ -17,23 +22,37 @@ func TestRegistry_register_and_list(t *testing.T) {
 }
 
 func TestRegistry_heartbeat_ok(t *testing.T) {
-	r := newWorkerRegistry()
+	r := newTestRegistry()
 	r.register(WorkerInfo{ID: "w1"})
 
-	if err := r.heartbeat("w1"); err != nil {
+	if err := r.heartbeat("w1", 0); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
+func TestRegistry_heartbeat_updates_in_flight(t *testing.T) {
+	r := newTestRegistry()
+	r.register(WorkerInfo{ID: "w1"})
+	_ = r.heartbeat("w1", 3)
+
+	r.mu.Lock()
+	inFlight := r.workers["w1"].InFlight
+	r.mu.Unlock()
+
+	if inFlight != 3 {
+		t.Errorf("want in_flight=3, got %d", inFlight)
+	}
+}
+
 func TestRegistry_heartbeat_unknown(t *testing.T) {
-	r := newWorkerRegistry()
-	if err := r.heartbeat("nobody"); err == nil {
+	r := newTestRegistry()
+	if err := r.heartbeat("nobody", 0); err == nil {
 		t.Error("expected error for unknown worker")
 	}
 }
 
 func TestRegistry_touch_updates_last_seen(t *testing.T) {
-	r := newWorkerRegistry()
+	r := newTestRegistry()
 	r.register(WorkerInfo{ID: "w1"})
 
 	before := r.workers["w1"].LastSeen
@@ -46,15 +65,14 @@ func TestRegistry_touch_updates_last_seen(t *testing.T) {
 }
 
 func TestRegistry_touch_unknown_ignored(t *testing.T) {
-	r := newWorkerRegistry()
+	r := newTestRegistry()
 	r.touch("ghost") // 패닉 없이 무시
 }
 
 func TestRegistry_list_excludes_expired(t *testing.T) {
-	r := newWorkerRegistry()
+	r := newTestRegistry()
 	r.register(WorkerInfo{ID: "w1"})
 
-	// LastSeen을 TTL보다 오래 전으로 강제 설정
 	r.mu.Lock()
 	r.workers["w1"].LastSeen = time.Now().Add(-(workerTTL + time.Second))
 	r.mu.Unlock()
@@ -65,7 +83,7 @@ func TestRegistry_list_excludes_expired(t *testing.T) {
 }
 
 func TestRegistry_cleanup_removes_expired(t *testing.T) {
-	r := newWorkerRegistry()
+	r := newTestRegistry()
 	r.register(WorkerInfo{ID: "alive"})
 	r.register(WorkerInfo{ID: "dead"})
 
@@ -89,7 +107,7 @@ func TestRegistry_cleanup_removes_expired(t *testing.T) {
 }
 
 func TestRegistry_reregister_updates_info(t *testing.T) {
-	r := newWorkerRegistry()
+	r := newTestRegistry()
 	r.register(WorkerInfo{ID: "w1", Label: "old"})
 	r.register(WorkerInfo{ID: "w1", Label: "new"})
 

@@ -55,6 +55,34 @@ var migrations = []migration{
 		desc:    "add owner_id to runs",
 		up:      `ALTER TABLE runs ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
 	},
+	{
+		version: 3,
+		desc:    "create workers and agents tables",
+		up: `
+			CREATE TABLE IF NOT EXISTS workers (
+				id            TEXT PRIMARY KEY,
+				label         TEXT NOT NULL DEFAULT '',
+				hostname      TEXT NOT NULL DEFAULT '',
+				concurrency   INTEGER NOT NULL DEFAULT 1,
+				status        TEXT NOT NULL DEFAULT 'online',
+				in_flight     INTEGER NOT NULL DEFAULT 0,
+				registered_at DATETIME NOT NULL,
+				last_seen_at  DATETIME NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS agents (
+				id         TEXT PRIMARY KEY,
+				task_id    TEXT NOT NULL,
+				run_id     TEXT NOT NULL DEFAULT '',
+				step_name  TEXT NOT NULL DEFAULT '',
+				status     TEXT NOT NULL DEFAULT 'pending',
+				started_at DATETIME,
+				ended_at   DATETIME,
+				error      TEXT
+			);
+			CREATE INDEX IF NOT EXISTS idx_agents_task ON agents(task_id);
+			CREATE INDEX IF NOT EXISTS idx_agents_run  ON agents(run_id, step_name);
+		`,
+	},
 }
 
 // migrate는 미적용 마이그레이션을 순서대로 실행한다

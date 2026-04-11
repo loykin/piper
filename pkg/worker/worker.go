@@ -190,11 +190,18 @@ func (w *Worker) heartbeat(ctx context.Context) error {
 	if w.cfg.MasterURL == "" {
 		return nil
 	}
+
+	w.mu.Lock()
+	inFlight := w.inFlight
+	w.mu.Unlock()
+
+	body, _ := json.Marshal(map[string]any{"in_flight": inFlight})
 	url := fmt.Sprintf("%s/api/workers/%s/heartbeat", w.cfg.MasterURL, w.id)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
 	if w.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+w.cfg.Token)
 	}

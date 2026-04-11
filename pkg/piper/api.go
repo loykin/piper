@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/store"
 )
@@ -217,7 +218,7 @@ func (h *apiHandler) handleRunSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		afterID, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-		lines, err := h.store.GetLogs(runID, stepName, afterID)
+		lines, err := h.p.logs.Query(runID, stepName, afterID)
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -357,9 +358,9 @@ func (h *apiHandler) handleLogIngest(w http.ResponseWriter, r *http.Request, run
 		return
 	}
 
-	lines := make([]*store.LogLine, len(entries))
+	lines := make([]*logstore.Line, len(entries))
 	for i, e := range entries {
-		lines[i] = &store.LogLine{
+		lines[i] = &logstore.Line{
 			RunID:    runID,
 			StepName: stepName,
 			Ts:       e.Ts,
@@ -367,7 +368,7 @@ func (h *apiHandler) handleLogIngest(w http.ResponseWriter, r *http.Request, run
 			Line:     e.Line,
 		}
 	}
-	if err := h.store.AppendLogs(lines); err != nil {
+	if err := h.p.logs.Append(lines); err != nil {
 		slog.Warn("append logs failed", "run_id", runID, "step", stepName, "err", err)
 	}
 	w.WriteHeader(http.StatusOK)
@@ -401,7 +402,7 @@ func (h *apiHandler) handleLogStream(w http.ResponseWriter, r *http.Request, run
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			lines, err := h.store.GetLogs(runID, stepName, afterID)
+			lines, err := h.p.logs.Query(runID, stepName, afterID)
 			if err != nil {
 				_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 				flusher.Flush()
@@ -419,7 +420,7 @@ func (h *apiHandler) handleLogStream(w http.ResponseWriter, r *http.Request, run
 			// If the run has ended, flush remaining logs and emit the done event
 			run, err := h.store.GetRun(runID)
 			if err == nil && run != nil && run.Status != "running" {
-				if tail, err2 := h.store.GetLogs(runID, stepName, afterID); err2 == nil {
+				if tail, err2 := h.p.logs.Query(runID, stepName, afterID); err2 == nil {
 					for _, l := range tail {
 						b, _ := json.Marshal(l)
 						_, _ = fmt.Fprintf(w, "data: %s\n\n", b)

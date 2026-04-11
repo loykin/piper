@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/piper/piper/pkg/logstore"
 	_ "modernc.org/sqlite"
 )
 
@@ -67,4 +68,9 @@ func (s *Store) Close() error {
 // Useful when library users need advanced features such as transactions.
 func (s *Store) DB() *sql.DB {
 	return s.db
+}
+
+// LogStore returns a logstore.LogStore backed by this Store's SQLite database.
+func (s *Store) LogStore() *logstore.SQLiteLogStore {
+	return logstore.NewSQLite(s.db)
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/piper/piper/pkg/executor"
+	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/source"
@@ -24,6 +25,7 @@ import (
 type Piper struct {
 	cfg      Config
 	store    *store.Store
+	logs     logstore.LogStore
 	queue    *queue
 	registry *workerRegistry
 }
@@ -54,7 +56,7 @@ func New(cfg Config) (*Piper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	p := &Piper{cfg: cfg, store: st, queue: newQueue(st), registry: newWorkerRegistry(st)}
+	p := &Piper{cfg: cfg, store: st, logs: st.LogStore(), queue: newQueue(st), registry: newWorkerRegistry(st)}
 	go p.runCleanup()
 	return p, nil
 }
@@ -134,8 +136,8 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 		// Capture logs: persist to store
 		var stdoutW, stderrW io.Writer = os.Stdout, os.Stderr
 		if runID != "" {
-			stdoutW = &storeLogWriter{store: p.store, runID: runID, stepName: step.Name, stream: "stdout", tee: os.Stdout}
-			stderrW = &storeLogWriter{store: p.store, runID: runID, stepName: step.Name, stream: "stderr", tee: os.Stderr}
+			stdoutW = &storeLogWriter{logs: p.logs, runID: runID, stepName: step.Name, stream: "stdout", tee: os.Stdout}
+			stderrW = &storeLogWriter{logs: p.logs, runID: runID, stepName: step.Name, stream: "stderr", tee: os.Stderr}
 		}
 
 		exec := executor.New(step)

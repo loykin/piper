@@ -7,13 +7,13 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/piper/piper/pkg/store"
+	"github.com/piper/piper/pkg/logstore"
 )
 
 // storeLogWriter implements io.Writer,
-// tee-ing to the terminal while persisting each line to the store
+// tee-ing to the terminal while persisting each line to the LogStore.
 type storeLogWriter struct {
-	store    *store.Store
+	logs     logstore.LogStore
 	runID    string
 	stepName string
 	stream   string
@@ -28,13 +28,13 @@ func (w *storeLogWriter) Write(p []byte) (int, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(p))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if err := w.store.AppendLog(&store.LogLine{
+		if err := w.logs.Append([]*logstore.Line{{
 			RunID:    w.runID,
 			StepName: w.stepName,
 			Ts:       time.Now(),
 			Stream:   w.stream,
 			Line:     line,
-		}); err != nil {
+		}}); err != nil {
 			slog.Warn("log store failed", "err", err)
 		}
 	}

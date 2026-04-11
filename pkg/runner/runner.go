@@ -115,10 +115,15 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 	// Log collector
 	logger := newBatchLogger(r, task.RunID, task.StepName, logFile)
 
+	// Periodically flush logs to master while the task is running
+	flushCtx, stopFlush := context.WithCancel(ctx)
+	go logger.flushLoop(flushCtx)
+
 	// Execute the command
 	execErr := r.execute(ctx, &step, task, stepOutputDir, logger)
 
-	// Flush collected logs
+	// Stop the flush loop and do a final flush
+	stopFlush()
 	logger.flush(ctx)
 
 	// Upload output artifacts to S3 (on success)
@@ -212,8 +217,25 @@ type batchLogger struct {
 	file     *os.File
 }
 
+const logFlushInterval = 2 * time.Second
+
 func newBatchLogger(r *Runner, runID, stepName string, file *os.File) *batchLogger {
 	return &batchLogger{r: r, runID: runID, stepName: stepName, file: file}
+}
+
+// flushLoop sends buffered logs to the master every logFlushInterval.
+// Run in a goroutine; cancel ctx to stop.
+func (l *batchLogger) flushLoop(ctx context.Context) {
+	ticker := time.NewTicker(logFlushInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			l.flush(ctx)
+		}
+	}
 }
 
 func (l *batchLogger) append(stream, line string) {

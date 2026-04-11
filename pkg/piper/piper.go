@@ -97,7 +97,8 @@ func openStore(cfg Config) (*store.Store, error) {
 
 // RunOptions holds optional parameters for local pipeline execution.
 type RunOptions struct {
-	Vars proto.BuiltinVars // system-injected builtin variables (e.g. ScheduledAt)
+	Vars   proto.BuiltinVars // system-injected builtin variables (e.g. ScheduledAt)
+	Params map[string]any    // run-level params; override step-level YAML params at runtime
 }
 
 // RunFile takes a YAML file path and runs the pipeline locally
@@ -120,15 +121,15 @@ func (p *Piper) Run(ctx context.Context, yamlBytes []byte) (*pipeline.RunResult,
 
 // RunPipeline directly executes a parsed Pipeline struct
 func (p *Piper) RunPipeline(ctx context.Context, pl *pipeline.Pipeline) (*pipeline.RunResult, error) {
-	return p.runPipelineWithRunID(ctx, pl, "", proto.BuiltinVars{})
+	return p.runPipelineWithRunID(ctx, pl, "", RunOptions{})
 }
 
-// RunPipelineOpts executes a parsed Pipeline with optional run options (e.g. Vars.ScheduledAt).
+// RunPipelineOpts executes a parsed Pipeline with optional run options (e.g. Vars.ScheduledAt, Params).
 func (p *Piper) RunPipelineOpts(ctx context.Context, pl *pipeline.Pipeline, opts RunOptions) (*pipeline.RunResult, error) {
-	return p.runPipelineWithRunID(ctx, pl, "", opts.Vars)
+	return p.runPipelineWithRunID(ctx, pl, "", opts)
 }
 
-func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline, runID string, vars proto.BuiltinVars) (*pipeline.RunResult, error) {
+func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline, runID string, opts RunOptions) (*pipeline.RunResult, error) {
 	dag, err := pipeline.BuildDAG(pl)
 	if err != nil {
 		return nil, err
@@ -155,11 +156,11 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 			WorkDir:   ".",
 			InputDir:  outputDir,
 			OutputDir: stepOutputDir,
-			Params:    step.Params,
+			Params:    mergeParams(step.Params, opts.Params),
 			SourceCfg: srcCfg,
 			Stdout:    stdoutW,
 			Stderr:    stderrW,
-			Vars:      vars,
+			Vars:      opts.Vars,
 		})
 	}
 
@@ -216,4 +217,21 @@ func (p *Piper) Config() Config {
 
 func (p *Piper) SourceConfig() source.Config {
 	return p.sourceConfig()
+}
+
+// mergeParams merges step-level params (base) with run-level params (override).
+// Run-level params take precedence, allowing runtime hyperparameter injection
+// without modifying the pipeline YAML.
+func mergeParams(stepParams, runParams map[string]any) map[string]any {
+	if len(runParams) == 0 {
+		return stepParams
+	}
+	merged := make(map[string]any, len(stepParams)+len(runParams))
+	for k, v := range stepParams {
+		merged[k] = v
+	}
+	for k, v := range runParams {
+		merged[k] = v // run-level overrides step-level
+	}
+	return merged
 }

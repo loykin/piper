@@ -75,7 +75,7 @@ func splitTaskID(id string) (runID, stepName string, err error) {
 }
 
 // add registers a pipeline in the queue and immediately marks steps with no dependencies as ready.
-func (q *queue) add(pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars) {
+func (q *queue) add(pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -102,6 +102,7 @@ func (q *queue) add(pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, ou
 			CreatedAt: time.Now(),
 			Label:     s.Runner.Label,
 			Vars:      vars,
+			RunParams: runParams,
 		}
 		r.tasks[s.Name] = &taskEntry{task: task, step: s, status: taskPending}
 	}

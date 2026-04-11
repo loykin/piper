@@ -140,7 +140,7 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Add to queue — workers execute by polling
-		h.p.queue.add(pl, dag, runID, ".", outputDir, req.Vars)
+		h.p.queue.add(pl, dag, runID, ".", outputDir, req.Vars, req.Params)
 
 		if h.p.cfg.Hooks.OnRunStart != nil {
 			go h.p.cfg.Hooks.OnRunStart(context.Background(), runID, pl)

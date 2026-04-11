@@ -160,7 +160,7 @@ func (r *Runner) execute(
 		OutputDir: outputDir,
 		RunID:     task.RunID,
 		StepName:  step.Name,
-		Params:    step.Params,
+		Params:    mergeParams(step.Params, task.RunParams),
 		Stdout:    stdoutW,
 		Stderr:    stderrW,
 		Vars:      task.Vars,
@@ -491,6 +491,23 @@ func s3PutFile(ctx context.Context, client *s3.Client, bucket, key, localPath st
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
+
+// mergeParams merges step-level params (base) with run-level params (override).
+// Run-level params take precedence, allowing runtime hyperparameter injection
+// without modifying the pipeline YAML.
+func mergeParams(stepParams, runParams map[string]any) map[string]any {
+	if len(runParams) == 0 {
+		return stepParams
+	}
+	merged := make(map[string]any, len(stepParams)+len(runParams))
+	for k, v := range stepParams {
+		merged[k] = v
+	}
+	for k, v := range runParams {
+		merged[k] = v // run-level overrides step-level
+	}
+	return merged
+}
 
 func openLogFile(outputDir, stepName string) *os.File {
 	path := filepath.Join(outputDir, stepName+".log")

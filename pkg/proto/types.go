@@ -13,16 +13,17 @@ type BuiltinVars struct {
 
 // Task is the unit of work the server delivers to a worker
 type Task struct {
-	ID        string      `json:"id"`
-	RunID     string      `json:"run_id"`
-	StepName  string      `json:"step_name"`
-	Step      []byte      `json:"step"`     // pipeline.Step JSON
-	Pipeline  []byte      `json:"pipeline"` // pipeline.Pipeline JSON
-	WorkDir   string      `json:"work_dir"`
-	OutputDir string      `json:"output_dir"`
-	CreatedAt time.Time   `json:"created_at"`
-	Label     string      `json:"label"` // worker label that should handle this task
-	Vars      BuiltinVars `json:"vars,omitempty"`
+	ID        string         `json:"id"`
+	RunID     string         `json:"run_id"`
+	StepName  string         `json:"step_name"`
+	Step      []byte         `json:"step"`     // pipeline.Step JSON
+	Pipeline  []byte         `json:"pipeline"` // pipeline.Pipeline JSON
+	WorkDir   string         `json:"work_dir"`
+	OutputDir string         `json:"output_dir"`
+	CreatedAt time.Time      `json:"created_at"`
+	Label     string         `json:"label"` // worker label that should handle this task
+	Vars      BuiltinVars    `json:"vars,omitempty"`
+	RunParams map[string]any `json:"run_params,omitempty"` // run-level params; override step-level YAML params
 }
 
 // TaskResult is the result a worker reports back to the server

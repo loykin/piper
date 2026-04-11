@@ -13,6 +13,7 @@ import (
 
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/store"
 )
 
@@ -83,9 +84,10 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			YAML    string         `json:"yaml"`
-			Params  map[string]any `json:"params,omitempty"`
-			OwnerID string         `json:"owner_id,omitempty"`
+			YAML    string            `json:"yaml"`
+			Params  map[string]any    `json:"params,omitempty"`
+			OwnerID string            `json:"owner_id,omitempty"`
+			Vars    proto.BuiltinVars `json:"vars,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
@@ -118,6 +120,7 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 			PipelineName: pl.Metadata.Name,
 			Status:       "running",
 			StartedAt:    time.Now(),
+			ScheduledAt:  req.Vars.ScheduledAt,
 			PipelineYAML: req.YAML,
 		}
 		if err := h.store.CreateRun(run); err != nil {
@@ -137,7 +140,7 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Add to queue — workers execute by polling
-		h.p.queue.add(pl, dag, runID, ".", outputDir)
+		h.p.queue.add(pl, dag, runID, ".", outputDir, req.Vars)
 
 		if h.p.cfg.Hooks.OnRunStart != nil {
 			go h.p.cfg.Hooks.OnRunStart(context.Background(), runID, pl)

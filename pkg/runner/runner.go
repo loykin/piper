@@ -163,6 +163,7 @@ func (r *Runner) execute(
 		Params:    step.Params,
 		Stdout:    stdoutW,
 		Stderr:    stderrW,
+		Vars:      task.Vars,
 		SourceCfg: source.Config{
 			GitToken:    r.cfg.GitToken,
 			GitUser:     r.cfg.GitUser,

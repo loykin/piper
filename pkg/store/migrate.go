@@ -83,6 +83,11 @@ var migrations = []migration{
 			CREATE INDEX IF NOT EXISTS idx_agents_run  ON agents(run_id, step_name);
 		`,
 	},
+	{
+		version: 4,
+		desc:    "add scheduled_at to runs",
+		up:      `ALTER TABLE runs ADD COLUMN scheduled_at DATETIME`,
+	},
 }
 
 // migrate applies any pending migrations in order.

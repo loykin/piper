@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/store"
 	_ "modernc.org/sqlite"
 )
@@ -86,7 +87,7 @@ func TestQueue_addAndNext(t *testing.T) {
 
 	pl := makePipeline(step("a"), step("b", "a"))
 	dag, _ := pipeline.BuildDAG(pl)
-	q.add(pl, dag, "run-1", "", t.TempDir())
+	q.add(pl, dag, "run-1", "", t.TempDir(), proto.BuiltinVars{})
 
 	// Only a is ready (b depends on a)
 	task := q.next("")
@@ -114,7 +115,7 @@ func TestQueue_completePromotesDownstream(t *testing.T) {
 	_ = st.UpsertStep(&store.Step{RunID: "run-1", StepName: "a", Status: "pending"})
 	_ = st.UpsertStep(&store.Step{RunID: "run-1", StepName: "b", Status: "pending"})
 
-	q.add(pl, dag, "run-1", "", t.TempDir())
+	q.add(pl, dag, "run-1", "", t.TempDir(), proto.BuiltinVars{})
 
 	task := q.next("")
 	if task == nil || task.StepName != "a" {
@@ -148,7 +149,7 @@ func TestQueue_failedSkipsDownstream(t *testing.T) {
 		_ = st.UpsertStep(&store.Step{RunID: "run-2", StepName: s.Name, Status: "pending"})
 	}
 
-	q.add(pl, dag, "run-2", "", t.TempDir())
+	q.add(pl, dag, "run-2", "", t.TempDir(), proto.BuiltinVars{})
 
 	task := q.next("") // a
 	if task == nil {
@@ -186,7 +187,7 @@ func TestQueue_completeAllDone_runsCompleted(t *testing.T) {
 	_ = st.CreateRun(&store.Run{ID: "run-3", PipelineName: "test", Status: "running", StartedAt: time.Now()})
 	_ = st.UpsertStep(&store.Step{RunID: "run-3", StepName: "a", Status: "pending"})
 
-	q.add(pl, dag, "run-3", "", t.TempDir())
+	q.add(pl, dag, "run-3", "", t.TempDir(), proto.BuiltinVars{})
 
 	task := q.next("")
 	if task == nil {
@@ -216,7 +217,7 @@ func TestQueue_labelFiltering(t *testing.T) {
 		}},
 	}
 	dag, _ := pipeline.BuildDAG(pl)
-	q.add(pl, dag, "run-4", "", t.TempDir())
+	q.add(pl, dag, "run-4", "", t.TempDir(), proto.BuiltinVars{})
 
 	// Request for gpu worker only
 	task := q.next("gpu")

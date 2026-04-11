@@ -4,8 +4,10 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/source"
 )
 
@@ -18,8 +20,9 @@ type ExecConfig struct {
 	StepName  string
 	Params    map[string]any
 	SourceCfg source.Config
-	Stdout    io.Writer // if nil, defaults to os.Stdout
-	Stderr    io.Writer // if nil, defaults to os.Stderr
+	Stdout    io.Writer         // if nil, defaults to os.Stdout
+	Stderr    io.Writer         // if nil, defaults to os.Stderr
+	Vars      proto.BuiltinVars // system-injected builtin variables
 }
 
 // fetchDir returns the directory into which this step's source will be fetched.
@@ -37,13 +40,21 @@ func (c ExecConfig) fetchDir(run pipeline.Run) string {
 }
 
 // Env returns the slice of environment variables to inject across all executors.
+// Fixed PIPER_* vars come first, followed by BuiltinVars fields.
+// To add a new builtin variable: add a field to proto.BuiltinVars and a case here.
 func (c ExecConfig) Env() []string {
-	return []string{
+	env := []string{
 		"PIPER_INPUT_DIR=" + c.InputDir,
 		"PIPER_OUTPUT_DIR=" + c.OutputDir,
 		"PIPER_RUN_ID=" + c.RunID,
 		"PIPER_STEP_NAME=" + c.StepName,
 	}
+	if v := c.Vars.ScheduledAt; v != nil {
+		// RFC3339 UTC matches Airflow's execution_date semantics:
+		// the logical/scheduled time regardless of when the run actually started.
+		env = append(env, "PIPER_SCHEDULED_AT="+v.UTC().Format(time.RFC3339))
+	}
+	return env
 }
 
 type Executor interface {

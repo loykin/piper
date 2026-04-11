@@ -95,6 +95,11 @@ func openStore(cfg Config) (*store.Store, error) {
 	return store.Open(dbPath)
 }
 
+// RunOptions holds optional parameters for local pipeline execution.
+type RunOptions struct {
+	Vars proto.BuiltinVars // system-injected builtin variables (e.g. ScheduledAt)
+}
+
 // RunFile takes a YAML file path and runs the pipeline locally
 func (p *Piper) RunFile(ctx context.Context, path string) (*pipeline.RunResult, error) {
 	pl, err := pipeline.ParseFile(path)
@@ -115,10 +120,15 @@ func (p *Piper) Run(ctx context.Context, yamlBytes []byte) (*pipeline.RunResult,
 
 // RunPipeline directly executes a parsed Pipeline struct
 func (p *Piper) RunPipeline(ctx context.Context, pl *pipeline.Pipeline) (*pipeline.RunResult, error) {
-	return p.runPipelineWithRunID(ctx, pl, "")
+	return p.runPipelineWithRunID(ctx, pl, "", proto.BuiltinVars{})
 }
 
-func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline, runID string) (*pipeline.RunResult, error) {
+// RunPipelineOpts executes a parsed Pipeline with optional run options (e.g. Vars.ScheduledAt).
+func (p *Piper) RunPipelineOpts(ctx context.Context, pl *pipeline.Pipeline, opts RunOptions) (*pipeline.RunResult, error) {
+	return p.runPipelineWithRunID(ctx, pl, "", opts.Vars)
+}
+
+func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline, runID string, vars proto.BuiltinVars) (*pipeline.RunResult, error) {
 	dag, err := pipeline.BuildDAG(pl)
 	if err != nil {
 		return nil, err
@@ -149,6 +159,7 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 			SourceCfg: srcCfg,
 			Stdout:    stdoutW,
 			Stderr:    stderrW,
+			Vars:      vars,
 		})
 	}
 

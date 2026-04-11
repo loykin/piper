@@ -199,10 +199,10 @@ func TestBuildJob_volumeMounts(t *testing.T) {
 	}
 }
 
-// ─── Dispatch 이미지 결정 로직 (unit, K8s API 없이) ───────────────────────────
+// ─── Dispatch image resolution logic (unit, without K8s API) ─────────────────
 
 func TestDispatch_noImage(t *testing.T) {
-	// K8s 클라이언트 없이 이미지 검증 로직만 테스트
+	// Test image validation logic without a K8s client
 	l := &Launcher{cfg: Config{DefaultImage: ""}}
 
 	step := pipeline.Step{Name: "s", Run: pipeline.Run{Command: []string{"echo"}}}
@@ -210,8 +210,8 @@ func TestDispatch_noImage(t *testing.T) {
 
 	task := makeTask("run-1", "s", step, pl)
 
-	// clientset이 nil이므로 이미지 검증 후 nil pointer dereference가 일어나기 전에 에러 반환을 확인
-	// Dispatch 내부에서 image == "" 일 때 에러를 반환하는 지 확인
+	// Verify that an error is returned before a nil pointer dereference occurs when clientset is nil
+	// Confirm that Dispatch returns an error when image == ""
 	var pipelineStep pipeline.Step
 	_ = json.Unmarshal(task.Step, &pipelineStep)
 	var pipelinePl pipeline.Pipeline

@@ -3,7 +3,7 @@ kind: Pipeline
 
 metadata:
   name: parallel-test
-  description: "병렬 실행 + 재시도 테스트"
+  description: "Parallel execution + retry test"
 
 spec:
   steps:

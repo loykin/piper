@@ -1,7 +1,7 @@
-// Library 모드 예제 — in-process 실행
+// Library mode example — in-process execution
 //
-// piper를 라이브러리로 임베딩해 파이프라인을 직접 실행한다.
-// 서버/worker 없이 단일 프로세스에서 동작한다.
+// Embeds piper as a library to run pipelines directly.
+// Runs in a single process with no server or worker required.
 //
 //	go run ./examples/library
 package main

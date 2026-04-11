@@ -24,7 +24,7 @@ export default function RunDetailPage() {
     }).catch(() => {})
   }, [id, selected])
 
-  // run 폴링 (running 상태일 때)
+  // Poll run status (while in running state)
   useEffect(() => {
     load()
     const iv = setInterval(() => {
@@ -33,7 +33,7 @@ export default function RunDetailPage() {
     return () => clearInterval(iv)
   }, [load, run?.status])
 
-  // 선택된 step 로그 스트리밍
+  // Stream logs for the selected step
   useEffect(() => {
     if (!id || !selected) return
     esRef.current?.close()
@@ -50,7 +50,7 @@ export default function RunDetailPage() {
     return () => es.close()
   }, [id, selected])
 
-  // 로그 자동 스크롤
+  // Auto-scroll logs
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [logs])
@@ -59,7 +59,7 @@ export default function RunDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* 헤더 */}
+      {/* Header */}
       <div className="flex items-center gap-3">
         <Link to="/" className="text-gray-500 hover:text-gray-300 text-sm">← Runs</Link>
         <span className="text-gray-600">/</span>
@@ -68,7 +68,7 @@ export default function RunDetailPage() {
       </div>
 
       <div className="grid grid-cols-[220px_1fr] gap-6">
-        {/* Step 목록 (사이드바) */}
+        {/* Step list (sidebar) */}
         <aside className="rounded-xl border border-gray-800 bg-gray-900 p-3 h-fit">
           <p className="mb-3 text-xs font-semibold text-gray-500 uppercase tracking-wider px-2">Steps</p>
           <ul className="space-y-1">
@@ -90,7 +90,7 @@ export default function RunDetailPage() {
           </ul>
         </aside>
 
-        {/* 로그 뷰어 */}
+        {/* Log viewer */}
         <div className="flex flex-col gap-3">
           {selected && (
             <>

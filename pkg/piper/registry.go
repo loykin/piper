@@ -11,7 +11,7 @@ import (
 
 const workerTTL = 30 * time.Second
 
-// WorkerInfo는 API 레이어에서 사용하는 Worker 정보 (인메모리 캐시)
+// WorkerInfo holds worker information used by the API layer (in-memory cache)
 type WorkerInfo struct {
 	ID           string    `json:"id"`
 	Label        string    `json:"label"`
@@ -26,7 +26,7 @@ type WorkerInfo struct {
 type workerRegistry struct {
 	mu      sync.Mutex
 	workers map[string]*WorkerInfo
-	store   *store.Store // nil이면 DB 비사용 (임베디드 모드)
+	store   *store.Store // nil means DB is not used (embedded mode)
 }
 
 func newWorkerRegistry(st *store.Store) *workerRegistry {
@@ -36,7 +36,7 @@ func newWorkerRegistry(st *store.Store) *workerRegistry {
 	}
 }
 
-// register는 Worker를 등록한다. 같은 ID로 재등록하면 갱신한다.
+// register registers a Worker. Re-registering with the same ID updates it.
 func (r *workerRegistry) register(info WorkerInfo) {
 	now := time.Now()
 	info.RegisteredAt = now
@@ -63,7 +63,7 @@ func (r *workerRegistry) register(info WorkerInfo) {
 	}
 }
 
-// heartbeat는 Worker의 LastSeen과 InFlight를 갱신한다.
+// heartbeat updates the Worker's LastSeen and InFlight values.
 func (r *workerRegistry) heartbeat(id string, inFlight int) error {
 	r.mu.Lock()
 	w, ok := r.workers[id]
@@ -83,7 +83,7 @@ func (r *workerRegistry) heartbeat(id string, inFlight int) error {
 	return nil
 }
 
-// touch는 폴링 요청마다 LastSeen을 갱신한다. 미등록 Worker는 무시한다.
+// touch updates LastSeen on each poll request. Ignores unregistered workers.
 func (r *workerRegistry) touch(id string) {
 	if id == "" {
 		return
@@ -95,7 +95,7 @@ func (r *workerRegistry) touch(id string) {
 	r.mu.Unlock()
 }
 
-// list는 TTL 내에 응답한 활성 Worker 목록을 반환한다.
+// list returns the list of active workers that have responded within the TTL.
 func (r *workerRegistry) list() []WorkerInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -109,7 +109,7 @@ func (r *workerRegistry) list() []WorkerInfo {
 	return out
 }
 
-// cleanup은 만료된 Worker를 인메모리에서 제거하고 DB에 offline으로 표시한다.
+// cleanup removes expired workers from memory and marks them as offline in the DB.
 func (r *workerRegistry) cleanup() {
 	cutoff := time.Now().Add(-workerTTL)
 

@@ -64,7 +64,7 @@ export default function RunsPage() {
 
   return (
     <div className="space-y-8">
-      {/* 실행 패널 */}
+      {/* Run panel */}
       <section className="rounded-xl border border-gray-800 bg-gray-900 p-6">
         <h2 className="mb-4 text-sm font-semibold text-gray-300 uppercase tracking-wider">New Run</h2>
         <textarea
@@ -86,7 +86,7 @@ export default function RunsPage() {
         </div>
       </section>
 
-      {/* 실행 목록 */}
+      {/* Run list */}
       <section>
         <h2 className="mb-4 text-sm font-semibold text-gray-300 uppercase tracking-wider">
           Recent Runs

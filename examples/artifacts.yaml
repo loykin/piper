@@ -1,10 +1,10 @@
-# S3 아티팩트 패싱 예제
+# S3 artifact passing example
 #
-# step 간에 파일을 S3를 통해 전달한다.
-# outputs: 로컬 파일 → S3 업로드
-# inputs:  S3 다운로드 → 로컬 파일
+# Passes files between steps via S3.
+# outputs: local file → S3 upload
+# inputs:  S3 download → local file
 #
-# 필요한 환경 변수:
+# Required environment variables:
 #   PIPER_S3_ENDPOINT=localhost:9000
 #   PIPER_S3_ACCESS_KEY=minioadmin
 #   PIPER_S3_SECRET_KEY=minioadmin
@@ -49,7 +49,7 @@ spec:
     depends_on: [generate]
     inputs:
       - name: dataset
-        from: generate/dataset   # generate step의 dataset 아티팩트
+        from: generate/dataset   # dataset artifact from the generate step
     outputs:
       - name: summary
         path: summary.txt

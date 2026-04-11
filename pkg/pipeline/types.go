@@ -1,6 +1,6 @@
 package pipeline
 
-// Pipeline은 piper YAML 전체 구조
+// Pipeline is the top-level structure of a piper YAML definition
 type Pipeline struct {
 	APIVersion string   `yaml:"apiVersion"`
 	Kind       string   `yaml:"kind"`
@@ -39,10 +39,10 @@ type Run struct {
 	Repo    string   `yaml:"repo"`
 	Branch  string   `yaml:"branch"`
 	Path    string   `yaml:"path"`
-	Dir     string   `yaml:"dir"` // source를 풀 서브디렉토리 이름 (미설정 시 step 이름 사용)
+	Dir     string   `yaml:"dir"` // sub-directory name for the source checkout (defaults to step name)
 	URL     string   `yaml:"url"` // http/https URL (source: http)
 	Command []string `yaml:"command"`
-	Image   string   `yaml:"image"` // 이 step에서 쓸 Docker 이미지 (optional)
+	Image   string   `yaml:"image"` // Docker image to use for this step (optional)
 }
 
 type Artifact struct {

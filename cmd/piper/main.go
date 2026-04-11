@@ -60,7 +60,7 @@ func initLogger() {
 func main() {
 	cfg := buildConfig()
 
-	// piper 인스턴스 생성 — 훅 없음 (standalone 모드)
+	// Create piper instance — no hooks (standalone mode)
 	p, err := piper.New(cfg)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "error:", err)
@@ -68,7 +68,7 @@ func main() {
 	}
 	defer func() { _ = p.Close() }()
 
-	// K8s 모드: AgentImage가 설정된 경우 K8s Launcher를 Dispatcher로 등록
+	// K8s mode: if AgentImage is set, register K8s Launcher as Dispatcher
 	if cfg.K8s.AgentImage != "" {
 		launcher, err := k8s.New(k8s.Config{
 			AgentImage:   cfg.K8s.AgentImage,
@@ -92,7 +92,7 @@ func main() {
 		slog.Info("k8s mode enabled", "agent_image", cfg.K8s.AgentImage, "namespace", cfg.K8s.Namespace)
 	}
 
-	// pkg/cmd에서 커맨드 가져와 등록
+	// Fetch commands from pkg/cmd and register them
 	rootCmd.AddCommand(pipercmd.Commands(p)...)
 
 	if err := rootCmd.Execute(); err != nil {

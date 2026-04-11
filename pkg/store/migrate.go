@@ -6,15 +6,15 @@ import (
 	"log/slog"
 )
 
-// migration은 버전별 마이그레이션 정의
+// migration defines a versioned database migration.
 type migration struct {
 	version int
 	desc    string
 	up      string
 }
 
-// migrations는 순서대로 적용되는 마이그레이션 목록
-// 새 스키마 변경은 여기에 추가만 하면 됨 — 기존 항목 수정 금지
+// migrations is the ordered list of migrations to apply.
+// Add new schema changes here only — never modify existing entries.
 var migrations = []migration{
 	{
 		version: 1,
@@ -85,9 +85,9 @@ var migrations = []migration{
 	},
 }
 
-// migrate는 미적용 마이그레이션을 순서대로 실행한다
+// migrate applies any pending migrations in order.
 func migrate(db *sql.DB) error {
-	// 마이그레이션 추적 테이블 생성
+	// Create the migration tracking table
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    INTEGER PRIMARY KEY,
@@ -98,13 +98,13 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	// 현재 적용된 버전 조회
+	// Query the currently applied versions
 	applied, err := appliedVersions(db)
 	if err != nil {
 		return err
 	}
 
-	// 미적용 마이그레이션 실행
+	// Run pending migrations
 	for _, m := range migrations {
 		if applied[m.version] {
 			continue

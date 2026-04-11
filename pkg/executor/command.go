@@ -21,7 +21,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	workDir := cfg.WorkDir
 	extraEnv := cfg.Env()
 
-	// source가 지정된 경우 fetch 후 fetchDir에서 실행
+	// If a source is specified, fetch it and run from fetchDir
 	if step.Run.Source != "" && step.Run.Source != "local" {
 		fetcher, err := source.New(step.Run, cfg.SourceCfg)
 		if err != nil {

@@ -1,15 +1,15 @@
-# K8s 실행 예제
+# K8s execution example
 #
-# K8s dispatcher가 설정된 경우 각 step이 별도 Pod에서 실행된다.
-# step마다 다른 컨테이너 이미지를 사용할 수 있다.
+# When a K8s dispatcher is configured, each step runs in a separate Pod.
+# Each step can use a different container image.
 #
-# 서버 설정 (piper.yaml):
+# Server configuration (piper.yaml):
 #   k8s:
 #     agent_image: piper/agent:latest
 #     namespace: piper-jobs
 #     default_image: alpine:3.20
 #
-# 실행:
+# Run:
 #   piper serve --config piper.yaml
 
 apiVersion: piper/v1
@@ -22,7 +22,7 @@ spec:
   steps:
   - name: extract
     runner:
-      image: python:3.12-slim    # 이 step은 Python 이미지로 실행
+      image: python:3.12-slim    # This step runs with the Python image
     run:
       type: command
       command:
@@ -41,7 +41,7 @@ spec:
 
   - name: transform
     runner:
-      image: alpine:3.20         # 이 step은 Alpine으로 실행
+      image: alpine:3.20         # This step runs with Alpine
       label: cpu
     run:
       type: command

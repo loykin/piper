@@ -7,13 +7,13 @@ import (
 	"github.com/piper/piper/pkg/pipeline"
 )
 
-// Fetcher는 step 실행 전 소스 파일을 로컬에 가져온다
+// Fetcher fetches source files to the local filesystem before a step executes
 type Fetcher interface {
-	// Fetch는 소스를 destDir에 내려받고 실행할 파일의 절대경로를 반환한다
+	// Fetch downloads the source into destDir and returns the absolute path of the file to execute
 	Fetch(ctx context.Context, run pipeline.Run, destDir string) (filePath string, err error)
 }
 
-// New는 run.Source에 맞는 Fetcher를 반환한다
+// New returns a Fetcher matching the given run.Source
 func New(run pipeline.Run, cfg Config) (Fetcher, error) {
 	switch run.Source {
 	case "git":
@@ -29,10 +29,10 @@ func New(run pipeline.Run, cfg Config) (Fetcher, error) {
 	}
 }
 
-// Config는 fetcher에 필요한 외부 설정 (인증 등)
+// Config holds external configuration required by fetchers (auth, etc.)
 type Config struct {
 	// Git
-	GitToken string // HTTP basic auth token (Gitea, GitHub 등)
+	GitToken string // HTTP basic auth token (Gitea, GitHub, etc.)
 	GitUser  string
 
 	// S3

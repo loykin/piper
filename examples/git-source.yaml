@@ -1,17 +1,17 @@
-# git source 예제
+# git source example
 #
-# GitHub 레포에서 스크립트를 직접 가져와 실행한다.
-# run.source: git  →  GitFetcher가 shallow clone 후 fetchDir에서 커맨드 실행
-# PIPER_SCRIPT_PATH 환경변수로 fetch된 파일의 절대경로를 참조할 수 있다.
+# Fetches scripts directly from a GitHub repository and executes them.
+# run.source: git  →  GitFetcher performs a shallow clone then runs the command from fetchDir
+# The absolute path of the fetched file is available via the PIPER_SCRIPT_PATH env var.
 #
-# source가 풀리는 위치:
-#   run.dir 미설정  →  {SourceDir}/{step 이름}/
-#   run.dir 설정    →  {SourceDir}/{dir}/
+# Where sources are checked out:
+#   run.dir not set  →  {SourceDir}/{step name}/
+#   run.dir set      →  {SourceDir}/{dir}/
 #
-# SourceDir은 runner/worker 실행 시 --source-dir 플래그로 지정.
-# 미설정 시 {WorkDir}/_source 가 기본값.
+# SourceDir is specified via the --source-dir flag when running runner/worker.
+# Defaults to {WorkDir}/_source if not set.
 #
-# 선택적 환경 변수 (private repo):
+# Optional env vars (private repo):
 #   PIPER_GIT_TOKEN=<personal access token>
 #   PIPER_GIT_USER=<username>
 
@@ -20,12 +20,12 @@ kind: Pipeline
 
 metadata:
   name: git-source-example
-  description: "GitHub 레포에서 Python 스크립트를 가져와 실행"
+  description: "Fetch and run a Python script from a GitHub repository"
 
 spec:
   steps:
 
-  # dir 미설정 — {SourceDir}/train/ 에 clone됨
+  # dir not set — cloned into {SourceDir}/train/
   - name: train
     run:
       source: git
@@ -37,14 +37,14 @@ spec:
       epochs: 5
       lr: 0.001
 
-  # dir 설정 — 같은 레포를 다른 이름으로 clone해 격리
+  # dir set — clone the same repo under a different name for isolation
   - name: train-v2
     run:
       source: git
       repo: https://github.com/loykin/piper
       branch: master
       path: examples/scripts/train.py
-      dir: model-v2          # {SourceDir}/model-v2/ 에 clone됨
+      dir: model-v2          # cloned into {SourceDir}/model-v2/
       command: ["python", "examples/scripts/train.py"]
     params:
       epochs: 10

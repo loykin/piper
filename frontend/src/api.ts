@@ -1,4 +1,4 @@
-// piper server API 클라이언트
+// piper server API client
 
 export interface Run {
   id: string

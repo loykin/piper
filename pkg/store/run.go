@@ -41,7 +41,7 @@ func (s *Store) GetRun(id string) (*Run, error) {
 	return scanRun(row)
 }
 
-// RunFilter는 목록 필터 조건
+// RunFilter holds filter conditions for listing runs.
 type RunFilter struct {
 	OwnerID      string
 	PipelineName string

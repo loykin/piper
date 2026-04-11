@@ -11,19 +11,19 @@ import (
 
 type ExecConfig struct {
 	WorkDir   string
-	SourceDir string // source fetch 루트 (미설정 시 WorkDir/_source)
+	SourceDir string // source fetch root (defaults to WorkDir/_source)
 	InputDir  string
 	OutputDir string
 	RunID     string
 	StepName  string
 	Params    map[string]any
 	SourceCfg source.Config
-	Stdout    io.Writer // nil이면 os.Stdout
-	Stderr    io.Writer // nil이면 os.Stderr
+	Stdout    io.Writer // if nil, defaults to os.Stdout
+	Stderr    io.Writer // if nil, defaults to os.Stderr
 }
 
-// fetchDir는 이 step의 source를 풀 디렉토리를 반환한다.
-// Run.Dir > StepName 순으로 서브디렉토리 이름을 결정한다.
+// fetchDir returns the directory into which this step's source will be fetched.
+// The subdirectory name is determined by Run.Dir first, then StepName.
 func (c ExecConfig) fetchDir(run pipeline.Run) string {
 	base := c.SourceDir
 	if base == "" {
@@ -36,7 +36,7 @@ func (c ExecConfig) fetchDir(run pipeline.Run) string {
 	return filepath.Join(base, sub)
 }
 
-// Env는 모든 executor에서 공통으로 주입할 환경변수 슬라이스를 반환한다.
+// Env returns the slice of environment variables to inject across all executors.
 func (c ExecConfig) Env() []string {
 	return []string{
 		"PIPER_INPUT_DIR=" + c.InputDir,

@@ -1,11 +1,11 @@
-// Package k8s는 piper task를 K8s Job으로 실행하는 Dispatcher 구현체를 제공한다.
+// Package k8s provides a Dispatcher implementation that runs piper tasks as K8s Jobs.
 //
-// 동작 방식 (agent injection 패턴):
-//  1. initContainer가 piper/agent 이미지에서 /piper-agent 바이너리를 emptyDir에 복사
-//  2. step 컨테이너의 entrypoint를 /piper-tools/piper-agent exec ... -- <원래 커맨드>로 교체
-//  3. piper-agent가 S3에서 입력 아티팩트 다운로드 → 커맨드 실행 → S3에 출력 업로드 → master에 완료 보고
+// How it works (agent injection pattern):
+//  1. An initContainer copies the /piper-agent binary from the piper/agent image into an emptyDir
+//  2. The step container's entrypoint is replaced with /piper-tools/piper-agent exec ... -- <original command>
+//  3. piper-agent downloads input artifacts from S3, runs the command, uploads outputs to S3, and reports completion to the master
 //
-// 사용자 이미지 수정 없이 K8s-native 실행 가능.
+// Runs natively on K8s without modifying user images.
 package k8s
 
 import (
@@ -27,51 +27,51 @@ import (
 	"github.com/piper/piper/pkg/proto"
 )
 
-// Config는 Launcher 설정.
-// piper.K8sConfig와 1:1 대응.
+// Config is the Launcher configuration.
+// Maps 1:1 to piper.K8sConfig.
 type Config struct {
-	// AgentImage: piper-agent 바이너리가 담긴 이미지 (initContainer용)
+	// AgentImage: image containing the piper-agent binary (used as initContainer)
 	AgentImage string
 
-	// Namespace: Job을 생성할 K8s 네임스페이스
+	// Namespace: K8s namespace in which to create Jobs
 	Namespace string
 
-	// InCluster: true이면 in-cluster config 사용
+	// InCluster: if true, use in-cluster config
 	InCluster bool
 
-	// Kubeconfig: out-of-cluster 실행 시 kubeconfig 파일 경로 (비어 있으면 KUBECONFIG 또는 ~/.kube/config)
+	// Kubeconfig: path to kubeconfig file for out-of-cluster execution (defaults to KUBECONFIG or ~/.kube/config)
 	Kubeconfig string
 
-	// MasterURL: Pod에서 접근 가능한 piper server URL
+	// MasterURL: piper server URL accessible from within a Pod
 	MasterURL string
 
-	// Token: piper server 인증 토큰
+	// Token: auth token for the piper server
 	Token string
 
-	// S3 아티팩트 공유 설정
+	// S3 artifact sharing configuration
 	S3Endpoint  string
 	S3AccessKey string
 	S3SecretKey string
 	S3Bucket    string
 	S3UseSSL    bool
 
-	// DefaultImage: step에 image가 없을 때 사용할 기본 컨테이너 이미지
+	// DefaultImage: fallback container image when a step has no image configured
 	DefaultImage string
 
-	// TTLAfterFinished: Job 완료 후 자동 삭제 시간(초). nil이면 자동 삭제 안 함.
+	// TTLAfterFinished: seconds after which a finished Job is automatically deleted. nil means no auto-deletion.
 	TTLAfterFinished *int32
 }
 
-// Launcher는 proto.Dispatcher를 구현한다.
-// task가 ready 상태가 되면 queue가 Dispatch를 호출한다.
+// Launcher implements proto.Dispatcher.
+// The queue calls Dispatch whenever a task becomes ready.
 type Launcher struct {
 	cfg       Config
 	clientset *kubernetes.Clientset
 }
 
-// New는 Launcher를 생성한다.
-// InCluster=true이면 in-cluster config를 사용하고,
-// 그렇지 않으면 Kubeconfig 경로(또는 기본 위치)의 kubeconfig를 사용한다.
+// New creates a Launcher.
+// If InCluster is true, it uses in-cluster config;
+// otherwise it uses the kubeconfig at Kubeconfig path (or the default location).
 func New(cfg Config) (*Launcher, error) {
 	if cfg.Namespace == "" {
 		cfg.Namespace = "default"
@@ -107,8 +107,8 @@ func New(cfg Config) (*Launcher, error) {
 	return &Launcher{cfg: cfg, clientset: clientset}, nil
 }
 
-// Dispatch는 task에 대응하는 K8s Job을 생성한다.
-// Job 완료를 기다리지 않는다 — Job 내부의 piper-agent가 master로 결과를 보고한다.
+// Dispatch creates a K8s Job for the given task.
+// It does not wait for the Job to complete — the piper-agent inside the Job reports results to the master.
 func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 	var step pipeline.Step
 	if err := json.Unmarshal(task.Step, &step); err != nil {
@@ -120,7 +120,7 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 		return fmt.Errorf("unmarshal pipeline: %w", err)
 	}
 
-	// 컨테이너 이미지 결정: step > pipeline defaults > launcher default
+	// Resolve container image: step > pipeline defaults > launcher default
 	image := step.Run.Image
 	if image == "" {
 		image = pl.Spec.Defaults.Image
@@ -132,7 +132,7 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 		return fmt.Errorf("step %q: no container image configured (set step.run.image, spec.defaults.image, or k8s.default_image)", step.Name)
 	}
 
-	// step JSON을 base64로 인코딩해서 agent에 전달
+	// Base64-encode the step JSON and pass it to the agent
 	stepJSON, err := json.Marshal(step)
 	if err != nil {
 		return err
@@ -183,7 +183,7 @@ func (l *Launcher) buildAgentArgs(task *proto.Task, stepB64 string) []string {
 }
 
 func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) *batchv1.Job {
-	backoffLimit := int32(0) // piper queue가 재시도 관리
+	backoffLimit := int32(0) // piper queue manages retries
 	var ttl *int32
 	if l.cfg.TTLAfterFinished != nil && *l.cfg.TTLAfterFinished > 0 {
 		ttl = l.cfg.TTLAfterFinished
@@ -205,20 +205,20 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
-					// initContainer: piper-agent 바이너리를 emptyDir에 복사
+					// initContainer: copy the piper-agent binary into the emptyDir
 					InitContainers: []corev1.Container{
 						{
 							Name:            "agent-init",
 							Image:           l.cfg.AgentImage,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							// piper/agent 이미지 내 /piper-agent 바이너리를 공유 볼륨에 복사
+							// Copy the /piper binary from the piper/agent image into the shared volume
 							Command: []string{"cp", "/piper", "/piper-tools/piper"},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},
 							},
 						},
 					},
-					// step 컨테이너: 원래 이미지에서 piper-agent를 entrypoint로 실행
+					// step container: run piper-agent as the entrypoint using the original image
 					Containers: []corev1.Container{
 						{
 							Name:            "step",
@@ -259,15 +259,15 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 	}
 }
 
-// jobName은 K8s Job 이름을 생성한다.
-// 형식: piper-{runID}-{stepName}, 63자 이하로 truncate.
+// jobName generates the K8s Job name.
+// Format: piper-{runID}-{stepName}, truncated to 63 characters.
 func jobName(task *proto.Task) string {
 	raw := "piper-" + task.RunID + "-" + task.StepName
 	return sanitizeName(raw)
 }
 
-// sanitizeName은 K8s 리소스 이름 규칙에 맞게 문자열을 정규화한다.
-// [a-z0-9-], 63자 이하, 시작/끝은 알파벳 또는 숫자.
+// sanitizeName normalizes a string to comply with K8s resource name rules.
+// Allows [a-z0-9-], max 63 characters, must start and end with an alphanumeric character.
 func sanitizeName(s string) string {
 	var b strings.Builder
 	for _, c := range strings.ToLower(s) {
@@ -285,8 +285,8 @@ func sanitizeName(s string) string {
 	return name
 }
 
-// sanitizeLabel은 K8s label value 규칙에 맞게 정규화한다.
-// [a-zA-Z0-9._-], 63자 이하.
+// sanitizeLabel normalizes a string to comply with K8s label value rules.
+// Allows [a-zA-Z0-9._-], max 63 characters.
 func sanitizeLabel(s string) string {
 	var b strings.Builder
 	for _, c := range s {

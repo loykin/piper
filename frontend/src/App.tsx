@@ -5,7 +5,7 @@ import RunDetailPage from './pages/RunDetailPage'
 export default function App() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
-      {/* 상단 네비게이션 */}
+      {/* Top navigation */}
       <header className="border-b border-gray-800 bg-gray-900">
         <div className="mx-auto max-w-7xl flex items-center gap-6 px-6 py-3">
           <span className="text-lg font-bold text-indigo-400 tracking-tight">⚡ piper</span>

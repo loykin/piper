@@ -1,6 +1,6 @@
 package piper
 
-// 내부 패키지 테스트 — queue, taskID 헬퍼 직접 접근
+// Internal package test — direct access to queue and taskID helpers
 
 import (
 	"database/sql"
@@ -58,7 +58,7 @@ func TestSplitTaskID_valid(t *testing.T) {
 }
 
 func TestSplitTaskID_stepWithHyphen(t *testing.T) {
-	// stepName에 하이픈이 있어도 정확히 파싱
+	// Parses correctly even when stepName contains hyphens
 	runID, stepName, err := splitTaskID("run-20260408-123456.000:data-prep")
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestQueue_addAndNext(t *testing.T) {
 	dag, _ := pipeline.BuildDAG(pl)
 	q.add(pl, dag, "run-1", "", t.TempDir())
 
-	// a만 ready (b는 a에 의존)
+	// Only a is ready (b depends on a)
 	task := q.next("")
 	if task == nil {
 		t.Fatal("expected task")
@@ -97,7 +97,7 @@ func TestQueue_addAndNext(t *testing.T) {
 		t.Errorf("want a, got %s", task.StepName)
 	}
 
-	// a가 running이므로 이제 없음
+	// a is now running, so no more tasks available
 	task2 := q.next("")
 	if task2 != nil {
 		t.Errorf("expected no more tasks, got %s", task2.StepName)
@@ -127,7 +127,7 @@ func TestQueue_completePromotesDownstream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// b가 ready됐으므로 next 반환
+	// b is now ready, so next returns it
 	task2 := q.next("")
 	if task2 == nil {
 		t.Fatal("expected task b after a completes")
@@ -157,13 +157,13 @@ func TestQueue_failedSkipsDownstream(t *testing.T) {
 	now := time.Now()
 	_ = q.complete(task.ID, "failed", "some error", now, now, 1)
 
-	// b, c는 skip됐으므로 next returns nil
+	// b and c are skipped, so next returns nil
 	task2 := q.next("")
 	if task2 != nil {
 		t.Errorf("expected no more tasks after fail, got %s", task2.StepName)
 	}
 
-	// DB에 b, c가 skipped로 저장됐는지 확인
+	// Verify that b and c are stored as skipped in the DB
 	steps, _ := st.ListSteps("run-2")
 	byName := make(map[string]string)
 	for _, s := range steps {
@@ -218,7 +218,7 @@ func TestQueue_labelFiltering(t *testing.T) {
 	dag, _ := pipeline.BuildDAG(pl)
 	q.add(pl, dag, "run-4", "", t.TempDir())
 
-	// gpu worker만 요청
+	// Request for gpu worker only
 	task := q.next("gpu")
 	if task == nil {
 		t.Fatal("expected gpu task")
@@ -227,7 +227,7 @@ func TestQueue_labelFiltering(t *testing.T) {
 		t.Errorf("want gpu-step, got %s", task.StepName)
 	}
 
-	// cpu worker 요청
+	// Request for cpu worker
 	task2 := q.next("cpu")
 	if task2 == nil {
 		t.Fatal("expected cpu task")

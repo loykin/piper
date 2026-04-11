@@ -16,13 +16,13 @@ import (
 	"github.com/piper/piper/pkg/runner"
 )
 
-// makeTask는 테스트용 proto.Task를 생성한다.
+// makeTask creates a proto.Task for testing.
 func makeTask(t *testing.T, step pipeline.Step) *proto.Task {
 	t.Helper()
 	return makeTaskWithRunID(t, step, "run-test")
 }
 
-// makeTaskWithRunID는 runID를 지정해 proto.Task를 생성한다.
+// makeTaskWithRunID creates a proto.Task with a specified runID.
 func makeTaskWithRunID(t *testing.T, step pipeline.Step, runID string) *proto.Task {
 	t.Helper()
 	b, err := json.Marshal(step)
@@ -37,7 +37,7 @@ func makeTaskWithRunID(t *testing.T, step pipeline.Step, runID string) *proto.Ta
 	}
 }
 
-// fakeMasterServer는 done/failed/logs 요청을 받는 테스트용 HTTP 서버를 반환한다.
+// fakeMasterServer returns a test HTTP server that accepts done/failed/logs requests.
 func fakeMasterServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +60,7 @@ func TestNew_defaults(t *testing.T) {
 }
 
 func TestNew_s3_skipped_when_no_endpoint(t *testing.T) {
-	// S3Endpoint 없으면 S3 클라이언트 생성 안 함 — 에러 없이 생성
+	// No S3 client is created when S3Endpoint is absent — creates without error
 	r, err := runner.New(runner.Config{
 		S3Bucket: "my-bucket",
 	})
@@ -72,7 +72,7 @@ func TestNew_s3_skipped_when_no_endpoint(t *testing.T) {
 	}
 }
 
-// ─── Run: 성공 ────────────────────────────────────────────────────────────────
+// ─── Run: success ─────────────────────────────────────────────────────────────
 
 func TestRun_success_echo(t *testing.T) {
 	var doneTaskID string
@@ -135,7 +135,7 @@ func TestRun_output_dir_created(t *testing.T) {
 	}
 }
 
-// ─── Run: 실패 ────────────────────────────────────────────────────────────────
+// ─── Run: failure ─────────────────────────────────────────────────────────────
 
 func TestRun_failed_bad_command(t *testing.T) {
 	var failedTaskID string
@@ -185,7 +185,7 @@ func TestRun_failed_no_command(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Command 없음
+	// No command
 	task := makeTask(t, pipeline.Step{Name: "no-cmd"})
 	r.Run(context.Background(), task)
 
@@ -225,7 +225,7 @@ func TestRun_failed_invalid_step_json(t *testing.T) {
 	}
 }
 
-// ─── Run: 로그 전송 ────────────────────────────────────────────────────────────
+// ─── Run: log forwarding ──────────────────────────────────────────────────────
 
 func TestRun_logs_sent_to_master(t *testing.T) {
 	var logBody []byte
@@ -256,7 +256,7 @@ func TestRun_logs_sent_to_master(t *testing.T) {
 	}
 }
 
-// ─── Run: MasterURL 없을 때 보고 스킵 ─────────────────────────────────────────
+// ─── Run: skip reporting when MasterURL is absent ─────────────────────────────
 
 func TestRun_no_master_no_panic(t *testing.T) {
 	r, err := runner.New(runner.Config{
@@ -271,6 +271,6 @@ func TestRun_no_master_no_panic(t *testing.T) {
 		Run:  pipeline.Run{Command: []string{"echo", "ok"}},
 	})
 
-	// MasterURL 없어도 패닉 없이 완료
+	// Completes without panic even when MasterURL is absent
 	r.Run(context.Background(), task)
 }

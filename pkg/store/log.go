@@ -19,7 +19,7 @@ func (s *Store) AppendLog(l *LogLine) error {
 	return err
 }
 
-// AppendLogs는 배치로 로그를 저장한다
+// AppendLogs persists a batch of log lines.
 func (s *Store) AppendLogs(lines []*LogLine) error {
 	if len(lines) == 0 {
 		return nil
@@ -32,21 +32,21 @@ func (s *Store) AppendLogs(lines []*LogLine) error {
 		`INSERT INTO logs (run_id, step_name, ts, stream, line) VALUES (?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, l := range lines {
 		if _, err := stmt.Exec(l.RunID, l.StepName, l.Ts, l.Stream, l.Line); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
-// GetLogs는 step 로그를 조회한다. afterID > 0이면 그 이후 로그만 반환 (실시간 polling용)
+// GetLogs retrieves logs for a step. If afterID > 0, only logs after that ID are returned (for real-time polling).
 func (s *Store) GetLogs(runID, stepName string, afterID int64) ([]*LogLine, error) {
 	rows, err := s.db.Query(
 		`SELECT id, run_id, step_name, ts, stream, line
@@ -57,7 +57,7 @@ func (s *Store) GetLogs(runID, stepName string, afterID int64) ([]*LogLine, erro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var lines []*LogLine
 	for rows.Next() {

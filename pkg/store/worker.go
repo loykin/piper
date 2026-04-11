@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// WorkerStatus 상수
+// WorkerStatus constants
 const (
 	WorkerStatusOnline   = "online"
 	WorkerStatusDraining = "draining"
@@ -18,12 +18,12 @@ type Worker struct {
 	Hostname     string    `json:"hostname"`
 	Concurrency  int       `json:"concurrency"`
 	Status       string    `json:"status"`    // online | draining | offline
-	InFlight     int       `json:"in_flight"` // 현재 실행 중인 태스크 수
+	InFlight     int       `json:"in_flight"` // number of tasks currently in flight
 	RegisteredAt time.Time `json:"registered_at"`
 	LastSeenAt   time.Time `json:"last_seen_at"`
 }
 
-// UpsertWorker는 Worker를 등록하거나 재등록 시 갱신한다.
+// UpsertWorker registers a Worker or updates it on re-registration.
 func (s *Store) UpsertWorker(w *Worker) error {
 	_, err := s.db.Exec(`
 		INSERT INTO workers (id, label, hostname, concurrency, status, in_flight, registered_at, last_seen_at)
@@ -42,7 +42,7 @@ func (s *Store) UpsertWorker(w *Worker) error {
 	return err
 }
 
-// HeartbeatWorker는 Worker의 last_seen_at과 in_flight를 갱신한다.
+// HeartbeatWorker updates last_seen_at and in_flight for a Worker.
 func (s *Store) HeartbeatWorker(id string, inFlight int) error {
 	res, err := s.db.Exec(`
 		UPDATE workers SET last_seen_at=?, in_flight=? WHERE id=?
@@ -57,13 +57,13 @@ func (s *Store) HeartbeatWorker(id string, inFlight int) error {
 	return nil
 }
 
-// SetWorkerStatus는 Worker 상태를 변경한다 (draining, offline 등).
+// SetWorkerStatus changes the status of a Worker (draining, offline, etc.).
 func (s *Store) SetWorkerStatus(id, status string) error {
 	_, err := s.db.Exec(`UPDATE workers SET status=? WHERE id=?`, status, id)
 	return err
 }
 
-// GetWorker는 단일 Worker를 반환한다.
+// GetWorker returns a single Worker by ID.
 func (s *Store) GetWorker(id string) (*Worker, error) {
 	row := s.db.QueryRow(`
 		SELECT id, label, hostname, concurrency, status, in_flight, registered_at, last_seen_at
@@ -72,8 +72,8 @@ func (s *Store) GetWorker(id string) (*Worker, error) {
 	return scanWorker(row)
 }
 
-// ListWorkers는 전체 Worker 목록을 반환한다.
-// onlineOnly=true면 status='online' 또는 'draining'인 것만 반환.
+// ListWorkers returns the full list of Workers.
+// If onlineOnly is true, only workers with status 'online' or 'draining' are returned.
 func (s *Store) ListWorkers(onlineOnly bool) ([]*Worker, error) {
 	query := `
 		SELECT id, label, hostname, concurrency, status, in_flight, registered_at, last_seen_at
@@ -100,7 +100,7 @@ func (s *Store) ListWorkers(onlineOnly bool) ([]*Worker, error) {
 	return workers, rows.Err()
 }
 
-// MarkWorkersOffline은 last_seen_at이 before 이전인 online Worker를 offline으로 만든다.
+// MarkWorkersOffline marks online Workers whose last_seen_at is before the given time as offline.
 func (s *Store) MarkWorkersOffline(before time.Time) error {
 	_, err := s.db.Exec(`
 		UPDATE workers SET status='offline'

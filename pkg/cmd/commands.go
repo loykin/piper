@@ -1,12 +1,12 @@
-// Package cmd는 piper의 cobra 커맨드를 라이브러리로 제공한다.
-// data-voyager 등 외부 앱이 자신의 CLI에 piper 커맨드를 추가할 수 있다.
+// Package cmd provides piper's cobra commands as a library.
+// External apps such as data-voyager can add piper commands to their own CLI.
 //
 //	import pipercmd "github.com/piper/piper/pkg/cmd"
 //
-//	// voyager CLI에 piper 커맨드 추가
+//	// Add piper commands to the voyager CLI
 //	rootCmd.AddCommand(pipercmd.Commands(p)...)
 //
-//	// 결과:
+//	// Result:
 //	// voyager pipeline run train.yaml
 //	// voyager pipeline server
 //	// voyager pipeline worker --master ...
@@ -17,8 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Commands piper 인스턴스에 바인딩된 cobra 커맨드 슬라이스를 반환한다.
-// 반환된 커맨드를 원하는 parent command에 AddCommand로 추가하면 된다.
+// Commands returns a slice of cobra commands bound to the given piper instance.
+// Add the returned commands to any parent command using AddCommand.
 func Commands(p *piper.Piper) []*cobra.Command {
 	return []*cobra.Command{
 		newRunCmd(p),

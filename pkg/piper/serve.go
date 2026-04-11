@@ -10,41 +10,52 @@ import (
 	"github.com/piper/piper/pkg/ui"
 )
 
-// ServeOption은 Serve 동작을 커스터마이징한다
+// ServeOption customizes the behavior of Serve
 type ServeOption struct {
-	// Extra는 사용자가 주입하는 추가 http.Handler.
-	// piper API 앞단에서 먼저 처리된다 (인증, 커스텀 라우트 등).
+	// Extra is an additional http.Handler injected by the caller.
+	// It is invoked before the piper API (auth, custom routes, etc.).
 	//
 	//   p.Serve(ctx, piper.ServeOption{
-	//       Extra: myRouter,  // chi, gin, echo 등
+	//       Extra: myRouter,  // chi, gin, echo, etc.
 	//   })
 	Extra http.Handler
+
+	// Addr overrides Config.Server.Addr when non-empty.
+	Addr string
 }
 
-// Serve는 piper HTTP 서버를 실행한다.
-// HTTP/HTTPS 모두 지원. 라이브러리 사용자는 직접 호출하거나
-// Handler()로 자신의 서버에 마운트할 수 있다.
+// Serve runs the piper HTTP server.
+// Supports both HTTP and HTTPS. Library users can call this directly or
+// mount it on their own server using Handler().
 func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
-	// API + UI 통합 핸들러
+	// Combined API + UI handler
 	mux := http.NewServeMux()
 	mux.Handle("/runs", p.Handler(opt.Extra))
 	mux.Handle("/runs/", p.Handler(opt.Extra))
 	mux.Handle("/api/", p.Handler(opt.Extra))
 	mux.Handle("/health", p.Handler(opt.Extra))
-	mux.Handle("/", ui.Handler()) // UI는 나머지 모든 경로
+	mux.Handle("/", ui.Handler()) // UI handles all remaining paths
 
-	// 미들웨어 체인 적용 (Config.Hooks.Middleware)
+	// Apply middleware chain (Config.Hooks.Middleware)
 	var handler http.Handler = mux
 	for i := len(p.cfg.Hooks.Middleware) - 1; i >= 0; i-- {
 		handler = p.cfg.Hooks.Middleware[i](handler)
 	}
 
+	addr := p.cfg.Server.Addr
+	if opt.Addr != "" {
+		addr = opt.Addr
+	}
+	if addr == "" {
+		addr = ":8080"
+	}
+
 	srv := &http.Server{
-		Addr:    p.cfg.Server.Addr,
+		Addr:    addr,
 		Handler: handler,
 	}
 
-	// graceful shutdown
+	// Graceful shutdown
 	go func() {
 		<-ctx.Done()
 		_ = srv.Shutdown(context.Background())

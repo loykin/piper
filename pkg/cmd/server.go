@@ -17,7 +17,8 @@ func newServerCmd(p *piper.Piper) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
-			return p.Serve(ctx, piper.ServeOption{})
+			addr, _ := cmd.Flags().GetString("addr")
+			return p.Serve(ctx, piper.ServeOption{Addr: addr})
 		},
 	}
 

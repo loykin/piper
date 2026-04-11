@@ -1,7 +1,7 @@
-// Worker 예제 — master 폴링 worker 실행
+// Worker example — run a master-polling worker
 //
-// examples/server가 실행 중인 상태에서 worker를 시작한다.
-// worker는 master에 등록 후 task를 폴링해서 실행한다.
+// Start the worker while examples/server is running.
+// The worker registers with the master, then polls for tasks to execute.
 //
 //	go run ./examples/worker
 //	go run ./examples/worker --master=http://remote-server:8080 --label=gpu

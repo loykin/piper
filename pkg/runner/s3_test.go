@@ -19,7 +19,7 @@ import (
 
 const testBucket = "piper-test"
 
-// fakeS3 는 인-프로세스 S3 서버를 띄우고 AWS SDK v2 클라이언트를 반환한다.
+// fakeS3 starts an in-process S3 server and returns an AWS SDK v2 client.
 func fakeS3(t *testing.T) (*httptest.Server, *s3.Client) {
 	t.Helper()
 
@@ -29,7 +29,7 @@ func fakeS3(t *testing.T) (*httptest.Server, *s3.Client) {
 
 	client := newTestS3Client(t, srv.URL)
 
-	// 버킷 생성
+	// Create bucket
 	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket: aws.String(testBucket),
 	})
@@ -55,7 +55,7 @@ func newTestS3Client(t *testing.T, endpoint string) *s3.Client {
 	})
 }
 
-// ─── S3 업로드 / 다운로드 ────────────────────────────────────────────────────
+// ─── S3 upload / download ─────────────────────────────────────────────────────
 
 func TestRun_s3_artifact_upload(t *testing.T) {
 	srv, s3client := fakeS3(t)
@@ -86,7 +86,7 @@ func TestRun_s3_artifact_upload(t *testing.T) {
 	})
 	r.Run(context.Background(), task)
 
-	// S3에 파일이 올라갔는지 확인
+	// Verify that the file was uploaded to S3
 	prefix := task.RunID + "/upload-step/result/"
 	out, err := s3client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
 		Bucket: aws.String(testBucket),
@@ -108,7 +108,7 @@ func TestRun_s3_artifact_input_output(t *testing.T) {
 	endpoint := srv.Listener.Addr().String()
 	masterSrv := fakeMasterServer(t)
 
-	// 이전 step이 올린 것처럼 S3에 입력 파일 업로드
+	// Upload an input file to S3 as if a previous step had done so
 	runID := "run-s3-test"
 	tmpFile := filepath.Join(t.TempDir(), "input.txt")
 	_ = os.WriteFile(tmpFile, []byte("hello from previous step\n"), 0644)
@@ -153,7 +153,7 @@ func TestRun_s3_artifact_input_output(t *testing.T) {
 	}, runID)
 	r.Run(context.Background(), task)
 
-	// 출력이 S3에 올라갔는지 확인
+	// Verify that the output was uploaded to S3
 	outPrefix := runID + "/consume-step/out/"
 	out, err := s3client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
 		Bucket: aws.String(testBucket),

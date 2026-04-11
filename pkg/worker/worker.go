@@ -1,5 +1,5 @@
-// Package worker는 piper master를 폴링하며 task를 실행하는 장기 실행 프로세스다.
-// 실행 로직은 pkg/runner에 위임한다.
+// Package worker is a long-running process that polls the piper master and executes tasks.
+// Execution logic is delegated to pkg/runner.
 package worker
 
 import (
@@ -19,7 +19,7 @@ import (
 	"github.com/piper/piper/pkg/source"
 )
 
-// Config는 Worker 설정.
+// Config holds Worker configuration.
 type Config struct {
 	MasterURL    string
 	Label        string
@@ -27,8 +27,8 @@ type Config struct {
 	PollInterval time.Duration
 	Concurrency  int
 	OutputDir    string
-	SourceCfg    source.Config // 현재 미사용 (runner.Config.S3*로 이동)
-	// S3 아티팩트 스토어
+	SourceCfg    source.Config // currently unused (moved to runner.Config.S3*)
+	// S3 artifact store
 	S3Endpoint  string
 	S3AccessKey string
 	S3SecretKey string
@@ -36,10 +36,10 @@ type Config struct {
 	S3UseSSL    bool
 }
 
-// Worker는 master를 폴링하며 task를 실행한다.
+// Worker polls the master and executes tasks.
 type Worker struct {
 	cfg    Config
-	id     string // 고유 worker ID (UUID)
+	id     string // unique worker ID (UUID)
 	runner *runner.Runner
 	poller *http.Client
 
@@ -83,7 +83,7 @@ func New(cfg Config) (*Worker, error) {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	// master에 등록
+	// Register with master
 	if err := w.register(ctx); err != nil {
 		slog.Warn("worker registration failed, continuing without registration", "err", err)
 	}
@@ -138,7 +138,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// register는 master에 이 worker를 등록한다.
+// register registers this worker with the master.
 func (w *Worker) register(ctx context.Context) error {
 	if w.cfg.MasterURL == "" {
 		return nil
@@ -168,8 +168,8 @@ func (w *Worker) register(ctx context.Context) error {
 	return nil
 }
 
-// heartbeatLoop는 10초마다 master에 생존 신호를 보낸다.
-// heartbeat 404(미등록) 시 재등록을 시도한다.
+// heartbeatLoop sends a keepalive signal to the master every 10 seconds.
+// On a 404 (unregistered) heartbeat response, it attempts re-registration.
 func (w *Worker) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()

@@ -7,13 +7,13 @@ run_id = os.environ.get("PIPER_RUN_ID", "local")
 
 os.makedirs(output_dir, exist_ok=True)
 
-# 파라미터
+# Parameters
 epochs = int(os.environ.get("PIPER_PARAM_epochs", 3))
 lr = float(os.environ.get("PIPER_PARAM_lr", 0.01))
 
 print(f"[train] run_id={run_id} epochs={epochs} lr={lr}")
 
-# 간단한 학습 시뮬레이션
+# Simple training simulation
 losses = []
 for epoch in range(1, epochs + 1):
     loss = 1.0 / (epoch * lr * 10 + 1)

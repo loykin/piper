@@ -1,20 +1,20 @@
-// Server 모드 예제 — master 서버 실행
+// Server mode example — run as master server
 //
-// piper를 HTTP 서버로 실행한다.
-// worker들이 이 서버에 등록하고 task를 폴링해서 실행한다.
+// Runs piper as an HTTP server.
+// Workers register with this server and poll for tasks to execute.
 //
-//	# 서버 시작
+//	# Start the server
 //	go run ./examples/server
 //
-//	# 다른 터미널에서 worker 시작
+//	# Start a worker in another terminal
 //	go run ./examples/worker
 //
-//	# 파이프라인 실행 요청
+//	# Submit a pipeline run
 //	curl -X POST http://localhost:8080/runs \
 //	  -H 'Content-Type: application/json' \
 //	  -d '{"yaml": "apiVersion: piper/v1\nkind: Pipeline\n..."}'
 //
-//	# 활성 worker 목록 조회
+//	# List active workers
 //	curl http://localhost:8080/api/workers
 package main
 

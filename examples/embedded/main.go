@@ -1,14 +1,14 @@
-// Embedded 모드 예제 — 기존 HTTP 서버에 piper 마운트
+// Embedded mode example — mount piper onto an existing HTTP server
 //
-// 자신의 웹 앱에 piper API를 서브패스로 붙이는 패턴.
-// 인증/미들웨어를 기존 앱 것을 그대로 재사용한다.
+// Pattern for attaching the piper API as a sub-path of your own web app.
+// Reuses the existing app's authentication and middleware as-is.
 //
 //	go run ./examples/embedded
 //
-//	# piper API (서브패스 마운트)
+//	# piper API (sub-path mount)
 //	curl http://localhost:8080/piper/runs
 //
-//	# 기존 앱 API
+//	# Existing app API
 //	curl http://localhost:8080/api/v1/hello
 package main
 
@@ -35,16 +35,16 @@ func main() {
 	}
 	defer func() { _ = p.Close() }()
 
-	// 기존 앱 라우터
+	// App router
 	mux := http.NewServeMux()
 
-	// 기존 앱 API
+	// Existing app API
 	mux.HandleFunc("/api/v1/hello", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintln(w, `{"message": "hello from my app"}`)
 	})
 
-	// piper API + UI를 /piper/ 아래에 마운트
-	// UI가 필요한 경우에만 pkg/ui를 import한다
+	// Mount piper API + UI under /piper/
+	// Only import pkg/ui when the UI is needed
 	piperHandler := p.Handler(nil)
 	mux.Handle("/piper/runs", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/runs/", http.StripPrefix("/piper", piperHandler))

@@ -105,7 +105,7 @@ func TestRunner_retryExhausted(t *testing.T) {
 }
 
 func TestRunner_parallel(t *testing.T) {
-	// a, b는 병렬, c는 둘 다 완료 후
+	// a and b run in parallel; c runs after both complete
 	started := make(chan string, 3)
 	ss := []Step{
 		{Name: "a", DependsOn: []string{}},

@@ -1,11 +1,11 @@
-// Package ui는 빌드된 React 앱을 Go 바이너리에 임베딩한다.
+// Package ui embeds the built React app into the Go binary.
 //
-// 사용:
+// Usage:
 //
 //	mux.Handle("/", ui.Handler())
 //
-// SPA 라우팅을 위해 존재하지 않는 경로는 index.html로 fallback한다.
-// API 경로(/runs, /api, /health)는 통과시킨다.
+// For SPA routing, unknown paths fall back to index.html.
+// API paths (/runs, /api, /health) are passed through.
 package ui
 
 import (
@@ -18,15 +18,15 @@ import (
 //go:embed dist
 var dist embed.FS
 
-// Handler는 React SPA를 서빙하는 http.Handler를 반환한다.
-// API 경로가 아닌 모든 요청은 index.html로 fallback한다.
-// dist가 비어 있으면(make ui 전) 503을 반환한다.
+// Handler returns an http.Handler that serves the React SPA.
+// All requests to non-API paths fall back to index.html.
+// Returns 503 if dist is empty (before running make ui).
 func Handler() http.Handler {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
 		panic("ui: embed dist not found: " + err.Error())
 	}
-	// index.html이 없으면 UI 미빌드 상태
+	// If index.html is missing, the UI has not been built
 	if _, err := fs.Stat(sub, "index.html"); err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "UI not built — run 'make ui'", http.StatusServiceUnavailable)
@@ -35,13 +35,13 @@ func Handler() http.Handler {
 	fileServer := http.FileServer(http.FS(sub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// API 경로는 통과 (이 핸들러로 오면 안 되지만 방어적으로)
+		// Pass through API paths (defensive; should not reach this handler)
 		if isAPIPath(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
 
-		// 실제 파일이 있으면 서빙, 없으면 SPA index.html로 fallback
+		// Serve the file if it exists, otherwise fall back to SPA index.html
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" {
 			path = "index.html"

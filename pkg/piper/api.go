@@ -15,7 +15,7 @@ import (
 	"github.com/piper/piper/pkg/store"
 )
 
-// apiHandler는 frontend + worker용 통합 HTTP API
+// apiHandler is the unified HTTP API for both the frontend and workers
 type apiHandler struct {
 	p     *Piper
 	extra http.Handler
@@ -43,13 +43,13 @@ func (h *apiHandler) routes() {
 }
 
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Auth 훅 — 모든 요청에 적용
+	// Auth hook — applied to all requests
 	if err := h.p.cfg.Hooks.callAuth(r); err != nil {
 		jsonErr(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	// 사용자 주입 extra 핸들러
+	// User-injected extra handler
 	if h.extra != nil {
 		rw := &responseRecorder{ResponseWriter: w}
 		h.extra.ServeHTTP(rw, r)
@@ -60,8 +60,8 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mux.ServeHTTP(w, r)
 }
 
-// GET  /runs       실행 목록
-// POST /runs       파이프라인 실행 (큐에 추가)
+// GET  /runs       list runs
+// POST /runs       start a pipeline run (add to queue)
 func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -124,7 +124,7 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// step 초기화
+		// Initialize steps
 		for _, s := range pl.Spec.Steps {
 			if err := h.store.UpsertStep(&store.Step{
 				RunID:    runID,
@@ -135,7 +135,7 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 큐에 추가 — worker가 폴링해서 실행
+		// Add to queue — workers execute by polling
 		h.p.queue.add(pl, dag, runID, ".", outputDir)
 
 		if h.p.cfg.Hooks.OnRunStart != nil {
@@ -149,19 +149,19 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleRunSub는 /runs/{id} 하위 경로를 처리한다.
+// handleRunSub handles sub-paths under /runs/{id}.
 //
-// GET  /runs/{id}                         — run + steps 조회
-// GET  /runs/{id}/steps                   — steps 조회
-// GET  /runs/{id}/steps/{step}/logs       — 로그 snapshot
-// GET  /runs/{id}/steps/{step}/logs/stream — SSE 스트리밍
-// POST /runs/{id}/steps/{step}/logs       — worker 로그 수집
+// GET  /runs/{id}                          — fetch run + steps
+// GET  /runs/{id}/steps                    — fetch steps
+// GET  /runs/{id}/steps/{step}/logs        — log snapshot
+// GET  /runs/{id}/steps/{step}/logs/stream — SSE streaming
+// POST /runs/{id}/steps/{step}/logs        — ingest worker logs
 func (h *apiHandler) handleRunSub(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/runs/")
 	parts := strings.SplitN(path, "/", 4)
 	runID := parts[0]
 
-	// POST /runs/{id}/steps/{step}/logs — worker 로그 수집
+	// POST /runs/{id}/steps/{step}/logs — ingest worker logs
 	if r.Method == http.MethodPost {
 		if len(parts) == 4 && parts[1] == "steps" && parts[3] == "logs" {
 			h.handleLogIngest(w, r, runID, parts[2])
@@ -229,8 +229,8 @@ func (h *apiHandler) handleRunSub(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /api/workers        — worker 등록
-// GET  /api/workers        — 활성 worker 목록
+// POST /api/workers        — register worker
+// GET  /api/workers        — list active workers
 func (h *apiHandler) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -255,7 +255,7 @@ func (h *apiHandler) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /api/workers/{id}/heartbeat — worker 생존 신호
+// POST /api/workers/{id}/heartbeat — worker keepalive signal
 func (h *apiHandler) handleWorkerOp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -273,17 +273,17 @@ func (h *apiHandler) handleWorkerOp(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		InFlight int `json:"in_flight"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body) // 바디 없어도 허용
+	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional
 
 	if err := h.p.registry.heartbeat(workerID, body.InFlight); err != nil {
-		// 미등록 worker — 재등록 유도
+		// Unregistered worker — prompt re-registration
 		jsonErr(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-// GET /api/tasks/next?worker_id=xxx&label=gpu — worker가 다음 task를 폴링
+// GET /api/tasks/next?worker_id=xxx&label=gpu — worker polls for the next task
 func (h *apiHandler) handleTaskNext(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -291,7 +291,7 @@ func (h *apiHandler) handleTaskNext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workerID := r.URL.Query().Get("worker_id")
-	h.p.registry.touch(workerID) // 폴링 자체도 last_seen 갱신
+	h.p.registry.touch(workerID) // polling itself updates last_seen
 
 	label := r.URL.Query().Get("label")
 	task := h.p.queue.next(label)
@@ -303,15 +303,15 @@ func (h *apiHandler) handleTaskNext(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, task)
 }
 
-// POST /api/tasks/{id}/done   — worker 성공 보고
-// POST /api/tasks/{id}/failed — worker 실패 보고
+// POST /api/tasks/{id}/done   — worker reports success
+// POST /api/tasks/{id}/failed — worker reports failure
 func (h *apiHandler) handleTaskOp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// /api/tasks/{id}/done|failed
+	// /api/tasks/{id}/done|failed path parsing
 	rest := strings.TrimPrefix(r.URL.Path, "/api/tasks/")
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) != 2 {
@@ -344,7 +344,7 @@ func (h *apiHandler) handleTaskOp(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// POST /runs/{id}/steps/{step}/logs — worker 배치 로그 수집
+// POST /runs/{id}/steps/{step}/logs — ingest a batch of worker logs
 func (h *apiHandler) handleLogIngest(w http.ResponseWriter, r *http.Request, runID, stepName string) {
 	type logEntry struct {
 		Ts     time.Time `json:"ts"`
@@ -373,13 +373,13 @@ func (h *apiHandler) handleLogIngest(w http.ResponseWriter, r *http.Request, run
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleLogStream은 SSE로 로그를 실시간 스트리밍한다.
+// handleLogStream streams logs in real time via SSE.
 // GET /runs/{id}/steps/{step}/logs/stream
 //
-// 이벤트:
+// Events:
 //
-//	data: <LogLine JSON>                         — 새 로그 라인
-//	event: done\ndata: {"status":"success"|"failed"} — run 완료
+//	data: <LogLine JSON>                             — new log line
+//	event: done\ndata: {"status":"success"|"failed"} — run finished
 func (h *apiHandler) handleLogStream(w http.ResponseWriter, r *http.Request, runID, stepName string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -416,7 +416,7 @@ func (h *apiHandler) handleLogStream(w http.ResponseWriter, r *http.Request, run
 				flusher.Flush()
 			}
 
-			// run이 종료됐으면 남은 로그 flush 후 done 이벤트
+			// If the run has ended, flush remaining logs and emit the done event
 			run, err := h.store.GetRun(runID)
 			if err == nil && run != nil && run.Status != "running" {
 				if tail, err2 := h.store.GetLogs(runID, stepName, afterID); err2 == nil {

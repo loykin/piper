@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// AgentStatus 상수
+// AgentStatus constants
 const (
 	AgentStatusPending   = "pending"
 	AgentStatusRunning   = "running"
@@ -24,7 +24,7 @@ type Agent struct {
 	Error     string     `json:"error,omitempty"`
 }
 
-// CreateAgent는 Agent 레코드를 생성한다 (pending 상태).
+// CreateAgent creates an Agent record in the pending state.
 func (s *Store) CreateAgent(a *Agent) error {
 	_, err := s.db.Exec(`
 		INSERT INTO agents (id, task_id, run_id, step_name, status)
@@ -33,7 +33,7 @@ func (s *Store) CreateAgent(a *Agent) error {
 	return err
 }
 
-// StartAgent는 Agent를 running 상태로 전이한다.
+// StartAgent transitions an Agent to the running state.
 func (s *Store) StartAgent(id string) error {
 	now := time.Now()
 	_, err := s.db.Exec(`
@@ -42,7 +42,7 @@ func (s *Store) StartAgent(id string) error {
 	return err
 }
 
-// FinishAgent는 Agent를 succeeded 또는 failed 상태로 전이한다.
+// FinishAgent transitions an Agent to the succeeded or failed state.
 func (s *Store) FinishAgent(id, status, errMsg string) error {
 	now := time.Now()
 	_, err := s.db.Exec(`
@@ -51,7 +51,7 @@ func (s *Store) FinishAgent(id, status, errMsg string) error {
 	return err
 }
 
-// GetAgent는 단일 Agent를 반환한다.
+// GetAgent returns a single Agent by ID.
 func (s *Store) GetAgent(id string) (*Agent, error) {
 	row := s.db.QueryRow(`
 		SELECT id, task_id, run_id, step_name, status, started_at, ended_at, error
@@ -60,7 +60,7 @@ func (s *Store) GetAgent(id string) (*Agent, error) {
 	return scanAgent(row)
 }
 
-// ListAgentsByRun은 특정 run의 Agent 목록을 반환한다.
+// ListAgentsByRun returns the list of Agents for a specific run.
 func (s *Store) ListAgentsByRun(runID string) ([]*Agent, error) {
 	rows, err := s.db.Query(`
 		SELECT id, task_id, run_id, step_name, status, started_at, ended_at, error

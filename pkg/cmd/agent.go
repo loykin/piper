@@ -12,12 +12,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newAgentCmd는 "piper agent" 커맨드를 반환한다.
-// K8s Job entrypoint로 사용: piper agent exec --master=... --step=... -- <command>
+// newAgentCmd returns the "piper agent" command.
+// Used as the K8s Job entrypoint: piper agent exec --master=... --step=... -- <command>
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
-		Short: "K8s Pod 내부 step 실행 에이전트",
+		Short: "Agent that executes a step inside a K8s Pod",
 	}
 	cmd.AddCommand(newAgentExecCmd())
 	return cmd
@@ -45,25 +45,25 @@ func newAgentExecCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "exec [flags] -- <command...>",
-		Short: "step을 실행하고 결과를 master에 보고한다",
+		Short: "Execute a step and report the result to the master",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAgentExec(cmd.Context(), f, args)
 		},
 	}
 
 	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL")
-	cmd.Flags().StringVar(&f.token, "token", "", "인증 토큰")
+	cmd.Flags().StringVar(&f.token, "token", "", "auth token")
 	cmd.Flags().StringVar(&f.taskID, "task-id", "", "task ID")
 	cmd.Flags().StringVar(&f.runID, "run-id", "", "run ID")
-	cmd.Flags().StringVar(&f.stepName, "step-name", "", "step 이름")
-	cmd.Flags().StringVar(&f.stepB64, "step", "", "base64 인코딩된 pipeline.Step JSON")
-	cmd.Flags().StringVar(&f.outputDir, "output-dir", "/piper-outputs", "로컬 출력 디렉토리")
-	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "로컬 입력 디렉토리")
-	cmd.Flags().StringVar(&f.s3Endpoint, "s3-endpoint", "", "S3 엔드포인트")
-	cmd.Flags().StringVar(&f.s3AccessKey, "s3-access-key", "", "S3 액세스 키")
-	cmd.Flags().StringVar(&f.s3SecretKey, "s3-secret-key", "", "S3 시크릿 키")
-	cmd.Flags().StringVar(&f.s3Bucket, "s3-bucket", "", "S3 버킷")
-	cmd.Flags().BoolVar(&f.s3UseSSL, "s3-use-ssl", false, "S3 SSL 사용")
+	cmd.Flags().StringVar(&f.stepName, "step-name", "", "step name")
+	cmd.Flags().StringVar(&f.stepB64, "step", "", "base64-encoded pipeline.Step JSON")
+	cmd.Flags().StringVar(&f.outputDir, "output-dir", "/piper-outputs", "local output directory")
+	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
+	cmd.Flags().StringVar(&f.s3Endpoint, "s3-endpoint", "", "S3 endpoint")
+	cmd.Flags().StringVar(&f.s3AccessKey, "s3-access-key", "", "S3 access key")
+	cmd.Flags().StringVar(&f.s3SecretKey, "s3-secret-key", "", "S3 secret key")
+	cmd.Flags().StringVar(&f.s3Bucket, "s3-bucket", "", "S3 bucket")
+	cmd.Flags().BoolVar(&f.s3UseSSL, "s3-use-ssl", false, "enable SSL for S3")
 
 	return cmd
 }
@@ -80,7 +80,7 @@ func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error
 		}
 	}
 
-	// '--' 뒤 args가 있으면 step.Run.Command 오버라이드
+	// If args after '--' are present, override step.Run.Command
 	if len(cmdArgs) > 0 {
 		step.Run.Command = cmdArgs
 	}

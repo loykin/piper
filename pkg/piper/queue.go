@@ -1,11 +1,11 @@
 package piper
 
-// 내부 task 큐 — DAG 인식, 분산 worker 실행용.
-// Task ID: "{runID}:{stepName}" (콜론 구분자, step 이름에 콜론 없음).
+// Internal task queue — DAG-aware, for distributed worker execution.
+// Task ID: "{runID}:{stepName}" (colon separator; step names must not contain a colon).
 //
-// Dispatcher가 설정된 경우 task가 ready 상태가 되는 즉시 Dispatch를 호출한다.
-// (K8s Job 등 능동적 dispatch 모드)
-// Dispatcher가 nil이면 worker가 /api/tasks/next 폴링으로 task를 가져간다.
+// When a Dispatcher is configured, Dispatch is called immediately when a task becomes ready.
+// (Active dispatch mode, e.g. K8s Jobs)
+// When Dispatcher is nil, workers pull tasks by polling /api/tasks/next.
 
 import (
 	"context"
@@ -49,7 +49,7 @@ type queue struct {
 	mu         sync.Mutex
 	runs       map[string]*runEntry // runID → entry
 	st         *store.Store
-	dispatcher proto.Dispatcher // nil이면 폴링 모드
+	dispatcher proto.Dispatcher // nil means polling mode
 }
 
 func newQueue(st *store.Store) *queue {
@@ -74,7 +74,7 @@ func splitTaskID(id string) (runID, stepName string, err error) {
 	return id[:idx], id[idx+1:], nil
 }
 
-// add는 파이프라인을 큐에 등록하고 dep 없는 step을 즉시 ready 상태로 만든다.
+// add registers a pipeline in the queue and immediately marks steps with no dependencies as ready.
 func (q *queue) add(pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -109,7 +109,7 @@ func (q *queue) add(pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, ou
 	q.runs[runID] = r
 }
 
-// next는 label에 맞는 ready task를 running 상태로 바꾸고 반환한다. 없으면 nil.
+// next transitions a ready task matching the given label to running and returns it. Returns nil if none available.
 func (q *queue) next(label string) *proto.Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -130,7 +130,7 @@ func (q *queue) next(label string) *proto.Task {
 	return nil
 }
 
-// complete는 task 결과를 기록하고 downstream을 처리한다.
+// complete records the task result and processes downstream steps.
 func (q *queue) complete(id, status, errMsg string, startedAt, endedAt time.Time, attempts int) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -151,7 +151,7 @@ func (q *queue) complete(id, status, errMsg string, startedAt, endedAt time.Time
 
 	entry.status = taskStatus(status)
 
-	// 스텝 결과 DB 저장
+	// Persist step result to DB
 	now := endedAt
 	if err := q.st.UpsertStep(&store.Step{
 		RunID:     runID,
@@ -172,7 +172,7 @@ func (q *queue) complete(id, status, errMsg string, startedAt, endedAt time.Time
 		q.skipDownstream(r, stepName)
 	}
 
-	// 모든 step이 terminal이면 run 완료
+	// If all steps are in a terminal state, the run is complete
 	if q.allTerminal(r) {
 		runStatus := "success"
 		for _, e := range r.tasks {
@@ -206,13 +206,13 @@ func (q *queue) promoteReady(r *runEntry) {
 	}
 }
 
-// dispatchIfNeeded는 Dispatcher가 설정된 경우 task를 즉시 dispatch한다.
-// lock을 보유한 상태에서 호출되므로 goroutine으로 비동기 실행한다.
+// dispatchIfNeeded immediately dispatches a task if a Dispatcher is configured.
+// Called while holding the lock, so it runs asynchronously in a goroutine.
 func (q *queue) dispatchIfNeeded(entry *taskEntry) {
 	if q.dispatcher == nil {
 		return
 	}
-	// 폴링 대신 즉시 dispatch — running 상태로 마킹
+	// Dispatch immediately instead of polling — mark as running
 	entry.status = taskRunning
 	task := entry.task
 	go func() {

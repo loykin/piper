@@ -47,7 +47,7 @@ func TestNew_defaultIsCommand(t *testing.T) {
 	}
 }
 
-// python은 별도 타입 없음 — command로 처리
+// python has no dedicated type — handled as command
 func TestNew_pythonIsCommand(t *testing.T) {
 	step := &pipeline.Step{Run: pipeline.Run{Type: "python"}}
 	ex := New(step)
@@ -56,7 +56,7 @@ func TestNew_pythonIsCommand(t *testing.T) {
 	}
 }
 
-// ─── CommandExecutor (source 없음) ───────────────────────────────────────────
+// ─── CommandExecutor (no source) ─────────────────────────────────────────────
 
 func TestCommandExecutor_success(t *testing.T) {
 	var buf bytes.Buffer
@@ -148,7 +148,7 @@ func TestCommandExecutor_nilWriters(t *testing.T) {
 // ─── CommandExecutor (source: http) ──────────────────────────────────────────
 
 func TestCommandExecutor_httpSource_scriptPath(t *testing.T) {
-	// HTTP 서버에서 스크립트를 fetch하고 PIPER_SCRIPT_PATH가 주입되는지 확인
+	// Fetch a script from an HTTP server and verify that PIPER_SCRIPT_PATH is injected
 	script := []byte("#!/bin/sh\necho 'from http'")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(script)
@@ -177,7 +177,7 @@ func TestCommandExecutor_httpSource_scriptPath(t *testing.T) {
 }
 
 func TestCommandExecutor_httpSource_workDirIsFetchDir(t *testing.T) {
-	// source fetch 후 WorkDir이 fetchDir로 바뀌어 파일이 보이는지 확인
+	// After source fetch, verify the WorkDir is changed to fetchDir and the file is visible
 	script := []byte("hello content")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(script)
@@ -220,7 +220,7 @@ func TestCommandExecutor_unknownSource(t *testing.T) {
 // ─── CommandExecutor (source: local) ─────────────────────────────────────────
 
 func TestCommandExecutor_localSource_usesWorkDir(t *testing.T) {
-	// source: local 이면 WorkDir 그대로 사용
+	// source: local uses the WorkDir as-is
 	workDir := t.TempDir()
 	_ = os.WriteFile(workDir+"/hello.sh", []byte("echo 'local script'"), 0755)
 

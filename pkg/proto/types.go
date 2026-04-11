@@ -2,20 +2,20 @@ package proto
 
 import "time"
 
-// Task는 server가 worker에게 전달하는 실행 단위
+// Task is the unit of work the server delivers to a worker
 type Task struct {
-	ID         string            `json:"id"`
-	RunID      string            `json:"run_id"`
-	StepName   string            `json:"step_name"`
-	Step       []byte            `json:"step"`       // pipeline.Step JSON
-	Pipeline   []byte            `json:"pipeline"`   // pipeline.Pipeline JSON
-	WorkDir    string            `json:"work_dir"`
-	OutputDir  string            `json:"output_dir"`
-	CreatedAt  time.Time         `json:"created_at"`
-	Label      string            `json:"label"`      // 이 task를 처리할 worker label
+	ID        string    `json:"id"`
+	RunID     string    `json:"run_id"`
+	StepName  string    `json:"step_name"`
+	Step      []byte    `json:"step"`     // pipeline.Step JSON
+	Pipeline  []byte    `json:"pipeline"` // pipeline.Pipeline JSON
+	WorkDir   string    `json:"work_dir"`
+	OutputDir string    `json:"output_dir"`
+	CreatedAt time.Time `json:"created_at"`
+	Label     string    `json:"label"` // worker label that should handle this task
 }
 
-// TaskResult는 worker가 server에 보고하는 결과
+// TaskResult is the result a worker reports back to the server
 type TaskResult struct {
 	TaskID    string    `json:"task_id"`
 	Status    string    `json:"status"` // done | failed
@@ -25,15 +25,15 @@ type TaskResult struct {
 	Attempts  int       `json:"attempts"`
 }
 
-// RunRequest는 클라이언트가 파이프라인 실행을 요청할 때 사용
+// RunRequest is used by a client to request a pipeline run
 type RunRequest struct {
-	PipelineYAML string            `json:"pipeline_yaml"`
-	Params       map[string]any    `json:"params,omitempty"`
-	WorkDir      string            `json:"work_dir,omitempty"`
-	OutputDir    string            `json:"output_dir,omitempty"`
+	PipelineYAML string         `json:"pipeline_yaml"`
+	Params       map[string]any `json:"params,omitempty"`
+	WorkDir      string         `json:"work_dir,omitempty"`
+	OutputDir    string         `json:"output_dir,omitempty"`
 }
 
-// RunResponse는 실행 요청에 대한 응답
+// RunResponse is the response to a run request
 type RunResponse struct {
 	RunID string `json:"run_id"`
 }

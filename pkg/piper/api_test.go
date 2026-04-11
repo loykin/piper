@@ -136,7 +136,7 @@ func TestAPI_listRuns_empty(t *testing.T) {
 	}
 	var runs []any
 	_ = json.NewDecoder(w.Body).Decode(&runs)
-	// 빈 배열 또는 null 모두 허용
+	// Both empty array and null are acceptable
 }
 
 func TestAPI_listRuns_afterCreate(t *testing.T) {
@@ -227,13 +227,13 @@ func TestAPI_taskDone(t *testing.T) {
 	p := newTestPiper(t)
 	do(t, p.Handler(nil), http.MethodPost, "/runs", map[string]any{"yaml": testPipelineYAML})
 
-	// task 획득
+	// Acquire task
 	w := do(t, p.Handler(nil), http.MethodGet, "/api/tasks/next", nil)
 	var task map[string]any
 	_ = json.NewDecoder(w.Body).Decode(&task)
 	taskID := task["id"].(string)
 
-	// done 보고
+	// Report done
 	now := time.Now().Format(time.RFC3339)
 	w2 := do(t, p.Handler(nil), http.MethodPost, "/api/tasks/"+taskID+"/done", map[string]any{
 		"started_at": now,
@@ -271,7 +271,7 @@ func TestAPI_logIngest(t *testing.T) {
 		t.Errorf("want 200, got %d: %s", w2.Code, w2.Body.String())
 	}
 
-	// 저장된 로그 조회
+	// Query stored logs
 	w3 := do(t, p.Handler(nil), http.MethodGet, "/runs/"+runID+"/steps/step-a/logs", nil)
 	if w3.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w3.Code)

@@ -45,7 +45,7 @@ func validate(p *Pipeline) error {
 		names[s.Name] = true
 	}
 
-	// depends_on 참조 검증
+	// Validate depends_on references
 	for _, s := range p.Spec.Steps {
 		for _, dep := range s.DependsOn {
 			if !names[dep] {

@@ -5,33 +5,33 @@ import (
 	"time"
 )
 
-// Config는 piper 전체 설정. 구조체로 받아서 임베딩 가능.
+// Config is the global piper configuration. Accepts a struct and can be embedded.
 type Config struct {
-	// 실행
+	// Execution
 	MaxRetries  int           `yaml:"max_retries"  mapstructure:"max_retries"`
 	RetryDelay  time.Duration `yaml:"retry_delay"  mapstructure:"retry_delay"`
 	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`
 	OutputDir   string        `yaml:"output_dir"   mapstructure:"output_dir"`
-	// DB 설정 — 셋 중 하나만 지정. 우선순위: DB > DBDriver+DBDSN > DBPath
-	DBPath   string  `yaml:"db_path"   mapstructure:"db_path"`   // sqlite 파일 경로 (기본: output_dir/piper.db)
-	DBDriver string  `yaml:"db_driver" mapstructure:"db_driver"` // "postgres" 등 외부 DB 드라이버
-	DBDSN    string  `yaml:"db_dsn"    mapstructure:"db_dsn"`    // 외부 DB DSN
-	DB       *sql.DB `yaml:"-" mapstructure:"-"`                 // 직접 주입 (*sql.DB)
+	// DB configuration — specify only one. Priority: DB > DBDriver+DBDSN > DBPath
+	DBPath   string  `yaml:"db_path"   mapstructure:"db_path"`   // sqlite file path (default: output_dir/piper.db)
+	DBDriver string  `yaml:"db_driver" mapstructure:"db_driver"` // external DB driver, e.g. "postgres"
+	DBDSN    string  `yaml:"db_dsn"    mapstructure:"db_dsn"`    // external DB DSN
+	DB       *sql.DB `yaml:"-" mapstructure:"-"`                 // directly injected *sql.DB
 
-	// Hooks — 모든 확장 포인트. nil이면 no-op.
+	// Hooks — all extension points. nil means no-op.
 	Hooks Hooks `yaml:"-" mapstructure:"-"`
 
-	// Git 소스
+	// Git source
 	Git GitConfig `yaml:"git" mapstructure:"git"`
 
-	// S3 소스
+	// S3 source
 	S3 S3Config `yaml:"s3" mapstructure:"s3"`
 
-	// 서버 (임베딩 모드에서는 불필요)
+	// Server (not required in embedded mode)
 	Server ServerConfig `yaml:"server" mapstructure:"server"`
 
-	// K8s — 설정 시 K8s Job으로 step을 실행한다.
-	// pkg/k8s.New(cfg.K8s)로 Launcher를 생성한 뒤 p.SetDispatcher(launcher)로 등록.
+	// K8s — when configured, steps run as K8s Jobs.
+	// Create a Launcher with pkg/k8s.New(cfg.K8s), then register it with p.SetDispatcher(launcher).
 	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
 }
 
@@ -59,32 +59,32 @@ type TLSConfig struct {
 	KeyFile  string `yaml:"key_file"  mapstructure:"key_file"`
 }
 
-// K8sConfig는 K8s Job 실행에 필요한 설정.
-// AgentImage가 비어 있으면 K8s 모드 비활성.
+// K8sConfig holds the configuration required for K8s Job execution.
+// K8s mode is disabled when AgentImage is empty.
 type K8sConfig struct {
-	// AgentImage: piper-agent 바이너리가 포함된 이미지 (initContainer용)
+	// AgentImage: image containing the piper-agent binary (used as initContainer)
 	AgentImage string `yaml:"agent_image" mapstructure:"agent_image"`
 
-	// Namespace: Job을 생성할 K8s 네임스페이스 (기본: "default")
+	// Namespace: K8s namespace in which to create Jobs (default: "default")
 	Namespace string `yaml:"namespace" mapstructure:"namespace"`
 
-	// InCluster: Pod 내부 실행 시 true
+	// InCluster: set to true when running inside a Pod
 	InCluster bool `yaml:"in_cluster" mapstructure:"in_cluster"`
 
-	// Kubeconfig: out-of-cluster 실행 시 kubeconfig 파일 경로
+	// Kubeconfig: path to kubeconfig file for out-of-cluster execution
 	Kubeconfig string `yaml:"kubeconfig" mapstructure:"kubeconfig"`
 
-	// MasterURL: K8s Pod에서 piper server에 접근할 URL
-	// 예: "http://piper-server.default.svc.cluster.local:8080"
+	// MasterURL: URL used by K8s Pods to reach the piper server
+	// e.g. "http://piper-server.default.svc.cluster.local:8080"
 	MasterURL string `yaml:"master_url" mapstructure:"master_url"`
 
-	// Token: piper server 인증 토큰
+	// Token: auth token for the piper server
 	Token string `yaml:"token" mapstructure:"token"`
 
-	// DefaultImage: step에 image가 없을 때 사용할 기본 컨테이너 이미지
+	// DefaultImage: fallback container image when a step has no image configured
 	DefaultImage string `yaml:"default_image" mapstructure:"default_image"`
 
-	// TTLAfterFinished: Job 완료 후 자동 삭제 시간(초). 0이면 자동 삭제 안 함.
+	// TTLAfterFinished: seconds after which a finished Job is automatically deleted. 0 means no auto-deletion.
 	TTLAfterFinished int32 `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
 }
 

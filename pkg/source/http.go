@@ -24,7 +24,7 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, run pipeline.Run, destDir strin
 		return "", fmt.Errorf("http source: url or path is required")
 	}
 
-	// 파일명은 URL 마지막 세그먼트에서 추출
+	// Extract filename from the last segment of the URL
 	name := filepath.Base(strings.Split(rawURL, "?")[0])
 	if name == "" || name == "." || name == "/" {
 		name = "file"

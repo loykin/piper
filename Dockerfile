@@ -1,8 +1,8 @@
-# piper 단일 이미지 빌드
-# - 서버: docker run piper/piper piper serve
-# - K8s agent: initContainer가 /piper 바이너리를 복사해서 사용
+# Single piper image build
+# - Server:    docker run piper/piper piper serve
+# - K8s agent: initContainer copies the /piper binary for use
 #
-# 빌드:
+# Build:
 #   make docker
 
 FROM alpine:3.20

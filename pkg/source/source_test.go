@@ -25,7 +25,7 @@ func TestNew_local(t *testing.T) {
 }
 
 func TestNew_emptySource(t *testing.T) {
-	// 빈 source도 local로 처리
+	// An empty source is treated as local
 	run := pipeline.Run{Source: ""}
 	f, err := New(run, Config{})
 	if err != nil {
@@ -81,8 +81,8 @@ func TestNew_unknown(t *testing.T) {
 
 // ─── GitFetcher ───────────────────────────────────────────────────────────────
 
-// TestGitFetcher_publicRepo는 실제 GitHub 레포에서 파일을 clone해 가져온다.
-// 네트워크가 없으면 스킵.
+// TestGitFetcher_publicRepo clones a file from a real GitHub repository.
+// Skipped when there is no network access.
 func TestGitFetcher_publicRepo(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping network test in short mode")
@@ -183,7 +183,7 @@ func TestHTTPFetcher_success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 파일명이 URL 마지막 세그먼트여야 함
+	// Filename must be the last segment of the URL
 	if filepath.Base(got) != "train.py" {
 		t.Errorf("want filename train.py, got %q", filepath.Base(got))
 	}
@@ -205,7 +205,7 @@ func TestHTTPFetcher_usePathWhenURLEmpty(t *testing.T) {
 	defer srv.Close()
 
 	f := &HTTPFetcher{}
-	// URL 필드 대신 Path에 URL을 넣어도 동작해야 함
+	// Should work when a URL is placed in the Path field instead of URL
 	run := pipeline.Run{Source: "http", Path: srv.URL + "/nb.ipynb"}
 	got, err := f.Fetch(context.Background(), run, t.TempDir())
 	if err != nil {

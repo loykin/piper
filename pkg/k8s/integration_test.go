@@ -29,8 +29,8 @@ func newTestLauncher(t *testing.T) *Launcher {
 		InCluster:    false,
 		AgentImage:   "piper/agent:latest",
 		Namespace:    "default",
-		MasterURL:    "",           // 테스트: master 없이 실행, 보고 스킵
-		DefaultImage: "registry:2", // 이미 K8s에 pull된 이미지 사용
+		MasterURL:    "",           // Test: run without master, skip reporting
+		DefaultImage: "registry:2", // Use an image already pulled in K8s
 	})
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
@@ -38,7 +38,7 @@ func newTestLauncher(t *testing.T) *Launcher {
 	return l
 }
 
-// TestIntegration_ClusterConnectivity는 kubeconfig로 클러스터 연결을 확인한다.
+// TestIntegration_ClusterConnectivity verifies cluster connectivity via kubeconfig.
 func TestIntegration_ClusterConnectivity(t *testing.T) {
 	l := newTestLauncher(t)
 
@@ -61,8 +61,8 @@ func TestIntegration_ClusterConnectivity(t *testing.T) {
 	}
 }
 
-// TestIntegration_SimpleJob은 agent injection 없이 busybox Job을 직접 생성해
-// K8s Job 생명주기(생성→실행→완료)를 검증한다.
+// TestIntegration_SimpleJob creates a busybox Job directly without agent injection
+// and verifies the full K8s Job lifecycle (create → running → complete).
 func TestIntegration_SimpleJob(t *testing.T) {
 	l := newTestLauncher(t)
 
@@ -71,13 +71,13 @@ func TestIntegration_SimpleJob(t *testing.T) {
 
 	runID := fmt.Sprintf("simple-%d", time.Now().UnixNano())
 
-	// registry:2: 이미 K8s에 pull된 이미지, Alpine 기반 → sh 사용 가능
+	// registry:2: already pulled in K8s, Alpine-based → sh is available
 	job := l.buildJob(
 		&proto.Task{RunID: runID, StepName: "hello"},
 		"registry:2",
 		nil,
 	)
-	// initContainer 제거 — agent injection 없이 직접 실행
+	// Remove initContainer — run directly without agent injection
 	job.Spec.Template.Spec.InitContainers = nil
 	job.Spec.Template.Spec.Containers[0].Command = []string{"sh", "-c", "echo hello-from-piper && sleep 1"}
 	job.Spec.Template.Spec.Containers[0].Args = nil
@@ -98,17 +98,17 @@ func TestIntegration_SimpleJob(t *testing.T) {
 	}
 }
 
-// TestIntegration_DispatchJob은 agent injection 패턴으로 실제 K8s Job을 실행한다.
+// TestIntegration_DispatchJob runs a real K8s Job using the agent injection pattern.
 //
-// 사전 요건:
-//  1. piper/agent:latest 이미지가 K8s에서 pull 가능해야 함
-//     - Docker Desktop: Settings → Experimental → "Use containerd for pulling and storing images" 활성화 후
+// Prerequisites:
+//  1. The piper/agent:latest image must be pullable from K8s
+//     - Docker Desktop: enable Settings → Experimental → "Use containerd for pulling and storing images", then run:
 //     docker build -t piper/agent:latest -f Dockerfile.agent .
-//     - 또는 로컬 레지스트리에 push 후 PIPER_AGENT_IMAGE 환경변수 설정
+//     - Or push to a local registry and set the PIPER_AGENT_IMAGE env var
 func TestIntegration_DispatchJob(t *testing.T) {
 	agentImage := os.Getenv("PIPER_AGENT_IMAGE")
 	if agentImage == "" {
-		t.Skip("PIPER_AGENT_IMAGE 환경변수가 설정되지 않음 (예: localhost:5000/piper/agent:latest)")
+		t.Skip("PIPER_AGENT_IMAGE env var is not set (e.g. localhost:5000/piper/agent:latest)")
 	}
 
 	l := newTestLauncher(t)

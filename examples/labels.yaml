@@ -1,9 +1,9 @@
-# Worker label 라우팅 예제
+# Worker label routing example
 #
-# step마다 실행할 worker를 지정한다.
-# label이 없는 step은 어느 worker든 실행 가능.
+# Specifies which worker to use for each step.
+# Steps without a label can run on any worker.
 #
-# worker 시작 예:
+# Start workers:
 #   go run ./examples/worker --label=gpu
 #   go run ./examples/worker --label=cpu
 
@@ -17,21 +17,21 @@ spec:
   steps:
   - name: preprocess
     runner:
-      label: cpu        # CPU worker에서 실행
+      label: cpu        # Run on CPU worker
     run:
       type: command
       command: ["sh", "-c", "echo 'preprocessing on CPU worker'"]
 
   - name: train
     runner:
-      label: gpu        # GPU worker에서 실행
+      label: gpu        # Run on GPU worker
     run:
       type: command
       command: ["sh", "-c", "echo 'training on GPU worker'"]
     depends_on: [preprocess]
 
   - name: report
-    # label 없음 → 어느 worker든 가능
+    # No label → any worker can run this
     run:
       type: command
       command: ["sh", "-c", "echo 'generating report'"]

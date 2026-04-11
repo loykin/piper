@@ -2,10 +2,10 @@ package pipeline
 
 import "fmt"
 
-// DAG은 step 실행 순서를 결정
+// DAG determines the execution order of steps
 type DAG struct {
 	steps map[string]*Step
-	order []string // 위상 정렬된 실행 순서
+	order []string // topologically sorted execution order
 }
 
 func BuildDAG(p *Pipeline) (*DAG, error) {
@@ -25,7 +25,7 @@ func BuildDAG(p *Pipeline) (*DAG, error) {
 	return dag, nil
 }
 
-// Order는 위상 정렬된 step 순서를 반환
+// Order returns the topologically sorted step order
 func (d *DAG) Order() []*Step {
 	result := make([]*Step, len(d.order))
 	for i, name := range d.order {
@@ -34,7 +34,7 @@ func (d *DAG) Order() []*Step {
 	return result
 }
 
-// Runnable은 완료된 step 목록을 받아 지금 실행 가능한 step을 반환
+// Runnable returns the steps that are ready to run given the set of completed steps
 func (d *DAG) Runnable(done map[string]bool) []*Step {
 	var result []*Step
 	for _, name := range d.order {

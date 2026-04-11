@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// nil store로 생성 — DB 없이 인메모리만 테스트
+// Created with a nil store — test in-memory behavior only, without DB
 func newTestRegistry() *workerRegistry {
 	return newWorkerRegistry(nil)
 }
@@ -66,7 +66,7 @@ func TestRegistry_touch_updates_last_seen(t *testing.T) {
 
 func TestRegistry_touch_unknown_ignored(t *testing.T) {
 	r := newTestRegistry()
-	r.touch("ghost") // 패닉 없이 무시
+	r.touch("ghost") // Ignored without panic
 }
 
 func TestRegistry_list_excludes_expired(t *testing.T) {

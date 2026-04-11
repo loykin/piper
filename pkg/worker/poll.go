@@ -9,8 +9,8 @@ import (
 	"github.com/piper/piper/pkg/proto"
 )
 
-// poll은 master에서 다음 task를 가져온다.
-// task가 없으면 (nil, nil)을 반환한다.
+// poll fetches the next task from the master.
+// Returns (nil, nil) if no task is available.
 func poll(ctx context.Context, client *http.Client, cfg Config, workerID string) (*proto.Task, error) {
 	url := fmt.Sprintf("%s/api/tasks/next?worker_id=%s&label=%s", cfg.MasterURL, workerID, cfg.Label)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

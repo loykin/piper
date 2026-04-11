@@ -35,7 +35,7 @@ func (f *GitFetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string
 		URL:           run.Repo,
 		ReferenceName: plumbing.NewBranchReferenceName(branch),
 		SingleBranch:  true,
-		Depth:         1, // shallow clone — 속도 최적화
+		Depth:         1, // shallow clone — speed optimization
 	}
 
 	if f.cfg.GitToken != "" {

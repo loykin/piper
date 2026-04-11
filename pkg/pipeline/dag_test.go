@@ -77,13 +77,13 @@ func TestRunnable(t *testing.T) {
 	))
 	dag, _ := BuildDAG(p)
 
-	// 아무것도 완료 안 된 상태 → a만 실행 가능
+	// Nothing completed yet → only a is runnable
 	runnable := dag.Runnable(map[string]bool{})
 	if len(runnable) != 1 || runnable[0].Name != "a" {
 		t.Errorf("want [a], got %v", names(runnable))
 	}
 
-	// a 완료 → b, c 실행 가능
+	// a completed → b and c are runnable
 	runnable = dag.Runnable(map[string]bool{"a": true})
 	if len(runnable) != 2 {
 		t.Errorf("want [b,c], got %v", names(runnable))

@@ -1,9 +1,9 @@
-// Package runner는 piper task 실행의 공통 로직을 제공한다.
+// Package runner provides the common logic for executing piper tasks.
 //
-// worker(폴링)와 agent(K8s one-shot) 모두 이 패키지를 사용한다.
-// 차이는 task를 어떻게 받느냐뿐 — 실행 로직은 동일하다.
+// Both the worker (polling) and agent (K8s one-shot) use this package.
+// The only difference is how they receive a task — the execution logic is identical.
 //
-//	task 받기 → S3 input 다운 → 커맨드 실행 → S3 output 업 → 보고
+//	receive task → download S3 inputs → run command → upload S3 outputs → report
 package runner
 
 import (
@@ -30,39 +30,39 @@ import (
 	"github.com/piper/piper/pkg/source"
 )
 
-// Config는 Runner 설정.
+// Config holds Runner configuration.
 type Config struct {
 	MasterURL string
 	Token     string
-	OutputDir string // 로컬 출력 루트 디렉토리
-	InputDir  string // 로컬 입력 루트 디렉토리
+	OutputDir string // local output root directory
+	InputDir  string // local input root directory
 
-	// S3 아티팩트 스토어 (비어 있으면 로컬 파일시스템만 사용)
+	// S3 artifact store (local filesystem only when empty)
 	S3Endpoint  string
 	S3AccessKey string
 	S3SecretKey string
 	S3Bucket    string
 	S3UseSSL    bool
 
-	// 소스 fetch 설정 (notebook/python source: git|s3|http)
+	// Source fetch configuration (notebook/python source: git|s3|http)
 	GitToken string
 	GitUser  string
 }
 
-// Runner는 단일 task를 실행한다.
+// Runner executes a single task.
 type Runner struct {
 	cfg    Config
 	client *http.Client
-	s3     *s3.Client // nil이면 S3 비사용
+	s3     *s3.Client // nil means S3 is not used
 }
 
-// New는 Runner를 생성한다.
+// New creates a Runner.
 func New(cfg Config) (*Runner, error) {
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = "./piper-outputs"
 	}
 	if cfg.InputDir == "" {
-		cfg.InputDir = cfg.OutputDir // 기본: 같은 디렉토리 (단일 머신)
+		cfg.InputDir = cfg.OutputDir // default: same directory (single machine)
 	}
 
 	r := &Runner{
@@ -81,7 +81,7 @@ func New(cfg Config) (*Runner, error) {
 	return r, nil
 }
 
-// Run은 task를 실행하고 master에 결과를 보고한다.
+// Run executes a task and reports the result to the master.
 func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 	startedAt := time.Now()
 
@@ -97,7 +97,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 		return
 	}
 
-	// S3에서 입력 아티팩트 다운로드
+	// Download input artifacts from S3
 	if r.s3 != nil && len(step.Inputs) > 0 {
 		if err := r.downloadInputs(ctx, task.RunID, step.Inputs); err != nil {
 			slog.Error("download inputs failed", "task_id", task.ID, "err", err)
@@ -106,22 +106,22 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 		}
 	}
 
-	// 로컬 로그 파일 (fallback)
+	// Local log file (fallback)
 	logFile := openLogFile(stepOutputDir, step.Name)
 	if logFile != nil {
 		defer func() { _ = logFile.Close() }()
 	}
 
-	// 로그 수집기
+	// Log collector
 	logger := newBatchLogger(r, task.RunID, task.StepName, logFile)
 
-	// 커맨드 실행
+	// Execute the command
 	execErr := r.execute(ctx, &step, task, stepOutputDir, logger)
 
-	// 수집된 로그 전송
+	// Flush collected logs
 	logger.flush(ctx)
 
-	// S3에 출력 아티팩트 업로드 (성공 시)
+	// Upload output artifacts to S3 (on success)
 	if execErr == nil && r.s3 != nil && len(step.Outputs) > 0 {
 		if err := r.uploadOutputs(ctx, task.RunID, step.Name, stepOutputDir, step.Outputs); err != nil {
 			slog.Error("upload outputs failed", "task_id", task.ID, "err", err)
@@ -136,7 +136,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 	r.reportDone(task, startedAt)
 }
 
-// ─── 실행 ─────────────────────────────────────────────────────────────────────
+// ─── Execution ────────────────────────────────────────────────────────────────
 
 func (r *Runner) execute(
 	ctx context.Context,
@@ -145,7 +145,7 @@ func (r *Runner) execute(
 	outputDir string,
 	logger *batchLogger,
 ) error {
-	// stdout/stderr를 줄 단위로 가로채는 io.Writer
+	// io.Writer that intercepts stdout/stderr line by line
 	stdoutW := &lineWriter{stream: "stdout", logger: logger, tee: os.Stdout}
 	stderrW := &lineWriter{stream: "stderr", logger: logger, tee: os.Stderr}
 
@@ -172,7 +172,7 @@ func (r *Runner) execute(
 	return executor.New(step).Execute(ctx, step, cfg)
 }
 
-// lineWriter는 io.Writer를 구현하며 줄 단위로 batchLogger에 기록한다.
+// lineWriter implements io.Writer and writes to batchLogger line by line.
 type lineWriter struct {
 	stream string
 	logger *batchLogger
@@ -195,7 +195,7 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// ─── 배치 로그 ────────────────────────────────────────────────────────────────
+// ─── Batch logging ────────────────────────────────────────────────────────────
 
 type logEntry struct {
 	Ts     time.Time `json:"ts"`
@@ -257,7 +257,7 @@ func (l *batchLogger) flush(ctx context.Context) {
 	_ = resp.Body.Close()
 }
 
-// ─── 보고 ─────────────────────────────────────────────────────────────────────
+// ─── Reporting ────────────────────────────────────────────────────────────────
 
 type taskResult struct {
 	Error     string    `json:"error,omitempty"`
@@ -311,10 +311,10 @@ func (r *Runner) setAuth(req *http.Request) {
 	}
 }
 
-// ─── S3 아티팩트 ──────────────────────────────────────────────────────────────
+// ─── S3 artifacts ─────────────────────────────────────────────────────────────
 
-// newS3Client는 AWS SDK v2 기반 S3 클라이언트를 생성한다.
-// MinIO, SeaweedFS, Ceph RGW, Cloudflare R2 등 S3 호환 스토리지 모두 지원.
+// newS3Client creates an S3 client based on AWS SDK v2.
+// Supports all S3-compatible storage: MinIO, SeaweedFS, Ceph RGW, Cloudflare R2, etc.
 func newS3Client(cfg Config) (*s3.Client, error) {
 	awsCfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion("us-east-1"),
@@ -328,7 +328,7 @@ func newS3Client(cfg Config) (*s3.Client, error) {
 
 	opts := []func(*s3.Options){
 		func(o *s3.Options) {
-			o.UsePathStyle = true // MinIO, SeaweedFS 등 path-style 필수
+			o.UsePathStyle = true // Required for MinIO, SeaweedFS, etc. (path-style)
 		},
 	}
 	if cfg.S3Endpoint != "" {
@@ -345,9 +345,9 @@ func newS3Client(cfg Config) (*s3.Client, error) {
 	return s3.NewFromConfig(awsCfg, opts...), nil
 }
 
-// downloadInputs는 step 입력 아티팩트를 S3에서 로컬로 다운로드한다.
-// S3 키: {runID}/{fromStep}/{artifactName}/
-// 로컬:  {inputDir}/{runID}/{artifactName}/
+// downloadInputs downloads step input artifacts from S3 to the local filesystem.
+// S3 key: {runID}/{fromStep}/{artifactName}/
+// Local:  {inputDir}/{runID}/{artifactName}/
 func (r *Runner) downloadInputs(ctx context.Context, runID string, inputs []pipeline.Artifact) error {
 	for _, art := range inputs {
 		if art.From == "" {
@@ -369,9 +369,9 @@ func (r *Runner) downloadInputs(ctx context.Context, runID string, inputs []pipe
 	return nil
 }
 
-// uploadOutputs는 step 출력 아티팩트를 S3에 업로드한다.
-// 로컬:  {outputDir}/{artifact.Path}
-// S3 키: {runID}/{stepName}/{artifactName}/
+// uploadOutputs uploads step output artifacts to S3.
+// Local:  {outputDir}/{artifact.Path}
+// S3 key: {runID}/{stepName}/{artifactName}/
 func (r *Runner) uploadOutputs(ctx context.Context, runID, stepName, outputDir string, outputs []pipeline.Artifact) error {
 	for _, art := range outputs {
 		if art.Path == "" {
@@ -467,7 +467,7 @@ func s3PutFile(ctx context.Context, client *s3.Client, bucket, key, localPath st
 	return err
 }
 
-// ─── 유틸 ─────────────────────────────────────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────────────────────────────
 
 func openLogFile(outputDir, stepName string) *os.File {
 	path := filepath.Join(outputDir, stepName+".log")

@@ -16,13 +16,13 @@ import (
 	"github.com/piper/piper/pkg/worker"
 )
 
-// fakeMaster는 테스트용 master HTTP 서버다.
+// fakeMaster is a test master HTTP server.
 type fakeMaster struct {
 	tasks        [][]byte
 	idx          int
 	done         int64 // atomic
 	failed       int64 // atomic
-	registered   int64 // atomic: POST /api/workers 횟수
+	registered   int64 // atomic: number of POST /api/workers calls
 	heartbeats   int64 // atomic
 	lastWorkerID string
 }
@@ -30,7 +30,7 @@ type fakeMaster struct {
 func (m *fakeMaster) handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Worker 등록
+	// Worker registration
 	mux.HandleFunc("/api/workers", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var body map[string]any
@@ -56,7 +56,7 @@ func (m *fakeMaster) handler() http.Handler {
 		w.WriteHeader(http.StatusNotFound)
 	})
 
-	// Task 폴링
+	// Task polling
 	mux.HandleFunc("/api/tasks/next", func(w http.ResponseWriter, r *http.Request) {
 		if m.idx >= len(m.tasks) {
 			w.WriteHeader(http.StatusNoContent)
@@ -67,7 +67,7 @@ func (m *fakeMaster) handler() http.Handler {
 		m.idx++
 	})
 
-	// Task 완료 보고
+	// Task completion report
 	mux.HandleFunc("/api/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/done") {
 			atomic.AddInt64(&m.done, 1)
@@ -77,7 +77,7 @@ func (m *fakeMaster) handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// 로그 수집
+	// Log ingestion
 	mux.HandleFunc("/runs/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -102,7 +102,7 @@ func makeTaskBytes(t *testing.T, id string, cmd []string) []byte {
 	return b
 }
 
-// waitFor는 조건이 참이 될 때까지 최대 timeout 대기한다.
+// waitFor waits up to timeout for cond to return true.
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -139,7 +139,7 @@ func TestNew_defaults_applied(t *testing.T) {
 	}
 }
 
-// ─── 등록 ─────────────────────────────────────────────────────────────────────
+// ─── Registration ────────────────────────────────────────────────────────────
 
 func TestWorker_registers_on_start(t *testing.T) {
 	fm := &fakeMaster{}
@@ -187,8 +187,8 @@ func TestWorker_sends_heartbeat(t *testing.T) {
 	go func() { _ = w.Run(ctx) }()
 	defer cancel()
 
-	// heartbeat는 10초 주기라 테스트에서 직접 검증하기 어려우므로
-	// 등록 성공 + Run 동작 확인으로 대체
+	// heartbeat runs on a 10-second interval, so direct verification in tests is impractical;
+	// substituting with a registration-success + Run-behavior check
 	if !waitFor(t, 2*time.Second, func() bool {
 		return atomic.LoadInt64(&fm.registered) > 0
 	}) {
@@ -196,7 +196,7 @@ func TestWorker_sends_heartbeat(t *testing.T) {
 	}
 }
 
-// ─── Run: task 실행 후 done 보고 ─────────────────────────────────────────────
+// ─── Run: reports done after task execution ───────────────────────────────────
 
 func TestWorker_run_reports_done(t *testing.T) {
 	fm := &fakeMaster{
@@ -230,7 +230,7 @@ func TestWorker_run_reports_done(t *testing.T) {
 	}
 }
 
-// ─── Run: 실패 커맨드 → failed 보고 ──────────────────────────────────────────
+// ─── Run: failed command → reports failed ─────────────────────────────────────
 
 func TestWorker_run_reports_failed(t *testing.T) {
 	fm := &fakeMaster{
@@ -260,7 +260,7 @@ func TestWorker_run_reports_failed(t *testing.T) {
 	cancel()
 }
 
-// ─── Run: 여러 task 처리 ──────────────────────────────────────────────────────
+// ─── Run: processes multiple tasks ───────────────────────────────────────────
 
 func TestWorker_run_multiple_tasks(t *testing.T) {
 	fm := &fakeMaster{
@@ -294,10 +294,10 @@ func TestWorker_run_multiple_tasks(t *testing.T) {
 	cancel()
 }
 
-// ─── Run: context 취소 시 정상 종료 ──────────────────────────────────────────
+// ─── Run: graceful shutdown on context cancel ─────────────────────────────────
 
 func TestWorker_shutdown_on_context_cancel(t *testing.T) {
-	fm := &fakeMaster{} // task 없음
+	fm := &fakeMaster{} // no tasks
 	srv := httptest.NewServer(fm.handler())
 	defer srv.Close()
 

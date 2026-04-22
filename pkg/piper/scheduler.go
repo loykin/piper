@@ -71,6 +71,12 @@ func (p *Piper) triggerScheduledRun(run *store.Run) {
 		return
 	}
 
+	for _, s := range pl.Spec.Steps {
+		if err := p.store.UpsertStep(&store.Step{RunID: run.ID, StepName: s.Name, Status: "pending"}); err != nil {
+			slog.Warn("init one-time scheduled step failed", "run_id", run.ID, "step", s.Name, "err", err)
+		}
+	}
+
 	outputDir := filepath.Join(p.cfg.OutputDir, run.ID)
 	vars := proto.BuiltinVars{ScheduledAt: run.ScheduledAt}
 	p.queue.add(pl, dag, run.ID, ".", outputDir, vars, nil)
@@ -82,23 +88,34 @@ func (p *Piper) triggerScheduledRun(run *store.Run) {
 
 func (p *Piper) triggerSchedule(sc *store.Schedule) {
 	now := time.Now().UTC()
-	nextRunAt, err := nextScheduleTime(sc.CronExpr, sc.NextRunAt)
-	if err != nil {
-		slog.Warn("invalid cron expression in schedule", "schedule_id", sc.ID, "cron", sc.CronExpr, "err", err)
-		_ = p.store.SetScheduleEnabled(sc.ID, false)
-		return
+
+	// For once-type: compute a dummy nextRunAt we don't actually use;
+	// we just need to mark it done after firing.
+	var nextRunAt time.Time
+	if sc.ScheduleType == "cron" {
+		var err error
+		nextRunAt, err = nextScheduleTime(sc.CronExpr, sc.NextRunAt)
+		if err != nil {
+			slog.Warn("invalid cron expression in schedule", "schedule_id", sc.ID, "cron", sc.CronExpr, "err", err)
+			_ = p.store.SetScheduleEnabled(sc.ID, false)
+			return
+		}
 	}
 
 	pl, err := p.Parse([]byte(sc.PipelineYAML))
 	if err != nil {
 		slog.Warn("parse schedule pipeline failed", "schedule_id", sc.ID, "err", err)
-		_ = p.store.UpdateScheduleRun(sc.ID, now, nextRunAt)
+		if sc.ScheduleType == "cron" {
+			_ = p.store.UpdateScheduleRun(sc.ID, now, nextRunAt)
+		}
 		return
 	}
 	dag, err := pipeline.BuildDAG(pl)
 	if err != nil {
 		slog.Warn("build schedule dag failed", "schedule_id", sc.ID, "err", err)
-		_ = p.store.UpdateScheduleRun(sc.ID, now, nextRunAt)
+		if sc.ScheduleType == "cron" {
+			_ = p.store.UpdateScheduleRun(sc.ID, now, nextRunAt)
+		}
 		return
 	}
 
@@ -131,7 +148,15 @@ func (p *Piper) triggerSchedule(sc *store.Schedule) {
 		_ = json.Unmarshal([]byte(sc.ParamsJSON), &params)
 	}
 	p.queue.add(pl, dag, runID, ".", outputDir, proto.BuiltinVars{ScheduledAt: &scheduledAt}, params)
-	if err := p.store.UpdateScheduleRun(sc.ID, now, nextRunAt); err != nil {
-		slog.Warn("update schedule run failed", "schedule_id", sc.ID, "err", err)
+
+	if sc.ScheduleType == "once" {
+		// One-time: mark disabled after firing — it's done.
+		if err := p.store.SetScheduleEnabled(sc.ID, false); err != nil {
+			slog.Warn("mark once schedule done failed", "schedule_id", sc.ID, "err", err)
+		}
+	} else {
+		if err := p.store.UpdateScheduleRun(sc.ID, now, nextRunAt); err != nil {
+			slog.Warn("update schedule run failed", "schedule_id", sc.ID, "err", err)
+		}
 	}
 }

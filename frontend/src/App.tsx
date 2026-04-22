@@ -2,7 +2,8 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import RunDetailPage from './pages/RunDetailPage'
 import WorkflowsPage from './pages/WorkflowsPage'
 import WorkflowCreatePage from './pages/WorkflowCreatePage'
-import RunHistoryPage from './pages/RunHistoryPage'
+import TaskHistoryPage from './pages/TaskHistoryPage'
+import ScheduleDetailPage from './pages/ScheduleDetailPage'
 
 function SidebarLink({ to, label }: { to: string; label: string }) {
   return (
@@ -31,17 +32,21 @@ export default function App() {
           </div>
 
           <nav className="space-y-1">
-            <SidebarLink to="/pipelines" label="Pipelines" />
-            <SidebarLink to="/run-history" label="Run History" />
+            <SidebarLink to="/schedules" label="Schedule" />
+            <SidebarLink to="/history" label="History" />
           </nav>
         </aside>
 
         <main className="flex-1 px-6 py-8">
           <Routes>
-            <Route path="/" element={<Navigate to="/pipelines" replace />} />
-            <Route path="/pipelines" element={<WorkflowsPage />} />
-            <Route path="/pipelines/create" element={<WorkflowCreatePage />} />
-            <Route path="/run-history" element={<RunHistoryPage />} />
+            <Route path="/" element={<Navigate to="/schedules" replace />} />
+            <Route path="/schedules" element={<WorkflowsPage />} />
+            <Route path="/schedules/create" element={<WorkflowCreatePage />} />
+            <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
+            <Route path="/history" element={<TaskHistoryPage />} />
+            <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />
+            <Route path="/pipelines/create" element={<Navigate to="/schedules/create" replace />} />
+            <Route path="/run-history" element={<Navigate to="/history" replace />} />
             <Route path="/runs/:id" element={<RunDetailPage />} />
           </Routes>
         </main>

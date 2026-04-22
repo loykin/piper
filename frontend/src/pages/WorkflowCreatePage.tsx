@@ -77,13 +77,22 @@ export default function WorkflowCreatePage() {
           yaml: normalizedYaml,
           cron: cronExpr.trim(),
         })
-        navigate('/pipelines')
+        navigate('/schedules')
         return
       }
 
-      const result = await createRun(normalizedYaml, {
-        vars: executionMode === 'once' ? { scheduled_at: scheduleAtISO } : undefined,
-      })
+      if (executionMode === 'once') {
+        await createSchedule({
+          name: trimmedName,
+          yaml: normalizedYaml,
+          run_at: scheduleAtISO,
+        })
+        navigate('/schedules')
+        return
+      }
+
+      // 'now' mode: run immediately
+      const result = await createRun(normalizedYaml)
       navigate(`/runs/${result.run_id}`)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -95,8 +104,8 @@ export default function WorkflowCreatePage() {
   return (
     <div className="space-y-6">
       <section className="rounded-xl border border-gray-800 bg-gray-900 p-6">
-        <h1 className="text-lg font-semibold text-gray-100">Create Pipeline</h1>
-        <p className="mt-1 text-sm text-gray-400">Choose execution mode and submit a pipeline run.</p>
+        <h1 className="text-lg font-semibold text-gray-100">Create Schedule</h1>
+        <p className="mt-1 text-sm text-gray-400">Register pipeline + schedule, then execute by trigger type.</p>
       </section>
 
       <section className="rounded-xl border border-gray-800 bg-gray-950 p-6">
@@ -148,7 +157,7 @@ export default function WorkflowCreatePage() {
                 className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-indigo-500 focus:outline-none"
               />
               <p className="mt-2 text-xs text-gray-500">
-                Note: this stores logical scheduled time (`PIPER_SCHEDULED_AT`) and executes immediately with current backend.
+                One-time schedules stay in `scheduled` status until the scheduled time, then execute automatically.
               </p>
             </div>
           )}
@@ -182,7 +191,7 @@ export default function WorkflowCreatePage() {
           <div className="flex items-center justify-end gap-3">
             <button
               type="button"
-              onClick={() => navigate('/pipelines')}
+              onClick={() => navigate('/schedules')}
               className="rounded-lg border border-gray-700 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-900"
             >
               Cancel

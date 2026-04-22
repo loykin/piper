@@ -107,7 +107,7 @@ func (s *Store) ListRuns(filter ...RunFilter) ([]*Run, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var runs []*Run
+	runs := make([]*Run, 0)
 	for rows.Next() {
 		r, err := scanRun(rows)
 		if err != nil {

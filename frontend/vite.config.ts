@@ -9,14 +9,20 @@ export default defineConfig({
       '/runs': {
         target: 'http://localhost:8080',
         bypass(req) {
-          // Browser navigation (text/html) → let Vite serve index.html for SPA routing
           if (req.headers.accept?.includes('text/html')) return req.url
-          return undefined // API fetch → proxy to backend
+          return undefined
+        },
+      },
+      '/schedules': {
+        target: 'http://localhost:8080',
+        bypass(req) {
+          // Browser navigation → SPA, API fetch (no text/html accept) → backend
+          if (req.headers.accept?.includes('text/html')) return req.url
+          return undefined
         },
       },
       '/api': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
-      '/schedules': 'http://localhost:8080',
       '/services': 'http://localhost:8080',
     },
   },

@@ -10,27 +10,36 @@ type Schedule struct {
 	Name         string     `json:"name"`
 	OwnerID      string     `json:"owner_id,omitempty"`
 	PipelineYAML string     `json:"pipeline_yaml"`
-	CronExpr     string     `json:"cron_expr"`
-	ParamsJSON   string     `json:"params_json,omitempty"`
+	ScheduleType string     `json:"schedule_type"` // "cron" | "once"
+	CronExpr     string     `json:"cron_expr,omitempty"`
 	Enabled      bool       `json:"enabled"`
 	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
 	NextRunAt    time.Time  `json:"next_run_at"`
+	ParamsJSON   string     `json:"params_json,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 func (s *Store) CreateSchedule(sc *Schedule) error {
 	_, err := s.db.Exec(
-		`INSERT INTO schedules (id, name, owner_id, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sc.ID, sc.Name, sc.OwnerID, sc.PipelineYAML, sc.CronExpr, sc.ParamsJSON, boolToInt(sc.Enabled), sc.LastRunAt, sc.NextRunAt, sc.CreatedAt, sc.UpdatedAt,
+		`INSERT INTO schedules (id, name, owner_id, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sc.ID, sc.Name, sc.OwnerID, sc.PipelineYAML, sc.CronExpr, sc.ParamsJSON, boolToInt(sc.Enabled), sc.LastRunAt, sc.NextRunAt, sc.CreatedAt, sc.UpdatedAt, sc.ScheduleType,
 	)
 	return err
 }
 
+func (s *Store) GetSchedule(id string) (*Schedule, error) {
+	row := s.db.QueryRow(
+		`SELECT id, name, owner_id, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type
+     FROM schedules WHERE id=?`, id,
+	)
+	return scanSchedule(row)
+}
+
 func (s *Store) ListSchedules() ([]*Schedule, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, owner_id, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at
+		`SELECT id, name, owner_id, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type
      FROM schedules
      ORDER BY created_at DESC`,
 	)
@@ -39,7 +48,7 @@ func (s *Store) ListSchedules() ([]*Schedule, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []*Schedule
+	out := make([]*Schedule, 0) // never nil → always marshals as []
 	for rows.Next() {
 		sc, err := scanSchedule(rows)
 		if err != nil {
@@ -52,7 +61,7 @@ func (s *Store) ListSchedules() ([]*Schedule, error) {
 
 func (s *Store) ListDueSchedules(now time.Time) ([]*Schedule, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, owner_id, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at
+		`SELECT id, name, owner_id, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type
      FROM schedules
      WHERE enabled=1 AND next_run_at <= ?
      ORDER BY next_run_at ASC`,
@@ -92,6 +101,11 @@ func (s *Store) SetScheduleEnabled(id string, enabled bool) error {
 	return err
 }
 
+func (s *Store) DeleteSchedule(id string) error {
+	_, err := s.db.Exec(`DELETE FROM schedules WHERE id=?`, id)
+	return err
+}
+
 func scanSchedule(sc interface{ Scan(dest ...any) error }) (*Schedule, error) {
 	var out Schedule
 	var enabledInt int
@@ -108,12 +122,16 @@ func scanSchedule(sc interface{ Scan(dest ...any) error }) (*Schedule, error) {
 		&out.NextRunAt,
 		&out.CreatedAt,
 		&out.UpdatedAt,
+		&out.ScheduleType,
 	); err != nil {
 		return nil, err
 	}
 	out.Enabled = enabledInt == 1
 	if lastRunAt.Valid {
 		out.LastRunAt = &lastRunAt.Time
+	}
+	if out.ScheduleType == "" {
+		out.ScheduleType = "cron"
 	}
 	return &out, nil
 }

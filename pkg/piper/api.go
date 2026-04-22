@@ -140,19 +140,19 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Initialize steps
-		for _, s := range pl.Spec.Steps {
-			if err := h.store.UpsertStep(&store.Step{
-				RunID:    runID,
-				StepName: s.Name,
-				Status:   "pending",
-			}); err != nil {
-				slog.Warn("init step failed", "run_id", runID, "step", s.Name, "err", err)
-			}
-		}
-
 		// Add to queue immediately unless this is a one-time future-scheduled run.
 		if runStatus == "running" {
+			// Initialize steps only when run is actually starting.
+			for _, s := range pl.Spec.Steps {
+				if err := h.store.UpsertStep(&store.Step{
+					RunID:    runID,
+					StepName: s.Name,
+					Status:   "pending",
+				}); err != nil {
+					slog.Warn("init step failed", "run_id", runID, "step", s.Name, "err", err)
+				}
+			}
+
 			h.p.queue.add(pl, dag, runID, ".", outputDir, req.Vars, req.Params)
 
 			if h.p.cfg.Hooks.OnRunStart != nil {
@@ -290,6 +290,7 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			Name    string         `json:"name"`
 			YAML    string         `json:"yaml"`
 			Cron    string         `json:"cron"`
+			RunAt   *time.Time     `json:"run_at,omitempty"`
 			OwnerID string         `json:"owner_id,omitempty"`
 			Params  map[string]any `json:"params,omitempty"`
 		}
@@ -297,21 +298,12 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if strings.TrimSpace(req.Cron) == "" {
-			jsonErr(w, "cron is required", http.StatusBadRequest)
+
+		hasCron := strings.TrimSpace(req.Cron) != ""
+		hasRunAt := req.RunAt != nil && !req.RunAt.IsZero()
+		if !hasCron && !hasRunAt {
+			jsonErr(w, "either cron or run_at is required", http.StatusBadRequest)
 			return
-		}
-		now := time.Now().UTC()
-		nextRunAt, err := nextScheduleTime(req.Cron, now)
-		if err != nil {
-			jsonErr(w, "invalid cron expression", http.StatusBadRequest)
-			return
-		}
-		paramsJSON := "{}"
-		if req.Params != nil {
-			if b, err := json.Marshal(req.Params); err == nil {
-				paramsJSON = string(b)
-			}
 		}
 
 		pl, err := h.p.Parse([]byte(req.YAML))
@@ -319,9 +311,18 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
+		now := time.Now().UTC()
 		name := strings.TrimSpace(req.Name)
 		if name == "" {
 			name = pl.Metadata.Name
+		}
+
+		paramsJSON := "{}"
+		if req.Params != nil {
+			if b, err := json.Marshal(req.Params); err == nil {
+				paramsJSON = string(b)
+			}
 		}
 
 		sc := &store.Schedule{
@@ -329,13 +330,31 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			Name:         name,
 			OwnerID:      req.OwnerID,
 			PipelineYAML: req.YAML,
-			CronExpr:     req.Cron,
 			ParamsJSON:   paramsJSON,
 			Enabled:      true,
-			NextRunAt:    nextRunAt,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
+
+		if hasCron {
+			nextRunAt, err := nextScheduleTime(req.Cron, now)
+			if err != nil {
+				jsonErr(w, "invalid cron expression", http.StatusBadRequest)
+				return
+			}
+			sc.ScheduleType = "cron"
+			sc.CronExpr = req.Cron
+			sc.NextRunAt = nextRunAt
+		} else {
+			if req.RunAt.Before(now) {
+				jsonErr(w, "run_at must be in the future", http.StatusBadRequest)
+				return
+			}
+			sc.ScheduleType = "once"
+			sc.CronExpr = ""
+			sc.NextRunAt = req.RunAt.UTC()
+		}
+
 		if err := h.store.CreateSchedule(sc); err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -347,33 +366,53 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// PATCH /schedules/{id} — enable/disable
+// GET    /schedules/{id} — get a single schedule
+// PATCH  /schedules/{id} — enable/disable
+// DELETE /schedules/{id} — delete
 func (h *apiHandler) handleScheduleSub(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPatch {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	id := strings.TrimPrefix(r.URL.Path, "/schedules/")
 	if id == "" {
 		jsonErr(w, "schedule id required", http.StatusBadRequest)
 		return
 	}
-	var req struct {
-		Enabled *bool `json:"enabled"`
+
+	switch r.Method {
+	case http.MethodGet:
+		sc, err := h.store.GetSchedule(id)
+		if err != nil {
+			jsonErr(w, "schedule not found", http.StatusNotFound)
+			return
+		}
+		jsonOK(w, sc)
+
+	case http.MethodPatch:
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Enabled == nil {
+			jsonErr(w, "enabled is required", http.StatusBadRequest)
+			return
+		}
+		if err := h.store.SetScheduleEnabled(id, *req.Enabled); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, map[string]any{"id": id, "enabled": *req.Enabled})
+
+	case http.MethodDelete:
+		if err := h.store.DeleteSchedule(id); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.Enabled == nil {
-		jsonErr(w, "enabled is required", http.StatusBadRequest)
-		return
-	}
-	if err := h.store.SetScheduleEnabled(id, *req.Enabled); err != nil {
-		jsonErr(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	jsonOK(w, map[string]any{"id": id, "enabled": *req.Enabled})
 }
 
 // POST /api/workers/{id}/heartbeat — worker keepalive signal

@@ -16,7 +16,8 @@ export interface Schedule {
   name: string
   owner_id?: string
   pipeline_yaml: string
-  cron_expr: string
+  schedule_type: 'cron' | 'once'
+  cron_expr?: string
   enabled: boolean
   last_run_at?: string
   next_run_at: string
@@ -54,7 +55,8 @@ export interface CreateRunOptions {
 export interface CreateScheduleOptions {
   name: string
   yaml: string
-  cron: string
+  cron?: string
+  run_at?: string  // ISO string for once-type
   owner_id?: string
   params?: Record<string, unknown>
 }
@@ -122,6 +124,12 @@ export async function listSchedules(): Promise<Schedule[]> {
   return Array.isArray(data) ? (data as Schedule[]) : []
 }
 
+export async function getSchedule(id: string): Promise<Schedule> {
+  const res = await fetch(`${BASE}/schedules/${id}`)
+  if (!res.ok) throw new Error(`getSchedule: ${res.status}`)
+  return res.json()
+}
+
 export async function createSchedule(options: CreateScheduleOptions): Promise<{ schedule_id: string }> {
   const res = await fetch(`${BASE}/schedules`, {
     method: 'POST',
@@ -141,6 +149,14 @@ export async function setScheduleEnabled(id: string, enabled: boolean): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/schedules/${id}`, { method: 'DELETE' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error ?? res.statusText)

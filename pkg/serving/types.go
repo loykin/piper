@@ -33,10 +33,11 @@ type ArtifactRef struct {
 
 // RuntimeSpec describes the serving process to launch.
 type RuntimeSpec struct {
-	Image   string   `yaml:"image"`
-	Command []string `yaml:"command"`
-	Port    int      `yaml:"port"`
-	Mode    string   `yaml:"mode"` // "local" | "k8s"
+	Image      string   `yaml:"image"`
+	Command    []string `yaml:"command"`
+	Port       int      `yaml:"port"`
+	Mode       string   `yaml:"mode"`        // "local" | "k8s"
+	HealthPath string   `yaml:"health_path"` // HTTP path for readiness check (default: "/")
 }
 
 // K8sSpec holds Kubernetes-specific deployment options.

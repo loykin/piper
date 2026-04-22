@@ -172,3 +172,60 @@ export async function deleteSchedule(id: string): Promise<void> {
     throw new Error(err.error ?? res.statusText)
   }
 }
+
+// ── Services ──────────────────────────────────────────────────────────────────
+
+export interface Service {
+  name: string
+  run_id: string
+  artifact: string   // "step/artifact_name"
+  status: 'running' | 'stopped' | 'failed'
+  endpoint: string   // e.g. "http://localhost:9001"
+  pid: number
+  yaml: string
+  created_at: string
+  updated_at: string
+}
+
+export async function listServices(): Promise<Service[]> {
+  const res = await fetch(`${BASE}/services`)
+  if (!res.ok) throw new Error(`listServices: ${res.status}`)
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as Service[]) : []
+}
+
+export async function getService(name: string): Promise<Service> {
+  const res = await fetch(`${BASE}/services/${name}`)
+  if (!res.ok) throw new Error(`getService: ${res.status}`)
+  return res.json()
+}
+
+export async function deployService(yaml: string): Promise<{ name: string }> {
+  const res = await fetch(`${BASE}/services`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ yaml }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+export async function stopService(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/services/${name}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+export async function restartService(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/services/${name}/restart`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+

@@ -4,6 +4,7 @@ import WorkflowsPage from './pages/WorkflowsPage'
 import WorkflowCreatePage from './pages/WorkflowCreatePage'
 import RunHistoryPage from './pages/RunHistoryPage'
 import ScheduleDetailPage from './pages/ScheduleDetailPage'
+import ServicesPage from './pages/ServicesPage'
 
 function SidebarLink({ to, label }: { to: string; label: string }) {
   return (
@@ -34,6 +35,7 @@ export default function App() {
           <nav className="space-y-1">
             <SidebarLink to="/schedules" label="Schedule" />
             <SidebarLink to="/history" label="History" />
+            <SidebarLink to="/services" label="Services" />
           </nav>
         </aside>
 
@@ -44,6 +46,7 @@ export default function App() {
             <Route path="/schedules/create" element={<WorkflowCreatePage />} />
             <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
             <Route path="/history" element={<RunHistoryPage />} />
+            <Route path="/services" element={<ServicesPage />} />
             <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />
             <Route path="/pipelines/create" element={<Navigate to="/schedules/create" replace />} />
             <Route path="/run-history" element={<Navigate to="/history" replace />} />

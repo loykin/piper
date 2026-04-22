@@ -23,7 +23,13 @@ export default defineConfig({
       },
       '/api': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
-      '/services': 'http://localhost:8080',
+      '/services': {
+        target: 'http://localhost:8080',
+        bypass(req) {
+          if (req.headers.accept?.includes('text/html')) return req.url
+          return undefined
+        },
+      },
     },
   },
   build: { outDir: 'dist' },

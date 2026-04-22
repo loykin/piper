@@ -156,7 +156,11 @@ func (m *Manager) deployLocal(ctx context.Context, svc ModelService, modelDir st
 	go m.watchProcess(svc.Metadata.Name, cmd)
 
 	// Wait briefly to verify the process started and is listening
-	if err := waitReady(ctx, endpoint+"/", 10*time.Second); err != nil {
+	healthPath := rt.HealthPath
+	if healthPath == "" {
+		healthPath = "/"
+	}
+	if err := waitReady(ctx, endpoint+healthPath, 10*time.Second); err != nil {
 		slog.Warn("service health check timed out; process may still be initialising",
 			"name", svc.Metadata.Name, "endpoint", endpoint)
 	}

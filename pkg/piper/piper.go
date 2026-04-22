@@ -101,6 +101,7 @@ func New(cfg Config) (*Piper, error) {
 	}
 	q.onRunSuccess = p.handleRunSuccess
 	go p.runCleanup()
+	go p.runScheduler()
 	return p, nil
 }
 

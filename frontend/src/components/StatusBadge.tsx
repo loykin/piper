@@ -1,4 +1,5 @@
 const colors: Record<string, string> = {
+  scheduled: 'bg-violet-500/20 text-violet-300 border-violet-500/30',
   running: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
   success: 'bg-green-500/20 text-green-300 border-green-500/30',
   done:    'bg-green-500/20 text-green-300 border-green-500/30',

@@ -1,31 +1,51 @@
-import { Routes, Route, NavLink } from 'react-router-dom'
-import RunsPage from './pages/RunsPage'
+import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import RunDetailPage from './pages/RunDetailPage'
+import WorkflowsPage from './pages/WorkflowsPage'
+import WorkflowCreatePage from './pages/WorkflowCreatePage'
+import RunHistoryPage from './pages/RunHistoryPage'
+
+function SidebarLink({ to, label }: { to: string; label: string }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        [
+          'block rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+          isActive ? 'bg-indigo-600/20 text-indigo-300' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200',
+        ].join(' ')
+      }
+    >
+      {label}
+    </NavLink>
+  )
+}
 
 export default function App() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
-      {/* Top navigation */}
-      <header className="border-b border-gray-800 bg-gray-900">
-        <div className="mx-auto max-w-7xl flex items-center gap-6 px-6 py-3">
-          <span className="text-lg font-bold text-indigo-400 tracking-tight">⚡ piper</span>
-          <NavLink
-            to="/"
-            className={({ isActive }) =>
-              `text-sm font-medium transition-colors ${isActive ? 'text-white' : 'text-gray-400 hover:text-gray-200'}`
-            }
-          >
-            Runs
-          </NavLink>
-        </div>
-      </header>
+      <div className="mx-auto flex min-h-screen max-w-[1400px]">
+        <aside className="w-64 shrink-0 border-r border-gray-800 bg-gray-900/70 px-4 py-6">
+          <div className="mb-6 px-2">
+            <p className="text-lg font-bold tracking-tight text-indigo-300">piper</p>
+            <p className="mt-1 text-xs text-gray-500">Pipeline Control</p>
+          </div>
 
-      <main className="mx-auto max-w-7xl px-6 py-8">
-        <Routes>
-          <Route path="/" element={<RunsPage />} />
-          <Route path="/runs/:id" element={<RunDetailPage />} />
-        </Routes>
-      </main>
+          <nav className="space-y-1">
+            <SidebarLink to="/pipelines" label="Pipelines" />
+            <SidebarLink to="/run-history" label="Run History" />
+          </nav>
+        </aside>
+
+        <main className="flex-1 px-6 py-8">
+          <Routes>
+            <Route path="/" element={<Navigate to="/pipelines" replace />} />
+            <Route path="/pipelines" element={<WorkflowsPage />} />
+            <Route path="/pipelines/create" element={<WorkflowCreatePage />} />
+            <Route path="/run-history" element={<RunHistoryPage />} />
+            <Route path="/runs/:id" element={<RunDetailPage />} />
+          </Routes>
+        </main>
+      </div>
     </div>
   )
 }

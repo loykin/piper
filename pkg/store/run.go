@@ -11,7 +11,7 @@ type Run struct {
 	ID           string     `json:"id"`
 	OwnerID      string     `json:"owner_id,omitempty"`
 	PipelineName string     `json:"pipeline_name"`
-	Status       string     `json:"status"` // running | success | failed
+	Status       string     `json:"status"` // scheduled | running | success | failed
 	StartedAt    time.Time  `json:"started_at"`
 	EndedAt      *time.Time `json:"ended_at,omitempty"`
 	ScheduledAt  *time.Time `json:"scheduled_at,omitempty"` // logical/scheduled execution time (Airflow-style)
@@ -33,6 +33,38 @@ func (s *Store) UpdateRunStatus(id, status string, endedAt *time.Time) error {
 		status, endedAt, id,
 	)
 	return err
+}
+
+func (s *Store) MarkRunRunning(id string, startedAt time.Time) error {
+	_, err := s.db.Exec(
+		`UPDATE runs SET status='running', started_at=? WHERE id=?`,
+		startedAt, id,
+	)
+	return err
+}
+
+func (s *Store) ListDueScheduledRuns(now time.Time) ([]*Run, error) {
+	rows, err := s.db.Query(
+		`SELECT id, owner_id, pipeline_name, status, started_at, ended_at, scheduled_at
+		 FROM runs
+		 WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ?
+		 ORDER BY scheduled_at ASC`,
+		now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var runs []*Run
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
 }
 
 func (s *Store) GetRun(id string) (*Run, error) {

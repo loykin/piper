@@ -36,6 +36,8 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 	mux.Handle("/health", p.Handler(opt.Extra))
 	mux.Handle("/services", p.Handler(opt.Extra))
 	mux.Handle("/services/", p.Handler(opt.Extra))
+	mux.Handle("/schedules", p.Handler(opt.Extra))
+	mux.Handle("/schedules/", p.Handler(opt.Extra))
 	mux.Handle("/", ui.Handler()) // UI handles all remaining paths
 
 	// Apply middleware chain (Config.Hooks.Middleware)

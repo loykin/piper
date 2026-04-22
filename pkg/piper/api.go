@@ -47,6 +47,8 @@ func (h *apiHandler) routes() {
 	h.mux.HandleFunc("/services", h.handleServices)
 	h.mux.HandleFunc("/services/predict/", h.p.serving.proxy.ServeHTTP)
 	h.mux.HandleFunc("/services/", h.handleServiceSub)
+	h.mux.HandleFunc("/schedules", h.handleSchedules)
+	h.mux.HandleFunc("/schedules/", h.handleScheduleSub)
 }
 
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -118,13 +120,18 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 
 		runID := genRunID()
 		outputDir := filepath.Join(h.p.cfg.OutputDir, runID)
+		now := time.Now().UTC()
+		runStatus := "running"
+		if req.Vars.ScheduledAt != nil && req.Vars.ScheduledAt.After(now) {
+			runStatus = "scheduled"
+		}
 
 		run := &store.Run{
 			ID:           runID,
 			OwnerID:      req.OwnerID,
 			PipelineName: pl.Metadata.Name,
-			Status:       "running",
-			StartedAt:    time.Now(),
+			Status:       runStatus,
+			StartedAt:    now,
 			ScheduledAt:  req.Vars.ScheduledAt,
 			PipelineYAML: req.YAML,
 		}
@@ -144,11 +151,13 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Add to queue — workers execute by polling
-		h.p.queue.add(pl, dag, runID, ".", outputDir, req.Vars, req.Params)
+		// Add to queue immediately unless this is a one-time future-scheduled run.
+		if runStatus == "running" {
+			h.p.queue.add(pl, dag, runID, ".", outputDir, req.Vars, req.Params)
 
-		if h.p.cfg.Hooks.OnRunStart != nil {
-			go h.p.cfg.Hooks.OnRunStart(context.Background(), runID, pl)
+			if h.p.cfg.Hooks.OnRunStart != nil {
+				go h.p.cfg.Hooks.OnRunStart(context.Background(), runID, pl)
+			}
 		}
 
 		jsonOK(w, map[string]string{"run_id": runID})
@@ -262,6 +271,109 @@ func (h *apiHandler) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// GET  /schedules          — list schedules
+// POST /schedules          — create cron schedule
+func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		schedules, err := h.store.ListSchedules()
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, schedules)
+
+	case http.MethodPost:
+		var req struct {
+			Name    string         `json:"name"`
+			YAML    string         `json:"yaml"`
+			Cron    string         `json:"cron"`
+			OwnerID string         `json:"owner_id,omitempty"`
+			Params  map[string]any `json:"params,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Cron) == "" {
+			jsonErr(w, "cron is required", http.StatusBadRequest)
+			return
+		}
+		now := time.Now().UTC()
+		nextRunAt, err := nextScheduleTime(req.Cron, now)
+		if err != nil {
+			jsonErr(w, "invalid cron expression", http.StatusBadRequest)
+			return
+		}
+		paramsJSON := "{}"
+		if req.Params != nil {
+			if b, err := json.Marshal(req.Params); err == nil {
+				paramsJSON = string(b)
+			}
+		}
+
+		pl, err := h.p.Parse([]byte(req.YAML))
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			name = pl.Metadata.Name
+		}
+
+		sc := &store.Schedule{
+			ID:           "sch-" + genRunID(),
+			Name:         name,
+			OwnerID:      req.OwnerID,
+			PipelineYAML: req.YAML,
+			CronExpr:     req.Cron,
+			ParamsJSON:   paramsJSON,
+			Enabled:      true,
+			NextRunAt:    nextRunAt,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if err := h.store.CreateSchedule(sc); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, map[string]string{"schedule_id": sc.ID})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// PATCH /schedules/{id} — enable/disable
+func (h *apiHandler) handleScheduleSub(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/schedules/")
+	if id == "" {
+		jsonErr(w, "schedule id required", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Enabled == nil {
+		jsonErr(w, "enabled is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.SetScheduleEnabled(id, *req.Enabled); err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]any{"id": id, "enabled": *req.Enabled})
 }
 
 // POST /api/workers/{id}/heartbeat — worker keepalive signal

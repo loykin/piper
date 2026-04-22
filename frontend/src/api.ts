@@ -2,13 +2,15 @@
 
 export interface Run {
   id: string
+  schedule_id?: string
   owner_id?: string
   pipeline_name: string
-  status: 'scheduled' | 'running' | 'success' | 'failed'
+  status: 'running' | 'success' | 'failed'
   started_at: string
-  finished_at?: string
+  ended_at?: string
   scheduled_at?: string
   pipeline_yaml: string
+  steps?: Step[]
 }
 
 export interface Schedule {
@@ -16,7 +18,7 @@ export interface Schedule {
   name: string
   owner_id?: string
   pipeline_yaml: string
-  schedule_type: 'cron' | 'once'
+  schedule_type: 'immediate' | 'once' | 'cron'
   cron_expr?: string
   enabled: boolean
   last_run_at?: string
@@ -55,8 +57,9 @@ export interface CreateRunOptions {
 export interface CreateScheduleOptions {
   name: string
   yaml: string
+  type: 'immediate' | 'once' | 'cron'
   cron?: string
-  run_at?: string  // ISO string for once-type
+  run_at?: string  // ISO string for type=once
   owner_id?: string
   params?: Record<string, unknown>
 }
@@ -128,6 +131,13 @@ export async function getSchedule(id: string): Promise<Schedule> {
   const res = await fetch(`${BASE}/schedules/${id}`)
   if (!res.ok) throw new Error(`getSchedule: ${res.status}`)
   return res.json()
+}
+
+export async function listScheduleRuns(scheduleId: string): Promise<Run[]> {
+  const res = await fetch(`${BASE}/schedules/${scheduleId}/runs`)
+  if (!res.ok) throw new Error(`listScheduleRuns: ${res.status}`)
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as Run[]) : []
 }
 
 export async function createSchedule(options: CreateScheduleOptions): Promise<{ schedule_id: string }> {

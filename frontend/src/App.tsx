@@ -2,7 +2,7 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import RunDetailPage from './pages/RunDetailPage'
 import WorkflowsPage from './pages/WorkflowsPage'
 import WorkflowCreatePage from './pages/WorkflowCreatePage'
-import TaskHistoryPage from './pages/TaskHistoryPage'
+import RunHistoryPage from './pages/RunHistoryPage'
 import ScheduleDetailPage from './pages/ScheduleDetailPage'
 
 function SidebarLink({ to, label }: { to: string; label: string }) {
@@ -43,7 +43,7 @@ export default function App() {
             <Route path="/schedules" element={<WorkflowsPage />} />
             <Route path="/schedules/create" element={<WorkflowCreatePage />} />
             <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
-            <Route path="/history" element={<TaskHistoryPage />} />
+            <Route path="/history" element={<RunHistoryPage />} />
             <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />
             <Route path="/pipelines/create" element={<Navigate to="/schedules/create" replace />} />
             <Route path="/run-history" element={<Navigate to="/history" replace />} />

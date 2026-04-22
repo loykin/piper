@@ -87,7 +87,19 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		jsonOK(w, runs)
+		type runWithSteps struct {
+			*store.Run
+			Steps []*store.Step `json:"steps"`
+		}
+		result := make([]runWithSteps, 0, len(runs))
+		for _, run := range runs {
+			steps, _ := h.store.ListSteps(run.ID)
+			if steps == nil {
+				steps = []*store.Step{}
+			}
+			result = append(result, runWithSteps{Run: run, Steps: steps})
+		}
+		jsonOK(w, result)
 
 	case http.MethodPost:
 		var req struct {
@@ -289,6 +301,7 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name    string         `json:"name"`
 			YAML    string         `json:"yaml"`
+			Type    string         `json:"type"` // immediate | once | cron
 			Cron    string         `json:"cron"`
 			RunAt   *time.Time     `json:"run_at,omitempty"`
 			OwnerID string         `json:"owner_id,omitempty"`
@@ -299,10 +312,11 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		hasCron := strings.TrimSpace(req.Cron) != ""
-		hasRunAt := req.RunAt != nil && !req.RunAt.IsZero()
-		if !hasCron && !hasRunAt {
-			jsonErr(w, "either cron or run_at is required", http.StatusBadRequest)
+		if req.Type == "" {
+			req.Type = "immediate"
+		}
+		if req.Type != "immediate" && req.Type != "once" && req.Type != "cron" {
+			jsonErr(w, "type must be immediate, once, or cron", http.StatusBadRequest)
 			return
 		}
 
@@ -330,35 +344,48 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 			Name:         name,
 			OwnerID:      req.OwnerID,
 			PipelineYAML: req.YAML,
+			ScheduleType: req.Type,
 			ParamsJSON:   paramsJSON,
 			Enabled:      true,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
 
-		if hasCron {
+		switch req.Type {
+		case "cron":
+			if strings.TrimSpace(req.Cron) == "" {
+				jsonErr(w, "cron is required for type=cron", http.StatusBadRequest)
+				return
+			}
 			nextRunAt, err := nextScheduleTime(req.Cron, now)
 			if err != nil {
 				jsonErr(w, "invalid cron expression", http.StatusBadRequest)
 				return
 			}
-			sc.ScheduleType = "cron"
 			sc.CronExpr = req.Cron
 			sc.NextRunAt = nextRunAt
-		} else {
-			if req.RunAt.Before(now) {
-				jsonErr(w, "run_at must be in the future", http.StatusBadRequest)
+
+		case "once":
+			if req.RunAt == nil || req.RunAt.IsZero() {
+				jsonErr(w, "run_at is required for type=once", http.StatusBadRequest)
 				return
 			}
-			sc.ScheduleType = "once"
-			sc.CronExpr = ""
 			sc.NextRunAt = req.RunAt.UTC()
+
+		case "immediate":
+			sc.NextRunAt = now
 		}
 
 		if err := h.store.CreateSchedule(sc); err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// For immediate type: trigger a run right now.
+		if req.Type == "immediate" {
+			go h.p.triggerSchedule(sc)
+		}
+
 		jsonOK(w, map[string]string{"schedule_id": sc.ID})
 
 	default:
@@ -366,13 +393,32 @@ func (h *apiHandler) handleSchedules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET    /schedules/{id} — get a single schedule
-// PATCH  /schedules/{id} — enable/disable
-// DELETE /schedules/{id} — delete
+// GET    /schedules/{id}      — get a single schedule
+// GET    /schedules/{id}/runs — list runs for this schedule
+// PATCH  /schedules/{id}      — enable/disable
+// DELETE /schedules/{id}      — delete
 func (h *apiHandler) handleScheduleSub(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/schedules/")
+	rest := strings.TrimPrefix(r.URL.Path, "/schedules/")
+	parts := strings.SplitN(rest, "/", 2)
+	id := parts[0]
+	sub := ""
+	if len(parts) == 2 {
+		sub = parts[1]
+	}
+
 	if id == "" {
 		jsonErr(w, "schedule id required", http.StatusBadRequest)
+		return
+	}
+
+	// GET /schedules/{id}/runs
+	if sub == "runs" && r.Method == http.MethodGet {
+		runs, err := h.store.ListRuns(store.RunFilter{ScheduleID: id})
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, runs)
 		return
 	}
 

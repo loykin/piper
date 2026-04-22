@@ -32,65 +32,17 @@ func (p *Piper) runScheduler() {
 		due, err := p.store.ListDueSchedules(now)
 		if err != nil {
 			slog.Warn("list due schedules failed", "err", err)
-		} else {
-			for _, sc := range due {
-				p.triggerSchedule(sc)
-			}
-		}
-
-		dueRuns, err := p.store.ListDueScheduledRuns(now)
-		if err != nil {
-			slog.Warn("list due one-time runs failed", "err", err)
 			continue
 		}
-		for _, run := range dueRuns {
-			p.triggerScheduledRun(run)
+		for _, sc := range due {
+			p.triggerSchedule(sc)
 		}
-	}
-}
-
-func (p *Piper) triggerScheduledRun(run *store.Run) {
-	pl, err := p.Parse([]byte(run.PipelineYAML))
-	if err != nil {
-		slog.Warn("parse one-time scheduled pipeline failed", "run_id", run.ID, "err", err)
-		now := time.Now().UTC()
-		_ = p.store.UpdateRunStatus(run.ID, "failed", &now)
-		return
-	}
-	dag, err := pipeline.BuildDAG(pl)
-	if err != nil {
-		slog.Warn("build one-time scheduled dag failed", "run_id", run.ID, "err", err)
-		now := time.Now().UTC()
-		_ = p.store.UpdateRunStatus(run.ID, "failed", &now)
-		return
-	}
-
-	startAt := time.Now().UTC()
-	if err := p.store.MarkRunRunning(run.ID, startAt); err != nil {
-		slog.Warn("mark run running failed", "run_id", run.ID, "err", err)
-		return
-	}
-
-	for _, s := range pl.Spec.Steps {
-		if err := p.store.UpsertStep(&store.Step{RunID: run.ID, StepName: s.Name, Status: "pending"}); err != nil {
-			slog.Warn("init one-time scheduled step failed", "run_id", run.ID, "step", s.Name, "err", err)
-		}
-	}
-
-	outputDir := filepath.Join(p.cfg.OutputDir, run.ID)
-	vars := proto.BuiltinVars{ScheduledAt: run.ScheduledAt}
-	p.queue.add(pl, dag, run.ID, ".", outputDir, vars, nil)
-
-	if p.cfg.Hooks.OnRunStart != nil {
-		go p.cfg.Hooks.OnRunStart(context.Background(), run.ID, pl)
 	}
 }
 
 func (p *Piper) triggerSchedule(sc *store.Schedule) {
 	now := time.Now().UTC()
 
-	// For once-type: compute a dummy nextRunAt we don't actually use;
-	// we just need to mark it done after firing.
 	var nextRunAt time.Time
 	if sc.ScheduleType == "cron" {
 		var err error
@@ -125,6 +77,7 @@ func (p *Piper) triggerSchedule(sc *store.Schedule) {
 
 	run := &store.Run{
 		ID:           runID,
+		ScheduleID:   sc.ID,
 		OwnerID:      sc.OwnerID,
 		PipelineName: pl.Metadata.Name,
 		Status:       "running",
@@ -149,14 +102,20 @@ func (p *Piper) triggerSchedule(sc *store.Schedule) {
 	}
 	p.queue.add(pl, dag, runID, ".", outputDir, proto.BuiltinVars{ScheduledAt: &scheduledAt}, params)
 
-	if sc.ScheduleType == "once" {
-		// One-time: mark disabled after firing — it's done.
-		if err := p.store.SetScheduleEnabled(sc.ID, false); err != nil {
-			slog.Warn("mark once schedule done failed", "schedule_id", sc.ID, "err", err)
-		}
-	} else {
+	if p.cfg.Hooks.OnRunStart != nil {
+		go p.cfg.Hooks.OnRunStart(context.Background(), runID, pl)
+	}
+
+	switch sc.ScheduleType {
+	case "cron":
 		if err := p.store.UpdateScheduleRun(sc.ID, now, nextRunAt); err != nil {
 			slog.Warn("update schedule run failed", "schedule_id", sc.ID, "err", err)
 		}
+	case "once", "immediate":
+		// fire once then done
+		if err := p.store.SetScheduleEnabled(sc.ID, false); err != nil {
+			slog.Warn("mark schedule done failed", "schedule_id", sc.ID, "err", err)
+		}
+		_ = p.store.UpdateScheduleRun(sc.ID, now, now)
 	}
 }

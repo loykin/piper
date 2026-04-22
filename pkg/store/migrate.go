@@ -18,14 +18,17 @@ type migration struct {
 var migrations = []migration{
 	{
 		version: 1,
-		desc:    "create runs, steps, logs tables",
+		desc:    "create core tables",
 		up: `
 			CREATE TABLE IF NOT EXISTS runs (
 				id            TEXT PRIMARY KEY,
+				schedule_id   TEXT NOT NULL DEFAULT '',
+				owner_id      TEXT NOT NULL DEFAULT '',
 				pipeline_name TEXT NOT NULL,
 				status        TEXT NOT NULL,
 				started_at    DATETIME NOT NULL,
 				ended_at      DATETIME,
+				scheduled_at  DATETIME,
 				pipeline_yaml TEXT NOT NULL DEFAULT ''
 			);
 			CREATE TABLE IF NOT EXISTS steps (
@@ -48,12 +51,8 @@ var migrations = []migration{
 			);
 			CREATE INDEX IF NOT EXISTS idx_logs_step ON logs(run_id, step_name);
 			CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run_id);
+			CREATE INDEX IF NOT EXISTS idx_runs_schedule ON runs(schedule_id);
 		`,
-	},
-	{
-		version: 2,
-		desc:    "add owner_id to runs",
-		up:      `ALTER TABLE runs ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''`,
 	},
 	{
 		version: 3,
@@ -82,11 +81,6 @@ var migrations = []migration{
 			CREATE INDEX IF NOT EXISTS idx_agents_task ON agents(task_id);
 			CREATE INDEX IF NOT EXISTS idx_agents_run  ON agents(run_id, step_name);
 		`,
-	},
-	{
-		version: 4,
-		desc:    "add scheduled_at to runs",
-		up:      `ALTER TABLE runs ADD COLUMN scheduled_at DATETIME`,
 	},
 	{
 		version: 5,

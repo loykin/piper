@@ -21,7 +21,7 @@ spec:
 
 function elapsed(run: Run): string {
   const start = new Date(run.started_at).getTime()
-  const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now()
+  const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now()
   const ms = end - start
   if (ms < 1000) return `${ms}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`

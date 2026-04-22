@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createRun, createSchedule } from '../api'
+import { createSchedule } from '../api'
 
-type ExecutionMode = 'now' | 'once' | 'cron'
+type ScheduleType = 'immediate' | 'once' | 'cron'
 
 const EXAMPLE_YAML = `apiVersion: piper/v1
 kind: Pipeline
@@ -27,73 +27,49 @@ function applyPipelineName(yaml: string, name: string): string {
   return yaml
 }
 
+const TYPE_OPTIONS: { type: ScheduleType; label: string; desc: string }[] = [
+  { type: 'immediate', label: 'Immediate', desc: 'Trigger a run as soon as the schedule is created.' },
+  { type: 'once',      label: 'Once',      desc: 'Run once at a specified time.' },
+  { type: 'cron',      label: 'Cron',      desc: 'Run repeatedly on a cron schedule.' },
+]
+
 export default function WorkflowCreatePage() {
   const navigate = useNavigate()
   const [name, setName] = useState('my-pipeline')
   const [yaml, setYaml] = useState(EXAMPLE_YAML)
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>('now')
-  const [scheduleAt, setScheduleAt] = useState('')
+  const [scheduleType, setScheduleType] = useState<ScheduleType>('immediate')
+  const [runAt, setRunAt] = useState('')
   const [cronExpr, setCronExpr] = useState('0 * * * *')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  const scheduleAtISO = useMemo(() => {
-    if (!scheduleAt) return ''
-    const d = new Date(scheduleAt)
-    if (Number.isNaN(d.getTime())) return ''
-    return d.toISOString()
-  }, [scheduleAt])
+  const runAtISO = useMemo(() => {
+    if (!runAt) return ''
+    const d = new Date(runAt)
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString()
+  }, [runAt])
 
-  async function handleCreateAndRun() {
+  async function handleSubmit() {
     setError('')
-
     const trimmedName = name.trim()
     const trimmedYaml = yaml.trim()
-    if (!trimmedName) {
-      setError('Pipeline name is required.')
-      return
-    }
-    if (!trimmedYaml) {
-      setError('Pipeline YAML is required.')
-      return
-    }
 
-    if (executionMode === 'once' && !scheduleAtISO) {
-      setError('One-time execution requires a valid schedule time.')
-      return
-    }
-    if (executionMode === 'cron' && !cronExpr.trim()) {
-      setError('Cron expression is required for cron schedule.')
-      return
-    }
+    if (!trimmedName) { setError('Pipeline name is required.'); return }
+    if (!trimmedYaml) { setError('Pipeline YAML is required.'); return }
+    if (scheduleType === 'once' && !runAtISO) { setError('Run time is required for once type.'); return }
+    if (scheduleType === 'cron' && !cronExpr.trim()) { setError('Cron expression is required.'); return }
 
     try {
       setSubmitting(true)
       const normalizedYaml = applyPipelineName(trimmedYaml, trimmedName)
-
-      if (executionMode === 'cron') {
-        await createSchedule({
-          name: trimmedName,
-          yaml: normalizedYaml,
-          cron: cronExpr.trim(),
-        })
-        navigate('/schedules')
-        return
-      }
-
-      if (executionMode === 'once') {
-        await createSchedule({
-          name: trimmedName,
-          yaml: normalizedYaml,
-          run_at: scheduleAtISO,
-        })
-        navigate('/schedules')
-        return
-      }
-
-      // 'now' mode: run immediately
-      const result = await createRun(normalizedYaml)
-      navigate(`/runs/${result.run_id}`)
+      const result = await createSchedule({
+        name: trimmedName,
+        yaml: normalizedYaml,
+        type: scheduleType,
+        cron: scheduleType === 'cron' ? cronExpr.trim() : undefined,
+        run_at: scheduleType === 'once' ? runAtISO : undefined,
+      })
+      navigate(`/schedules/${result.schedule_id}`)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -105,7 +81,7 @@ export default function WorkflowCreatePage() {
     <div className="space-y-6">
       <section className="rounded-xl border border-gray-800 bg-gray-900 p-6">
         <h1 className="text-lg font-semibold text-gray-100">Create Schedule</h1>
-        <p className="mt-1 text-sm text-gray-400">Register pipeline + schedule, then execute by trigger type.</p>
+        <p className="mt-1 text-sm text-gray-400">Register a pipeline and choose how it should be triggered.</p>
       </section>
 
       <section className="rounded-xl border border-gray-800 bg-gray-950 p-6">
@@ -121,57 +97,44 @@ export default function WorkflowCreatePage() {
           </div>
 
           <div>
-            <p className="mb-2 block text-sm font-medium text-gray-300">Execution Mode</p>
+            <p className="mb-2 block text-sm font-medium text-gray-300">Trigger Type</p>
             <div className="grid gap-2 sm:grid-cols-3">
-              <button
-                type="button"
-                onClick={() => setExecutionMode('now')}
-                className={`rounded-lg border px-3 py-2 text-left text-sm ${executionMode === 'now' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
-              >
-                Run Now
-              </button>
-              <button
-                type="button"
-                onClick={() => setExecutionMode('once')}
-                className={`rounded-lg border px-3 py-2 text-left text-sm ${executionMode === 'once' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
-              >
-                Run Once (Scheduled)
-              </button>
-              <button
-                type="button"
-                onClick={() => setExecutionMode('cron')}
-                className={`rounded-lg border px-3 py-2 text-left text-sm ${executionMode === 'cron' ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
-              >
-                Cron Schedule
-              </button>
+              {TYPE_OPTIONS.map(({ type, label, desc }) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setScheduleType(type)}
+                  className={`rounded-lg border px-3 py-3 text-left text-sm transition-colors ${scheduleType === type ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300' : 'border-gray-700 bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
+                >
+                  <div className="font-semibold">{label}</div>
+                  <div className="mt-0.5 text-xs opacity-70">{desc}</div>
+                </button>
+              ))}
             </div>
           </div>
 
-          {executionMode === 'once' && (
+          {scheduleType === 'once' && (
             <div>
-              <label className="mb-2 block text-sm font-medium text-gray-300">Schedule At</label>
+              <label className="mb-2 block text-sm font-medium text-gray-300">Run At</label>
               <input
                 type="datetime-local"
-                value={scheduleAt}
-                onChange={(e) => setScheduleAt(e.target.value)}
+                value={runAt}
+                onChange={(e) => setRunAt(e.target.value)}
                 className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-indigo-500 focus:outline-none"
               />
-              <p className="mt-2 text-xs text-gray-500">
-                One-time schedules stay in `scheduled` status until the scheduled time, then execute automatically.
-              </p>
             </div>
           )}
 
-          {executionMode === 'cron' && (
+          {scheduleType === 'cron' && (
             <div>
               <label className="mb-2 block text-sm font-medium text-gray-300">Cron Expression</label>
               <input
                 value={cronExpr}
                 onChange={(e) => setCronExpr(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-indigo-500 focus:outline-none font-mono"
                 placeholder="0 * * * *"
               />
-              <p className="mt-2 text-xs text-gray-500">Format: minute hour day month weekday (e.g. `*/15 * * * *`).</p>
+              <p className="mt-1 text-xs text-gray-500">minute hour day month weekday — e.g. <code>*/15 * * * *</code> (every 15 min)</p>
             </div>
           )}
 
@@ -198,11 +161,11 @@ export default function WorkflowCreatePage() {
             </button>
             <button
               type="button"
-              onClick={handleCreateAndRun}
+              onClick={handleSubmit}
               disabled={submitting}
               className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
             >
-              {submitting ? 'Submitting...' : executionMode === 'cron' ? 'Create Schedule' : 'Create & Run'}
+              {submitting ? 'Submitting...' : 'Create Schedule'}
             </button>
           </div>
         </div>

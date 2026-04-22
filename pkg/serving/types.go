@@ -41,7 +41,8 @@ type RuntimeSpec struct {
 
 // K8sSpec holds Kubernetes-specific deployment options.
 type K8sSpec struct {
-	Namespace string            `yaml:"namespace"`
-	Replicas  int               `yaml:"replicas"`
-	Resources map[string]string `yaml:"resources"` // cpu, memory, gpu
+	Namespace       string            `yaml:"namespace"`
+	Replicas        int               `yaml:"replicas"`
+	Resources       map[string]string `yaml:"resources"`         // cpu, memory, gpu
+	ImagePullPolicy string            `yaml:"image_pull_policy"` // Always | IfNotPresent | Never (default: Always)
 }

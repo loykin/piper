@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
@@ -74,7 +78,15 @@ func New(cfg Config) (*Piper, error) {
 		return nil, fmt.Errorf("create model dir: %w", err)
 	}
 
-	servingMgr := serving.New(st, modelDir, nil) // k8s clientset injected later via SetServingK8sClient
+	var k8sClientset *kubernetes.Clientset
+	if cfg.K8s.Kubeconfig != "" || cfg.K8s.InCluster {
+		if cs, err := buildK8sClientset(cfg.K8s); err != nil {
+			slog.Warn("k8s clientset unavailable for serving", "err", err)
+		} else {
+			k8sClientset = cs
+		}
+	}
+	servingMgr := serving.New(st, modelDir, k8sClientset)
 	q := newQueue(st)
 	p := &Piper{
 		cfg:      cfg,
@@ -370,6 +382,33 @@ func (p *Piper) resolveArtifactDir(_ context.Context, svc serving.ModelService) 
 
 func (p *Piper) SourceConfig() source.Config {
 	return p.sourceConfig()
+}
+
+// SetServingK8sClientset builds a k8s clientset from the given kubeconfig path
+// and injects it into the serving manager. Call this after New() when the
+// kubeconfig path is only available at runtime (e.g. via CLI flag).
+func (p *Piper) SetServingK8sClientset(kubeconfig string) error {
+	cs, err := buildK8sClientset(K8sConfig{Kubeconfig: kubeconfig})
+	if err != nil {
+		return fmt.Errorf("build k8s clientset: %w", err)
+	}
+	p.serving.manager.SetK8sClientset(cs)
+	return nil
+}
+
+// buildK8sClientset creates a Kubernetes clientset from the K8sConfig.
+func buildK8sClientset(cfg K8sConfig) (*kubernetes.Clientset, error) {
+	var restCfg *rest.Config
+	var err error
+	if cfg.InCluster {
+		restCfg, err = rest.InClusterConfig()
+	} else {
+		restCfg, err = clientcmd.BuildConfigFromFlags("", cfg.Kubeconfig)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("k8s rest config: %w", err)
+	}
+	return kubernetes.NewForConfig(restCfg)
 }
 
 // mergeParams merges step-level params (base) with run-level params (override).

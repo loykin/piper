@@ -17,6 +17,13 @@ func newServerCmd(p *piper.Piper) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
+
+			if kc, _ := cmd.Flags().GetString("serving-kubeconfig"); kc != "" {
+				if err := p.SetServingK8sClientset(kc); err != nil {
+					return err
+				}
+			}
+
 			addr, _ := cmd.Flags().GetString("addr")
 			return p.Serve(ctx, piper.ServeOption{Addr: addr})
 		},
@@ -26,6 +33,7 @@ func newServerCmd(p *piper.Piper) *cobra.Command {
 	cmd.Flags().Bool("tls", false, "enable TLS")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file")
 	cmd.Flags().String("tls-key", "", "TLS key file")
+	cmd.Flags().String("serving-kubeconfig", "", "kubeconfig path for ModelService k8s deployments")
 
 	mustBindPFlag("server.addr", cmd.Flags().Lookup("addr"))
 	mustBindPFlag("server.tls.enabled", cmd.Flags().Lookup("tls"))

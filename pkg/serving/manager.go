@@ -28,6 +28,11 @@ type Manager struct {
 	k8s      *kubernetes.Clientset // nil when k8s mode is not configured
 }
 
+// SetK8sClientset injects a Kubernetes clientset at runtime.
+func (m *Manager) SetK8sClientset(cs *kubernetes.Clientset) {
+	m.k8s = cs
+}
+
 // New creates a Manager.
 // modelDir is the root directory for local model artifact downloads.
 // clientset may be nil if K8s mode is not used.
@@ -324,11 +329,12 @@ func (m *Manager) deployK8s(ctx context.Context, svc ModelService, s3URI string,
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:      "serving",
-							Image:     rt.Image,
-							Command:   []string{command[0]},
-							Args:      command[1:],
-							Resources: resReqs,
+							Name:            "serving",
+							Image:           rt.Image,
+							ImagePullPolicy: corev1.PullPolicy(k.ImagePullPolicy),
+							Command:         []string{command[0]},
+							Args:            command[1:],
+							Resources:       resReqs,
 							Env: []corev1.EnvVar{
 								{Name: "PIPER_MODEL_DIR", Value: s3URI},
 								{Name: "PIPER_SERVICE_NAME", Value: svc.Metadata.Name},

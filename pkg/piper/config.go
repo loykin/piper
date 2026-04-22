@@ -33,6 +33,9 @@ type Config struct {
 	// K8s — when configured, steps run as K8s Jobs.
 	// Create a Launcher with pkg/k8s.New(cfg.K8s), then register it with p.SetDispatcher(launcher).
 	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
+
+	// Serving — model serving configuration.
+	Serving ServingConfig `yaml:"serving" mapstructure:"serving"`
 }
 
 type GitConfig struct {
@@ -86,6 +89,13 @@ type K8sConfig struct {
 
 	// TTLAfterFinished: seconds after which a finished Job is automatically deleted. 0 means no auto-deletion.
 	TTLAfterFinished int32 `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
+}
+
+// ServingConfig holds configuration for model serving (ModelService).
+type ServingConfig struct {
+	// ModelDir is the local directory where model artifacts are downloaded before serving.
+	// Defaults to output_dir/models.
+	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
 }
 
 func DefaultConfig() Config {

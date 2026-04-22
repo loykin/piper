@@ -14,8 +14,20 @@ type Metadata struct {
 }
 
 type Spec struct {
-	Defaults Defaults `yaml:"defaults"`
-	Steps    []Step   `yaml:"steps"`
+	Defaults  Defaults   `yaml:"defaults"`
+	Steps     []Step     `yaml:"steps"`
+	OnSuccess *OnSuccess `yaml:"on_success,omitempty"`
+}
+
+// OnSuccess defines actions to run when all pipeline steps succeed.
+type OnSuccess struct {
+	Deploy *DeployTrigger `yaml:"deploy,omitempty"`
+}
+
+// DeployTrigger automatically redeploys a ModelService after a successful run.
+type DeployTrigger struct {
+	Service  string `yaml:"service"`  // ModelService name
+	Artifact string `yaml:"artifact"` // "step/artifact" from this run
 }
 
 type Defaults struct {

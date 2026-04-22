@@ -137,6 +137,122 @@ GET  /api/workers                    list active workers
 
 Workers handle this automatically — no manual calls needed.
 
+## Model Serving
+
+Deploy a trained model as a long-running inference service using `ModelService`.
+Any runtime that accepts `image + command` is supported — Triton, vLLM, TorchServe, BentoML, etc.
+
+### ModelService YAML
+
+```yaml
+apiVersion: piper/v1
+kind: ModelService
+
+metadata:
+  name: fraud-detector
+
+spec:
+  # Which artifact to serve
+  model:
+    from_artifact:
+      pipeline: train-fraud   # Pipeline metadata.name
+      step: train             # step name
+      artifact: model         # outputs[].name
+      run: latest             # latest | <run-id>
+
+  # Runtime: any server covered by image + command
+  runtime:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    command: ["tritonserver", "--model-repository=$(PIPER_MODEL_DIR)"]
+    port: 8000
+    mode: local               # local | k8s
+
+  # K8s mode only
+  k8s:
+    namespace: default
+    replicas: 1
+    resources:
+      cpu: "2"
+      memory: "8Gi"
+      gpu: "1"
+```
+
+### Injected Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `PIPER_MODEL_DIR` | Path to the downloaded artifact (local mode) or S3 URI (k8s mode) |
+| `PIPER_SERVICE_NAME` | ModelService name |
+
+### Runtime Examples
+
+```yaml
+# Triton
+runtime:
+  image: nvcr.io/nvidia/tritonserver:24.01-py3
+  command: ["tritonserver", "--model-repository=$(PIPER_MODEL_DIR)"]
+  port: 8000
+
+# vLLM
+runtime:
+  image: vllm/vllm-openai:latest
+  command: ["python", "-m", "vllm.entrypoints.openai.api_server",
+            "--model", "$(PIPER_MODEL_DIR)", "--port", "8000"]
+  port: 8000
+
+# TorchServe
+runtime:
+  image: pytorch/torchserve:latest
+  command: ["torchserve", "--start", "--model-store", "$(PIPER_MODEL_DIR)", "--foreground"]
+  port: 8080
+
+# BentoML
+runtime:
+  image: my-bentoml-service:latest
+  command: ["bentoml", "serve", "$(PIPER_MODEL_DIR)", "--port", "3000"]
+  port: 3000
+```
+
+### Auto-deploy on Pipeline Success
+
+```yaml
+spec:
+  steps:
+    - name: train
+      ...
+  on_success:
+    deploy:
+      service: fraud-detector   # ModelService name
+      artifact: train/model     # artifact from this run
+```
+
+### Model Serving API
+
+```
+GET    /services                     list services
+POST   /services                     deploy a ModelService (body: {"yaml": "..."})
+GET    /services/{name}              service status
+DELETE /services/{name}              stop and delete
+POST   /services/{name}/restart      restart with latest artifact
+POST   /services/predict/{name}[/…]  proxy inference request to the runtime
+```
+
+### Library Usage
+
+```go
+// Deploy a service
+svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
+
+// Inference proxy is automatically mounted at /services/predict/{name}
+// — just send requests to the piper server
+
+// Stop a service
+err = p.StopService(ctx, "fraud-detector")
+
+// Restart with latest artifact
+err = p.RestartService(ctx, "fraud-detector")
+```
+
 ## Library Usage
 
 ```go
@@ -170,6 +286,9 @@ mux.Handle("/piper/ui/", http.StripPrefix("/piper/ui", ui.Handler()))
 // Enable Kubernetes mode
 launcher, _ := k8s.New(k8s.Config{...})
 p.SetDispatcher(launcher)
+
+// Deploy a ModelService
+svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
 ```
 
 ## Configuration (`.piper.yaml`)
@@ -194,6 +313,9 @@ source:
     access_key: minioadmin
     secret_key: minioadmin
     bucket: piper-artifacts
+
+serving:
+  model_dir: ./piper-models    # local artifact download path
 
 k8s:
   agent_image: piper/piper:latest
@@ -267,6 +389,7 @@ pkg/runner/         shared execution logic (S3 download → exec → upload → 
 pkg/worker/         bare-metal worker (poll, register, heartbeat)
 pkg/k8s/            Kubernetes Job launcher (Dispatcher implementation)
 pkg/executor/       step executors (command, python, notebook)
+pkg/serving/        ModelService lifecycle (deploy, stop, restart, proxy)
 pkg/store/          state persistence (SQLite / PostgreSQL)
 pkg/cmd/            cobra commands (reusable in embedded mode)
 pkg/ui/             embedded React SPA

@@ -46,10 +46,11 @@ type runEntry struct {
 }
 
 type queue struct {
-	mu         sync.Mutex
-	runs       map[string]*runEntry // runID → entry
-	st         *store.Store
-	dispatcher proto.Dispatcher // nil means polling mode
+	mu           sync.Mutex
+	runs         map[string]*runEntry // runID → entry
+	st           *store.Store
+	dispatcher   proto.Dispatcher                          // nil means polling mode
+	onRunSuccess func(runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
 }
 
 func newQueue(st *store.Store) *queue {
@@ -187,8 +188,13 @@ func (q *queue) complete(id, status, errMsg string, startedAt, endedAt time.Time
 		if err := q.st.UpdateRunStatus(runID, runStatus, &finishedAt); err != nil {
 			slog.Warn("update run status failed", "run_id", runID, "err", err)
 		}
+		pl := r.pl
 		delete(q.runs, runID)
 		slog.Info("run completed", "run_id", runID, "status", runStatus)
+
+		if runStatus == "success" && q.onRunSuccess != nil {
+			go q.onRunSuccess(runID, pl)
+		}
 	}
 
 	return nil

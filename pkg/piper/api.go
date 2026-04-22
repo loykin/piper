@@ -42,6 +42,11 @@ func (h *apiHandler) routes() {
 	h.mux.HandleFunc("/api/workers/", h.handleWorkerOp)
 	h.mux.HandleFunc("/api/tasks/next", h.handleTaskNext)
 	h.mux.HandleFunc("/api/tasks/", h.handleTaskOp)
+
+	// ModelService API
+	h.mux.HandleFunc("/services", h.handleServices)
+	h.mux.HandleFunc("/services/predict/", h.p.serving.proxy.ServeHTTP)
+	h.mux.HandleFunc("/services/", h.handleServiceSub)
 }
 
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -439,6 +444,84 @@ func (h *apiHandler) handleLogStream(w http.ResponseWriter, r *http.Request, run
 
 func (h *apiHandler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+// GET  /services       — list services
+// POST /services       — deploy a ModelService from YAML
+func (h *apiHandler) handleServices(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		svcs, err := h.store.ListServices()
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, svcs)
+
+	case http.MethodPost:
+		var req struct {
+			YAML string `json:"yaml"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		svc, err := h.p.DeployService(r.Context(), []byte(req.YAML))
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		jsonOK(w, svc)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// GET    /services/{name}         — get service status
+// DELETE /services/{name}         — stop and delete service
+// POST   /services/{name}/restart — restart service
+func (h *apiHandler) handleServiceSub(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/services/")
+	parts := strings.SplitN(rest, "/", 2)
+	name := parts[0]
+	if name == "" {
+		jsonErr(w, "service name required", http.StatusBadRequest)
+		return
+	}
+
+	// POST /services/{name}/restart
+	if r.Method == http.MethodPost && len(parts) == 2 && parts[1] == "restart" {
+		if err := h.p.RestartService(r.Context(), name); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		svc, err := h.store.GetService(name)
+		if err != nil || svc == nil {
+			jsonErr(w, "service not found", http.StatusNotFound)
+			return
+		}
+		jsonOK(w, svc)
+
+	case http.MethodDelete:
+		if err := h.p.StopService(r.Context(), name); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := h.store.DeleteService(name); err != nil {
+			slog.Warn("delete service record failed", "name", name, "err", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 type responseRecorder struct {

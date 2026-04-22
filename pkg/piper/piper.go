@@ -9,13 +9,22 @@ import (
 	"path/filepath"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/source"
 	"github.com/piper/piper/pkg/store"
 )
+
+// servingBundle groups the serving manager and proxy together.
+type servingBundle struct {
+	manager *serving.Manager
+	proxy   *serving.Proxy
+}
 
 // Piper is the library entry point.
 // Embed it in projects such as data-voyager.
@@ -28,6 +37,7 @@ type Piper struct {
 	logs     logstore.LogStore
 	queue    *queue
 	registry *workerRegistry
+	serving  servingBundle
 }
 
 func New(cfg Config) (*Piper, error) {
@@ -56,9 +66,59 @@ func New(cfg Config) (*Piper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	p := &Piper{cfg: cfg, store: st, logs: st.LogStore(), queue: newQueue(st), registry: newWorkerRegistry(st)}
+	modelDir := cfg.Serving.ModelDir
+	if modelDir == "" {
+		modelDir = filepath.Join(cfg.OutputDir, "models")
+	}
+	if err := os.MkdirAll(modelDir, 0755); err != nil {
+		return nil, fmt.Errorf("create model dir: %w", err)
+	}
+
+	servingMgr := serving.New(st, modelDir, nil) // k8s clientset injected later via SetServingK8sClient
+	q := newQueue(st)
+	p := &Piper{
+		cfg:      cfg,
+		store:    st,
+		logs:     st.LogStore(),
+		queue:    q,
+		registry: newWorkerRegistry(st),
+		serving: servingBundle{
+			manager: servingMgr,
+			proxy:   serving.NewProxy(st),
+		},
+	}
+	q.onRunSuccess = p.handleRunSuccess
 	go p.runCleanup()
 	return p, nil
+}
+
+// handleRunSuccess is called (in a goroutine) when a queued run completes successfully.
+// It triggers on_success.deploy if configured in the pipeline spec.
+func (p *Piper) handleRunSuccess(runID string, pl *pipeline.Pipeline) {
+	if pl.Spec.OnSuccess == nil || pl.Spec.OnSuccess.Deploy == nil {
+		return
+	}
+	trigger := pl.Spec.OnSuccess.Deploy
+	svc, err := p.store.GetService(trigger.Service)
+	if err != nil || svc == nil {
+		return
+	}
+	if svc.YAML == "" {
+		return
+	}
+	// Re-deploy with the new run's artifact
+	var ms serving.ModelService
+	if err := yaml.Unmarshal([]byte(svc.YAML), &ms); err != nil {
+		return
+	}
+	if ms.Spec.Model.FromArtifact != nil {
+		ms.Spec.Model.FromArtifact.Run = runID
+	}
+	updatedYAML, _ := yaml.Marshal(ms)
+	if _, err := p.DeployService(context.Background(), updatedYAML); err != nil {
+		// Non-fatal: log and continue
+		_ = err
+	}
 }
 
 // runCleanup periodically removes expired workers.
@@ -213,6 +273,99 @@ func (p *Piper) SetDispatcher(d proto.Dispatcher) {
 
 func (p *Piper) Config() Config {
 	return p.cfg
+}
+
+// DeployService parses a ModelService YAML and deploys it.
+// It resolves the artifact (downloading if needed) and starts the runtime process or K8s Deployment.
+func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*store.Service, error) {
+	var svc serving.ModelService
+	if err := yaml.Unmarshal(yamlBytes, &svc); err != nil {
+		return nil, fmt.Errorf("parse ModelService YAML: %w", err)
+	}
+	if svc.Metadata.Name == "" {
+		return nil, fmt.Errorf("ModelService metadata.name is required")
+	}
+
+	// Resolve artifact directory
+	artifactDir, runID, err := p.resolveArtifactDir(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := p.serving.manager.Deploy(ctx, svc, artifactDir); err != nil {
+		return nil, fmt.Errorf("deploy service: %w", err)
+	}
+
+	// Persist YAML and run_id
+	rec, err := p.store.GetService(svc.Metadata.Name)
+	if err != nil || rec == nil {
+		return nil, fmt.Errorf("get service after deploy: %w", err)
+	}
+	rec.YAML = string(yamlBytes)
+	rec.RunID = runID
+	if err := p.store.UpdateService(rec); err != nil {
+		return nil, fmt.Errorf("update service record: %w", err)
+	}
+	return rec, nil
+}
+
+// StopService stops the named service.
+func (p *Piper) StopService(ctx context.Context, name string) error {
+	return p.serving.manager.Stop(ctx, name)
+}
+
+// RestartService re-deploys the named service using its stored YAML.
+func (p *Piper) RestartService(ctx context.Context, name string) error {
+	rec, err := p.store.GetService(name)
+	if err != nil || rec == nil {
+		return fmt.Errorf("service %q not found", name)
+	}
+	if rec.YAML == "" {
+		return fmt.Errorf("service %q has no stored YAML; cannot restart", name)
+	}
+	_, err = p.DeployService(ctx, []byte(rec.YAML))
+	return err
+}
+
+// ListServices returns all registered services.
+func (p *Piper) ListServices(_ context.Context) ([]*store.Service, error) {
+	return p.store.ListServices()
+}
+
+// GetService returns a single service by name.
+func (p *Piper) GetService(_ context.Context, name string) (*store.Service, error) {
+	return p.store.GetService(name)
+}
+
+// resolveArtifactDir finds the local directory (or S3 URI) for the artifact
+// referenced by the ModelService's from_artifact spec.
+func (p *Piper) resolveArtifactDir(_ context.Context, svc serving.ModelService) (artifactDir, runID string, err error) {
+	ref := svc.Spec.Model.FromArtifact
+	if ref == nil {
+		return "", "", fmt.Errorf("spec.model.from_artifact is required")
+	}
+
+	if ref.Run == "latest" || ref.Run == "" {
+		run, err := p.store.GetLatestSuccessfulRun(ref.Pipeline)
+		if err != nil {
+			return "", "", fmt.Errorf("lookup latest run for pipeline %q: %w", ref.Pipeline, err)
+		}
+		if run == nil {
+			return "", "", fmt.Errorf("no successful run found for pipeline %q", ref.Pipeline)
+		}
+		runID = run.ID
+	} else {
+		runID = ref.Run
+	}
+
+	// Local artifact path: outputDir/runID/stepName/artifactName (or subfolder)
+	modelDir := p.cfg.Serving.ModelDir
+	if modelDir == "" {
+		modelDir = filepath.Join(p.cfg.OutputDir, "models")
+	}
+	artifactDir = serving.ArtifactLocalPath(p.cfg.OutputDir, runID, ref.Step, ref.Artifact)
+	_ = modelDir
+	return artifactDir, runID, nil
 }
 
 func (p *Piper) SourceConfig() source.Config {

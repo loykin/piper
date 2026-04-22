@@ -171,6 +171,7 @@ spec:
   k8s:
     namespace: default
     replicas: 1
+    image_pull_policy: IfNotPresent   # Always | IfNotPresent | Never (default: Always)
     resources:
       cpu: "2"
       memory: "8Gi"
@@ -329,12 +330,16 @@ k8s:
 ## CLI
 
 ```
-piper serve                          start server (API + UI)
-piper run <file.yaml>                run a pipeline locally
-piper parse <file.yaml>              validate YAML without running
-piper worker --master=<url>          start a worker
-piper agent exec --master=<url> ...  execute a step inside a K8s Pod (called automatically)
+piper server                                     start server (API + UI)
+piper server --serving-kubeconfig=~/.kube/config start server with k8s ModelService support
+piper run <file.yaml>                            run a pipeline locally
+piper parse <file.yaml>                          validate YAML without running
+piper worker --master=<url>                      start a worker
+piper agent exec --master=<url> ...              execute a step inside a K8s Pod (called automatically)
 ```
+
+> **Note**: `--serving-kubeconfig` is required when running `piper server` outside a cluster and deploying
+> ModelServices in `mode: k8s`. It takes precedence over the `KUBECONFIG` environment variable.
 
 ## Docker
 

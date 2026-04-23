@@ -66,8 +66,12 @@ export interface CreateScheduleOptions {
 
 const BASE = ''
 
-export async function listRuns(): Promise<Run[]> {
-  const res = await fetch(`${BASE}/runs`)
+export async function listRuns(filter?: { status?: string; pipeline?: string }): Promise<Run[]> {
+  const params = new URLSearchParams()
+  if (filter?.status) params.set('status', filter.status)
+  if (filter?.pipeline) params.set('pipeline_name', filter.pipeline)
+  const qs = params.toString()
+  const res = await fetch(`${BASE}/runs${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error(`listRuns: ${res.status}`)
   const data: unknown = await res.json()
   return Array.isArray(data) ? (data as Run[]) : []
@@ -223,6 +227,44 @@ export async function stopService(name: string): Promise<void> {
 
 export async function restartService(name: string): Promise<void> {
   const res = await fetch(`${BASE}/services/${name}/restart`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+// ─── Artifacts ───────────────────────────────────────────────────────────────
+
+export interface ArtifactFile {
+  path: string
+  size: number
+  modified_at: string
+}
+
+export interface ArtifactEntry {
+  name: string
+  files: ArtifactFile[]
+}
+
+export interface StepArtifacts {
+  step: string
+  artifacts: ArtifactEntry[]
+}
+
+export async function listArtifacts(runID: string): Promise<StepArtifacts[]> {
+  const res = await fetch(`${BASE}/runs/${runID}/artifacts`)
+  if (!res.ok) throw new Error(`listArtifacts: ${res.status}`)
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as StepArtifacts[]) : []
+}
+
+/** Returns the URL to download a specific artifact file (use as href or window.open). */
+export function artifactDownloadURL(runID: string, step: string, artifact: string, filePath: string): string {
+  return `${BASE}/runs/${runID}/artifacts/${step}/${artifact}/${filePath}`
+}
+
+export async function deleteRun(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/runs/${id}`, { method: 'DELETE' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error ?? res.statusText)

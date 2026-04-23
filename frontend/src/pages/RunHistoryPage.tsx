@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { listRuns, type Run, type Step } from '../api'
+import { listRuns, deleteRun, type Run, type Step } from '../api'
 import StatusBadge from '../components/StatusBadge'
 
 function elapsed(run: Run): string {
@@ -40,6 +40,7 @@ function StepDots({ steps }: { steps: Step[] }) {
 export default function RunHistoryPage() {
   const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
+  const [deleting, setDeleting] = useState<string | null>(null)
   const navigate = useNavigate()
   const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
 
@@ -54,6 +55,16 @@ export default function RunHistoryPage() {
     intervalRef.current = setInterval(load, 3000)
     return () => clearInterval(intervalRef.current)
   }, [])
+
+  const handleDelete = (e: React.MouseEvent, run: Run) => {
+    e.stopPropagation()
+    if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
+    setDeleting(run.id)
+    deleteRun(run.id)
+      .then(load)
+      .catch((err) => alert(err.message))
+      .finally(() => setDeleting(null))
+  }
 
   const columns: DataGridColumnDef<Run>[] = [
     {
@@ -96,6 +107,21 @@ export default function RunHistoryPage() {
       header: 'Duration',
       meta: { minWidth: 100 },
       cell: ({ row }) => <span className="text-gray-400">{elapsed(row.original)}</span>,
+    },
+    {
+      id: 'actions',
+      header: '',
+      meta: { minWidth: 60, align: 'right' },
+      cell: ({ row }) => (
+        <button
+          type="button"
+          disabled={row.original.status === 'running' || deleting === row.original.id}
+          onClick={(e) => handleDelete(e, row.original)}
+          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-950 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          {deleting === row.original.id ? '…' : 'Delete'}
+        </button>
+      ),
     },
   ]
 

@@ -15,6 +15,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
@@ -42,6 +44,7 @@ type Piper struct {
 	queue    *queue
 	registry *workerRegistry
 	serving  servingBundle
+	s3Cli    *s3sdk.Client // nil when S3 not configured
 }
 
 func New(cfg Config) (*Piper, error) {
@@ -98,6 +101,13 @@ func New(cfg Config) (*Piper, error) {
 			manager: servingMgr,
 			proxy:   serving.NewProxy(st),
 		},
+	}
+	if cfg.S3.Bucket != "" && cfg.S3.AccessKey != "" {
+		if s3c, err := newPiperS3Client(cfg.S3); err != nil {
+			slog.Warn("artifact S3 client unavailable", "err", err)
+		} else {
+			p.s3Cli = s3c
+		}
 	}
 	q.onRunSuccess = p.handleRunSuccess
 	go p.runCleanup()

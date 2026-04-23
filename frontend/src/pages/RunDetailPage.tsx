@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { getRun, streamLogs, type Run, type Step, type LogLine } from '../api'
+import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, type Run, type Step, type LogLine, type StepArtifacts } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import RunDAG from '../components/RunDAG'
 
@@ -20,13 +20,22 @@ function formatStepDuration(step: Step): string {
   return `${(ms / 60000).toFixed(1)}m`
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [run, setRun] = useState<Run | null>(null)
   const [steps, setSteps] = useState<Step[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [logs, setLogs] = useState<LogLine[]>([])
   const [logDone, setLogDone] = useState(false)
+  const [artifacts, setArtifacts] = useState<StepArtifacts[]>([])
   const logEndRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
 
@@ -41,6 +50,7 @@ export default function RunDetailPage() {
         }
       })
       .catch(() => {})
+    listArtifacts(id).then(setArtifacts).catch(() => {})
   }, [id, selected])
 
   useEffect(() => {
@@ -122,10 +132,23 @@ export default function RunDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Link to="/" className="text-sm text-gray-500 hover:text-gray-300">← Runs</Link>
+        <Link to="/history" className="text-sm text-gray-500 hover:text-gray-300">← History</Link>
         <span className="text-gray-600">/</span>
         <span className="font-mono text-sm text-gray-300">{run.id}</span>
         <StatusBadge status={run.status} />
+        <div className="ml-auto">
+          <button
+            type="button"
+            disabled={run.status === 'running'}
+            onClick={() => {
+              if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
+              deleteRun(run.id).then(() => navigate('/history')).catch((err) => alert(err.message))
+            }}
+            className="rounded px-3 py-1 text-xs text-red-500 ring-1 ring-red-900 hover:bg-red-950 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            Delete Run
+          </button>
+        </div>
       </div>
 
       {/* DAG */}
@@ -160,9 +183,47 @@ export default function RunDetailPage() {
         />
       </section>
 
+      {/* Artifacts */}
+      {artifacts.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-gray-800 bg-gray-950">
+          <div className="border-b border-gray-800 bg-gray-900 px-4 py-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-300">Artifacts</h2>
+          </div>
+          <div className="divide-y divide-gray-800">
+            {artifacts.map((sa) =>
+              sa.artifacts.map((art) => (
+                <div key={`${sa.step}/${art.name}`} className="px-4 py-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="rounded bg-gray-800 px-2 py-0.5 font-mono text-xs text-gray-400">{sa.step}</span>
+                    <span className="text-sm font-medium text-gray-200">{art.name}</span>
+                    <span className="text-xs text-gray-500">({art.files.length} file{art.files.length !== 1 ? 's' : ''})</span>
+                  </div>
+                  <div className="space-y-1">
+                    {art.files.map((f) => (
+                      <div key={f.path} className="flex items-center justify-between rounded px-2 py-1 hover:bg-gray-900">
+                        <span className="font-mono text-xs text-gray-300">{f.path}</span>
+                        <div className="flex items-center gap-4">
+                          <span className="text-xs text-gray-500">{formatFileSize(f.size)}</span>
+                          <a
+                            href={artifactDownloadURL(id!, sa.step, art.name, f.path)}
+                            download
+                            className="text-xs text-indigo-400 hover:text-indigo-300"
+                          >
+                            Download
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      )}
+
       <div className="flex flex-col gap-3">
-        {selected && (
-          <>
+        {selected && (          <>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-300">
                 {selected}

@@ -82,6 +82,7 @@ func (h *apiHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		runs, err := h.store.ListRuns(store.RunFilter{
 			OwnerID:      filter.OwnerID,
 			PipelineName: filter.PipelineName,
+			Status:       r.URL.Query().Get("status"),
 		})
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
@@ -201,6 +202,28 @@ func (h *apiHandler) handleRunSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DELETE /runs/{id} — delete run (DB + artifacts)
+	if r.Method == http.MethodDelete && len(parts) == 1 {
+		run, err := h.store.GetRun(runID)
+		if err != nil || run == nil {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		}
+		if run.Status == "running" {
+			jsonErr(w, "cannot delete a running run", http.StatusConflict)
+			return
+		}
+		if err := deleteArtifacts(r.Context(), h.p.s3Cli, h.p.cfg.S3.Bucket, h.p.cfg.OutputDir, runID); err != nil {
+			slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
+		}
+		if err := h.store.DeleteRun(runID); err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -225,6 +248,19 @@ func (h *apiHandler) handleRunSub(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("list steps failed", "run_id", runID, "err", err)
 		}
 		jsonOK(w, map[string]any{"run": run, "steps": steps})
+
+	// GET /runs/{id}/artifacts
+	case len(parts) == 2 && parts[1] == "artifacts":
+		h.handleArtifactList(w, r, runID)
+
+	// GET /runs/{id}/artifacts/{step}/{artifact}/{...file}
+	case len(parts) >= 3 && parts[1] == "artifacts":
+		step := parts[2]
+		rest := ""
+		if len(parts) == 4 {
+			rest = parts[3]
+		}
+		h.handleArtifactDownload(w, r, runID, step, rest)
 
 	// GET /runs/{id}/steps
 	case len(parts) == 2 && parts[1] == "steps":

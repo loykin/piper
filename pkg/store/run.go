@@ -56,6 +56,7 @@ type RunFilter struct {
 	OwnerID      string
 	PipelineName string
 	ScheduleID   string
+	Status       string
 }
 
 func (s *Store) ListRuns(filter ...RunFilter) ([]*Run, error) {
@@ -76,6 +77,10 @@ func (s *Store) ListRuns(filter ...RunFilter) ([]*Run, error) {
 		if f.ScheduleID != "" {
 			where = append(where, "schedule_id=?")
 			args = append(args, f.ScheduleID)
+		}
+		if f.Status != "" {
+			where = append(where, "status=?")
+			args = append(args, f.Status)
 		}
 	}
 	if len(where) > 0 {
@@ -117,4 +122,23 @@ func scanRun(s scanner) (*Run, error) {
 		r.ScheduledAt = &scheduledAt.Time
 	}
 	return &r, nil
+}
+
+// DeleteRun removes a run record along with its steps and logs from the DB.
+func (s *Store) DeleteRun(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`DELETE FROM logs WHERE run_id=?`,
+		`DELETE FROM steps WHERE run_id=?`,
+		`DELETE FROM runs WHERE id=?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }

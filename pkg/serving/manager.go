@@ -17,13 +17,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-
-	"github.com/piper/piper/pkg/store"
 )
 
 // Manager handles the lifecycle of ModelService deployments.
 type Manager struct {
-	store    *store.Store
+	repo     Repository
 	modelDir string                // base directory for downloaded model artifacts
 	k8s      *kubernetes.Clientset // nil when k8s mode is not configured
 }
@@ -36,8 +34,8 @@ func (m *Manager) SetK8sClientset(cs *kubernetes.Clientset) {
 // New creates a Manager.
 // modelDir is the root directory for local model artifact downloads.
 // clientset may be nil if K8s mode is not used.
-func New(st *store.Store, modelDir string, clientset *kubernetes.Clientset) *Manager {
-	return &Manager{store: st, modelDir: modelDir, k8s: clientset}
+func New(repo Repository, modelDir string, clientset *kubernetes.Clientset) *Manager {
+	return &Manager{repo: repo, modelDir: modelDir, k8s: clientset}
 }
 
 // Deploy starts a ModelService. Artifact download and process/pod creation happen here.
@@ -48,10 +46,10 @@ func (m *Manager) Deploy(ctx context.Context, svc ModelService, artifactDir stri
 		mode = "local"
 	}
 
-	rec := &store.Service{
+	rec := &Service{
 		Name:     name,
 		Artifact: svc.Spec.Model.FromArtifact.Step + "/" + svc.Spec.Model.FromArtifact.Artifact,
-		Status:   store.ServiceStatusRunning,
+		Status:   StatusRunning,
 		YAML:     "", // caller may set this
 	}
 
@@ -72,12 +70,12 @@ func (m *Manager) Deploy(ctx context.Context, svc ModelService, artifactDir stri
 		return fmt.Errorf("unknown runtime mode: %q", mode)
 	}
 
-	return m.store.UpsertService(rec)
+	return m.repo.Upsert(ctx, rec)
 }
 
 // Stop terminates a running service.
 func (m *Manager) Stop(ctx context.Context, name string) error {
-	svc, err := m.store.GetService(name)
+	svc, err := m.repo.Get(ctx, name)
 	if err != nil {
 		return fmt.Errorf("get service: %w", err)
 	}
@@ -92,12 +90,12 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 		}
 	} else if m.k8s != nil {
 		// K8s mode: delete Deployment and Service
-		ns := m.k8sNamespace(name)
+		ns := m.k8sNamespace(ctx, name)
 		_ = m.k8s.AppsV1().Deployments(ns).Delete(ctx, k8sName(name), metav1.DeleteOptions{})
 		_ = m.k8s.CoreV1().Services(ns).Delete(ctx, k8sName(name), metav1.DeleteOptions{})
 	}
 
-	return m.store.SetServiceStatus(name, store.ServiceStatusStopped)
+	return m.repo.SetStatus(ctx, name, StatusStopped)
 }
 
 // Restart stops and re-deploys a service with the given artifact directory.
@@ -107,18 +105,18 @@ func (m *Manager) Restart(ctx context.Context, svc ModelService, artifactDir str
 }
 
 // SetYAML stores the original YAML on the service record.
-func (m *Manager) SetYAML(name, yaml string) error {
-	svc, err := m.store.GetService(name)
+func (m *Manager) SetYAML(ctx context.Context, name, yaml string) error {
+	svc, err := m.repo.Get(ctx, name)
 	if err != nil || svc == nil {
 		return fmt.Errorf("service %q not found", name)
 	}
 	svc.YAML = yaml
-	return m.store.UpdateService(svc)
+	return m.repo.Update(ctx, svc)
 }
 
 // --- local mode ---
 
-func (m *Manager) deployLocal(ctx context.Context, svc ModelService, modelDir string, rec *store.Service) error {
+func (m *Manager) deployLocal(ctx context.Context, svc ModelService, modelDir string, rec *Service) error {
 	rt := svc.Spec.Runtime
 	if len(rt.Command) == 0 {
 		return fmt.Errorf("runtime.command must not be empty")
@@ -151,7 +149,7 @@ func (m *Manager) deployLocal(ctx context.Context, svc ModelService, modelDir st
 
 	rec.PID = cmd.Process.Pid
 	rec.Endpoint = endpoint
-	rec.Status = store.ServiceStatusRunning
+	rec.Status = StatusRunning
 
 	go m.watchProcess(svc.Metadata.Name, cmd)
 
@@ -170,15 +168,16 @@ func (m *Manager) deployLocal(ctx context.Context, svc ModelService, modelDir st
 
 // watchProcess monitors a local process and updates the service status on exit.
 func (m *Manager) watchProcess(name string, cmd *exec.Cmd) {
+	ctx := context.Background()
 	err := cmd.Wait()
-	status := store.ServiceStatusStopped
+	status := StatusStopped
 	if err != nil {
-		status = store.ServiceStatusFailed
+		status = StatusFailed
 		slog.Warn("serving process exited with error", "name", name, "err", err)
 	} else {
 		slog.Info("serving process exited", "name", name)
 	}
-	if dbErr := m.store.SetServiceStatus(name, status); dbErr != nil {
+	if dbErr := m.repo.SetStatus(ctx, name, status); dbErr != nil {
 		slog.Warn("update service status failed", "name", name, "err", dbErr)
 	}
 }
@@ -279,7 +278,7 @@ func isIdentChar(c byte) bool {
 
 // --- k8s mode ---
 
-func (m *Manager) deployK8s(ctx context.Context, svc ModelService, s3URI string, rec *store.Service) error {
+func (m *Manager) deployK8s(ctx context.Context, svc ModelService, s3URI string, rec *Service) error {
 	rt := svc.Spec.Runtime
 	k := svc.Spec.K8s
 	ns := k.Namespace
@@ -373,7 +372,7 @@ func (m *Manager) deployK8s(ctx context.Context, svc ModelService, s3URI string,
 	// Endpoint is the in-cluster DNS name
 	rec.Endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", name, ns, rt.Port)
 	rec.PID = 0
-	rec.Status = store.ServiceStatusRunning
+	rec.Status = StatusRunning
 	return nil
 }
 
@@ -396,10 +395,10 @@ func k8sName(name string) string {
 	return s
 }
 
-// k8sNamespace resolves the namespace for a service by looking it up in the store.
+// k8sNamespace resolves the namespace for a service by looking it up in the repo.
 // Falls back to "default" on any error.
-func (m *Manager) k8sNamespace(name string) string {
-	svc, err := m.store.GetService(name)
+func (m *Manager) k8sNamespace(ctx context.Context, name string) string {
+	svc, err := m.repo.Get(ctx, name)
 	if err != nil || svc == nil {
 		return "default"
 	}

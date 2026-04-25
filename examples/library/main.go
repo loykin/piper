@@ -13,7 +13,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/piper/piper/pkg/piper"
+	piper "github.com/piper/piper"
 	_ "modernc.org/sqlite"
 )
 

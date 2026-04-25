@@ -62,6 +62,15 @@ type Config struct {
 	TTLAfterFinished *int32
 }
 
+const (
+	// agentBinarySrc is the path of the piper-agent binary inside the agent image.
+	agentBinarySrc = "/piper-agent"
+	// agentBinaryDst is where the binary is copied to in the shared emptyDir volume.
+	agentBinaryDst = "/piper-tools/piper"
+	// agentExecSubcmd is the subcommand the agent binary exposes for step execution.
+	agentExecSubcmd = "exec"
+)
+
 // Launcher implements proto.Dispatcher.
 // The queue calls Dispatch whenever a task becomes ready.
 type Launcher struct {
@@ -156,7 +165,7 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 
 func (l *Launcher) buildAgentArgs(task *proto.Task, stepB64 string) []string {
 	args := []string{
-		"agent", "exec",
+		agentExecSubcmd,
 		"--master=" + l.cfg.MasterURL,
 		"--task-id=" + task.ID,
 		"--run-id=" + task.RunID,
@@ -211,8 +220,8 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 							Name:            "agent-init",
 							Image:           l.cfg.AgentImage,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							// Copy the /piper binary from the piper/agent image into the shared volume
-							Command: []string{"cp", "/piper", "/piper-tools/piper"},
+							// Copy the agent binary from the agent image into the shared volume
+							Command: []string{"cp", agentBinarySrc, agentBinaryDst},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},
 							},
@@ -224,7 +233,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 							Name:            "step",
 							Image:           image,
 							ImagePullPolicy: corev1.PullIfNotPresent,
-							Command:         []string{"/piper-tools/piper"},
+							Command:         []string{agentBinaryDst},
 							Args:            agentArgs,
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},

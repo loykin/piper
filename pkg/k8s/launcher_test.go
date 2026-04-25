@@ -84,7 +84,7 @@ func TestBuildAgentArgs_contains(t *testing.T) {
 	}
 
 	checks := []string{
-		"exec",
+		agentExecSubcmd,
 		"--master=http://piper:8080",
 		"--task-id=run-1:step-a",
 		"--run-id=run-1",
@@ -142,7 +142,7 @@ func TestBuildJob_structure(t *testing.T) {
 		TTLAfterFinished: &ttl,
 	}}
 	task := &proto.Task{RunID: "run-1", StepName: "train"}
-	job := l.buildJob(task, "pytorch:latest", []string{"exec", "--master=http://x"})
+	job := l.buildJob(task, "pytorch:latest", []string{agentExecSubcmd, "--master=http://x"})
 
 	if job.Namespace != "ml" {
 		t.Errorf("namespace = %q, want ml", job.Namespace)
@@ -161,6 +161,9 @@ func TestBuildJob_structure(t *testing.T) {
 	if initContainers[0].Image != "piper/agent:latest" {
 		t.Errorf("initContainer image = %q", initContainers[0].Image)
 	}
+	if got := initContainers[0].Command; len(got) < 3 || got[1] != agentBinarySrc || got[2] != agentBinaryDst {
+		t.Errorf("initContainer command = %v, want [cp %s %s]", got, agentBinarySrc, agentBinaryDst)
+	}
 
 	containers := job.Spec.Template.Spec.Containers
 	if len(containers) != 1 {
@@ -168,6 +171,9 @@ func TestBuildJob_structure(t *testing.T) {
 	}
 	if containers[0].Image != "pytorch:latest" {
 		t.Errorf("container image = %q, want pytorch:latest", containers[0].Image)
+	}
+	if got := containers[0].Command; len(got) != 1 || got[0] != agentBinaryDst {
+		t.Errorf("container command = %v, want [%s]", got, agentBinaryDst)
 	}
 }
 

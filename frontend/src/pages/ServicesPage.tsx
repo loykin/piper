@@ -19,7 +19,8 @@ interface RuntimeTemplate {
   description: string
   runtimeMode: string
   image: string         // default container image (k8s)
-  imageHint: string     // example alternative tag shown as hint
+  imageHint?: string    // example alternative tag shown as hint
+  imageOptions?: string[] // selectable image options
   command: string
   port: string
   healthPath: string

@@ -9,10 +9,9 @@ import (
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/s3client"
 )
 
 type S3Fetcher struct {
@@ -63,30 +62,5 @@ func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string)
 }
 
 func newS3Client(cfg Config) (*s3.Client, error) {
-	awsCfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.S3AccessKey, cfg.S3SecretKey, "",
-		)),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	opts := []func(*s3.Options){
-		func(o *s3.Options) {
-			o.UsePathStyle = true
-		},
-	}
-	if cfg.S3Endpoint != "" {
-		scheme := "http"
-		if cfg.S3UseSSL {
-			scheme = "https"
-		}
-		opts = append(opts, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String(scheme + "://" + cfg.S3Endpoint)
-		})
-	}
-
-	return s3.NewFromConfig(awsCfg, opts...), nil
+	return s3client.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL)
 }

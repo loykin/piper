@@ -21,12 +21,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/s3client"
 	"github.com/piper/piper/pkg/source"
 )
 
@@ -71,11 +70,11 @@ func New(cfg Config) (*Runner, error) {
 	}
 
 	if cfg.S3Endpoint != "" && cfg.S3Bucket != "" {
-		s3client, err := newS3Client(cfg)
+		cli, err := s3client.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL)
 		if err != nil {
 			return nil, fmt.Errorf("s3 client: %w", err)
 		}
-		r.s3 = s3client
+		r.s3 = cli
 	}
 
 	return r, nil
@@ -160,7 +159,7 @@ func (r *Runner) execute(
 		OutputDir: outputDir,
 		RunID:     task.RunID,
 		StepName:  step.Name,
-		Params:    mergeParams(step.Params, task.RunParams),
+		Params:    proto.MergeParams(step.Params, task.RunParams),
 		Stdout:    stdoutW,
 		Stderr:    stderrW,
 		Vars:      task.Vars,
@@ -290,12 +289,12 @@ type taskResult struct {
 }
 
 func (r *Runner) reportDone(task *proto.Task, startedAt time.Time) {
-	r.report(task.ID, "done", taskResult{StartedAt: startedAt, EndedAt: time.Now(), Attempts: 1})
+	r.report(task.ID, proto.TaskStatusDone, taskResult{StartedAt: startedAt, EndedAt: time.Now(), Attempts: 1})
 }
 
 func (r *Runner) reportFailed(task *proto.Task, err error, startedAt time.Time) {
 	slog.Error("task failed", "task_id", task.ID, "err", err)
-	r.report(task.ID, "failed", taskResult{
+	r.report(task.ID, proto.TaskStatusFailed, taskResult{
 		Error:     err.Error(),
 		StartedAt: startedAt,
 		EndedAt:   time.Now(),
@@ -335,38 +334,6 @@ func (r *Runner) setAuth(req *http.Request) {
 }
 
 // ─── S3 artifacts ─────────────────────────────────────────────────────────────
-
-// newS3Client creates an S3 client based on AWS SDK v2.
-// Supports all S3-compatible storage: MinIO, SeaweedFS, Ceph RGW, Cloudflare R2, etc.
-func newS3Client(cfg Config) (*s3.Client, error) {
-	awsCfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.S3AccessKey, cfg.S3SecretKey, "",
-		)),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	opts := []func(*s3.Options){
-		func(o *s3.Options) {
-			o.UsePathStyle = true // Required for MinIO, SeaweedFS, etc. (path-style)
-		},
-	}
-	if cfg.S3Endpoint != "" {
-		scheme := "http"
-		if cfg.S3UseSSL {
-			scheme = "https"
-		}
-		endpoint := scheme + "://" + cfg.S3Endpoint
-		opts = append(opts, func(o *s3.Options) {
-			o.BaseEndpoint = aws.String(endpoint)
-		})
-	}
-
-	return s3.NewFromConfig(awsCfg, opts...), nil
-}
 
 // downloadInputs downloads step input artifacts from S3 to the local filesystem.
 // S3 key: {runID}/{fromStep}/{artifactName}/
@@ -491,23 +458,6 @@ func s3PutFile(ctx context.Context, client *s3.Client, bucket, key, localPath st
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
-
-// mergeParams merges step-level params (base) with run-level params (override).
-// Run-level params take precedence, allowing runtime hyperparameter injection
-// without modifying the pipeline YAML.
-func mergeParams(stepParams, runParams map[string]any) map[string]any {
-	if len(runParams) == 0 {
-		return stepParams
-	}
-	merged := make(map[string]any, len(stepParams)+len(runParams))
-	for k, v := range stepParams {
-		merged[k] = v
-	}
-	for k, v := range runParams {
-		merged[k] = v // run-level overrides step-level
-	}
-	return merged
-}
 
 func openLogFile(outputDir, stepName string) *os.File {
 	path := filepath.Join(outputDir, stepName+".log")

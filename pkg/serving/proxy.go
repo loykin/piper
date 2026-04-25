@@ -5,19 +5,17 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-
-	"github.com/piper/piper/pkg/store"
 )
 
 // Proxy forwards inference requests to the appropriate serving endpoint.
 // It is mounted at /services/predict/{name} by the API handler.
 type Proxy struct {
-	store *store.Store
+	repo Repository
 }
 
-// NewProxy creates a Proxy backed by the given store.
-func NewProxy(st *store.Store) *Proxy {
-	return &Proxy{store: st}
+// NewProxy creates a Proxy backed by the given repository.
+func NewProxy(repo Repository) *Proxy {
+	return &Proxy{repo: repo}
 }
 
 // ServeHTTP handles POST /services/predict/{name}[/...].
@@ -32,12 +30,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := p.store.GetService(name)
+	svc, err := p.repo.Get(r.Context(), name)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if svc == nil || svc.Status != store.ServiceStatusRunning {
+	if svc == nil || svc.Status != StatusRunning {
 		http.Error(w, "service not found or not running", http.StatusServiceUnavailable)
 		return
 	}

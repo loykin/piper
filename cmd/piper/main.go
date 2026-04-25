@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"os"
 
-	pipercmd "github.com/piper/piper/pkg/cmd"
+	piper "github.com/piper/piper"
+	pipercmd "github.com/piper/piper/cmd/piper/commands"
 	"github.com/piper/piper/pkg/k8s"
-	"github.com/piper/piper/pkg/piper"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -92,7 +92,7 @@ func main() {
 		slog.Info("k8s mode enabled", "agent_image", cfg.K8s.AgentImage, "namespace", cfg.K8s.Namespace)
 	}
 
-	// Fetch commands from pkg/cmd and register them
+	// Fetch commands from cmd/piper/commands and register them
 	rootCmd.AddCommand(pipercmd.Commands(p)...)
 
 	if err := rootCmd.Execute(); err != nil {

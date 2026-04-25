@@ -21,7 +21,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/piper/piper/pkg/piper"
+	piper "github.com/piper/piper"
 	"github.com/piper/piper/pkg/ui"
 )
 

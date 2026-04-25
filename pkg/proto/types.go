@@ -2,6 +2,30 @@ package proto
 
 import "time"
 
+// Task-level status values reported by workers/agents to the master.
+// These must match the string literals in queue.go taskStatus constants.
+const (
+	TaskStatusDone   = "done"
+	TaskStatusFailed = "failed"
+)
+
+// MergeParams merges step-level params (base) with run-level params (override).
+// Run-level params take precedence, allowing runtime hyperparameter injection
+// without modifying the pipeline YAML.
+func MergeParams(stepParams, runParams map[string]any) map[string]any {
+	if len(runParams) == 0 {
+		return stepParams
+	}
+	merged := make(map[string]any, len(stepParams)+len(runParams))
+	for k, v := range stepParams {
+		merged[k] = v
+	}
+	for k, v := range runParams {
+		merged[k] = v
+	}
+	return merged
+}
+
 // BuiltinVars holds system-injected variables that are propagated to every step.
 // Add new scheduled/contextual metadata here — each field becomes a PIPER_* env var.
 type BuiltinVars struct {

@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -16,7 +17,7 @@ type HandlerDeps struct {
 	Schedules Repository
 	Runs      run.Repository
 	Parse     func(yaml []byte) (*pipeline.Pipeline, error)
-	Trigger   func(ctx interface{ Done() <-chan struct{} }, sc *Schedule)
+	Trigger   func(ctx context.Context, sc *Schedule)
 	NextTime  func(expr string, from time.Time) (time.Time, error)
 	// GenID generates a unique schedule ID prefix (e.g. "sch-run-xxx").
 	GenID func() string

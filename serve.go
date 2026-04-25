@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 
 	"github.com/piper/piper/pkg/pipeline"
@@ -143,7 +142,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},
-		Trigger: func(ctx interface{ Done() <-chan struct{} }, sc *schedule.Schedule) {
+		Trigger: func(ctx context.Context, sc *schedule.Schedule) {
 			p.triggerSchedule(p.ctx, sc)
 		},
 		NextTime: nextScheduleTime,
@@ -291,44 +290,38 @@ func (h *piperRunHooks) BeforeGetLogs(ctx context.Context, r *http.Request, runI
 	return h.p.cfg.Hooks.callBeforeGetLogs(ctx, r, runID, step)
 }
 
-// ── piperArtifacts — bridges artifact handling into run.ArtifactListDownloader
+// ── piperArtifacts — implements run.ArtifactProvider ─────────────────────────
 
 type piperArtifacts struct {
 	p *Piper
 }
 
-func (a *piperArtifacts) HandleList(c *gin.Context, runID string) {
-	var (
-		result []stepArtifacts
-		err    error
-	)
+func (a *piperArtifacts) List(ctx context.Context, runID string) ([]any, error) {
+	var result []stepArtifacts
+	var err error
 	if a.p.s3Cli != nil && a.p.cfg.S3.Bucket != "" {
-		result, err = listArtifactsS3(c.Request.Context(), a.p.s3Cli, a.p.cfg.S3.Bucket, runID)
+		result, err = listArtifactsS3(ctx, a.p.s3Cli, a.p.cfg.S3.Bucket, runID)
 	} else {
 		result, err = listArtifactsLocal(a.p.cfg.OutputDir, runID)
 	}
 	if err != nil {
-		slog.Warn("list artifacts failed", "run_id", runID, "err", err)
+		return nil, err
 	}
-	if result == nil {
-		result = []stepArtifacts{}
+	out := make([]any, len(result))
+	for i, v := range result {
+		out[i] = v
 	}
-	c.JSON(http.StatusOK, result)
+	return out, nil
 }
 
-func (a *piperArtifacts) HandleDownload(c *gin.Context, runID, step, rest string) {
-	downloadArtifact(c, a.p.s3Cli, a.p.cfg.S3.Bucket, a.p.cfg.OutputDir, runID, step, rest)
-}
-
-// downloadArtifact streams an artifact file to the gin context.
-func downloadArtifact(c *gin.Context, s3Cli *s3.Client, bucket, outputDir, runID, step, rest string) {
+func (a *piperArtifacts) ServeDownload(w http.ResponseWriter, r *http.Request, runID, step, rest string) {
 	if containsDotDot(rest) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	if s3Cli != nil && bucket != "" {
-		downloadArtifactS3(c, s3Cli, bucket, runID, step, rest)
+	if a.p.s3Cli != nil && a.p.cfg.S3.Bucket != "" {
+		downloadArtifactS3Raw(w, r, a.p.s3Cli, a.p.cfg.S3.Bucket, runID, step, rest)
 		return
 	}
-	downloadArtifactLocal(c, outputDir, runID, step, rest)
+	downloadArtifactLocal(w, r, a.p.cfg.OutputDir, runID, step, rest)
 }

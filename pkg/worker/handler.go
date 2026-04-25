@@ -8,6 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/pkg/proto"
+
+	iworker "github.com/piper/piper/internal/worker"
 )
 
 // TaskQueuer abstracts the task queue for the worker handler.
@@ -18,7 +20,7 @@ type TaskQueuer interface {
 
 // HandlerDeps holds all dependencies required by the worker handler.
 type HandlerDeps struct {
-	Registry *Registry
+	Registry *iworker.Registry
 	Queue    TaskQueuer
 }
 
@@ -45,7 +47,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // POST /api/workers
 func (h *Handler) registerWorker(c *gin.Context) {
-	var info Info
+	var info iworker.Info
 	if err := c.ShouldBindJSON(&info); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

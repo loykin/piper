@@ -3,32 +3,33 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/piper/piper/pkg/run"
 )
 
-type runRepo struct{ db *sql.DB }
+type runRepo struct{ db *sqlx.DB }
 
-func NewRunRepo(db *sql.DB) run.Repository { return &runRepo{db: db} }
+func NewRunRepo(db *sqlx.DB) run.Repository { return &runRepo{db: db} }
 
 func (r *runRepo) Create(ctx context.Context, row *run.Run) error {
-	_, err := r.db.ExecContext(ctx,
+	_, err := r.db.NamedExecContext(ctx,
 		`INSERT INTO runs (id, schedule_id, owner_id, pipeline_name, status, started_at, scheduled_at, pipeline_yaml)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.ID, row.ScheduleID, row.OwnerID, row.PipelineName, row.Status,
-		row.StartedAt, row.ScheduledAt, row.PipelineYAML,
-	)
+		 VALUES (:id, :schedule_id, :owner_id, :pipeline_name, :status, :started_at, :scheduled_at, :pipeline_yaml)`,
+		row)
 	return err
 }
 
 func (r *runRepo) Get(ctx context.Context, id string) (*run.Run, error) {
-	row := r.db.QueryRowContext(ctx,
-		`SELECT id, schedule_id, owner_id, pipeline_name, status, started_at, ended_at, scheduled_at FROM runs WHERE id=?`, id,
-	)
-	return scanRun(row)
+	var v run.Run
+	err := r.db.GetContext(ctx, &v,
+		`SELECT id, schedule_id, owner_id, pipeline_name, status, started_at, ended_at, scheduled_at FROM runs WHERE id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 func (r *runRepo) List(ctx context.Context, filter run.RunFilter) ([]*run.Run, error) {
@@ -55,20 +56,12 @@ func (r *runRepo) List(ctx context.Context, filter run.RunFilter) ([]*run.Run, e
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
 	query += " ORDER BY started_at DESC"
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
+	var out []*run.Run
+	err := r.db.SelectContext(ctx, &out, query, args...)
+	if out == nil {
+		out = []*run.Run{}
 	}
-	defer func() { _ = rows.Close() }()
-	out := make([]*run.Run, 0)
-	for rows.Next() {
-		v, err := scanRun(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return out, err
 }
 
 func (r *runRepo) UpdateStatus(ctx context.Context, id, status string, endedAt *time.Time) error {
@@ -87,32 +80,16 @@ func (r *runRepo) Delete(ctx context.Context, id string) error {
 }
 
 func (r *runRepo) GetLatestSuccessful(ctx context.Context, pipelineName string) (*run.Run, error) {
-	row := r.db.QueryRowContext(ctx,
+	var v run.Run
+	err := r.db.GetContext(ctx, &v,
 		`SELECT id, schedule_id, owner_id, pipeline_name, status, started_at, ended_at, scheduled_at
 		 FROM runs WHERE pipeline_name=? AND status='success' ORDER BY started_at DESC LIMIT 1`,
-		pipelineName,
-	)
-	v, err := scanRun(row)
-	if err != nil && strings.Contains(err.Error(), "no rows") {
+		pipelineName)
+	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return v, err
-}
-
-type scanner interface{ Scan(dest ...any) error }
-
-func scanRun(s scanner) (*run.Run, error) {
-	var v run.Run
-	var endedAt, scheduledAt sql.NullTime
-	if err := s.Scan(&v.ID, &v.ScheduleID, &v.OwnerID, &v.PipelineName, &v.Status,
-		&v.StartedAt, &endedAt, &scheduledAt); err != nil {
-		return nil, fmt.Errorf("scan run: %w", err)
-	}
-	if endedAt.Valid {
-		v.EndedAt = &endedAt.Time
-	}
-	if scheduledAt.Valid {
-		v.ScheduledAt = &scheduledAt.Time
+	if err != nil {
+		return nil, err
 	}
 	return &v, nil
 }

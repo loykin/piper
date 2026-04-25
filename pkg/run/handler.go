@@ -42,18 +42,17 @@ type HandlerDeps struct {
 	Logs      LogQuerier
 	StartRun  func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error)
 	DeleteRun func(ctx context.Context, runID string) error
-	Artifacts ArtifactListDownloader
+	Artifacts ArtifactProvider
 	Hooks     RunHooks
 }
 
-// ArtifactListDownloader is a lower-level interface used by the run handler
-// to avoid pulling in the full artifact implementation as a dependency.
-// The root piper package provides the concrete wiring.
-type ArtifactListDownloader interface {
-	// HandleList writes the artifact listing JSON to the gin context.
-	HandleList(c *gin.Context, runID string)
-	// HandleDownload streams an artifact file to the gin context.
-	HandleDownload(c *gin.Context, runID, step, rest string)
+// ArtifactProvider is the domain interface for artifact listing and download.
+// Implementations must not depend on gin.Context.
+type ArtifactProvider interface {
+	// List returns the artifact tree for a run as a JSON-serialisable value.
+	List(ctx context.Context, runID string) ([]any, error)
+	// ServeDownload streams an artifact file directly to the http.ResponseWriter.
+	ServeDownload(w http.ResponseWriter, r *http.Request, runID, step, path string)
 }
 
 // Handler is the Gin HTTP handler for the /runs domain.
@@ -307,11 +306,18 @@ func (h *Handler) ingestLogs(c *gin.Context) {
 
 // GET /runs/:id/artifacts
 func (h *Handler) listArtifacts(c *gin.Context) {
-	if h.deps.Artifacts != nil {
-		h.deps.Artifacts.HandleList(c, c.Param("id"))
+	if h.deps.Artifacts == nil {
+		c.JSON(http.StatusOK, []any{})
 		return
 	}
-	c.JSON(http.StatusOK, []any{})
+	result, err := h.deps.Artifacts.List(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		slog.Warn("list artifacts failed", "run_id", c.Param("id"), "err", err)
+	}
+	if result == nil {
+		result = []any{}
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 // GET /runs/:id/artifacts/*path
@@ -333,7 +339,7 @@ func (h *Handler) downloadArtifact(c *gin.Context) {
 	if len(parts) == 2 {
 		rest = parts[1]
 	}
-	h.deps.Artifacts.HandleDownload(c, runID, step, rest)
+	h.deps.Artifacts.ServeDownload(c.Writer, c.Request, runID, step, rest)
 }
 
 // splitN splits s by sep up to n parts (similar to strings.SplitN).

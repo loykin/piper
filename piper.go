@@ -16,18 +16,18 @@ import (
 
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 
+	"github.com/piper/piper/internal/queue"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/queue"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/s3client"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/source"
-	"github.com/piper/piper/pkg/worker"
 
 	storemod "github.com/piper/piper/internal/store"
+	iworker "github.com/piper/piper/internal/worker"
 )
 
 // servingBundle groups the serving manager and proxy together.
@@ -47,7 +47,7 @@ type Piper struct {
 	repos    *storemod.Repos
 	logs     logstore.LogStore
 	queue    *queue.Queue
-	registry *worker.Registry
+	registry *iworker.Registry
 	serving  servingBundle
 	s3Cli    *s3sdk.Client // nil when S3 not configured
 
@@ -106,7 +106,7 @@ func New(cfg Config) (*Piper, error) {
 		repos:    repos,
 		logs:     repos.Log,
 		queue:    q,
-		registry: worker.NewRegistry(repos.Worker),
+		registry: iworker.NewRegistry(repos.Worker),
 		serving: servingBundle{
 			manager: servingMgr,
 			proxy:   serving.NewProxy(repos.Serving),
@@ -156,7 +156,7 @@ func (p *Piper) handleRunSuccess(ctx context.Context, runID string, pl *pipeline
 
 // runCleanup periodically removes expired workers and stuck queue entries.
 func (p *Piper) runCleanup(ctx context.Context) {
-	ticker := time.NewTicker(worker.WorkerTTL / 2)
+	ticker := time.NewTicker(iworker.WorkerTTL / 2)
 	defer ticker.Stop()
 	for {
 		select {

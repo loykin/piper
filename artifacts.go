@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/gin-gonic/gin"
 )
 
 type artifactFile struct {
@@ -198,36 +197,38 @@ func deleteArtifactsS3(ctx context.Context, client *s3.Client, bucket, runID str
 	return nil
 }
 
-func downloadArtifactS3(c *gin.Context, client *s3.Client, bucket, runID, step, rest string) {
+// downloadArtifactS3Raw streams an S3 artifact file to an http.ResponseWriter.
+func downloadArtifactS3Raw(w http.ResponseWriter, r *http.Request, client *s3.Client, bucket, runID, step, rest string) {
 	key := fmt.Sprintf("%s/%s/%s", runID, step, rest)
-	out, err := client.GetObject(c.Request.Context(), &s3.GetObjectInput{
+	out, err := client.GetObject(r.Context(), &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "artifact not found"})
+		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
 	}
 	defer func() { _ = out.Body.Close() }()
 	filename := filepath.Base(rest)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	if out.ContentLength != nil {
-		c.Header("Content-Length", fmt.Sprintf("%d", *out.ContentLength))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", *out.ContentLength))
 	}
-	_, _ = io.Copy(c.Writer, out.Body)
+	_, _ = io.Copy(w, out.Body)
 }
 
-func downloadArtifactLocal(c *gin.Context, outputDir, runID, step, rest string) {
+// downloadArtifactLocal streams a local artifact file to an http.ResponseWriter.
+func downloadArtifactLocal(w http.ResponseWriter, r *http.Request, outputDir, runID, step, rest string) {
 	localPath := filepath.Join(outputDir, runID, step, filepath.FromSlash(rest))
 	absPath, err := filepath.Abs(localPath)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 	baseAbs, _ := filepath.Abs(outputDir)
 	if !strings.HasPrefix(absPath, baseAbs+string(filepath.Separator)) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	http.ServeFile(c.Writer, c.Request, absPath)
+	http.ServeFile(w, r, absPath)
 }

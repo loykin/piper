@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 
 	"github.com/piper/piper/internal/store/sqlite"
+	"github.com/piper/piper/internal/worker"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/worker"
 )
 
 // Repos holds all repository implementations for the selected driver.
@@ -26,13 +27,13 @@ type Repos struct {
 	Serving  serving.Repository
 	Log      logstore.LogStore
 
-	db     *sql.DB
+	db     *sqlx.DB
 	ownsDB bool
 }
 
 // Open opens a SQLite file and returns Repos with all repositories wired.
 func Open(path string) (*Repos, error) {
-	db, err := sql.Open("sqlite", path+"?_journal=WAL&_timeout=5000")
+	db, err := sqlx.Open("sqlite", path+"?_journal=WAL&_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -45,20 +46,20 @@ func Open(path string) (*Repos, error) {
 // New creates Repos from an externally injected *sql.DB (SQLite assumed).
 // Calling Close does not close db — the caller retains ownership.
 func New(db *sql.DB) (*Repos, error) {
-	return newRepos(db, "sqlite", false)
+	return newRepos(sqlx.NewDb(db, "sqlite"), "sqlite", false)
 }
 
 // NewWithDSN creates Repos from a driver + DSN string.
 func NewWithDSN(driver, dsn string) (*Repos, error) {
-	db, err := sql.Open(driver, dsn)
+	db, err := sqlx.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	return newRepos(db, driver, true)
 }
 
-func newRepos(db *sql.DB, driver string, ownsDB bool) (*Repos, error) {
-	if err := migrate(db, driver); err != nil {
+func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
+	if err := migrate(db.DB, driver); err != nil {
 		if ownsDB {
 			_ = db.Close()
 		}
@@ -73,7 +74,7 @@ func newRepos(db *sql.DB, driver string, ownsDB bool) (*Repos, error) {
 			Schedule: sqlite.NewScheduleRepo(db),
 			Worker:   sqlite.NewWorkerRepo(db),
 			Serving:  sqlite.NewServingRepo(db),
-			Log:      logstore.NewSQLite(db),
+			Log:      logstore.NewSQLite(db.DB),
 			db:       db,
 			ownsDB:   ownsDB,
 		}, nil
@@ -95,7 +96,7 @@ func (r *Repos) Close() error {
 
 // DB returns the underlying *sql.DB.
 func (r *Repos) DB() *sql.DB {
-	return r.db
+	return r.db.DB
 }
 
 // DeleteRun removes a run and all its steps and logs atomically.

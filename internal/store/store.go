@@ -59,7 +59,7 @@ func NewWithDSN(driver, dsn string) (*Repos, error) {
 }
 
 func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
-	if err := migrate(db.DB, driver); err != nil {
+	if err := migrate(context.Background(), db, driver); err != nil {
 		if ownsDB {
 			_ = db.Close()
 		}

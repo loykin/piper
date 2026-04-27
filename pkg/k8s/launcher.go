@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -78,6 +80,14 @@ const (
 type Launcher struct {
 	cfg       Config
 	clientset kubernetes.Interface
+	mu        sync.Mutex
+	watched   map[string]watchedJob
+}
+
+type watchedJob struct {
+	TaskID    string
+	Attempt   int
+	StartedAt time.Time
 }
 
 // New creates a Launcher.
@@ -115,7 +125,7 @@ func New(cfg Config) (*Launcher, error) {
 		return nil, fmt.Errorf("k8s clientset: %w", err)
 	}
 
-	return &Launcher{cfg: cfg, clientset: clientset}, nil
+	return &Launcher{cfg: cfg, clientset: clientset, watched: make(map[string]watchedJob)}, nil
 }
 
 // Dispatch creates a K8s Job for the given task.
@@ -166,7 +176,116 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 	if err != nil {
 		return fmt.Errorf("create job %s: %w", job.Name, err)
 	}
+	l.watchJob(job.Name, task)
 	return nil
+}
+
+// ReconcileJobs polls dispatched K8s Jobs and reports failed or disappeared Jobs
+// back to the queue. Successful Jobs are expected to report completion through
+// the piper agent before Kubernetes TTL cleanup removes them.
+func (l *Launcher) ReconcileJobs(ctx context.Context, report func(context.Context, string, string, string, time.Time, time.Time, int) error) {
+	if report == nil {
+		return
+	}
+	l.mu.Lock()
+	if len(l.watched) == 0 {
+		l.mu.Unlock()
+		return
+	}
+	watched := make(map[string]watchedJob, len(l.watched))
+	for name, rec := range l.watched {
+		watched[name] = rec
+	}
+	l.mu.Unlock()
+
+	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/managed-by=piper",
+	})
+	if err != nil {
+		return
+	}
+	present := make(map[string]batchv1.Job, len(jobs.Items))
+	for _, job := range jobs.Items {
+		present[job.Name] = job
+	}
+
+	for name, rec := range watched {
+		job, ok := present[name]
+		switch {
+		case !ok:
+			l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusFailed, "k8s job disappeared before reporting completion")
+		case jobSucceeded(job):
+			l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusDone, "")
+		case jobFailed(job):
+			l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusFailed, k8sJobFailureMessage(job))
+		}
+	}
+}
+
+func (l *Launcher) watchJob(name string, task *proto.Task) {
+	attempt := task.Attempt
+	if attempt < 1 {
+		attempt = 1
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.watched == nil {
+		l.watched = make(map[string]watchedJob)
+	}
+	l.watched[name] = watchedJob{
+		TaskID:    task.ID,
+		Attempt:   attempt,
+		StartedAt: time.Now().UTC(),
+	}
+}
+
+func (l *Launcher) unwatchJob(name string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.watched, name)
+}
+
+func (l *Launcher) reportWatchedJob(ctx context.Context, report func(context.Context, string, string, string, time.Time, time.Time, int) error, name string, rec watchedJob, status, msg string) {
+	now := time.Now().UTC()
+	if err := report(ctx, rec.TaskID, status, msg, rec.StartedAt, now, rec.Attempt); err == nil || strings.Contains(err.Error(), "not found in queue") {
+		l.unwatchJob(name)
+	}
+}
+
+func jobSucceeded(job batchv1.Job) bool {
+	if job.Status.Succeeded > 0 {
+		return true
+	}
+	for _, cond := range job.Status.Conditions {
+		if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func jobFailed(job batchv1.Job) bool {
+	if job.Status.Failed > 0 {
+		return true
+	}
+	for _, cond := range job.Status.Conditions {
+		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func k8sJobFailureMessage(job batchv1.Job) string {
+	for _, cond := range job.Status.Conditions {
+		if cond.Type == batchv1.JobFailed && cond.Message != "" {
+			return cond.Message
+		}
+		if cond.Type == batchv1.JobFailed && cond.Reason != "" {
+			return cond.Reason
+		}
+	}
+	return "k8s job failed"
 }
 
 // CancelRun deletes all piper Jobs associated with a run.
@@ -227,6 +346,9 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName(task),
 			Namespace: l.cfg.Namespace,
+			Annotations: map[string]string{
+				"piper/task-id": task.ID,
+			},
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "piper",
 				"piper/run-id":                 sanitizeLabel(task.RunID),

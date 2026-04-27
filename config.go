@@ -2,6 +2,7 @@ package piper
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -32,6 +33,9 @@ type Config struct {
 
 	// Retention controls automatic cleanup. Zero values disable cleanup.
 	Retention RetentionConfig `yaml:"retention" mapstructure:"retention"`
+
+	// Schedule controls cron/once scheduling behavior.
+	Schedule ScheduleConfig `yaml:"schedule" mapstructure:"schedule"`
 
 	// K8s — when configured, steps run as K8s Jobs.
 	// Create a Launcher with pkg/k8s.New(cfg.K8s), then register it with p.SetBackend(launcher).
@@ -69,6 +73,14 @@ type TLSConfig struct {
 type RetentionConfig struct {
 	RunTTL      time.Duration `yaml:"run_ttl"      mapstructure:"run_ttl"`
 	ArtifactTTL time.Duration `yaml:"artifact_ttl" mapstructure:"artifact_ttl"`
+}
+
+type ScheduleConfig struct {
+	// MisfirePolicy controls cron schedules that are overdue when the scheduler wakes up.
+	// Supported values: "skip" (default), "run_once".
+	MisfirePolicy string `yaml:"misfire_policy" mapstructure:"misfire_policy"`
+	// MisfireGracePeriod is the delay tolerated before a due cron run is considered missed.
+	MisfireGracePeriod time.Duration `yaml:"misfire_grace_period" mapstructure:"misfire_grace_period"`
 }
 
 // K8sConfig holds the configuration required for K8s Job execution.
@@ -116,5 +128,49 @@ func DefaultConfig() Config {
 		Server: ServerConfig{
 			Addr: ":8080",
 		},
+		Schedule: ScheduleConfig{
+			MisfirePolicy:      "skip",
+			MisfireGracePeriod: time.Minute,
+		},
 	}
+}
+
+func (c Config) Validate() error {
+	if c.Server.TLS.Enabled {
+		if c.Server.TLS.CertFile == "" || c.Server.TLS.KeyFile == "" {
+			return fmt.Errorf("server.tls enabled but cert_file or key_file is not set")
+		}
+	}
+
+	if c.S3.Bucket != "" {
+		if c.S3.Endpoint == "" {
+			return fmt.Errorf("source.s3.bucket requires source.s3.endpoint")
+		}
+		if c.S3.AccessKey == "" || c.S3.SecretKey == "" {
+			return fmt.Errorf("source.s3.bucket requires source.s3.access_key and source.s3.secret_key")
+		}
+	}
+
+	switch c.Schedule.MisfirePolicy {
+	case "", "skip", "run_once":
+	default:
+		return fmt.Errorf("schedule.misfire_policy must be one of: skip, run_once")
+	}
+	if c.Schedule.MisfireGracePeriod < 0 {
+		return fmt.Errorf("schedule.misfire_grace_period must not be negative")
+	}
+
+	if c.K8s.AgentImage != "" {
+		if c.K8s.MasterURL == "" {
+			return fmt.Errorf("k8s.agent_image requires k8s.master_url")
+		}
+		if c.K8s.InCluster && c.K8s.Kubeconfig != "" {
+			return fmt.Errorf("k8s.in_cluster and k8s.kubeconfig are mutually exclusive")
+		}
+		if c.K8s.Token == "" && c.Server.Token != "" {
+			return fmt.Errorf("k8s.token is required when server.token is set")
+		}
+	}
+
+	return nil
 }

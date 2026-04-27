@@ -56,6 +56,19 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 			_ = p.repos.Schedule.SetEnabled(ctx, sc.ID, false)
 			return
 		}
+		if p.cfg.Schedule.MisfirePolicy != "run_once" && isCronMisfire(sc.NextRunAt, now, p.cfg.Schedule.MisfireGracePeriod) {
+			nextRunAt, err = nextScheduleTime(sc.CronExpr, now)
+			if err != nil {
+				slog.Warn("invalid cron expression in schedule", "schedule_id", sc.ID, "cron", sc.CronExpr, "err", err)
+				_ = p.repos.Schedule.SetEnabled(ctx, sc.ID, false)
+				return
+			}
+			if err := p.repos.Schedule.UpdateRun(ctx, sc.ID, now, nextRunAt); err != nil {
+				slog.Warn("skip missed schedule update failed", "schedule_id", sc.ID, "err", err)
+			}
+			slog.Info("event", "type", "schedule.misfire_skipped", "schedule_id", sc.ID, "missed_at", sc.NextRunAt, "next_run_at", nextRunAt)
+			return
+		}
 	}
 
 	pl, err := p.Parse([]byte(sc.PipelineYAML))
@@ -107,4 +120,11 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 		}
 		_ = p.repos.Schedule.UpdateRun(ctx, sc.ID, now, now)
 	}
+}
+
+func isCronMisfire(dueAt, now time.Time, grace time.Duration) bool {
+	if grace < 0 {
+		grace = 0
+	}
+	return dueAt.Add(grace).Before(now)
 }

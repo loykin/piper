@@ -54,6 +54,7 @@ type Piper struct {
 	serving  servingBundle
 	s3Cli    *s3sdk.Client     // nil when S3 not configured
 	resolver artifact.Resolver // central artifact resolver
+	backend  backend.ExecutionBackend
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 }
@@ -74,6 +75,15 @@ func New(cfg Config) (*Piper, error) {
 	}
 	if cfg.Server.Addr == "" {
 		cfg.Server.Addr = def.Server.Addr
+	}
+	if cfg.Schedule.MisfirePolicy == "" {
+		cfg.Schedule.MisfirePolicy = def.Schedule.MisfirePolicy
+	}
+	if cfg.Schedule.MisfireGracePeriod == 0 {
+		cfg.Schedule.MisfireGracePeriod = def.Schedule.MisfireGracePeriod
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
@@ -175,10 +185,26 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.registry.Cleanup()
+			p.reconcileBackend(ctx)
+			p.serving.manager.CheckHealth(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.cleanupRetention(ctx)
 		}
 	}
+}
+
+type jobReconciler interface {
+	ReconcileJobs(ctx context.Context, report func(context.Context, string, string, string, time.Time, time.Time, int) error)
+}
+
+func (p *Piper) reconcileBackend(ctx context.Context) {
+	reconciler, ok := p.backend.(jobReconciler)
+	if !ok {
+		return
+	}
+	reconciler.ReconcileJobs(ctx, func(ctx context.Context, taskID, status, errMsg string, startedAt, endedAt time.Time, attempts int) error {
+		return p.queue.Complete(ctx, taskID, status, errMsg, startedAt, endedAt, attempts)
+	})
 }
 
 func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
@@ -419,6 +445,7 @@ func (p *Piper) sourceConfig() source.Config {
 // When set, Dispatch is called immediately whenever a task becomes ready.
 // Setting nil reverts to worker polling mode.
 func (p *Piper) SetBackend(b backend.ExecutionBackend) {
+	p.backend = b
 	p.queue.SetBackend(b)
 }
 

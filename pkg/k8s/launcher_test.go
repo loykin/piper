@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -243,6 +246,37 @@ func TestCancelRunDeletesJobsByRunLabel(t *testing.T) {
 	}
 	if len(jobs.Items) != 1 || jobs.Items[0].Labels["piper/run-id"] != "run-2" {
 		t.Fatalf("remaining jobs = %#v, want only run-2", jobs.Items)
+	}
+}
+
+func TestReconcileJobsReportsFailedJob(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}
+	task := &proto.Task{ID: "run-1:train", RunID: "run-1", StepName: "train", Attempt: 1}
+	job := l.buildJob(task, "python:3.11", nil)
+	job.Status.Conditions = []batchv1.JobCondition{{
+		Type:    batchv1.JobFailed,
+		Status:  corev1.ConditionTrue,
+		Reason:  "BackoffLimitExceeded",
+		Message: "job failed",
+	}}
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), job, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	l.watchJob(job.Name, task)
+
+	var gotTaskID, gotStatus, gotErr string
+	l.ReconcileJobs(context.Background(), func(_ context.Context, taskID, status, errMsg string, _, _ time.Time, _ int) error {
+		gotTaskID = taskID
+		gotStatus = status
+		gotErr = errMsg
+		return nil
+	})
+	if gotTaskID != task.ID || gotStatus != proto.TaskStatusFailed || gotErr != "job failed" {
+		t.Fatalf("report = (%q, %q, %q), want (%q, %q, %q)", gotTaskID, gotStatus, gotErr, task.ID, proto.TaskStatusFailed, "job failed")
+	}
+	if len(l.watched) != 0 {
+		t.Fatalf("failed job remained watched: %#v", l.watched)
 	}
 }
 

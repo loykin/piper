@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"log/slog"
 	"net/http"
 	"os"
@@ -108,6 +109,48 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 func (m *Manager) Restart(ctx context.Context, svc ModelService, art artifact.Resolved) error {
 	_ = m.Stop(ctx, svc.Metadata.Name)
 	return m.Deploy(ctx, svc, art)
+}
+
+func (m *Manager) CheckHealth(ctx context.Context) {
+	services, err := m.repo.List(ctx)
+	if err != nil {
+		slog.Warn("list services for health check failed", "err", err)
+		return
+	}
+	for _, svc := range services {
+		if svc.Status == StatusStopped || svc.Endpoint == "" {
+			continue
+		}
+		healthy := m.serviceHealthy(ctx, svc)
+		next := StatusFailed
+		if healthy {
+			next = StatusRunning
+		}
+		if next != svc.Status {
+			if err := m.repo.SetStatus(ctx, svc.Name, next); err != nil {
+				slog.Warn("update service health status failed", "name", svc.Name, "status", next, "err", err)
+			}
+		}
+	}
+}
+
+func (m *Manager) serviceHealthy(ctx context.Context, svc *Service) bool {
+	var ms ModelService
+	healthPath := "/"
+	if svc.YAML != "" && yaml.Unmarshal([]byte(svc.YAML), &ms) == nil && ms.Spec.Runtime.HealthPath != "" {
+		healthPath = ms.Spec.Runtime.HealthPath
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, svc.Endpoint+healthPath, nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode < 500
 }
 
 // SetYAML stores the original YAML on the service record.
@@ -420,4 +463,3 @@ func (m *Manager) k8sNamespace(ctx context.Context, name string) string {
 	}
 	return "default"
 }
-

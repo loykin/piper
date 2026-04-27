@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/secret"
 	"github.com/piper/piper/pkg/source"
 )
 
@@ -37,7 +38,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 		extraEnv = append(extraEnv, "PIPER_SCRIPT_PATH="+scriptPath)
 	}
 
-	slog.Info("running command", "step", step.Name, "cmd", step.Run.Command, "workDir", workDir)
+	slog.Info("running command", "step", step.Name, "cmd", redactArgs(step.Run.Command), "workDir", workDir)
 
 	stdout, stderr := cfg.Stdout, cfg.Stderr
 	if stdout == nil {
@@ -74,4 +75,12 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 		<-done
 		return ctx.Err()
 	}
+}
+
+func redactArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, arg := range args {
+		out[i] = secret.RedactString(arg)
+	}
+	return out
 }

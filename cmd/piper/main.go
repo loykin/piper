@@ -83,6 +83,13 @@ func main() {
 			S3SecretKey:  cfg.S3.SecretKey,
 			S3Bucket:     cfg.S3.Bucket,
 			S3UseSSL:     cfg.S3.UseSSL,
+			TTLAfterFinished: func() *int32 {
+				if cfg.K8s.TTLAfterFinished <= 0 {
+					return nil
+				}
+				v := cfg.K8s.TTLAfterFinished
+				return &v
+			}(),
 		})
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, "k8s launcher error:", err)
@@ -138,6 +145,10 @@ func buildConfig() piper.Config {
 		Retention: piper.RetentionConfig{
 			RunTTL:      viper.GetDuration("retention.run_ttl"),
 			ArtifactTTL: viper.GetDuration("retention.artifact_ttl"),
+		},
+		Schedule: piper.ScheduleConfig{
+			MisfirePolicy:      viper.GetString("schedule.misfire_policy"),
+			MisfireGracePeriod: viper.GetDuration("schedule.misfire_grace_period"),
 		},
 		K8s: piper.K8sConfig{
 			AgentImage:       viper.GetString("k8s.agent_image"),

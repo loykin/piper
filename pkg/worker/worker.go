@@ -22,15 +22,16 @@ import (
 
 // Config holds Worker configuration.
 type Config struct {
-	MasterURL    string
-	Label        string
-	Token        string
-	Version      string
-	Capabilities []string
-	PollInterval time.Duration
-	Concurrency  int
-	OutputDir    string
-	SourceCfg    source.Config // currently unused (moved to runner.Config.S3*)
+	MasterURL           string
+	Label               string
+	Token               string
+	Version             string
+	Capabilities        []string
+	PollInterval        time.Duration
+	ShutdownGracePeriod time.Duration
+	Concurrency         int
+	OutputDir           string
+	SourceCfg           source.Config // currently unused (moved to runner.Config.S3*)
 	// S3 artifact store
 	S3Endpoint  string
 	S3AccessKey string
@@ -48,6 +49,8 @@ type Worker struct {
 
 	mu       sync.Mutex
 	inFlight int
+	wg       sync.WaitGroup
+	cancels  map[string]context.CancelFunc
 }
 
 func New(cfg Config) (*Worker, error) {
@@ -56,6 +59,9 @@ func New(cfg Config) (*Worker, error) {
 	}
 	if cfg.Concurrency == 0 {
 		cfg.Concurrency = 4
+	}
+	if cfg.ShutdownGracePeriod == 0 {
+		cfg.ShutdownGracePeriod = 30 * time.Second
 	}
 
 	r, err := runner.New(runner.Config{
@@ -78,10 +84,11 @@ func New(cfg Config) (*Worker, error) {
 	}
 
 	return &Worker{
-		cfg:    cfg,
-		id:     uuid.New().String(),
-		runner: r,
-		poller: &http.Client{Timeout: 10 * time.Second},
+		cfg:     cfg,
+		id:      uuid.New().String(),
+		runner:  r,
+		poller:  &http.Client{Timeout: 10 * time.Second},
+		cancels: make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -106,7 +113,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			slog.Info("worker shutting down", "id", w.id)
-			return nil
+			return w.waitForDrain()
 		default:
 		}
 
@@ -129,18 +136,63 @@ func (w *Worker) Run(ctx context.Context) error {
 		w.mu.Lock()
 		w.inFlight++
 		w.mu.Unlock()
+		w.wg.Add(1)
 
 		go func(t *proto.Task) {
+			taskCtx, cancel := context.WithCancel(context.Background())
+			w.trackCancel(t.ID, cancel)
 			defer func() {
+				w.untrackCancel(t.ID)
+				cancel()
 				w.mu.Lock()
 				w.inFlight--
 				w.mu.Unlock()
+				w.wg.Done()
 			}()
-			taskCtx, cancel := context.WithCancel(ctx)
-			defer cancel()
-			go w.watchTaskCancel(taskCtx, t, cancel)
+			go w.watchTaskCancel(ctx, t, cancel)
 			w.runner.Run(taskCtx, t)
 		}(task)
+	}
+}
+
+func (w *Worker) trackCancel(taskID string, cancel context.CancelFunc) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.cancels[taskID] = cancel
+}
+
+func (w *Worker) untrackCancel(taskID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.cancels, taskID)
+}
+
+func (w *Worker) cancelInFlight() {
+	w.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(w.cancels))
+	for _, cancel := range w.cancels {
+		cancels = append(cancels, cancel)
+	}
+	w.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
+func (w *Worker) waitForDrain() error {
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-time.After(w.cfg.ShutdownGracePeriod):
+		slog.Warn("worker shutdown grace period exceeded; canceling in-flight tasks", "id", w.id, "grace_period", w.cfg.ShutdownGracePeriod)
+		w.cancelInFlight()
+		<-done
+		return nil
 	}
 }
 

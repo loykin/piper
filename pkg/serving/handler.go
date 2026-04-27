@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/pkg/secret"
 )
 
 // HandlerDeps holds all dependencies required by the serving handler.
@@ -49,7 +50,11 @@ func (h *Handler) listServices(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, svcs)
+	out := make([]*Service, len(svcs))
+	for i, svc := range svcs {
+		out[i] = redactService(svc)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // POST /services
@@ -70,7 +75,7 @@ func (h *Handler) createService(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, svc)
+	c.JSON(http.StatusOK, redactService(svc))
 }
 
 // GET /services/:name
@@ -81,7 +86,16 @@ func (h *Handler) getService(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 		return
 	}
-	c.JSON(http.StatusOK, svc)
+	c.JSON(http.StatusOK, redactService(svc))
+}
+
+func redactService(svc *Service) *Service {
+	if svc == nil {
+		return nil
+	}
+	cp := *svc
+	cp.YAML = secret.RedactString(cp.YAML)
+	return &cp
 }
 
 // DELETE /services/:name

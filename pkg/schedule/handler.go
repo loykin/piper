@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/secret"
 )
 
 // HandlerDeps holds all dependencies required by the schedule handler.
@@ -19,6 +20,7 @@ type HandlerDeps struct {
 	Parse     func(yaml []byte) (*pipeline.Pipeline, error)
 	Trigger   func(ctx context.Context, sc *Schedule)
 	NextTime  func(expr string, from time.Time) (time.Time, error)
+	OwnerID   func(r *http.Request) string
 	// GenID generates a unique schedule ID prefix (e.g. "sch-run-xxx").
 	GenID func() string
 }
@@ -50,7 +52,15 @@ func (h *Handler) listSchedules(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, schedules)
+	ownerID := h.ownerID(c.Request)
+	out := make([]*Schedule, 0, len(schedules))
+	for _, sc := range schedules {
+		if ownerID != "" && sc.OwnerID != "" && sc.OwnerID != ownerID {
+			continue
+		}
+		out = append(out, redactSchedule(sc))
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // POST /schedules
@@ -116,6 +126,9 @@ func (h *Handler) createSchedule(c *gin.Context) {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+	if sc.OwnerID == "" {
+		sc.OwnerID = h.ownerID(c.Request)
+	}
 
 	switch req.Type {
 	case "cron":
@@ -167,7 +180,11 @@ func (h *Handler) getSchedule(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
 		return
 	}
-	c.JSON(http.StatusOK, sc)
+	if !h.canAccess(c.Request, sc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	c.JSON(http.StatusOK, redactSchedule(sc))
 }
 
 // PATCH /schedules/:id
@@ -184,6 +201,10 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled is required"})
 		return
 	}
+	if sc, err := h.deps.Schedules.Get(c.Request.Context(), id); err != nil || !h.canAccess(c.Request, sc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
 	if err := h.deps.Schedules.SetEnabled(c.Request.Context(), id, *req.Enabled); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -194,6 +215,10 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 // DELETE /schedules/:id
 func (h *Handler) deleteSchedule(c *gin.Context) {
 	id := c.Param("id")
+	if sc, err := h.deps.Schedules.Get(c.Request.Context(), id); err != nil || !h.canAccess(c.Request, sc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
 	if err := h.deps.Schedules.Delete(c.Request.Context(), id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -204,10 +229,43 @@ func (h *Handler) deleteSchedule(c *gin.Context) {
 // GET /schedules/:id/runs
 func (h *Handler) listScheduleRuns(c *gin.Context) {
 	id := c.Param("id")
+	if sc, err := h.deps.Schedules.Get(c.Request.Context(), id); err != nil || !h.canAccess(c.Request, sc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
 	runs, err := h.deps.Runs.List(c.Request.Context(), run.RunFilter{ScheduleID: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	for _, r := range runs {
+		r.PipelineYAML = secret.RedactString(r.PipelineYAML)
+		r.ParamsJSON = secret.RedactString(r.ParamsJSON)
+	}
 	c.JSON(http.StatusOK, runs)
+}
+
+func (h *Handler) ownerID(r *http.Request) string {
+	if h.deps.OwnerID == nil {
+		return ""
+	}
+	return h.deps.OwnerID(r)
+}
+
+func (h *Handler) canAccess(r *http.Request, sc *Schedule) bool {
+	if sc == nil {
+		return false
+	}
+	ownerID := h.ownerID(r)
+	return ownerID == "" || sc.OwnerID == "" || sc.OwnerID == ownerID
+}
+
+func redactSchedule(sc *Schedule) *Schedule {
+	if sc == nil {
+		return nil
+	}
+	cp := *sc
+	cp.PipelineYAML = secret.RedactString(cp.PipelineYAML)
+	cp.ParamsJSON = secret.RedactString(cp.ParamsJSON)
+	return &cp
 }

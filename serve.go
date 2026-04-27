@@ -149,6 +149,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		},
 		Artifacts: &piperArtifacts{p: p},
 		Hooks:     &piperRunHooks{p: p},
+		OwnerID:   ownerIDFromRequest,
 	}).RegisterRoutes(r.Group(""))
 
 	// Schedule domain
@@ -162,6 +163,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 			p.triggerSchedule(p.ctx, sc)
 		},
 		NextTime: nextScheduleTime,
+		OwnerID:  ownerIDFromRequest,
 		GenID:    genScheduleID,
 	}).RegisterRoutes(r.Group(""))
 
@@ -234,6 +236,16 @@ func (p *Piper) checkBearerToken(r *http.Request) error {
 		return fmt.Errorf("invalid bearer token")
 	}
 	return nil
+}
+
+func ownerIDFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if ownerID := strings.TrimSpace(r.Header.Get("X-Piper-Owner-ID")); ownerID != "" {
+		return ownerID
+	}
+	return strings.TrimSpace(r.URL.Query().Get("owner_id"))
 }
 
 func genRunID() string {
@@ -429,6 +441,9 @@ type piperRunHooks struct {
 
 func (h *piperRunHooks) BeforeListRuns(ctx context.Context, r *http.Request) (run.RunFilter, error) {
 	f, err := h.p.cfg.Hooks.callBeforeListRuns(ctx, r)
+	if f.OwnerID == "" {
+		f.OwnerID = ownerIDFromRequest(r)
+	}
 	return run.RunFilter{
 		OwnerID:      f.OwnerID,
 		PipelineName: f.PipelineName,
@@ -440,11 +455,32 @@ func (h *piperRunHooks) BeforeCreateRun(ctx context.Context, r *http.Request, ya
 }
 
 func (h *piperRunHooks) BeforeGetRun(ctx context.Context, r *http.Request, id string) error {
-	return h.p.cfg.Hooks.callBeforeGetRun(ctx, r, id)
+	if err := h.p.cfg.Hooks.callBeforeGetRun(ctx, r, id); err != nil {
+		return err
+	}
+	return h.checkRunOwner(ctx, r, id)
 }
 
 func (h *piperRunHooks) BeforeGetLogs(ctx context.Context, r *http.Request, runID, step string) error {
-	return h.p.cfg.Hooks.callBeforeGetLogs(ctx, r, runID, step)
+	if err := h.p.cfg.Hooks.callBeforeGetLogs(ctx, r, runID, step); err != nil {
+		return err
+	}
+	return h.checkRunOwner(ctx, r, runID)
+}
+
+func (h *piperRunHooks) checkRunOwner(ctx context.Context, r *http.Request, runID string) error {
+	ownerID := ownerIDFromRequest(r)
+	if ownerID == "" {
+		return nil
+	}
+	rec, err := h.p.repos.Run.Get(ctx, runID)
+	if err != nil || rec == nil {
+		return nil
+	}
+	if rec.OwnerID != "" && rec.OwnerID != ownerID {
+		return fmt.Errorf("forbidden")
+	}
+	return nil
 }
 
 // ── piperArtifacts — implements run.ArtifactProvider ─────────────────────────

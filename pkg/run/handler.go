@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/secret"
 )
 
 // LogQuerier abstracts log storage for the run handler.
@@ -47,6 +48,7 @@ type HandlerDeps struct {
 	DeleteRun func(ctx context.Context, runID string) error
 	Artifacts ArtifactProvider
 	Hooks     RunHooks
+	OwnerID   func(r *http.Request) string
 }
 
 // ArtifactProvider is the domain interface for artifact listing and download.
@@ -117,6 +119,7 @@ func (h *Handler) listRuns(c *gin.Context) {
 	}
 	result := make([]runWithSteps, 0, len(runs))
 	for _, r := range runs {
+		r = redactRun(r)
 		steps, _ := h.deps.Steps.List(c.Request.Context(), r.ID)
 		if steps == nil {
 			steps = []*Step{}
@@ -150,6 +153,9 @@ func (h *Handler) createRun(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "StartRun not configured"})
 		return
 	}
+	if req.OwnerID == "" && h.deps.OwnerID != nil {
+		req.OwnerID = h.deps.OwnerID(c.Request)
+	}
 
 	runID, err := h.deps.StartRun(c.Request.Context(), req.YAML, req.OwnerID, req.Params, req.Vars)
 	if err != nil {
@@ -177,7 +183,7 @@ func (h *Handler) getRun(c *gin.Context) {
 	if err != nil {
 		slog.Warn("list steps failed", "run_id", runID, "err", err)
 	}
-	c.JSON(http.StatusOK, gin.H{"run": r, "steps": steps})
+	c.JSON(http.StatusOK, gin.H{"run": redactRun(r), "steps": steps})
 }
 
 // POST /runs/:id/cancel
@@ -271,6 +277,16 @@ func (h *Handler) listSteps(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, steps)
+}
+
+func redactRun(r *Run) *Run {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	cp.PipelineYAML = secret.RedactString(cp.PipelineYAML)
+	cp.ParamsJSON = secret.RedactString(cp.ParamsJSON)
+	return &cp
 }
 
 // POST /runs/:id/steps/:step/retry

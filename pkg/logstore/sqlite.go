@@ -2,7 +2,8 @@ package logstore
 
 import (
 	"database/sql"
-	"regexp"
+
+	"github.com/piper/piper/pkg/secret"
 )
 
 // SQLiteLogStore implements LogStore using the existing logs table.
@@ -34,24 +35,13 @@ func (s *SQLiteLogStore) Append(lines []*Line) error {
 	defer func() { _ = stmt.Close() }()
 
 	for _, l := range lines {
-		l.Line = redactSecrets(l.Line)
+		l.Line = secret.RedactString(l.Line)
 		if _, err := stmt.Exec(l.RunID, l.StepName, l.Ts, l.Stream, l.Line); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 	}
 	return tx.Commit()
-}
-
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(password|passwd|token|secret|api[_-]?key|access[_-]?key)\s*[:=]\s*([^ \t\r\n]+)`),
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-}
-
-func redactSecrets(line string) string {
-	line = secretPatterns[0].ReplaceAllString(line, `$1=[REDACTED]`)
-	line = secretPatterns[1].ReplaceAllString(line, `[REDACTED_AWS_ACCESS_KEY]`)
-	return line
 }
 
 func (s *SQLiteLogStore) Query(runID, stepName string, afterID int64) ([]*Line, error) {

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: piper-worker
+  namespace: piper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: piper-worker
+  template:
+    metadata:
+      labels:
+        app: piper-worker
+    spec:
+      serviceAccountName: piper
+      containers:
+        - name: worker
+          image: piper/piper:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - worker
+            - --master=http://piper-server.piper.svc.cluster.local:8080
+            - --concurrency=2
+          env:
+            - name: PIPER_SOURCE_S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: endpoint
+                  optional: true
+            - name: PIPER_SOURCE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: access_key
+                  optional: true
+            - name: PIPER_SOURCE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: secret_key
+                  optional: true
+            - name: PIPER_SOURCE_S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: bucket
+                  optional: true

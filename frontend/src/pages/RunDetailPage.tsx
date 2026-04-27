@@ -275,6 +275,7 @@ export default function RunDetailPage() {
                         <span className="font-mono text-xs text-gray-300">{f.path}</span>
                         <div className="flex items-center gap-4">
                           <span className="text-xs text-gray-500">{formatFileSize(f.size)}</span>
+                          <span className="text-xs text-gray-500">{new Date(f.modified_at).toLocaleString()}</span>
                           <a
                             href={artifactDownloadURL(id!, sa.step, art.name, f.path)}
                             download

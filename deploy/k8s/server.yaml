@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: piper-server
+  namespace: piper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: piper-server
+  template:
+    metadata:
+      labels:
+        app: piper-server
+    spec:
+      serviceAccountName: piper
+      containers:
+        - name: piper
+          image: piper/piper:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - --addr=:8080
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PIPER_SERVER_ADDR
+              value: :8080
+            - name: PIPER_SOURCE_S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: endpoint
+                  optional: true
+            - name: PIPER_SOURCE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: access_key
+                  optional: true
+            - name: PIPER_SOURCE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: secret_key
+                  optional: true
+            - name: PIPER_SOURCE_S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: piper-s3
+                  key: bucket
+                  optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: piper-server
+  namespace: piper
+spec:
+  selector:
+    app: piper-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -20,6 +22,7 @@ import (
 	"github.com/piper/piper/internal/queue"
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/backend"
+	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
@@ -55,6 +58,7 @@ type Piper struct {
 	s3Cli    *s3sdk.Client     // nil when S3 not configured
 	resolver artifact.Resolver // central artifact resolver
 	backend  backend.ExecutionBackend
+	events   *event.Hub
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 }
@@ -127,6 +131,7 @@ func New(cfg Config) (*Piper, error) {
 			proxy:   serving.NewProxy(repos.Serving),
 		},
 		stopCtx: stopFn,
+		events:  event.NewHub(),
 	}
 	if cfg.S3.Bucket != "" && cfg.S3.AccessKey != "" {
 		if s3c, err := newPiperS3Client(cfg.S3); err != nil {
@@ -141,6 +146,8 @@ func New(cfg Config) (*Piper, error) {
 		s3Bucket:  cfg.S3.Bucket,
 	}
 	q.OnRunSuccess = p.handleRunSuccess
+	q.SetEventPublisher(p.events)
+	p.serving.manager.SetEventPublisher(p.events)
 	p.recoverInterruptedRuns(context.Background())
 	go p.runCleanup(p.ctx)
 	go p.runScheduler(p.ctx)
@@ -215,20 +222,47 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 	}
 	now := time.Now().UTC()
 	for _, r := range runs {
+		if r.PipelineYAML == "" {
+			// No YAML — can't reconstruct DAG, mark failed.
+			if err := p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now); err != nil {
+				slog.Warn("recover run failed", "run_id", r.ID, "err", err)
+			}
+			continue
+		}
+		pl, err := p.Parse([]byte(r.PipelineYAML))
+		if err != nil {
+			slog.Warn("recover: parse pipeline failed", "run_id", r.ID, "err", err)
+			_ = p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now)
+			continue
+		}
+		dag, err := pipeline.BuildDAG(pl)
+		if err != nil {
+			slog.Warn("recover: build dag failed", "run_id", r.ID, "err", err)
+			_ = p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now)
+			continue
+		}
 		steps, _ := p.repos.Step.List(ctx, r.ID)
+		doneSteps := map[string]bool{}
 		for _, s := range steps {
-			if s.Status == "running" || s.Status == "pending" {
-				s.Status = "failed"
-				s.EndedAt = &now
-				s.Error = "server restarted before task completed"
+			switch s.Status {
+			case "done", "skipped":
+				doneSteps[s.StepName] = true
+			case "running":
+				// Reset to pending; the worker may have crashed mid-task.
+				s.Status = "pending"
+				s.StartedAt = nil
+				s.Error = ""
 				if err := p.repos.Step.Upsert(ctx, s); err != nil {
-					slog.Warn("recover step failed", "run_id", r.ID, "step", s.StepName, "err", err)
+					slog.Warn("recover: reset step status failed", "run_id", r.ID, "step", s.StepName, "err", err)
 				}
 			}
 		}
-		if err := p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now); err != nil {
-			slog.Warn("recover run failed", "run_id", r.ID, "err", err)
+		var params map[string]any
+		if r.ParamsJSON != "" {
+			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
 		}
+		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
+		p.queue.Recover(ctx, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, doneSteps)
 	}
 }
 
@@ -456,6 +490,10 @@ func (p *Piper) Config() Config {
 // DeployService parses a ModelService YAML and deploys it.
 // It resolves the artifact via the central resolver and starts the runtime process or K8s Deployment.
 func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*serving.Service, error) {
+	return p.deployService(ctx, yamlBytes, "")
+}
+
+func (p *Piper) deployService(ctx context.Context, yamlBytes []byte, ownerID string) (*serving.Service, error) {
 	var svc serving.ModelService
 	if err := yaml.Unmarshal(yamlBytes, &svc); err != nil {
 		return nil, fmt.Errorf("parse ModelService YAML: %w", err)
@@ -464,19 +502,14 @@ func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*serving.S
 		return nil, fmt.Errorf("ModelService metadata.name is required")
 	}
 
-	ref := svc.Spec.Model.FromArtifact
-	if ref == nil {
-		return nil, fmt.Errorf("spec.model.from_artifact is required")
-	}
-
 	target := artifact.TargetLocal
 	if svc.Spec.Runtime.Mode == "k8s" {
 		target = artifact.TargetS3
 	}
 
-	resolved, err := p.resolver.Resolve(ctx, ref.Pipeline, ref.Step, ref.Artifact, ref.Run, target)
+	resolved, artifactLabel, err := p.resolveServiceModel(ctx, svc, target)
 	if err != nil {
-		return nil, fmt.Errorf("resolve artifact: %w", err)
+		return nil, err
 	}
 
 	if err := p.serving.manager.Deploy(ctx, svc, resolved); err != nil {
@@ -490,10 +523,94 @@ func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*serving.S
 	}
 	rec.YAML = string(yamlBytes)
 	rec.RunID = resolved.RunID
+	rec.OwnerID = ownerID
+	if artifactLabel != "" {
+		rec.Artifact = artifactLabel
+	}
 	if err := p.repos.Serving.Update(ctx, rec); err != nil {
 		return nil, fmt.Errorf("update service record: %w", err)
 	}
 	return rec, nil
+}
+
+func (p *Piper) resolveServiceModel(ctx context.Context, svc serving.ModelService, target artifact.Target) (artifact.Resolved, string, error) {
+	ref := svc.Spec.Model.FromArtifact
+	if ref != nil {
+		resolved, err := p.resolver.Resolve(ctx, ref.Pipeline, ref.Step, ref.Artifact, ref.Run, target)
+		if err != nil {
+			return artifact.Resolved{}, "", fmt.Errorf("resolve artifact: %w", err)
+		}
+		return resolved, ref.Step + "/" + ref.Artifact, nil
+	}
+	uri := strings.TrimSpace(svc.Spec.Model.FromURI)
+	if uri == "" {
+		return artifact.Resolved{}, "", fmt.Errorf("spec.model.from_artifact or spec.model.from_uri is required")
+	}
+	resolved, err := p.resolveModelURI(ctx, svc.Metadata.Name, uri, target)
+	if err != nil {
+		return artifact.Resolved{}, "", err
+	}
+	return resolved, uri, nil
+}
+
+func (p *Piper) resolveModelURI(ctx context.Context, serviceName, uri string, target artifact.Target) (artifact.Resolved, error) {
+	if strings.HasPrefix(uri, "s3://") {
+		if target == artifact.TargetS3 {
+			return artifact.Resolved{S3URI: uri}, nil
+		}
+		if p.s3Cli == nil {
+			return artifact.Resolved{}, fmt.Errorf("local serving from s3:// URI requires S3 credentials (configure S3.AccessKey/SecretKey)")
+		}
+		dir := filepath.Join(p.cfg.Serving.ModelDir, serviceName)
+		if p.cfg.Serving.ModelDir == "" {
+			dir = filepath.Join(p.cfg.OutputDir, "models", serviceName)
+		}
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return artifact.Resolved{}, err
+		}
+		if err := downloadS3URIToLocal(ctx, p.s3Cli, uri, dir); err != nil {
+			return artifact.Resolved{}, fmt.Errorf("download s3 model: %w", err)
+		}
+		return artifact.Resolved{LocalPath: dir}, nil
+	}
+	if strings.HasPrefix(uri, "file://") {
+		return artifact.Resolved{LocalPath: strings.TrimPrefix(uri, "file://")}, nil
+	}
+	if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
+		if target == artifact.TargetS3 {
+			return artifact.Resolved{}, fmt.Errorf("k8s serving from http(s) URI requires an s3:// URI")
+		}
+		dir := filepath.Join(p.cfg.Serving.ModelDir, serviceName)
+		if p.cfg.Serving.ModelDir == "" {
+			dir = filepath.Join(p.cfg.OutputDir, "models", serviceName)
+		}
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return artifact.Resolved{}, err
+		}
+		dest := filepath.Join(dir, filepath.Base(strings.Split(uri, "?")[0]))
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
+		if err != nil {
+			return artifact.Resolved{}, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return artifact.Resolved{}, err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return artifact.Resolved{}, fmt.Errorf("download model URI: status %d", resp.StatusCode)
+		}
+		out, err := os.Create(dest)
+		if err != nil {
+			return artifact.Resolved{}, err
+		}
+		defer func() { _ = out.Close() }()
+		if _, err := io.Copy(out, resp.Body); err != nil {
+			return artifact.Resolved{}, err
+		}
+		return artifact.Resolved{LocalPath: dir}, nil
+	}
+	return artifact.Resolved{LocalPath: uri}, nil
 }
 
 // StopService stops the named service.

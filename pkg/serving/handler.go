@@ -11,10 +11,11 @@ import (
 // HandlerDeps holds all dependencies required by the serving handler.
 type HandlerDeps struct {
 	Services Repository
-	Deploy   func(ctx context.Context, yaml []byte) (*Service, error)
+	Deploy   func(ctx context.Context, yaml []byte, ownerID string) (*Service, error)
 	Stop     func(ctx context.Context, name string) error
 	Restart  func(ctx context.Context, name string) error
 	Proxy    http.Handler
+	OwnerID  func(r *http.Request) string
 }
 
 // Handler is the Gin HTTP handler for the /services domain.
@@ -50,9 +51,13 @@ func (h *Handler) listServices(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	out := make([]*Service, len(svcs))
-	for i, svc := range svcs {
-		out[i] = redactService(svc)
+	ownerID := h.ownerID(c.Request)
+	out := make([]*Service, 0, len(svcs))
+	for _, svc := range svcs {
+		if ownerID != "" && svc.OwnerID != "" && svc.OwnerID != ownerID {
+			continue
+		}
+		out = append(out, redactService(svc))
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -70,7 +75,7 @@ func (h *Handler) createService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Deploy not configured"})
 		return
 	}
-	svc, err := h.deps.Deploy(c.Request.Context(), []byte(req.YAML))
+	svc, err := h.deps.Deploy(c.Request.Context(), []byte(req.YAML), h.ownerID(c.Request))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -84,6 +89,10 @@ func (h *Handler) getService(c *gin.Context) {
 	svc, err := h.deps.Services.Get(c.Request.Context(), name)
 	if err != nil || svc == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
+		return
+	}
+	if !h.canAccess(c.Request, svc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	c.JSON(http.StatusOK, redactService(svc))
@@ -101,6 +110,11 @@ func redactService(svc *Service) *Service {
 // DELETE /services/:name
 func (h *Handler) deleteService(c *gin.Context) {
 	name := c.Param("name")
+	svc, err := h.deps.Services.Get(c.Request.Context(), name)
+	if err != nil || !h.canAccess(c.Request, svc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
 	if h.deps.Stop != nil {
 		if err := h.deps.Stop(c.Request.Context(), name); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -117,6 +131,11 @@ func (h *Handler) deleteService(c *gin.Context) {
 // POST /services/:name/restart
 func (h *Handler) restartService(c *gin.Context) {
 	name := c.Param("name")
+	svc, err := h.deps.Services.Get(c.Request.Context(), name)
+	if err != nil || !h.canAccess(c.Request, svc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
 	if h.deps.Restart != nil {
 		if err := h.deps.Restart(c.Request.Context(), name); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -124,4 +143,19 @@ func (h *Handler) restartService(c *gin.Context) {
 		}
 	}
 	c.Status(http.StatusOK)
+}
+
+func (h *Handler) ownerID(r *http.Request) string {
+	if h.deps.OwnerID == nil {
+		return ""
+	}
+	return h.deps.OwnerID(r)
+}
+
+func (h *Handler) canAccess(r *http.Request, svc *Service) bool {
+	if svc == nil {
+		return false
+	}
+	ownerID := h.ownerID(r)
+	return ownerID == "" || svc.OwnerID == "" || svc.OwnerID == ownerID
 }

@@ -11,6 +11,7 @@ const (
 // Service represents a deployed ModelService record in the database.
 type Service struct {
 	Name      string    `json:"name"       db:"name"`
+	OwnerID   string    `json:"owner_id,omitempty" db:"owner_id"`
 	RunID     string    `json:"run_id"     db:"run_id"`
 	Artifact  string    `json:"artifact"   db:"artifact"`
 	Status    string    `json:"status"     db:"status"`

@@ -18,9 +18,17 @@ type TaskQueuer interface {
 	Complete(ctx context.Context, taskID, action, errMsg string, startedAt, endedAt time.Time, attempts int) error
 }
 
+// WorkerRegistrar abstracts the worker registry for the worker handler.
+type WorkerRegistrar interface {
+	Register(info iworker.Info)
+	Heartbeat(id string, inFlight int) error
+	Touch(id string)
+	List() []iworker.Info
+}
+
 // HandlerDeps holds all dependencies required by the worker handler.
 type HandlerDeps struct {
-	Registry *iworker.Registry
+	Registry WorkerRegistrar
 	Queue    TaskQueuer
 }
 

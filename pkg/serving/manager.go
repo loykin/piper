@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/piper/piper/pkg/event"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -26,11 +28,17 @@ type Manager struct {
 	repo     Repository
 	modelDir string                // base directory for downloaded model artifacts
 	k8s      *kubernetes.Clientset // nil when k8s mode is not configured
+	events   event.Publisher       // nil means no event publishing
 }
 
 // SetK8sClientset injects a Kubernetes clientset at runtime.
 func (m *Manager) SetK8sClientset(cs *kubernetes.Clientset) {
 	m.k8s = cs
+}
+
+// SetEventPublisher wires an event publisher so the manager can emit service lifecycle events.
+func (m *Manager) SetEventPublisher(p event.Publisher) {
+	m.events = p
 }
 
 // New creates a Manager.
@@ -51,9 +59,15 @@ func (m *Manager) Deploy(ctx context.Context, svc ModelService, art artifact.Res
 		mode = "local"
 	}
 
+	artifactLabel := ""
+	if svc.Spec.Model.FromArtifact != nil {
+		artifactLabel = svc.Spec.Model.FromArtifact.Step + "/" + svc.Spec.Model.FromArtifact.Artifact
+	} else if svc.Spec.Model.FromURI != "" {
+		artifactLabel = svc.Spec.Model.FromURI
+	}
 	rec := &Service{
 		Name:     name,
-		Artifact: svc.Spec.Model.FromArtifact.Step + "/" + svc.Spec.Model.FromArtifact.Artifact,
+		Artifact: artifactLabel,
 		Status:   StatusRunning,
 		YAML:     "", // caller may set this
 	}
@@ -77,7 +91,11 @@ func (m *Manager) Deploy(ctx context.Context, svc ModelService, art artifact.Res
 		return fmt.Errorf("unknown runtime mode: %q", mode)
 	}
 
-	return m.repo.Upsert(ctx, rec)
+	if err := m.repo.Upsert(ctx, rec); err != nil {
+		return err
+	}
+	m.emit("service.deployed", map[string]any{"name": name, "mode": mode, "artifact": artifactLabel})
+	return nil
 }
 
 // Stop terminates a running service.
@@ -93,7 +111,9 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 	if svc.PID > 0 {
 		proc, err := os.FindProcess(svc.PID)
 		if err == nil {
-			_ = proc.Kill()
+			if err := proc.Kill(); err != nil {
+				slog.Warn("serving: kill process failed", "name", name, "pid", svc.PID, "err", err)
+			}
 		}
 	} else if m.k8s != nil {
 		// K8s mode: delete Deployment and Service
@@ -102,7 +122,11 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 		_ = m.k8s.CoreV1().Services(ns).Delete(ctx, k8sName(name), metav1.DeleteOptions{})
 	}
 
-	return m.repo.SetStatus(ctx, name, StatusStopped)
+	if err := m.repo.SetStatus(ctx, name, StatusStopped); err != nil {
+		return err
+	}
+	m.emit("service.stopped", map[string]any{"name": name})
+	return nil
 }
 
 // Restart stops and re-deploys a service with the resolved artifact.
@@ -228,6 +252,13 @@ func (m *Manager) watchProcess(name string, cmd *exec.Cmd) {
 	}
 	if dbErr := m.repo.SetStatus(ctx, name, status); dbErr != nil {
 		slog.Warn("update service status failed", "name", name, "err", dbErr)
+	}
+	m.emit("service.exited", map[string]any{"name": name, "status": status})
+}
+
+func (m *Manager) emit(eventType string, fields map[string]any) {
+	if m.events != nil {
+		m.events.Publish(event.New(eventType, fields))
 	}
 }
 

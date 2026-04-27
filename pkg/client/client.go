@@ -50,6 +50,13 @@ type CreateScheduleRequest struct {
 	Params  map[string]any `json:"params,omitempty"`
 }
 
+type Event struct {
+	ID     string         `json:"id"`
+	Type   string         `json:"type"`
+	At     time.Time      `json:"at"`
+	Fields map[string]any `json:"fields,omitempty"`
+}
+
 type Worker struct {
 	ID           string    `json:"id"`
 	Label        string    `json:"label"`
@@ -194,6 +201,22 @@ func (c *Client) StopService(ctx context.Context, name string) error {
 
 func (c *Client) RestartService(ctx context.Context, name string) error {
 	return c.doJSON(ctx, http.MethodPost, "/services/"+url.PathEscape(name)+"/restart", nil, nil)
+}
+
+func (c *Client) Events(ctx context.Context) (io.ReadCloser, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/events", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer func() { _ = resp.Body.Close() }()
+		return nil, decodeError(resp)
+	}
+	return resp.Body, nil
 }
 
 func (c *Client) doJSON(ctx context.Context, method, apiPath string, in, out any) error {

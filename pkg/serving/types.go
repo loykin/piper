@@ -21,6 +21,8 @@ type ModelServiceSpec struct {
 type ModelRef struct {
 	// FromArtifact references an artifact produced by a Pipeline run.
 	FromArtifact *ArtifactRef `yaml:"from_artifact"`
+	// FromURI references an external model location, e.g. file://, s3://, http://.
+	FromURI string `yaml:"from_uri"`
 }
 
 // ArtifactRef identifies a specific artifact from a Pipeline step.

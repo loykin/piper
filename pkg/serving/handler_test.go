@@ -89,7 +89,7 @@ func TestCreateService(t *testing.T) {
 	deployed := false
 	router := newServingRouter(HandlerDeps{
 		Services: repo,
-		Deploy: func(_ context.Context, yamlBytes []byte) (*Service, error) {
+		Deploy: func(_ context.Context, yamlBytes []byte, ownerID string) (*Service, error) {
 			deployed = true
 			svc := &Service{Name: "my-model", Status: StatusRunning}
 			_ = repo.Upsert(context.Background(), svc)

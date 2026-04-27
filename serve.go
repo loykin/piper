@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
@@ -129,24 +131,14 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Run domain
 	run.NewHandler(run.HandlerDeps{
-		Runs:  p.repos.Run,
-		Steps: p.repos.Step,
-		Logs:  p.logs,
-		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error) {
-			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars)
-		},
-		CancelRun: func(ctx context.Context, runID string) error {
-			return p.cancelRun(ctx, runID)
-		},
-		RerunRun: func(ctx context.Context, runID string, failedOnly bool) (string, error) {
-			return p.rerunRun(ctx, runID, failedOnly)
-		},
-		RetryStep: func(ctx context.Context, runID, stepName string) (string, error) {
-			return p.retryStep(ctx, runID, stepName)
-		},
-		DeleteRun: func(ctx context.Context, runID string) error {
-			return p.deleteRunWithArtifacts(ctx, runID)
-		},
+		Runs:      p.repos.Run,
+		Steps:     p.repos.Step,
+		Logs:      p.logs,
+		StartRun:  p.StartRun,
+		CancelRun: p.CancelRun,
+		RerunRun:  p.RerunRun,
+		RetryStep: p.RetryStep,
+		DeleteRun: p.DeleteRun,
 		Artifacts: &piperArtifacts{p: p},
 		Hooks:     &piperRunHooks{p: p},
 		OwnerID:   ownerIDFromRequest,
@@ -170,16 +162,11 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	// Serving domain
 	serving.NewHandler(serving.HandlerDeps{
 		Services: p.repos.Serving,
-		Deploy: func(ctx context.Context, yaml []byte) (*serving.Service, error) {
-			return p.DeployService(ctx, yaml)
-		},
-		Stop: func(ctx context.Context, name string) error {
-			return p.StopService(ctx, name)
-		},
-		Restart: func(ctx context.Context, name string) error {
-			return p.RestartService(ctx, name)
-		},
-		Proxy: p.serving.proxy,
+		Deploy:   p.DeployServiceAs,
+		Stop:     p.StopService,
+		Restart:  p.RestartService,
+		Proxy:    p.serving.proxy,
+		OwnerID:  ownerIDFromRequest,
 	}).RegisterRoutes(r.Group(""))
 
 	// Worker domain (mounted under /api)
@@ -193,6 +180,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	r.GET("/metrics", p.metricsHandler)
+	r.GET("/events", p.eventsHandler)
 
 	// SPA fallback
 	r.NoRoute(gin.WrapH(ui.Handler()))
@@ -236,6 +224,26 @@ func (p *Piper) checkBearerToken(r *http.Request) error {
 		return fmt.Errorf("invalid bearer token")
 	}
 	return nil
+}
+
+func (p *Piper) eventsHandler(c *gin.Context) {
+	events, cancel := p.events.Subscribe()
+	defer cancel()
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	c.Stream(func(w io.Writer) bool {
+		select {
+		case <-c.Request.Context().Done():
+			return false
+		case ev := <-events:
+			_, _ = fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", ev.ID, ev.Type, event.Encode(ev))
+			return true
+		}
+	})
 }
 
 func ownerIDFromRequest(r *http.Request) string {
@@ -295,6 +303,36 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 		Vars:    vars,
 		YAML:    yaml,
 	})
+}
+
+// StartRun is the exported entry point for creating a run from the HTTP API.
+func (p *Piper) StartRun(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error) {
+	return p.startRunFromAPI(ctx, yaml, ownerID, params, vars)
+}
+
+// CancelRun cancels a queued or running run.
+func (p *Piper) CancelRun(ctx context.Context, runID string) error {
+	return p.queue.Cancel(ctx, runID)
+}
+
+// RerunRun re-executes a run, optionally limiting to failed steps only.
+func (p *Piper) RerunRun(ctx context.Context, runID string, failedOnly bool) (string, error) {
+	return p.rerunRun(ctx, runID, failedOnly)
+}
+
+// RetryStep retries a single failed step within a run.
+func (p *Piper) RetryStep(ctx context.Context, runID, stepName string) (string, error) {
+	return p.retryStep(ctx, runID, stepName)
+}
+
+// DeleteRun deletes a run and its artifacts.
+func (p *Piper) DeleteRun(ctx context.Context, runID string) error {
+	return p.deleteRunWithArtifacts(ctx, runID)
+}
+
+// DeployServiceAs deploys a service on behalf of the given owner.
+func (p *Piper) DeployServiceAs(ctx context.Context, yamlBytes []byte, ownerID string) (*serving.Service, error) {
+	return p.deployService(ctx, yamlBytes, ownerID)
 }
 
 func (p *Piper) cancelRun(ctx context.Context, runID string) error {

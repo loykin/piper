@@ -217,6 +217,72 @@ func downloadArtifactS3Raw(w http.ResponseWriter, r *http.Request, client *s3.Cl
 	_, _ = io.Copy(w, out.Body)
 }
 
+// downloadS3URIToLocal downloads all objects under an s3://bucket/prefix URI into destDir,
+// preserving the key structure relative to the prefix.
+// If the URI points to a single object (no trailing slash, no sub-keys), it is downloaded directly.
+func downloadS3URIToLocal(ctx context.Context, client *s3.Client, s3URI, destDir string) error {
+	// s3://bucket/key/path
+	without := strings.TrimPrefix(s3URI, "s3://")
+	slash := strings.IndexByte(without, '/')
+	if slash < 0 {
+		return fmt.Errorf("invalid s3 URI %q: missing key", s3URI)
+	}
+	bucket := without[:slash]
+	prefix := without[slash+1:]
+
+	// List all objects under the prefix
+	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(prefix),
+	})
+
+	downloaded := 0
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return err
+		}
+		for _, obj := range page.Contents {
+			key := aws.ToString(obj.Key)
+			if strings.HasSuffix(key, "/") {
+				continue // directory marker
+			}
+			rel := strings.TrimPrefix(key, prefix)
+			rel = strings.TrimPrefix(rel, "/")
+			if rel == "" {
+				rel = filepath.Base(key)
+			}
+			dest := filepath.Join(destDir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+				return err
+			}
+			out, err := client.GetObject(ctx, &s3.GetObjectInput{
+				Bucket: aws.String(bucket),
+				Key:    aws.String(key),
+			})
+			if err != nil {
+				return fmt.Errorf("get object %s: %w", key, err)
+			}
+			f, createErr := os.Create(dest)
+			if createErr != nil {
+				_ = out.Body.Close()
+				return createErr
+			}
+			_, copyErr := io.Copy(f, out.Body)
+			_ = out.Body.Close()
+			_ = f.Close()
+			if copyErr != nil {
+				return fmt.Errorf("write %s: %w", dest, copyErr)
+			}
+			downloaded++
+		}
+	}
+	if downloaded == 0 {
+		return fmt.Errorf("no objects found at %s", s3URI)
+	}
+	return nil
+}
+
 // downloadArtifactLocal streams a local artifact file to an http.ResponseWriter.
 func downloadArtifactLocal(w http.ResponseWriter, r *http.Request, outputDir, runID, step, rest string) {
 	localPath := filepath.Join(outputDir, runID, step, filepath.FromSlash(rest))

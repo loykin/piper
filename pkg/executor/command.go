@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"syscall"
 
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/source"
@@ -46,14 +47,31 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 		stderr = os.Stderr
 	}
 
-	cmd := exec.CommandContext(ctx, step.Run.Command[0], step.Run.Command[1:]...)
+	cmd := exec.Command(step.Run.Command[0], step.Run.Command[1:]...)
 	cmd.Dir = workDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	for k, v := range cfg.Params {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("PIPER_PARAM_%s=%v", k, v))
 	}
 
-	return cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		<-done
+		return ctx.Err()
+	}
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { listRuns, deleteRun, type Run, type Step } from '../api'
+import { listRuns, deleteRun, rerunRun, type Run, type Step } from '../api'
 import StatusBadge from '../components/StatusBadge'
 
 function elapsed(run: Run): string {
@@ -19,6 +19,7 @@ const STEP_COLOR: Record<string, string> = {
   running: 'bg-blue-400 animate-pulse',
   failed:  'bg-red-500',
   skipped: 'bg-yellow-600',
+  canceled: 'bg-orange-500',
   pending: 'bg-gray-600',
 }
 
@@ -66,6 +67,13 @@ export default function RunHistoryPage() {
       .finally(() => setDeleting(null))
   }
 
+  const handleRerun = (e: React.MouseEvent, run: Run, failedOnly = false) => {
+    e.stopPropagation()
+    rerunRun(run.id, failedOnly)
+      .then(({ run_id }) => navigate(`/runs/${run_id}`))
+      .catch((err) => alert(err.message))
+  }
+
   const columns: DataGridColumnDef<Run>[] = [
     {
       accessorKey: 'id',
@@ -111,16 +119,34 @@ export default function RunHistoryPage() {
     {
       id: 'actions',
       header: '',
-      meta: { minWidth: 60, align: 'right' },
+      meta: { minWidth: 210, align: 'right' },
       cell: ({ row }) => (
-        <button
-          type="button"
-          disabled={row.original.status === 'running' || deleting === row.original.id}
-          onClick={(e) => handleDelete(e, row.original)}
-          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-950 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
-        >
-          {deleting === row.original.id ? '…' : 'Delete'}
-        </button>
+        <div className="flex justify-end gap-1">
+          <button
+            type="button"
+            disabled={row.original.status === 'running' || row.original.status === 'scheduled'}
+            onClick={(e) => handleRerun(e, row.original)}
+            className="rounded px-2 py-1 text-xs text-indigo-400 hover:bg-indigo-950 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            Rerun
+          </button>
+          <button
+            type="button"
+            disabled={row.original.status !== 'failed'}
+            onClick={(e) => handleRerun(e, row.original, true)}
+            className="rounded px-2 py-1 text-xs text-yellow-400 hover:bg-yellow-950 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            Failed
+          </button>
+          <button
+            type="button"
+            disabled={row.original.status === 'running' || deleting === row.original.id}
+            onClick={(e) => handleDelete(e, row.original)}
+            className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-950 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            {deleting === row.original.id ? '…' : 'Delete'}
+          </button>
+        </div>
       ),
     },
   ]

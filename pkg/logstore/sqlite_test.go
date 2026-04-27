@@ -105,3 +105,21 @@ func TestSQLiteLogStore_QueryDifferentSteps(t *testing.T) {
 		t.Errorf("step-b: expected [b], got %v", gotB)
 	}
 }
+
+func TestSQLiteLogStore_RedactsSecrets(t *testing.T) {
+	db := openTestDB(t)
+	ls := logstore.NewSQLite(db)
+
+	if err := ls.Append([]*logstore.Line{
+		{RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "token=supersecret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ls.Query("r1", "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Line != "token=[REDACTED]" {
+		t.Fatalf("line = %q, want token=[REDACTED]", got[0].Line)
+	}
+}

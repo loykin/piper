@@ -30,6 +30,9 @@ type Config struct {
 	// Server (not required in embedded mode)
 	Server ServerConfig `yaml:"server" mapstructure:"server"`
 
+	// Retention controls automatic cleanup. Zero values disable cleanup.
+	Retention RetentionConfig `yaml:"retention" mapstructure:"retention"`
+
 	// K8s — when configured, steps run as K8s Jobs.
 	// Create a Launcher with pkg/k8s.New(cfg.K8s), then register it with p.SetBackend(launcher).
 	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
@@ -52,14 +55,20 @@ type S3Config struct {
 }
 
 type ServerConfig struct {
-	Addr string    `yaml:"addr"    mapstructure:"addr"`
-	TLS  TLSConfig `yaml:"tls"     mapstructure:"tls"`
+	Addr  string    `yaml:"addr"    mapstructure:"addr"`
+	Token string    `yaml:"token"   mapstructure:"token"`
+	TLS   TLSConfig `yaml:"tls"     mapstructure:"tls"`
 }
 
 type TLSConfig struct {
 	Enabled  bool   `yaml:"enabled"   mapstructure:"enabled"`
 	CertFile string `yaml:"cert_file" mapstructure:"cert_file"`
 	KeyFile  string `yaml:"key_file"  mapstructure:"key_file"`
+}
+
+type RetentionConfig struct {
+	RunTTL      time.Duration `yaml:"run_ttl"      mapstructure:"run_ttl"`
+	ArtifactTTL time.Duration `yaml:"artifact_ttl" mapstructure:"artifact_ttl"`
 }
 
 // K8sConfig holds the configuration required for K8s Job execution.

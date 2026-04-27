@@ -169,6 +169,23 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
+// CancelRun deletes all piper Jobs associated with a run.
+func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
+	selector := "piper/run-id=" + sanitizeLabel(runID)
+	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return err
+	}
+	for _, job := range jobs.Items {
+		if err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (l *Launcher) buildAgentArgs(task *proto.Task, taskB64, stepB64 string) []string {
 	args := []string{
 		agentSubcmd,

@@ -30,9 +30,10 @@ const (
 	taskRunning  taskStatus = "running"
 	taskRetrying taskStatus = "retrying"
 	// taskDone and taskFailed use proto constants to stay in sync with worker/agent reporting.
-	taskDone    taskStatus = proto.TaskStatusDone
-	taskFailed  taskStatus = proto.TaskStatusFailed
-	taskSkipped taskStatus = "skipped"
+	taskDone     taskStatus = proto.TaskStatusDone
+	taskFailed   taskStatus = proto.TaskStatusFailed
+	taskSkipped  taskStatus = "skipped"
+	taskCanceled taskStatus = "canceled"
 )
 
 type taskEntry struct {
@@ -182,6 +183,9 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 
 	r, ok := q.runs[runID]
 	if !ok {
+		if rec, getErr := q.runRepo.Get(ctx, runID); getErr == nil && rec != nil && rec.Status == run.StatusCanceled {
+			return nil
+		}
 		return fmt.Errorf("run %s not found in queue", runID)
 	}
 	entry, ok := r.tasks[stepName]
@@ -196,10 +200,11 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 			entry.attempts = 1
 		}
 	}
-	slog.Info("task completed", "task_id", id, "status", status)
+	slog.Info("event", "type", "step.reported", "run_id", runID, "step", stepName, "task_id", id, "status", status)
 
 	if status == string(taskDone) {
 		entry.status = taskDone
+		slog.Info("event", "type", "step.done", "run_id", runID, "step", stepName, "attempts", entry.attempts)
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
 			StepName:  stepName,
@@ -228,6 +233,7 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		q.scheduleRetryLocked(ctx, entry)
 	} else {
 		entry.status = taskFailed
+		slog.Info("event", "type", "step.failed", "run_id", runID, "step", stepName, "attempts", entry.attempts, "error", errMsg)
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
 			StepName:  stepName,
@@ -257,7 +263,7 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		}
 		pl := r.pl
 		delete(q.runs, runID)
-		slog.Info("run completed", "run_id", runID, "status", runStatus)
+		slog.Info("event", "type", "run.completed", "run_id", runID, "status", runStatus)
 
 		if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
 			go q.OnRunSuccess(ctx, runID, pl)
@@ -265,6 +271,46 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 	}
 
 	return nil
+}
+
+// Cancel stops queue-owned work for a run and marks any non-terminal steps as canceled.
+// Active backends may also receive a cancellation request to stop in-flight work.
+func (q *Queue) Cancel(ctx context.Context, runID string) error {
+	q.mu.Lock()
+	r, ok := q.runs[runID]
+	b := q.backend
+	if ok {
+		for _, entry := range r.tasks {
+			switch entry.status {
+			case taskDone, taskFailed, taskSkipped, taskCanceled:
+				continue
+			default:
+				entry.status = taskCanceled
+				now := time.Now()
+				if err := q.stepRepo.Upsert(ctx, &run.Step{
+					RunID:    runID,
+					StepName: entry.step.Name,
+					Status:   string(taskCanceled),
+					EndedAt:  &now,
+					Attempts: entry.attempts,
+				}); err != nil {
+					slog.Warn("upsert canceled step failed", "task_id", entry.task.ID, "err", err)
+				}
+			}
+		}
+		delete(q.runs, runID)
+	}
+	q.mu.Unlock()
+
+	if cb, ok := b.(backend.CancelableBackend); ok {
+		if err := cb.CancelRun(ctx, runID); err != nil {
+			return err
+		}
+	}
+
+	now := time.Now()
+	slog.Info("event", "type", "run.canceled", "run_id", runID)
+	return q.runRepo.UpdateStatus(ctx, runID, run.StatusCanceled, &now)
 }
 
 func (q *Queue) promoteReady(ctx context.Context, r *runEntry) {
@@ -275,7 +321,7 @@ func (q *Queue) promoteReady(ctx context.Context, r *runEntry) {
 		}
 		if depsAllDone(entry.step.DependsOn, done) {
 			entry.status = taskReady
-			slog.Info("task ready", "task_id", entry.task.ID)
+			slog.Info("event", "type", "step.ready", "run_id", r.runID, "step", entry.step.Name, "task_id", entry.task.ID)
 			q.dispatchIfNeeded(ctx, entry)
 		}
 	}
@@ -286,6 +332,7 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 	entry.task.Attempt = entry.attempts
 	entry.status = taskRunning
 	now := time.Now()
+	slog.Info("event", "type", "step.running", "run_id", runID, "step", entry.step.Name, "task_id", entry.task.ID, "attempt", entry.attempts)
 	if err := q.stepRepo.Upsert(ctx, &run.Step{
 		RunID:     runID,
 		StepName:  entry.step.Name,
@@ -355,7 +402,7 @@ func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep stri
 				}); err != nil {
 					slog.Warn("upsert skipped step failed", "task_id", entry.task.ID, "err", err)
 				}
-				slog.Info("task skipped", "task_id", entry.task.ID, "failed_dep", failedStep)
+				slog.Info("event", "type", "step.skipped", "run_id", r.runID, "step", entry.step.Name, "task_id", entry.task.ID, "failed_dep", failedStep)
 				q.skipDownstream(ctx, r, entry.step.Name)
 				break
 			}
@@ -393,17 +440,66 @@ func depsAllDone(deps []string, done map[string]bool) bool {
 	return true
 }
 
-// Cleanup removes runs that have been stuck in the queue longer than ttl without reaching a terminal state.
+// Cleanup fails runs that have been stuck in the queue longer than ttl without reaching a terminal state.
 // This guards against orphaned runs (e.g. a K8s job that never reports back).
-func (q *Queue) Cleanup(ttl time.Duration) {
+func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	cutoff := time.Now().Add(-ttl)
 	for runID, r := range q.runs {
 		if r.addedAt.Before(cutoff) {
-			slog.Warn("queue: removing stuck run", "run_id", runID, "age", time.Since(r.addedAt).Round(time.Second))
+			now := time.Now()
+			for _, entry := range r.tasks {
+				switch entry.status {
+				case taskDone, taskFailed, taskSkipped, taskCanceled:
+					continue
+				default:
+					entry.status = taskFailed
+					if err := q.stepRepo.Upsert(ctx, &run.Step{
+						RunID:    runID,
+						StepName: entry.step.Name,
+						Status:   string(taskFailed),
+						EndedAt:  &now,
+						Attempts: entry.attempts,
+						Error:    "task lease expired",
+					}); err != nil {
+						slog.Warn("upsert expired step failed", "task_id", entry.task.ID, "err", err)
+					}
+				}
+			}
+			if err := q.runRepo.UpdateStatus(ctx, runID, run.StatusFailed, &now); err != nil {
+				slog.Warn("update expired run failed", "run_id", runID, "err", err)
+			}
+			slog.Warn("event", "type", "run.expired", "run_id", runID, "status", run.StatusFailed, "age", time.Since(r.addedAt).Round(time.Second))
 			delete(q.runs, runID)
 		}
 	}
+}
+
+type Stats struct {
+	Runs    int
+	Pending int
+	Ready   int
+	Running int
+}
+
+func (q *Queue) Stats() Stats {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var s Stats
+	s.Runs = len(q.runs)
+	for _, r := range q.runs {
+		for _, entry := range r.tasks {
+			switch entry.status {
+			case taskPending:
+				s.Pending++
+			case taskReady:
+				s.Ready++
+			case taskRunning:
+				s.Running++
+			}
+		}
+	}
+	return s
 }

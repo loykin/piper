@@ -38,11 +38,14 @@ func (r *Registry) Register(info Info) {
 	r.mu.Lock()
 	r.workers[info.ID] = &info
 	r.mu.Unlock()
+	slog.Info("event", "type", "worker.registered", "worker_id", info.ID, "label", info.Label, "version", info.Version, "capabilities", info.Capabilities, "hostname", info.Hostname)
 
 	if r.repo != nil {
 		if err := r.repo.Upsert(context.Background(), &WorkerRecord{
 			ID:           info.ID,
 			Label:        info.Label,
+			Version:      info.Version,
+			Capabilities: info.Capabilities,
 			Hostname:     info.Hostname,
 			Concurrency:  info.Concurrency,
 			Status:       StatusOnline,
@@ -109,6 +112,7 @@ func (r *Registry) Cleanup() {
 	for id, w := range r.workers {
 		if !w.LastSeen.After(cutoff) {
 			delete(r.workers, id)
+			slog.Info("event", "type", "worker.lost", "worker_id", id, "last_seen", w.LastSeen)
 		}
 	}
 	r.mu.Unlock()

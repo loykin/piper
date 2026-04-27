@@ -3,9 +3,11 @@ package piper
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -104,6 +106,11 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Auth + extra handler middleware
 	r.Use(func(c *gin.Context) {
+		if err := p.checkBearerToken(c.Request); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			c.Abort()
+			return
+		}
 		if err := p.cfg.Hooks.callAuth(c.Request); err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			c.Abort()
@@ -127,6 +134,15 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		Logs:  p.logs,
 		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error) {
 			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars)
+		},
+		CancelRun: func(ctx context.Context, runID string) error {
+			return p.cancelRun(ctx, runID)
+		},
+		RerunRun: func(ctx context.Context, runID string, failedOnly bool) (string, error) {
+			return p.rerunRun(ctx, runID, failedOnly)
+		},
+		RetryStep: func(ctx context.Context, runID, stepName string) (string, error) {
+			return p.retryStep(ctx, runID, stepName)
 		},
 		DeleteRun: func(ctx context.Context, runID string) error {
 			return p.deleteRunWithArtifacts(ctx, runID)
@@ -174,6 +190,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/metrics", p.metricsHandler)
 
 	// SPA fallback
 	r.NoRoute(gin.WrapH(ui.Handler()))
@@ -208,6 +225,17 @@ func (rw *responseRecorder) Write(b []byte) (int, error) {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+func (p *Piper) checkBearerToken(r *http.Request) error {
+	if p.cfg.Server.Token == "" || r.URL.Path == "/health" {
+		return nil
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != p.cfg.Server.Token {
+		return fmt.Errorf("invalid bearer token")
+	}
+	return nil
+}
+
 func genRunID() string {
 	return fmt.Sprintf("run-%d", time.Now().UnixNano())
 }
@@ -241,6 +269,7 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 			StartedAt:    now,
 			ScheduledAt:  vars.ScheduledAt,
 			PipelineYAML: yaml,
+			ParamsJSON:   encodeParams(params),
 		}
 		if err := p.repos.Run.Create(ctx, newRun); err != nil {
 			return "", err
@@ -254,6 +283,134 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 		Vars:    vars,
 		YAML:    yaml,
 	})
+}
+
+func (p *Piper) cancelRun(ctx context.Context, runID string) error {
+	return p.queue.Cancel(ctx, runID)
+}
+
+func (p *Piper) metricsHandler(c *gin.Context) {
+	runs, err := p.repos.Run.List(c.Request.Context(), run.RunFilter{})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	counts := map[string]int{}
+	var totalDurationSeconds float64
+	var completed int
+	for _, r := range runs {
+		counts[r.Status]++
+		if r.EndedAt != nil {
+			totalDurationSeconds += r.EndedAt.Sub(r.StartedAt).Seconds()
+			completed++
+		}
+	}
+	stats := p.queue.Stats()
+	c.Header("Content-Type", "text/plain; version=0.0.4")
+	for status, count := range counts {
+		_, _ = fmt.Fprintf(c.Writer, "piper_runs_total{status=%q} %d\n", status, count)
+	}
+	_, _ = fmt.Fprintf(c.Writer, "piper_run_duration_seconds_sum %.3f\n", totalDurationSeconds)
+	_, _ = fmt.Fprintf(c.Writer, "piper_run_duration_seconds_count %d\n", completed)
+	_, _ = fmt.Fprintf(c.Writer, "piper_queue_runs %d\n", stats.Runs)
+	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"pending\"} %d\n", stats.Pending)
+	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"ready\"} %d\n", stats.Ready)
+	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"running\"} %d\n", stats.Running)
+	_, _ = fmt.Fprintf(c.Writer, "piper_workers %d\n", len(p.registry.List()))
+}
+
+func (p *Piper) rerunRun(ctx context.Context, runID string, failedOnly bool) (string, error) {
+	prev, err := p.repos.Run.Get(ctx, runID)
+	if err != nil || prev == nil {
+		return "", fmt.Errorf("run %q not found", runID)
+	}
+	if prev.PipelineYAML == "" {
+		return "", fmt.Errorf("run %q has no stored pipeline yaml", runID)
+	}
+	var params map[string]any
+	if prev.ParamsJSON != "" {
+		_ = json.Unmarshal([]byte(prev.ParamsJSON), &params)
+	}
+	pl, err := p.Parse([]byte(prev.PipelineYAML))
+	if err != nil {
+		return "", fmt.Errorf("parse previous run yaml: %w", err)
+	}
+	if failedOnly {
+		steps, err := p.repos.Step.List(ctx, runID)
+		if err != nil {
+			return "", err
+		}
+		failed := map[string]bool{}
+		for _, s := range steps {
+			if s.Status == "failed" {
+				failed[s.StepName] = true
+			}
+		}
+		if len(failed) == 0 {
+			return "", fmt.Errorf("run %q has no failed steps", runID)
+		}
+		var filtered []pipeline.Step
+		for _, s := range pl.Spec.Steps {
+			if failed[s.Name] {
+				s.DependsOn = nil
+				filtered = append(filtered, s)
+			}
+		}
+		pl.Spec.Steps = filtered
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		return "", fmt.Errorf("build dag: %w", err)
+	}
+	return p.startRun(ctx, pl, dag, StartRunOptions{
+		OwnerID: prev.OwnerID,
+		Params:  params,
+		YAML:    prev.PipelineYAML,
+	})
+}
+
+func (p *Piper) retryStep(ctx context.Context, runID, stepName string) (string, error) {
+	prev, err := p.repos.Run.Get(ctx, runID)
+	if err != nil || prev == nil {
+		return "", fmt.Errorf("run %q not found", runID)
+	}
+	steps, err := p.repos.Step.List(ctx, runID)
+	if err != nil {
+		return "", err
+	}
+	foundFailed := false
+	for _, s := range steps {
+		if s.StepName == stepName && s.Status == "failed" {
+			foundFailed = true
+			break
+		}
+	}
+	if !foundFailed {
+		return "", fmt.Errorf("step %q is not failed in run %q", stepName, runID)
+	}
+	if prev.PipelineYAML == "" {
+		return "", fmt.Errorf("run %q has no stored pipeline yaml", runID)
+	}
+	var params map[string]any
+	if prev.ParamsJSON != "" {
+		_ = json.Unmarshal([]byte(prev.ParamsJSON), &params)
+	}
+	pl, err := p.Parse([]byte(prev.PipelineYAML))
+	if err != nil {
+		return "", fmt.Errorf("parse previous run yaml: %w", err)
+	}
+	for _, s := range pl.Spec.Steps {
+		if s.Name == stepName {
+			s.DependsOn = nil
+			pl.Spec.Steps = []pipeline.Step{s}
+			dag, err := pipeline.BuildDAG(pl)
+			if err != nil {
+				return "", fmt.Errorf("build dag: %w", err)
+			}
+			return p.startRun(ctx, pl, dag, StartRunOptions{OwnerID: prev.OwnerID, Params: params, YAML: prev.PipelineYAML})
+		}
+	}
+	return "", fmt.Errorf("step %q not found in pipeline yaml", stepName)
 }
 
 // deleteRunWithArtifacts deletes the run's artifacts and then the run record.

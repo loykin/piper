@@ -127,12 +127,17 @@ func buildConfig() piper.Config {
 			UseSSL:    viper.GetBool("source.s3.use_ssl"),
 		},
 		Server: piper.ServerConfig{
-			Addr: viper.GetString("server.addr"),
+			Addr:  viper.GetString("server.addr"),
+			Token: viper.GetString("server.token"),
 			TLS: piper.TLSConfig{
 				Enabled:  viper.GetBool("server.tls.enabled"),
 				CertFile: viper.GetString("server.tls.cert_file"),
 				KeyFile:  viper.GetString("server.tls.key_file"),
 			},
+		},
+		Retention: piper.RetentionConfig{
+			RunTTL:      viper.GetDuration("retention.run_ttl"),
+			ArtifactTTL: viper.GetDuration("retention.artifact_ttl"),
 		},
 		K8s: piper.K8sConfig{
 			AgentImage:       viper.GetString("k8s.agent_image"),

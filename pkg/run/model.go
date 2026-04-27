@@ -7,6 +7,7 @@ const (
 	StatusScheduled = "scheduled"
 	StatusSuccess   = "success"
 	StatusFailed    = "failed"
+	StatusCanceled  = "canceled"
 )
 
 type Run struct {
@@ -19,6 +20,7 @@ type Run struct {
 	EndedAt      *time.Time `json:"ended_at,omitempty"     db:"ended_at"`
 	ScheduledAt  *time.Time `json:"scheduled_at,omitempty" db:"scheduled_at"`
 	PipelineYAML string     `json:"pipeline_yaml,omitempty" db:"pipeline_yaml"`
+	ParamsJSON   string     `json:"params_json,omitempty" db:"params_json"`
 }
 
 type Step struct {

@@ -16,6 +16,13 @@ type ExecutionBackend interface {
 	Dispatch(ctx context.Context, task *proto.Task) error
 }
 
+// CancelableBackend is implemented by active backends that can stop in-flight
+// work for a run, such as deleting Kubernetes Jobs.
+type CancelableBackend interface {
+	ExecutionBackend
+	CancelRun(ctx context.Context, runID string) error
+}
+
 // PassiveBackend is implemented by backends that do not actively dispatch tasks.
 // When the queue sees a PassiveBackend it leaves tasks in the ready state so
 // that workers can acquire them via /api/tasks/next (polling mode).

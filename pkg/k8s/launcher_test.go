@@ -221,6 +221,31 @@ func TestBuildJob_volumeMounts(t *testing.T) {
 	}
 }
 
+func TestCancelRunDeletesJobsByRunLabel(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}
+
+	runTask := &proto.Task{RunID: "run-1", StepName: "train"}
+	otherTask := &proto.Task{RunID: "run-2", StepName: "train"}
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), l.buildJob(runTask, "python:3.11", nil), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), l.buildJob(otherTask, "python:3.11", nil), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := l.CancelRun(context.Background(), "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := clientset.BatchV1().Jobs("default").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 1 || jobs.Items[0].Labels["piper/run-id"] != "run-2" {
+		t.Fatalf("remaining jobs = %#v, want only run-2", jobs.Items)
+	}
+}
+
 // ─── Dispatch image resolution logic (unit, without K8s API) ─────────────────
 
 func TestDispatch_noImage(t *testing.T) {

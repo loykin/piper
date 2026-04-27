@@ -5,7 +5,7 @@ export interface Run {
   schedule_id?: string
   owner_id?: string
   pipeline_name: string
-  status: 'running' | 'success' | 'failed'
+  status: 'scheduled' | 'running' | 'success' | 'failed' | 'canceled'
   started_at: string
   ended_at?: string
   scheduled_at?: string
@@ -30,7 +30,7 @@ export interface Schedule {
 export interface Step {
   run_id: string
   step_name: string
-  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'canceled'
   started_at?: string
   ended_at?: string
   attempts: number
@@ -271,3 +271,32 @@ export async function deleteRun(id: string): Promise<void> {
   }
 }
 
+export async function cancelRun(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/runs/${id}/cancel`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+export async function rerunRun(id: string, failedOnly = false): Promise<{ run_id: string }> {
+  const res = await fetch(`${BASE}/runs/${id}/rerun`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ failed_only: failedOnly }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+export async function retryStep(runID: string, stepName: string): Promise<{ run_id: string }> {
+  const res = await fetch(`${BASE}/runs/${runID}/steps/${encodeURIComponent(stepName)}/retry`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}

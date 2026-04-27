@@ -16,7 +16,10 @@ type memoryRunRepo struct {
 }
 
 func (r *memoryRunRepo) Create(context.Context, *run.Run) error { return nil }
-func (r *memoryRunRepo) Get(context.Context, string) (*run.Run, error) {
+func (r *memoryRunRepo) Get(_ context.Context, id string) (*run.Run, error) {
+	if status, ok := r.status[id]; ok {
+		return &run.Run{ID: id, Status: status}, nil
+	}
 	return nil, nil
 }
 func (r *memoryRunRepo) List(context.Context, run.RunFilter) ([]*run.Run, error) {
@@ -71,6 +74,24 @@ func (b *recordingBackend) snapshot() []*proto.Task {
 	out := make([]*proto.Task, len(b.tasks))
 	copy(out, b.tasks)
 	return out
+}
+
+type cancelRecordingBackend struct {
+	recordingBackend
+	canceled string
+}
+
+func (b *cancelRecordingBackend) CancelRun(_ context.Context, runID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.canceled = runID
+	return nil
+}
+
+func (b *cancelRecordingBackend) canceledRun() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.canceled
 }
 
 func TestNextStrictLabelMatching(t *testing.T) {
@@ -285,6 +306,55 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 	}
 	if dispatched[1].Attempt != 2 {
 		t.Fatalf("retry dispatch attempt = %d, want 2", dispatched[1].Attempt)
+	}
+}
+
+func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
+	ctx := context.Background()
+	pl := &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: "cancel"},
+		Spec: pipeline.Spec{Steps: []pipeline.Step{
+			{Name: "first", Run: pipeline.Run{Command: []string{"sleep", "60"}}},
+			{Name: "second", Run: pipeline.Run{Command: []string{"echo", "second"}}, DependsOn: []string{"first"}},
+		}},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRepo := &memoryRunRepo{}
+	stepRepo := &memoryStepRepo{}
+	backend := &cancelRecordingBackend{}
+	q := NewQueue(runRepo, stepRepo)
+	q.SetBackend(backend)
+	q.Add(ctx, pl, dag, "run-cancel", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	if !waitUntil(2*time.Second, func() bool {
+		return len(backend.snapshot()) == 1
+	}) {
+		t.Fatal("first task was not dispatched")
+	}
+	if err := q.Cancel(ctx, "run-cancel"); err != nil {
+		t.Fatal(err)
+	}
+	if got := backend.canceledRun(); got != "run-cancel" {
+		t.Fatalf("backend canceled run = %q, want run-cancel", got)
+	}
+	if runRepo.status["run-cancel"] != run.StatusCanceled {
+		t.Fatalf("run status = %q, want canceled", runRepo.status["run-cancel"])
+	}
+	for _, stepName := range []string{"first", "second"} {
+		step := stepRepo.steps["run-cancel:"+stepName]
+		if step == nil || step.Status != "canceled" {
+			t.Fatalf("%s step = %#v, want canceled", stepName, step)
+		}
+	}
+	if task := q.Next(""); task != nil {
+		t.Fatalf("got task after cancel: %#v", task)
+	}
+	now := time.Now()
+	if err := q.Complete(ctx, "run-cancel:first", proto.TaskStatusDone, "", now, now, 1); err != nil {
+		t.Fatalf("late completion after cancel returned error: %v", err)
 	}
 }
 

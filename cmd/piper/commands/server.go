@@ -30,12 +30,14 @@ func newServerCmd(p *piper.Piper) *cobra.Command {
 	}
 
 	cmd.Flags().String("addr", ":8080", "listen address")
+	cmd.Flags().String("token", "", "bearer token required for API and UI requests")
 	cmd.Flags().Bool("tls", false, "enable TLS")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file")
 	cmd.Flags().String("tls-key", "", "TLS key file")
 	cmd.Flags().String("serving-kubeconfig", "", "kubeconfig path for ModelService k8s deployments")
 
 	mustBindPFlag("server.addr", cmd.Flags().Lookup("addr"))
+	mustBindPFlag("server.token", cmd.Flags().Lookup("token"))
 	mustBindPFlag("server.tls.enabled", cmd.Flags().Lookup("tls"))
 	mustBindPFlag("server.tls.cert_file", cmd.Flags().Lookup("tls-cert"))
 	mustBindPFlag("server.tls.key_file", cmd.Flags().Lookup("tls-key"))

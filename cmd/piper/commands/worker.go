@@ -22,6 +22,8 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 				MasterURL:    viper.GetString("worker.master"),
 				Label:        viper.GetString("worker.label"),
 				Token:        viper.GetString("worker.token"),
+				Version:      viper.GetString("worker.version"),
+				Capabilities: viper.GetStringSlice("worker.capabilities"),
 				PollInterval: viper.GetDuration("worker.poll_interval"),
 				OutputDir:    viper.GetString("worker.output_dir"),
 				Concurrency:  viper.GetInt("worker.concurrency"),
@@ -42,6 +44,8 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 	cmd.Flags().String("master", "", "master server URL")
 	cmd.Flags().String("label", "", "worker label (e.g. gpu)")
 	cmd.Flags().String("token", "", "authentication token")
+	cmd.Flags().String("version", "", "worker version")
+	cmd.Flags().StringSlice("capability", nil, "worker capability; may be repeated")
 	cmd.Flags().Duration("poll-interval", 3*time.Second, "polling interval")
 	cmd.Flags().String("output-dir", "./piper-outputs", "output directory")
 	cmd.Flags().Int("concurrency", 4, "max parallel tasks")
@@ -50,6 +54,8 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 	mustBindPFlag("worker.master", cmd.Flags().Lookup("master"))
 	mustBindPFlag("worker.label", cmd.Flags().Lookup("label"))
 	mustBindPFlag("worker.token", cmd.Flags().Lookup("token"))
+	mustBindPFlag("worker.version", cmd.Flags().Lookup("version"))
+	mustBindPFlag("worker.capabilities", cmd.Flags().Lookup("capability"))
 	mustBindPFlag("worker.poll_interval", cmd.Flags().Lookup("poll-interval"))
 	mustBindPFlag("worker.output_dir", cmd.Flags().Lookup("output-dir"))
 	mustBindPFlag("worker.concurrency", cmd.Flags().Lookup("concurrency"))

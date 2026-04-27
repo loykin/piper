@@ -4,6 +4,7 @@ const colors: Record<string, string> = {
   success: 'bg-green-500/20 text-green-300 border-green-500/30',
   done:    'bg-green-500/20 text-green-300 border-green-500/30',
   failed:  'bg-red-500/20 text-red-300 border-red-500/30',
+  canceled:'bg-orange-500/20 text-orange-300 border-orange-500/30',
   pending: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
   skipped: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
 }

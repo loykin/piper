@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,8 @@ type Config struct {
 	MasterURL    string
 	Label        string
 	Token        string
+	Version      string
+	Capabilities []string
 	PollInterval time.Duration
 	Concurrency  int
 	OutputDir    string
@@ -133,9 +136,65 @@ func (w *Worker) Run(ctx context.Context) error {
 				w.inFlight--
 				w.mu.Unlock()
 			}()
-			w.runner.Run(ctx, t)
+			taskCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go w.watchTaskCancel(taskCtx, t, cancel)
+			w.runner.Run(taskCtx, t)
 		}(task)
 	}
+}
+
+func (w *Worker) watchTaskCancel(ctx context.Context, task *proto.Task, cancel context.CancelFunc) {
+	if w.cfg.MasterURL == "" || task.RunID == "" {
+		return
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			canceled, err := w.isRunCanceled(ctx, task.RunID)
+			if err != nil {
+				slog.Warn("cancel watch failed", "run_id", task.RunID, "err", err)
+				continue
+			}
+			if canceled {
+				slog.Info("task cancellation received", "task_id", task.ID, "run_id", task.RunID)
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func (w *Worker) isRunCanceled(ctx context.Context, runID string) (bool, error) {
+	url := fmt.Sprintf("%s/runs/%s", w.cfg.MasterURL, runID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	if w.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+w.cfg.Token)
+	}
+	resp, err := w.poller.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("run status: unexpected status %d", resp.StatusCode)
+	}
+	var body struct {
+		Run struct {
+			Status string `json:"status"`
+		} `json:"run"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false, err
+	}
+	return body.Run.Status == "canceled", nil
 }
 
 // register registers this worker with the master.
@@ -145,10 +204,12 @@ func (w *Worker) register(ctx context.Context) error {
 	}
 	hostname, _ := os.Hostname()
 	body := map[string]any{
-		"id":          w.id,
-		"label":       w.cfg.Label,
-		"concurrency": w.cfg.Concurrency,
-		"hostname":    hostname,
+		"id":           w.id,
+		"label":        w.cfg.Label,
+		"version":      w.cfg.Version,
+		"capabilities": strings.Join(w.cfg.Capabilities, ","),
+		"concurrency":  w.cfg.Concurrency,
+		"hostname":     hostname,
 	}
 	data, _ := json.Marshal(body)
 	url := fmt.Sprintf("%s/api/workers", w.cfg.MasterURL)

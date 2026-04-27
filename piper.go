@@ -2,6 +2,7 @@ package piper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -130,6 +131,7 @@ func New(cfg Config) (*Piper, error) {
 		s3Bucket:  cfg.S3.Bucket,
 	}
 	q.OnRunSuccess = p.handleRunSuccess
+	p.recoverInterruptedRuns(context.Background())
 	go p.runCleanup(p.ctx)
 	go p.runScheduler(p.ctx)
 	return p, nil
@@ -173,7 +175,63 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.registry.Cleanup()
-			p.queue.Cleanup(4 * time.Hour)
+			p.queue.Cleanup(ctx, 4*time.Hour)
+			p.cleanupRetention(ctx)
+		}
+	}
+}
+
+func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
+	runs, err := p.repos.Run.List(ctx, run.RunFilter{Status: run.StatusRunning})
+	if err != nil {
+		slog.Warn("recover running runs failed", "err", err)
+		return
+	}
+	now := time.Now().UTC()
+	for _, r := range runs {
+		steps, _ := p.repos.Step.List(ctx, r.ID)
+		for _, s := range steps {
+			if s.Status == "running" || s.Status == "pending" {
+				s.Status = "failed"
+				s.EndedAt = &now
+				s.Error = "server restarted before task completed"
+				if err := p.repos.Step.Upsert(ctx, s); err != nil {
+					slog.Warn("recover step failed", "run_id", r.ID, "step", s.StepName, "err", err)
+				}
+			}
+		}
+		if err := p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now); err != nil {
+			slog.Warn("recover run failed", "run_id", r.ID, "err", err)
+		}
+	}
+}
+
+func (p *Piper) cleanupRetention(ctx context.Context) {
+	runTTL := p.cfg.Retention.RunTTL
+	artifactTTL := p.cfg.Retention.ArtifactTTL
+	if runTTL <= 0 && artifactTTL <= 0 {
+		return
+	}
+	runs, err := p.repos.Run.List(ctx, run.RunFilter{})
+	if err != nil {
+		slog.Warn("retention list runs failed", "err", err)
+		return
+	}
+	now := time.Now().UTC()
+	for _, r := range runs {
+		if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
+			continue
+		}
+		if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
+			if err := p.deleteRunWithArtifacts(ctx, r.ID); err != nil {
+				slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
+			}
+			continue
+		}
+		if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
+			if err := deleteArtifacts(ctx, p.s3Cli, p.cfg.S3.Bucket, p.cfg.OutputDir, r.ID); err != nil {
+				slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
+			}
 		}
 	}
 }
@@ -309,6 +367,7 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 		StartedAt:    now,
 		ScheduledAt:  opts.Vars.ScheduledAt,
 		PipelineYAML: opts.YAML,
+		ParamsJSON:   encodeParams(opts.Params),
 	}
 	if err := p.repos.Run.Create(ctx, r); err != nil {
 		return "", fmt.Errorf("create run: %w", err)
@@ -325,6 +384,7 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 	}
 
 	p.queue.Add(ctx, pl, dag, runID, ".", outputDir, opts.Vars, opts.Params)
+	slog.Info("event", "type", "run.started", "run_id", runID, "pipeline", pl.Metadata.Name)
 
 	if p.cfg.Hooks.OnRunStart != nil {
 		go p.cfg.Hooks.OnRunStart(ctx, runID, pl)
@@ -476,6 +536,17 @@ func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, art
 
 func (p *Piper) SourceConfig() source.Config {
 	return p.sourceConfig()
+}
+
+func encodeParams(params map[string]any) string {
+	if params == nil {
+		return "{}"
+	}
+	b, err := json.Marshal(params)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // SetServingK8sClientset builds a k8s clientset from the given kubeconfig path

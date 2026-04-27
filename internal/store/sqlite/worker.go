@@ -13,14 +13,15 @@ type workerRepo struct{ db *sqlx.DB }
 
 func NewWorkerRepo(db *sqlx.DB) worker.Repository { return &workerRepo{db: db} }
 
-const workerSelectCols = `id, label, hostname, concurrency, status, in_flight, registered_at, last_seen_at`
+const workerSelectCols = `id, label, version, capabilities, hostname, concurrency, status, in_flight, registered_at, last_seen_at`
 
 func (r *workerRepo) Upsert(ctx context.Context, w *worker.WorkerRecord) error {
 	_, err := r.db.NamedExecContext(ctx, `
-		INSERT INTO workers (id, label, hostname, concurrency, status, in_flight, registered_at, last_seen_at)
-		VALUES (:id, :label, :hostname, :concurrency, :status, :in_flight, :registered_at, :last_seen_at)
+		INSERT INTO workers (id, label, version, capabilities, hostname, concurrency, status, in_flight, registered_at, last_seen_at)
+		VALUES (:id, :label, :version, :capabilities, :hostname, :concurrency, :status, :in_flight, :registered_at, :last_seen_at)
 		ON CONFLICT(id) DO UPDATE SET
-			label=excluded.label, hostname=excluded.hostname, concurrency=excluded.concurrency,
+			label=excluded.label, version=excluded.version, capabilities=excluded.capabilities,
+			hostname=excluded.hostname, concurrency=excluded.concurrency,
 			status=excluded.status, in_flight=excluded.in_flight,
 			registered_at=excluded.registered_at, last_seen_at=excluded.last_seen_at
 	`, w)

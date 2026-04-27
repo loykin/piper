@@ -10,6 +10,8 @@ const (
 type WorkerRecord struct {
 	ID           string    `json:"id"            db:"id"`
 	Label        string    `json:"label"         db:"label"`
+	Version      string    `json:"version"       db:"version"`
+	Capabilities string    `json:"capabilities"  db:"capabilities"`
 	Hostname     string    `json:"hostname"      db:"hostname"`
 	Concurrency  int       `json:"concurrency"   db:"concurrency"`
 	Status       string    `json:"status"        db:"status"`
@@ -22,6 +24,8 @@ type WorkerRecord struct {
 type Info struct {
 	ID           string    `json:"id"`
 	Label        string    `json:"label"`
+	Version      string    `json:"version"`
+	Capabilities string    `json:"capabilities"`
 	Concurrency  int       `json:"concurrency"`
 	Hostname     string    `json:"hostname"`
 	RegisteredAt time.Time `json:"registered_at"`

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, type Run, type Step, type LogLine, type StepArtifacts } from '../api'
+import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, cancelRun, rerunRun, retryStep, type Run, type Step, type LogLine, type StepArtifacts, type ArtifactFile } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import RunDAG from '../components/RunDAG'
 
@@ -35,7 +35,11 @@ export default function RunDetailPage() {
   const [selected, setSelected] = useState<string | null>(null)
   const [logs, setLogs] = useState<LogLine[]>([])
   const [logDone, setLogDone] = useState(false)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all')
+  const [logSearch, setLogSearch] = useState('')
   const [artifacts, setArtifacts] = useState<StepArtifacts[]>([])
+  const [preview, setPreview] = useState<{ title: string; text: string } | null>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
 
@@ -81,8 +85,28 @@ export default function RunDetailPage() {
   }, [id, selected])
 
   useEffect(() => {
+    if (!autoScroll) return
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+  }, [logs, autoScroll])
+
+  const visibleLogs = logs.filter((line) => {
+    if (streamFilter !== 'all' && line.stream !== streamFilter) return false
+    return !(logSearch && !line.line.toLowerCase().includes(logSearch.toLowerCase()));
+
+  })
+
+  const previewArtifact = async (step: string, art: string, file: ArtifactFile) => {
+    if (file.size > 128 * 1024) {
+      alert('Preview is limited to files up to 128 KB.')
+      return
+    }
+    const res = await fetch(artifactDownloadURL(id!, step, art, file.path))
+    if (!res.ok) {
+      alert(`Preview failed: ${res.status}`)
+      return
+    }
+    setPreview({ title: `${step}/${art}/${file.path}`, text: await res.text() })
+  }
 
   const columns: DataGridColumnDef<Step>[] = [
     {
@@ -125,6 +149,26 @@ export default function RunDetailPage() {
         <span className="block truncate text-xs text-red-400">{row.original.error ?? '—'}</span>
       ),
     },
+    {
+      id: 'actions',
+      header: '',
+      meta: { minWidth: 90, align: 'right' },
+      cell: ({ row }) => (
+        <button
+          type="button"
+          disabled={row.original.status !== 'failed'}
+          onClick={(e) => {
+            e.stopPropagation()
+            retryStep(run!.id, row.original.step_name)
+              .then(({ run_id }) => navigate(`/runs/${run_id}`))
+              .catch((err) => alert(err.message))
+          }}
+          className="rounded px-2 py-1 text-xs text-yellow-400 hover:bg-yellow-950 disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          Retry
+        </button>
+      ),
+    },
   ]
 
   if (!run) return <p className="text-sm text-gray-500">Loading…</p>
@@ -136,7 +180,34 @@ export default function RunDetailPage() {
         <span className="text-gray-600">/</span>
         <span className="font-mono text-sm text-gray-300">{run.id}</span>
         <StatusBadge status={run.status} />
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            disabled={run.status !== 'running' && run.status !== 'scheduled'}
+            onClick={() => {
+              if (!confirm(`Cancel run ${run.id}?`)) return
+              cancelRun(run.id).then(load).catch((err) => alert(err.message))
+            }}
+            className="rounded px-3 py-1 text-xs text-orange-400 ring-1 ring-orange-900 hover:bg-orange-950 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            Cancel Run
+          </button>
+          <button
+            type="button"
+            disabled={run.status === 'running' || run.status === 'scheduled'}
+            onClick={() => rerunRun(run.id).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
+            className="rounded px-3 py-1 text-xs text-indigo-400 ring-1 ring-indigo-900 hover:bg-indigo-950 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            Rerun
+          </button>
+          <button
+            type="button"
+            disabled={run.status !== 'failed'}
+            onClick={() => rerunRun(run.id, true).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
+            className="rounded px-3 py-1 text-xs text-yellow-400 ring-1 ring-yellow-900 hover:bg-yellow-950 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            Retry Failed
+          </button>
           <button
             type="button"
             disabled={run.status === 'running'}
@@ -211,6 +282,13 @@ export default function RunDetailPage() {
                           >
                             Download
                           </a>
+                          <button
+                            type="button"
+                            onClick={() => previewArtifact(sa.step, art.name, f)}
+                            className="text-xs text-gray-400 hover:text-gray-200"
+                          >
+                            Preview
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -237,12 +315,38 @@ export default function RunDetailPage() {
                 </span>
               )}
             </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={streamFilter}
+                onChange={(e) => setStreamFilter(e.target.value as 'all' | 'stdout' | 'stderr')}
+                className="rounded border border-gray-800 bg-gray-950 px-2 py-1 text-xs text-gray-300"
+              >
+                <option value="all">All streams</option>
+                <option value="stdout">stdout</option>
+                <option value="stderr">stderr</option>
+              </select>
+              <input
+                value={logSearch}
+                onChange={(e) => setLogSearch(e.target.value)}
+                placeholder="Search logs"
+                className="min-w-56 rounded border border-gray-800 bg-gray-950 px-2 py-1 text-xs text-gray-300 outline-none focus:border-indigo-700"
+              />
+              <label className="ml-auto inline-flex items-center gap-2 text-xs text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={autoScroll}
+                  onChange={(e) => setAutoScroll(e.target.checked)}
+                  className="accent-indigo-500"
+                />
+                Auto-scroll
+              </label>
+            </div>
 
-            <div className="h-[520px] overflow-y-auto rounded-xl border border-gray-800 bg-gray-950 p-4 font-mono text-xs leading-5">
-              {logs.length === 0 && (
+            <div className="h-130 overflow-y-auto rounded-xl border border-gray-800 bg-gray-950 p-4 font-mono text-xs leading-5">
+              {visibleLogs.length === 0 && (
                 <span className="text-gray-600">{logDone ? 'No output.' : 'Waiting for logs…'}</span>
               )}
-              {logs.map((line, index) => (
+              {visibleLogs.map((line, index) => (
                 <div
                   key={index}
                   className={`flex gap-3 ${line.stream === 'stderr' ? 'text-red-400' : 'text-gray-300'}`}
@@ -258,6 +362,17 @@ export default function RunDetailPage() {
           </>
         )}
       </div>
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={() => setPreview(null)}>
+          <div className="max-h-[80vh] w-full max-w-4xl overflow-hidden rounded-lg border border-gray-800 bg-gray-950" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+              <h3 className="font-mono text-xs text-gray-300">{preview.title}</h3>
+              <button type="button" onClick={() => setPreview(null)} className="text-sm text-gray-500 hover:text-gray-200">Close</button>
+            </div>
+            <pre className="max-h-[68vh] overflow-auto p-4 text-xs leading-5 text-gray-300">{preview.text}</pre>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -41,6 +41,9 @@ type HandlerDeps struct {
 	Steps     StepRepository
 	Logs      LogQuerier
 	StartRun  func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error)
+	CancelRun func(ctx context.Context, runID string) error
+	RerunRun  func(ctx context.Context, runID string, failedOnly bool) (string, error)
+	RetryStep func(ctx context.Context, runID, stepName string) (string, error)
 	DeleteRun func(ctx context.Context, runID string) error
 	Artifacts ArtifactProvider
 	Hooks     RunHooks
@@ -70,8 +73,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/runs", h.listRuns)
 	rg.POST("/runs", h.createRun)
 	rg.GET("/runs/:id", h.getRun)
+	rg.POST("/runs/:id/cancel", h.cancelRun)
+	rg.POST("/runs/:id/rerun", h.rerunRun)
 	rg.DELETE("/runs/:id", h.deleteRun)
 	rg.GET("/runs/:id/steps", h.listSteps)
+	rg.POST("/runs/:id/steps/:step/retry", h.retryStep)
 	rg.GET("/runs/:id/steps/:step/logs", h.getLogs)
 	rg.GET("/runs/:id/steps/:step/logs/stream", h.streamLogs)
 	rg.POST("/runs/:id/steps/:step/logs", h.ingestLogs)
@@ -174,6 +180,67 @@ func (h *Handler) getRun(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"run": r, "steps": steps})
 }
 
+// POST /runs/:id/cancel
+func (h *Handler) cancelRun(c *gin.Context) {
+	runID := c.Param("id")
+	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	if err != nil || r == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return
+	}
+	if h.deps.Hooks != nil {
+		if err := h.deps.Hooks.BeforeGetRun(c.Request.Context(), c.Request, runID); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	switch r.Status {
+	case StatusCanceled, StatusSuccess, StatusFailed:
+		c.JSON(http.StatusOK, gin.H{"status": r.Status})
+		return
+	}
+	if h.deps.CancelRun == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "CancelRun not configured"})
+		return
+	}
+	if err := h.deps.CancelRun(c.Request.Context(), runID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": StatusCanceled})
+}
+
+// POST /runs/:id/rerun
+func (h *Handler) rerunRun(c *gin.Context) {
+	runID := c.Param("id")
+	var req struct {
+		FailedOnly bool `json:"failed_only"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	if err != nil || r == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return
+	}
+	if h.deps.Hooks != nil {
+		if err := h.deps.Hooks.BeforeGetRun(c.Request.Context(), c.Request, runID); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if h.deps.RerunRun == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RerunRun not configured"})
+		return
+	}
+	newRunID, err := h.deps.RerunRun(c.Request.Context(), runID, req.FailedOnly)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"run_id": newRunID})
+}
+
 // DELETE /runs/:id
 func (h *Handler) deleteRun(c *gin.Context) {
 	runID := c.Param("id")
@@ -204,6 +271,33 @@ func (h *Handler) listSteps(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, steps)
+}
+
+// POST /runs/:id/steps/:step/retry
+func (h *Handler) retryStep(c *gin.Context) {
+	runID := c.Param("id")
+	stepName := c.Param("step")
+	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	if err != nil || r == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return
+	}
+	if h.deps.Hooks != nil {
+		if err := h.deps.Hooks.BeforeGetRun(c.Request.Context(), c.Request, runID); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if h.deps.RetryStep == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RetryStep not configured"})
+		return
+	}
+	newRunID, err := h.deps.RetryStep(c.Request.Context(), runID, stepName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"run_id": newRunID})
 }
 
 // GET /runs/:id/steps/:step/logs

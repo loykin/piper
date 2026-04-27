@@ -297,12 +297,16 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 	}
 }
 
-// dispatchIfNeeded immediately dispatches a task if an ExecutionBackend is configured.
+// dispatchIfNeeded immediately dispatches a task if an active ExecutionBackend is configured.
+// Passive backends (e.g. PollingBackend) are treated like nil — tasks stay ready for polling.
 // Called while holding the lock; captures the backend reference before launching
 // the goroutine to avoid a race with SetBackend.
 func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	b := q.backend // capture while holding the lock
 	if b == nil {
+		return
+	}
+	if pb, ok := b.(backend.PassiveBackend); ok && pb.IsPassive() {
 		return
 	}
 	runID := entry.task.RunID

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +16,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/piper/piper/pkg/artifact"
 )
 
 // Manager handles the lifecycle of ModelService deployments.
@@ -39,7 +40,10 @@ func New(repo Repository, modelDir string, clientset *kubernetes.Clientset) *Man
 }
 
 // Deploy starts a ModelService. Artifact download and process/pod creation happen here.
-func (m *Manager) Deploy(ctx context.Context, svc ModelService, artifactDir string) error {
+//
+// art must be resolved by an artifact.Resolver before calling Deploy.
+// Local mode uses art.LocalPath; k8s mode uses art.S3URI.
+func (m *Manager) Deploy(ctx context.Context, svc ModelService, art artifact.Resolved) error {
 	name := svc.Metadata.Name
 	mode := svc.Spec.Runtime.Mode
 	if mode == "" {
@@ -55,15 +59,17 @@ func (m *Manager) Deploy(ctx context.Context, svc ModelService, artifactDir stri
 
 	switch mode {
 	case "local":
-		if err := m.deployLocal(ctx, svc, artifactDir, rec); err != nil {
+		if err := m.deployLocal(ctx, svc, art.LocalPath, rec); err != nil {
 			return err
 		}
 	case "k8s":
 		if m.k8s == nil {
 			return fmt.Errorf("k8s mode requested but no k8s clientset configured")
 		}
-		s3URI := artifactDir // in k8s mode the caller passes an S3 URI
-		if err := m.deployK8s(ctx, svc, s3URI, rec); err != nil {
+		if art.S3URI == "" {
+			return fmt.Errorf("k8s serving requires S3 artifact storage (configure S3.Bucket)")
+		}
+		if err := m.deployK8s(ctx, svc, art.S3URI, rec); err != nil {
 			return err
 		}
 	default:
@@ -98,10 +104,10 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 	return m.repo.SetStatus(ctx, name, StatusStopped)
 }
 
-// Restart stops and re-deploys a service with the given artifact directory.
-func (m *Manager) Restart(ctx context.Context, svc ModelService, artifactDir string) error {
+// Restart stops and re-deploys a service with the resolved artifact.
+func (m *Manager) Restart(ctx context.Context, svc ModelService, art artifact.Resolved) error {
 	_ = m.Stop(ctx, svc.Metadata.Name)
-	return m.Deploy(ctx, svc, artifactDir)
+	return m.Deploy(ctx, svc, art)
 }
 
 // SetYAML stores the original YAML on the service record.
@@ -415,8 +421,3 @@ func (m *Manager) k8sNamespace(ctx context.Context, name string) string {
 	return "default"
 }
 
-// ArtifactLocalPath returns the local filesystem path where a run's step artifact
-// should be (or will be) downloaded.
-func ArtifactLocalPath(modelDir, runID, step, artifact string) string {
-	return filepath.Join(modelDir, runID, step, artifact)
-}

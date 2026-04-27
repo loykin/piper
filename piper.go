@@ -17,6 +17,7 @@ import (
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/piper/piper/internal/queue"
+	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
@@ -50,7 +51,8 @@ type Piper struct {
 	queue    *queue.Queue
 	registry *iworker.Registry
 	serving  servingBundle
-	s3Cli    *s3sdk.Client // nil when S3 not configured
+	s3Cli    *s3sdk.Client     // nil when S3 not configured
+	resolver artifact.Resolver // central artifact resolver
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 }
@@ -121,6 +123,11 @@ func New(cfg Config) (*Piper, error) {
 		} else {
 			p.s3Cli = s3c
 		}
+	}
+	p.resolver = &piperArtifactResolver{
+		runRepo:   repos.Run,
+		outputDir: cfg.OutputDir,
+		s3Bucket:  cfg.S3.Bucket,
 	}
 	q.OnRunSuccess = p.handleRunSuccess
 	go p.runCleanup(p.ctx)
@@ -360,7 +367,7 @@ func (p *Piper) Config() Config {
 }
 
 // DeployService parses a ModelService YAML and deploys it.
-// It resolves the artifact (downloading if needed) and starts the runtime process or K8s Deployment.
+// It resolves the artifact via the central resolver and starts the runtime process or K8s Deployment.
 func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*serving.Service, error) {
 	var svc serving.ModelService
 	if err := yaml.Unmarshal(yamlBytes, &svc); err != nil {
@@ -370,13 +377,22 @@ func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*serving.S
 		return nil, fmt.Errorf("ModelService metadata.name is required")
 	}
 
-	// Resolve artifact directory
-	artifactDir, runID, err := p.resolveArtifactDir(ctx, svc)
-	if err != nil {
-		return nil, err
+	ref := svc.Spec.Model.FromArtifact
+	if ref == nil {
+		return nil, fmt.Errorf("spec.model.from_artifact is required")
 	}
 
-	if err := p.serving.manager.Deploy(ctx, svc, artifactDir); err != nil {
+	target := artifact.TargetLocal
+	if svc.Spec.Runtime.Mode == "k8s" {
+		target = artifact.TargetS3
+	}
+
+	resolved, err := p.resolver.Resolve(ctx, ref.Pipeline, ref.Step, ref.Artifact, ref.Run, target)
+	if err != nil {
+		return nil, fmt.Errorf("resolve artifact: %w", err)
+	}
+
+	if err := p.serving.manager.Deploy(ctx, svc, resolved); err != nil {
 		return nil, fmt.Errorf("deploy service: %w", err)
 	}
 
@@ -386,7 +402,7 @@ func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*serving.S
 		return nil, fmt.Errorf("get service after deploy: %w", err)
 	}
 	rec.YAML = string(yamlBytes)
-	rec.RunID = runID
+	rec.RunID = resolved.RunID
 	if err := p.repos.Serving.Update(ctx, rec); err != nil {
 		return nil, fmt.Errorf("update service record: %w", err)
 	}
@@ -421,35 +437,41 @@ func (p *Piper) GetService(ctx context.Context, name string) (*serving.Service, 
 	return p.repos.Serving.Get(ctx, name)
 }
 
-// resolveArtifactDir finds the local directory (or S3 URI) for the artifact
-// referenced by the ModelService's from_artifact spec.
-func (p *Piper) resolveArtifactDir(ctx context.Context, svc serving.ModelService) (artifactDir, runID string, err error) {
-	ref := svc.Spec.Model.FromArtifact
-	if ref == nil {
-		return "", "", fmt.Errorf("spec.model.from_artifact is required")
-	}
+// piperArtifactResolver implements artifact.Resolver for the Piper instance.
+type piperArtifactResolver struct {
+	runRepo   run.Repository
+	outputDir string
+	s3Bucket  string
+}
 
-	if ref.Run == "latest" || ref.Run == "" {
-		r, err := p.repos.Run.GetLatestSuccessful(ctx, ref.Pipeline)
+func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, artName, runRef string, target artifact.Target) (artifact.Resolved, error) {
+	runID := runRef
+	if runID == "latest" || runID == "" {
+		latest, err := r.runRepo.GetLatestSuccessful(ctx, pipeline)
 		if err != nil {
-			return "", "", fmt.Errorf("lookup latest run for pipeline %q: %w", ref.Pipeline, err)
+			return artifact.Resolved{}, fmt.Errorf("lookup latest run for pipeline %q: %w", pipeline, err)
 		}
-		if r == nil {
-			return "", "", fmt.Errorf("no successful run found for pipeline %q", ref.Pipeline)
+		if latest == nil {
+			return artifact.Resolved{}, fmt.Errorf("no successful run found for pipeline %q", pipeline)
 		}
-		runID = r.ID
-	} else {
-		runID = ref.Run
+		runID = latest.ID
 	}
 
-	// Local artifact path: outputDir/runID/stepName/artifactName (or subfolder)
-	modelDir := p.cfg.Serving.ModelDir
-	if modelDir == "" {
-		modelDir = filepath.Join(p.cfg.OutputDir, "models")
+	switch target {
+	case artifact.TargetS3:
+		if r.s3Bucket == "" {
+			return artifact.Resolved{}, fmt.Errorf("k8s serving requires S3 artifact storage (configure S3.Bucket)")
+		}
+		return artifact.Resolved{
+			RunID: runID,
+			S3URI: fmt.Sprintf("s3://%s/%s/%s/%s", r.s3Bucket, runID, step, artName),
+		}, nil
+	default:
+		return artifact.Resolved{
+			RunID:     runID,
+			LocalPath: filepath.Join(r.outputDir, runID, step, artName),
+		}, nil
 	}
-	artifactDir = serving.ArtifactLocalPath(p.cfg.OutputDir, runID, ref.Step, ref.Artifact)
-	_ = modelDir
-	return artifactDir, runID, nil
 }
 
 func (p *Piper) SourceConfig() source.Config {

@@ -3,7 +3,6 @@ package backend
 
 import (
 	"context"
-	"errors"
 
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
@@ -17,20 +16,24 @@ type ExecutionBackend interface {
 	Dispatch(ctx context.Context, task *proto.Task) error
 }
 
-// ErrPollingBackend is returned if PollingBackend is used as an active backend.
-var ErrPollingBackend = errors.New("polling backend does not actively dispatch tasks")
+// PassiveBackend is implemented by backends that do not actively dispatch tasks.
+// When the queue sees a PassiveBackend it leaves tasks in the ready state so
+// that workers can acquire them via /api/tasks/next (polling mode).
+type PassiveBackend interface {
+	ExecutionBackend
+	IsPassive() bool
+}
 
-// PollingBackend documents worker-polling mode.
+// PollingBackend is an explicit value for worker-polling mode.
 //
-// Polling mode is represented by a nil active backend in the queue so tasks stay
+// Setting this backend is equivalent to a nil backend: the queue leaves tasks
 // ready until a worker calls /api/tasks/next.
+// Use it when you want to document the intended mode explicitly instead of
+// relying on a nil check.
 type PollingBackend struct{}
 
-// Dispatch returns ErrPollingBackend because polling workers acquire tasks via
-// Queue.Next rather than active dispatch.
-func (PollingBackend) Dispatch(context.Context, *proto.Task) error {
-	return ErrPollingBackend
-}
+func (PollingBackend) Dispatch(context.Context, *proto.Task) error { return nil }
+func (PollingBackend) IsPassive() bool                             { return true }
 
 // LocalBackend dispatches tasks to an in-process runner.
 //
@@ -46,5 +49,5 @@ func (b *LocalBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-var _ ExecutionBackend = PollingBackend{}
+var _ PassiveBackend = PollingBackend{}
 var _ ExecutionBackend = (*LocalBackend)(nil)

@@ -107,10 +107,10 @@ func TestIntegration_SimpleJob(t *testing.T) {
 // and verifies that the agent calls back to a fake master server.
 //
 // Prerequisites:
-//  1. The piper/agent:latest image must be pullable from K8s
+//  1. The piper image must be pullable from K8s
 //     - Docker Desktop: enable Settings → Experimental → "Use containerd for pulling and storing images", then run:
-//     docker build -t piper/agent:latest -f Dockerfile.agent .
-//     - Or push to a local registry and set the PIPER_AGENT_IMAGE env var
+//     make docker IMAGE=piper/agent:latest
+//     - Or push to a registry and set the PIPER_AGENT_IMAGE env var
 //
 // The fake master listens on 0.0.0.0 so the agent Pod can reach it.
 // Set PIPER_TEST_HOST to override the hostname the Pod uses (default: host.docker.internal).

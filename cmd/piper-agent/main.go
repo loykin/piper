@@ -2,15 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
 	"github.com/spf13/cobra"
 )
@@ -29,9 +25,9 @@ func main() {
 }
 
 type execFlags struct {
-	master, token, taskID, runID, stepName, stepB64, outputDir, inputDir string
-	s3Endpoint, s3AccessKey, s3SecretKey, s3Bucket                       string
-	s3UseSSL                                                             bool
+	master, token, taskB64, taskID, runID, stepName, stepB64, outputDir, inputDir string
+	s3Endpoint, s3AccessKey, s3SecretKey, s3Bucket                                string
+	s3UseSSL                                                                      bool
 }
 
 func newExecCmd() *cobra.Command {
@@ -40,25 +36,9 @@ func newExecCmd() *cobra.Command {
 		Use:   "exec [flags] -- <command...>",
 		Short: "Execute a step and report result to master",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var step pipeline.Step
-			if f.stepB64 != "" {
-				b, err := base64.StdEncoding.DecodeString(f.stepB64)
-				if err != nil {
-					return fmt.Errorf("decode step: %w", err)
-				}
-				if err := json.Unmarshal(b, &step); err != nil {
-					return fmt.Errorf("unmarshal step: %w", err)
-				}
-			}
-			if len(args) > 0 {
-				step.Run.Command = args
-			}
-			stepJSON, err := json.Marshal(step)
+			task, err := runner.TaskFromAgentInput(f.taskB64, f.taskID, f.runID, f.stepName, f.stepB64, args)
 			if err != nil {
-				return fmt.Errorf("marshal step: %w", err)
-			}
-			task := &proto.Task{
-				ID: f.taskID, RunID: f.runID, StepName: f.stepName, Step: stepJSON,
+				return err
 			}
 			r, err := runner.New(runner.Config{
 				MasterURL: f.master, Token: f.token,
@@ -75,6 +55,7 @@ func newExecCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL")
 	cmd.Flags().StringVar(&f.token, "token", "", "auth token")
+	cmd.Flags().StringVar(&f.taskB64, "task", "", "base64-encoded proto.Task JSON")
 	cmd.Flags().StringVar(&f.taskID, "task-id", "", "task ID")
 	cmd.Flags().StringVar(&f.runID, "run-id", "", "run ID")
 	cmd.Flags().StringVar(&f.stepName, "step-name", "", "step name")

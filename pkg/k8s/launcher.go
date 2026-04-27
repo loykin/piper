@@ -1,9 +1,9 @@
-// Package k8s provides a Dispatcher implementation that runs piper tasks as K8s Jobs.
+// Package k8s provides an ExecutionBackend implementation that runs piper tasks as K8s Jobs.
 //
 // How it works (agent injection pattern):
-//  1. An initContainer copies the /piper-agent binary from the piper/agent image into an emptyDir
-//  2. The step container's entrypoint is replaced with /piper-tools/piper-agent exec ... -- <original command>
-//  3. piper-agent downloads input artifacts from S3, runs the command, uploads outputs to S3, and reports completion to the master
+//  1. An initContainer copies the /piper binary from the piper image into an emptyDir
+//  2. The step container's entrypoint is replaced with /piper-tools/piper agent exec ... -- <original command>
+//  3. piper agent downloads input artifacts from S3, runs the command, uploads outputs to S3, and reports completion to the master
 //
 // Runs natively on K8s without modifying user images.
 package k8s
@@ -25,12 +25,13 @@ import (
 
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/runner"
 )
 
 // Config is the Launcher configuration.
 // Maps 1:1 to piper.K8sConfig.
 type Config struct {
-	// AgentImage: image containing the piper-agent binary (used as initContainer)
+	// AgentImage: image containing the piper CLI binary (used as initContainer)
 	AgentImage string
 
 	// Namespace: K8s namespace in which to create Jobs
@@ -63,19 +64,20 @@ type Config struct {
 }
 
 const (
-	// agentBinarySrc is the path of the piper-agent binary inside the agent image.
-	agentBinarySrc = "/piper-agent"
+	// agentBinarySrc is the path of the piper CLI binary inside the agent image.
+	agentBinarySrc = "/piper"
 	// agentBinaryDst is where the binary is copied to in the shared emptyDir volume.
 	agentBinaryDst = "/piper-tools/piper"
-	// agentExecSubcmd is the subcommand the agent binary exposes for step execution.
+	// agentSubcmd and agentExecSubcmd are the piper CLI subcommands for step execution.
+	agentSubcmd     = "agent"
 	agentExecSubcmd = "exec"
 )
 
-// Launcher implements proto.Dispatcher.
+// Launcher implements backend.ExecutionBackend.
 // The queue calls Dispatch whenever a task becomes ready.
 type Launcher struct {
 	cfg       Config
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 }
 
 // New creates a Launcher.
@@ -117,7 +119,7 @@ func New(cfg Config) (*Launcher, error) {
 }
 
 // Dispatch creates a K8s Job for the given task.
-// It does not wait for the Job to complete — the piper-agent inside the Job reports results to the master.
+// It does not wait for the Job to complete — the piper agent command inside the Job reports results to the master.
 func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 	var step pipeline.Step
 	if err := json.Unmarshal(task.Step, &step); err != nil {
@@ -148,7 +150,11 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 	}
 	stepB64 := base64.StdEncoding.EncodeToString(stepJSON)
 
-	agentArgs := l.buildAgentArgs(task, stepB64)
+	taskB64, err := runner.EncodeTask(task)
+	if err != nil {
+		return err
+	}
+	agentArgs := l.buildAgentArgs(task, taskB64, stepB64)
 	if len(step.Run.Command) > 0 {
 		agentArgs = append(agentArgs, "--")
 		agentArgs = append(agentArgs, step.Run.Command...)
@@ -163,10 +169,12 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-func (l *Launcher) buildAgentArgs(task *proto.Task, stepB64 string) []string {
+func (l *Launcher) buildAgentArgs(task *proto.Task, taskB64, stepB64 string) []string {
 	args := []string{
+		agentSubcmd,
 		agentExecSubcmd,
 		"--master=" + l.cfg.MasterURL,
+		"--task=" + taskB64,
 		"--task-id=" + task.ID,
 		"--run-id=" + task.RunID,
 		"--step-name=" + task.StepName,
@@ -214,12 +222,12 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
-					// initContainer: copy the piper-agent binary into the emptyDir
+					// initContainer: copy the piper CLI binary into the emptyDir
 					InitContainers: []corev1.Container{
 						{
 							Name:            "agent-init",
 							Image:           l.cfg.AgentImage,
-							ImagePullPolicy: corev1.PullIfNotPresent,
+							ImagePullPolicy: corev1.PullAlways,
 							// Copy the agent binary from the agent image into the shared volume
 							Command: []string{"cp", agentBinarySrc, agentBinaryDst},
 							VolumeMounts: []corev1.VolumeMount{
@@ -227,7 +235,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 							},
 						},
 					},
-					// step container: run piper-agent as the entrypoint using the original image
+					// step container: run piper agent as the entrypoint using the original image
 					Containers: []corev1.Container{
 						{
 							Name:            "step",
@@ -269,9 +277,12 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 }
 
 // jobName generates the K8s Job name.
-// Format: piper-{runID}-{stepName}, truncated to 63 characters.
+// Format: piper-{runID}-{stepName}[-a{attempt}], truncated to 63 characters.
 func jobName(task *proto.Task) string {
 	raw := "piper-" + task.RunID + "-" + task.StepName
+	if task.Attempt > 1 {
+		raw = fmt.Sprintf("%s-a%d", raw, task.Attempt)
+	}
 	return sanitizeName(raw)
 }
 

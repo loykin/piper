@@ -46,6 +46,7 @@ type Task struct {
 	OutputDir string         `json:"output_dir"`
 	CreatedAt time.Time      `json:"created_at"`
 	Label     string         `json:"label"` // worker label that should handle this task
+	Attempt   int            `json:"attempt,omitempty"`
 	Vars      BuiltinVars    `json:"vars,omitempty"`
 	RunParams map[string]any `json:"run_params,omitempty"` // run-level params; override step-level YAML params
 }

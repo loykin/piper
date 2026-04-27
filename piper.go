@@ -17,6 +17,7 @@ import (
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/piper/piper/internal/queue"
+	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
@@ -100,6 +101,7 @@ func New(cfg Config) (*Piper, error) {
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(repos.Run, repos.Step)
+	q.SetRetryPolicy(cfg.MaxRetries+1, cfg.RetryDelay)
 	p := &Piper{
 		cfg:      cfg,
 		ctx:      bgCtx,
@@ -346,11 +348,11 @@ func (p *Piper) sourceConfig() source.Config {
 	}
 }
 
-// SetDispatcher registers an external execution environment such as a K8s Job launcher.
+// SetBackend registers an external execution environment such as a K8s Job launcher.
 // When set, Dispatch is called immediately whenever a task becomes ready.
 // Setting nil reverts to worker polling mode.
-func (p *Piper) SetDispatcher(d proto.Dispatcher) {
-	p.queue.SetDispatcher(d)
+func (p *Piper) SetBackend(b backend.ExecutionBackend) {
+	p.queue.SetBackend(b)
 }
 
 func (p *Piper) Config() Config {

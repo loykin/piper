@@ -68,7 +68,7 @@ func main() {
 	}
 	defer func() { _ = p.Close() }()
 
-	// K8s mode: if AgentImage is set, register K8s Launcher as Dispatcher
+	// K8s mode: if AgentImage is set, register K8s Launcher as ExecutionBackend.
 	if cfg.K8s.AgentImage != "" {
 		launcher, err := k8s.New(k8s.Config{
 			AgentImage:   cfg.K8s.AgentImage,
@@ -88,7 +88,7 @@ func main() {
 			_, _ = fmt.Fprintln(os.Stderr, "k8s launcher error:", err)
 			os.Exit(1)
 		}
-		p.SetDispatcher(launcher)
+		p.SetBackend(launcher)
 		slog.Info("k8s mode enabled", "agent_image", cfg.K8s.AgentImage, "namespace", cfg.K8s.Namespace)
 	}
 

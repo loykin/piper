@@ -91,6 +91,13 @@ func (h *Handler) listRuns(c *gin.Context) {
 		filter = f
 	}
 	filter.Status = c.Query("status")
+	if pipelineName := c.Query("pipeline_name"); pipelineName != "" {
+		if filter.PipelineName != "" && filter.PipelineName != pipelineName {
+			c.JSON(http.StatusOK, []any{})
+			return
+		}
+		filter.PipelineName = pipelineName
+	}
 
 	runs, err := h.deps.Runs.List(c.Request.Context(), filter)
 	if err != nil {

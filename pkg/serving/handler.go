@@ -30,15 +30,16 @@ func NewHandler(deps HandlerDeps) *Handler {
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/services", h.listServices)
 	rg.POST("/services", h.createService)
-	rg.GET("/services/:name", h.getService)
-	rg.DELETE("/services/:name", h.deleteService)
-	rg.POST("/services/:name/restart", h.restartService)
 
-	// Proxy: /services/predict/*path — must be registered before /:name to match correctly.
+	// Proxy: /services/predict/*path — registered before /services/:name to match correctly.
 	// Gin matches routes in registration order; use Any to support all methods.
 	if h.deps.Proxy != nil {
 		rg.Any("/services/predict/*path", gin.WrapH(h.deps.Proxy))
 	}
+
+	rg.GET("/services/:name", h.getService)
+	rg.DELETE("/services/:name", h.deleteService)
+	rg.POST("/services/:name/restart", h.restartService)
 }
 
 // GET /services

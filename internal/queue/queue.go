@@ -3,9 +3,9 @@ package queue
 // Internal task queue — DAG-aware, for distributed worker execution.
 // Task ID: "{runID}:{stepName}" (colon separator; step names must not contain a colon).
 //
-// When a Dispatcher is configured, Dispatch is called immediately when a task becomes ready.
+// When an ExecutionBackend is configured, Dispatch is called immediately when a task becomes ready.
 // (Active dispatch mode, e.g. K8s Jobs)
-// When Dispatcher is nil, workers pull tasks by polling /api/tasks/next.
+// When backend is nil, workers pull tasks by polling /api/tasks/next.
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
@@ -24,9 +25,10 @@ import (
 type taskStatus string
 
 const (
-	taskPending taskStatus = "pending"
-	taskReady   taskStatus = "ready"
-	taskRunning taskStatus = "running"
+	taskPending  taskStatus = "pending"
+	taskReady    taskStatus = "ready"
+	taskRunning  taskStatus = "running"
+	taskRetrying taskStatus = "retrying"
 	// taskDone and taskFailed use proto constants to stay in sync with worker/agent reporting.
 	taskDone    taskStatus = proto.TaskStatusDone
 	taskFailed  taskStatus = proto.TaskStatusFailed
@@ -34,9 +36,11 @@ const (
 )
 
 type taskEntry struct {
-	task   *proto.Task
-	step   *pipeline.Step
-	status taskStatus
+	task        *proto.Task
+	step        *pipeline.Step
+	status      taskStatus
+	attempts    int
+	maxAttempts int
 }
 
 type runEntry struct {
@@ -53,24 +57,39 @@ type Queue struct {
 	runs         map[string]*runEntry // runID → entry
 	runRepo      run.Repository
 	stepRepo     run.StepRepository
-	dispatcher   proto.Dispatcher                                               // nil means polling mode
+	backend      backend.ExecutionBackend // nil means polling mode
+	maxAttempts  int                      // total attempts, including the first try
+	retryDelay   time.Duration
 	OnRunSuccess func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
 }
 
 // NewQueue creates a new Queue backed by the given repositories.
 func NewQueue(runRepo run.Repository, stepRepo run.StepRepository) *Queue {
 	return &Queue{
-		runs:     make(map[string]*runEntry),
-		runRepo:  runRepo,
-		stepRepo: stepRepo,
+		runs:        make(map[string]*runEntry),
+		runRepo:     runRepo,
+		stepRepo:    stepRepo,
+		maxAttempts: 1,
 	}
 }
 
-// SetDispatcher registers an external execution environment such as a K8s Job launcher.
-func (q *Queue) SetDispatcher(d proto.Dispatcher) {
+// SetBackend registers an external execution environment such as a K8s Job launcher.
+func (q *Queue) SetBackend(b backend.ExecutionBackend) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.dispatcher = d
+	q.backend = b
+}
+
+// SetRetryPolicy configures queue-owned retries for distributed execution.
+// maxAttempts is the total number of tries, including the first attempt.
+func (q *Queue) SetRetryPolicy(maxAttempts int, retryDelay time.Duration) {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.maxAttempts = maxAttempts
+	q.retryDelay = retryDelay
 }
 
 // MakeTaskID creates a task ID from runID and stepName.
@@ -123,7 +142,7 @@ func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DA
 			RunParams: runParams,
 		}
 		sCopy := s
-		r.tasks[s.Name] = &taskEntry{task: task, step: &sCopy, status: taskPending}
+		r.tasks[s.Name] = &taskEntry{task: task, step: &sCopy, status: taskPending, maxAttempts: q.maxAttempts}
 	}
 
 	q.promoteReady(ctx, r)
@@ -140,10 +159,10 @@ func (q *Queue) Next(label string) *proto.Task {
 			if entry.status != taskReady {
 				continue
 			}
-			if label != "" && entry.task.Label != "" && entry.task.Label != label {
+			if entry.task.Label != "" && entry.task.Label != label {
 				continue
 			}
-			entry.status = taskRunning
+			q.startTaskLocked(context.Background(), r.runID, entry)
 			slog.Info("task dispatched", "task_id", entry.task.ID, "label", label)
 			return entry.task
 		}
@@ -170,26 +189,56 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		return fmt.Errorf("step %s not found in run %s", stepName, runID)
 	}
 
-	entry.status = taskStatus(status)
-
-	// Persist step result to DB
 	now := endedAt
-	if err := q.stepRepo.Upsert(ctx, &run.Step{
-		RunID:     runID,
-		StepName:  stepName,
-		Status:    status,
-		StartedAt: &startedAt,
-		EndedAt:   &now,
-		Attempts:  attempts,
-		Error:     errMsg,
-	}); err != nil {
-		slog.Warn("upsert step failed", "task_id", id, "err", err)
+	if entry.attempts == 0 {
+		entry.attempts = attempts
+		if entry.attempts < 1 {
+			entry.attempts = 1
+		}
 	}
 	slog.Info("task completed", "task_id", id, "status", status)
 
 	if status == string(taskDone) {
+		entry.status = taskDone
+		if err := q.stepRepo.Upsert(ctx, &run.Step{
+			RunID:     runID,
+			StepName:  stepName,
+			Status:    status,
+			StartedAt: &startedAt,
+			EndedAt:   &now,
+			Attempts:  entry.attempts,
+			Error:     errMsg,
+		}); err != nil {
+			slog.Warn("upsert step failed", "task_id", id, "err", err)
+		}
 		q.promoteReady(ctx, r)
+	} else if entry.attempts < entry.maxAttempts {
+		entry.status = taskRetrying
+		if err := q.stepRepo.Upsert(ctx, &run.Step{
+			RunID:     runID,
+			StepName:  stepName,
+			Status:    string(taskRunning),
+			StartedAt: &startedAt,
+			EndedAt:   &now,
+			Attempts:  entry.attempts,
+			Error:     errMsg,
+		}); err != nil {
+			slog.Warn("upsert retry step failed", "task_id", id, "err", err)
+		}
+		q.scheduleRetryLocked(ctx, entry)
 	} else {
+		entry.status = taskFailed
+		if err := q.stepRepo.Upsert(ctx, &run.Step{
+			RunID:     runID,
+			StepName:  stepName,
+			Status:    status,
+			StartedAt: &startedAt,
+			EndedAt:   &now,
+			Attempts:  entry.attempts,
+			Error:     errMsg,
+		}); err != nil {
+			slog.Warn("upsert step failed", "task_id", id, "err", err)
+		}
 		q.skipDownstream(ctx, r, stepName)
 	}
 
@@ -232,22 +281,59 @@ func (q *Queue) promoteReady(ctx context.Context, r *runEntry) {
 	}
 }
 
-// dispatchIfNeeded immediately dispatches a task if a Dispatcher is configured.
-// Called while holding the lock; captures the dispatcher reference before launching
-// the goroutine to avoid a race with SetDispatcher.
+func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEntry) {
+	entry.attempts++
+	entry.task.Attempt = entry.attempts
+	entry.status = taskRunning
+	now := time.Now()
+	if err := q.stepRepo.Upsert(ctx, &run.Step{
+		RunID:     runID,
+		StepName:  entry.step.Name,
+		Status:    string(taskRunning),
+		StartedAt: &now,
+		Attempts:  entry.attempts,
+	}); err != nil {
+		slog.Warn("upsert running step failed", "task_id", entry.task.ID, "err", err)
+	}
+}
+
+// dispatchIfNeeded immediately dispatches a task if an ExecutionBackend is configured.
+// Called while holding the lock; captures the backend reference before launching
+// the goroutine to avoid a race with SetBackend.
 func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
-	d := q.dispatcher // capture while holding the lock
-	if d == nil {
+	b := q.backend // capture while holding the lock
+	if b == nil {
 		return
 	}
-	entry.status = taskRunning
+	runID := entry.task.RunID
+	q.startTaskLocked(ctx, runID, entry)
 	task := entry.task
 	go func() {
-		if err := d.Dispatch(ctx, task); err != nil {
+		if err := b.Dispatch(ctx, task); err != nil {
 			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
 			_ = q.Complete(ctx, task.ID, proto.TaskStatusFailed, err.Error(), time.Now(), time.Now(), 0)
 		}
 	}()
+}
+
+func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
+	if q.retryDelay <= 0 {
+		entry.status = taskReady
+		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
+		q.dispatchIfNeeded(ctx, entry)
+		return
+	}
+	retry := func() {
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		if entry.status != taskRetrying {
+			return
+		}
+		entry.status = taskReady
+		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
+		q.dispatchIfNeeded(ctx, entry)
+	}
+	time.AfterFunc(q.retryDelay, retry)
 }
 
 func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep string) {

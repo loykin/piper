@@ -1,11 +1,14 @@
 package k8s
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func makeTask(runID, stepName string, step pipeline.Step, pl pipeline.Pipeline) *proto.Task {
@@ -64,6 +67,17 @@ func TestJobName_format(t *testing.T) {
 	}
 }
 
+func TestJobName_includesRetryAttempt(t *testing.T) {
+	first := jobName(&proto.Task{RunID: "run-123", StepName: "data-prep", Attempt: 1})
+	retry := jobName(&proto.Task{RunID: "run-123", StepName: "data-prep", Attempt: 2})
+	if first == retry {
+		t.Fatalf("retry job name should differ from first attempt: %q", retry)
+	}
+	if retry != "piper-run-123-data-prep-a2" {
+		t.Fatalf("retry job name = %q, want piper-run-123-data-prep-a2", retry)
+	}
+}
+
 // ─── buildAgentArgs ───────────────────────────────────────────────────────────
 
 func TestBuildAgentArgs_contains(t *testing.T) {
@@ -72,7 +86,7 @@ func TestBuildAgentArgs_contains(t *testing.T) {
 		Token:     "secret",
 	}}
 	task := &proto.Task{ID: "run-1:step-a", RunID: "run-1", StepName: "step-a"}
-	args := l.buildAgentArgs(task, "BASE64DATA")
+	args := l.buildAgentArgs(task, "TASKB64", "STEPB64")
 
 	contains := func(target string) bool {
 		for _, a := range args {
@@ -84,12 +98,14 @@ func TestBuildAgentArgs_contains(t *testing.T) {
 	}
 
 	checks := []string{
+		agentSubcmd,
 		agentExecSubcmd,
 		"--master=http://piper:8080",
+		"--task=TASKB64",
 		"--task-id=run-1:step-a",
 		"--run-id=run-1",
 		"--step-name=step-a",
-		"--step=BASE64DATA",
+		"--step=STEPB64",
 		"--token=secret",
 	}
 	for _, c := range checks {
@@ -107,7 +123,7 @@ func TestBuildAgentArgs_s3(t *testing.T) {
 		S3Bucket:    "piper",
 	}}
 	task := &proto.Task{ID: "r:s", RunID: "r", StepName: "s"}
-	args := l.buildAgentArgs(task, "B64")
+	args := l.buildAgentArgs(task, "TASKB64", "STEPB64")
 
 	found := false
 	for _, a := range args {
@@ -123,7 +139,7 @@ func TestBuildAgentArgs_s3(t *testing.T) {
 func TestBuildAgentArgs_noToken(t *testing.T) {
 	l := &Launcher{cfg: Config{MasterURL: "http://piper:8080"}}
 	task := &proto.Task{ID: "r:s", RunID: "r", StepName: "s"}
-	args := l.buildAgentArgs(task, "B64")
+	args := l.buildAgentArgs(task, "TASKB64", "STEPB64")
 
 	for _, a := range args {
 		if a == "--token=" {
@@ -142,7 +158,7 @@ func TestBuildJob_structure(t *testing.T) {
 		TTLAfterFinished: &ttl,
 	}}
 	task := &proto.Task{RunID: "run-1", StepName: "train"}
-	job := l.buildJob(task, "pytorch:latest", []string{agentExecSubcmd, "--master=http://x"})
+	job := l.buildJob(task, "pytorch:latest", []string{agentSubcmd, agentExecSubcmd, "--master=http://x"})
 
 	if job.Namespace != "ml" {
 		t.Errorf("namespace = %q, want ml", job.Namespace)
@@ -269,4 +285,89 @@ func TestDispatch_imageResolution(t *testing.T) {
 			t.Errorf("image resolution: got %q, want %q", image, c.want)
 		}
 	}
+}
+
+func TestDispatchCreatesJobWithFullTaskAgentContract(t *testing.T) {
+	step := pipeline.Step{
+		Name: "train",
+		Run: pipeline.Run{
+			Image:   "python:3.11",
+			Command: []string{"sh", "-c", "echo train"},
+		},
+	}
+	pl := pipeline.Pipeline{Metadata: pipeline.Metadata{Name: "pipe"}}
+	task := makeTask("run-1", "train", step, pl)
+	task.WorkDir = "/work"
+	task.OutputDir = "/out"
+	task.RunParams = map[string]any{"lr": "0.2"}
+	task.Attempt = 2
+
+	l := &Launcher{
+		cfg: Config{
+			AgentImage: "loykin/piper:agent",
+			Namespace:  "default",
+			MasterURL:  "http://master:8080",
+		},
+		clientset: fake.NewSimpleClientset(),
+	}
+	if err := l.Dispatch(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+
+	jobs, err := l.clientset.BatchV1().Jobs("default").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 1 {
+		t.Fatalf("jobs = %d, want 1", len(jobs.Items))
+	}
+	job := jobs.Items[0]
+	if job.Name != "piper-run-1-train-a2" {
+		t.Fatalf("job name = %q, want piper-run-1-train-a2", job.Name)
+	}
+	if got := *job.Spec.BackoffLimit; got != 0 {
+		t.Fatalf("BackoffLimit = %d, want 0", got)
+	}
+	init := job.Spec.Template.Spec.InitContainers[0]
+	if init.Image != "loykin/piper:agent" {
+		t.Fatalf("init image = %q", init.Image)
+	}
+	if init.ImagePullPolicy != "Always" {
+		t.Fatalf("init pull policy = %q, want Always", init.ImagePullPolicy)
+	}
+	stepContainer := job.Spec.Template.Spec.Containers[0]
+	if stepContainer.Image != "python:3.11" {
+		t.Fatalf("step image = %q, want python:3.11", stepContainer.Image)
+	}
+	if !hasArgPrefix(stepContainer.Args, "--task=") {
+		t.Fatalf("agent args missing --task: %v", stepContainer.Args)
+	}
+	if !hasArg(stepContainer.Args, "--task-id=run-1:train") {
+		t.Fatalf("agent args missing task id: %v", stepContainer.Args)
+	}
+	if !hasArg(stepContainer.Args, "--master=http://master:8080") {
+		t.Fatalf("agent args missing master URL: %v", stepContainer.Args)
+	}
+
+	if job.Spec.Template.Spec.RestartPolicy != "Never" {
+		t.Fatalf("restart policy = %q, want Never", job.Spec.Template.Spec.RestartPolicy)
+	}
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArgPrefix(args []string, prefix string) bool {
+	for _, arg := range args {
+		if len(arg) >= len(prefix) && arg[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }

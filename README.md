@@ -81,6 +81,17 @@ spec:
 | `PIPER_RUN_ID` | Current run ID |
 | `PIPER_STEP_NAME` | Current step name |
 
+### Artifact Layout
+
+Piper stores artifacts under the same logical layout in every distributed execution mode:
+
+```text
+local: {outputDir}/{runID}/{stepName}/{artifactName}/...
+s3:    s3://{bucket}/{runID}/{stepName}/{artifactName}/...
+```
+
+Local in-process library execution is being aligned to this layout; current worker and Kubernetes task execution already use the run-scoped layout.
+
 ## Execution Modes
 
 ### 1. Local (in-process)
@@ -286,7 +297,7 @@ mux.Handle("/piper/ui/", http.StripPrefix("/piper/ui", ui.Handler()))
 
 // Enable Kubernetes mode
 launcher, _ := k8s.New(k8s.Config{...})
-p.SetDispatcher(launcher)
+p.SetBackend(launcher)
 
 // Deploy a ModelService
 svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
@@ -392,7 +403,7 @@ pkg/piper/          library entry point (Piper, Config, Serve)
 pkg/pipeline/       YAML parsing, DAG, local runner
 pkg/runner/         shared execution logic (S3 download → exec → upload → report)
 pkg/worker/         bare-metal worker (poll, register, heartbeat)
-pkg/k8s/            Kubernetes Job launcher (Dispatcher implementation)
+pkg/k8s/            Kubernetes Job launcher (ExecutionBackend implementation)
 pkg/executor/       step executors (command, python, notebook)
 pkg/serving/        ModelService lifecycle (deploy, stop, restart, proxy)
 pkg/store/          state persistence (SQLite / PostgreSQL)

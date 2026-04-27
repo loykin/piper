@@ -2,12 +2,8 @@ package commands
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +22,7 @@ func newAgentCmd() *cobra.Command {
 type agentExecFlags struct {
 	master    string
 	token     string
+	taskB64   string
 	taskID    string
 	runID     string
 	stepName  string
@@ -53,6 +50,7 @@ func newAgentExecCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL")
 	cmd.Flags().StringVar(&f.token, "token", "", "auth token")
+	cmd.Flags().StringVar(&f.taskB64, "task", "", "base64-encoded proto.Task JSON")
 	cmd.Flags().StringVar(&f.taskID, "task-id", "", "task ID")
 	cmd.Flags().StringVar(&f.runID, "run-id", "", "run ID")
 	cmd.Flags().StringVar(&f.stepName, "step-name", "", "step name")
@@ -69,32 +67,9 @@ func newAgentExecCmd() *cobra.Command {
 }
 
 func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error {
-	var step pipeline.Step
-	if f.stepB64 != "" {
-		b, err := base64.StdEncoding.DecodeString(f.stepB64)
-		if err != nil {
-			return fmt.Errorf("decode step: %w", err)
-		}
-		if err := json.Unmarshal(b, &step); err != nil {
-			return fmt.Errorf("unmarshal step: %w", err)
-		}
-	}
-
-	// If args after '--' are present, override step.Run.Command
-	if len(cmdArgs) > 0 {
-		step.Run.Command = cmdArgs
-	}
-
-	stepJSON, err := json.Marshal(step)
+	task, err := runner.TaskFromAgentInput(f.taskB64, f.taskID, f.runID, f.stepName, f.stepB64, cmdArgs)
 	if err != nil {
-		return fmt.Errorf("marshal step: %w", err)
-	}
-
-	task := &proto.Task{
-		ID:       f.taskID,
-		RunID:    f.runID,
-		StepName: f.stepName,
-		Step:     stepJSON,
+		return err
 	}
 
 	r, err := runner.New(runner.Config{

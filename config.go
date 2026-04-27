@@ -31,7 +31,7 @@ type Config struct {
 	Server ServerConfig `yaml:"server" mapstructure:"server"`
 
 	// K8s — when configured, steps run as K8s Jobs.
-	// Create a Launcher with pkg/k8s.New(cfg.K8s), then register it with p.SetDispatcher(launcher).
+	// Create a Launcher with pkg/k8s.New(cfg.K8s), then register it with p.SetBackend(launcher).
 	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
 
 	// Serving — model serving configuration.

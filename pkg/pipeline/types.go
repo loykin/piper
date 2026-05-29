@@ -71,6 +71,7 @@ type Resources struct {
 }
 
 type RunnerSelector struct {
+	Image        string            `yaml:"image"`
 	Label        string            `yaml:"label"`
 	NodeSelector map[string]string `yaml:"node_selector,omitempty"`
 	Tolerations  []Toleration      `yaml:"tolerations,omitempty"`

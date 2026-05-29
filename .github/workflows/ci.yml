@@ -107,10 +107,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Load image into kind
+      - name: Load images into kind
         run: |
           docker pull "${{ needs.build-image.outputs.image }}"
           kind load docker-image "${{ needs.build-image.outputs.image }}"
+          docker pull chrislusf/seaweedfs:latest
+          kind load docker-image chrislusf/seaweedfs:latest
+          docker pull amazon/aws-cli:latest
+          kind load docker-image amazon/aws-cli:latest
+          docker pull python:3.12-slim
+          kind load docker-image python:3.12-slim
 
       - name: Run K8s E2E tests
         run: |

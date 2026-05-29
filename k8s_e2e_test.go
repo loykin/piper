@@ -47,6 +47,8 @@ func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 
 	applyK8sE2EManifests(t, ns, image)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
+	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
 	localPort := freeK8sE2EPort(t)
 	pfCtx, pfCancel := context.WithCancel(ctx)
@@ -84,8 +86,8 @@ spec:
 	}
 }
 
-// TestK8sE2E_ExamplePipelines runs the example YAML files that do not require
-// external infrastructure (S3, GPU, etc.) against a real K8s cluster.
+// TestK8sE2E_ExamplePipelines runs the example YAML files against a real K8s cluster.
+// MinIO is deployed per-namespace to support artifact-passing examples.
 func TestK8sE2E_ExamplePipelines(t *testing.T) {
 	requireKubectlCluster(t)
 
@@ -114,6 +116,16 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 			yamlFile:   "examples/basics/retry.yaml",
 			wantStatus: "failed", // intentionally always fails
 		},
+		{
+			name:       "artifacts",
+			yamlFile:   "examples/artifacts/pipeline.yaml",
+			wantStatus: "success",
+		},
+		{
+			name:       "kubernetes/multi-image",
+			yamlFile:   "examples/kubernetes/pipeline.yaml",
+			wantStatus: "success",
+		},
 	}
 
 	for _, tc := range cases {
@@ -136,6 +148,8 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 
 			applyK8sE2EManifests(t, ns, image)
 			kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+			kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
+			kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
 			localPort := freeK8sE2EPort(t)
 			pfCtx, pfCancel := context.WithCancel(ctx)
@@ -218,6 +232,13 @@ data:
       retries: 0
     server:
       addr: :8080
+    source:
+      s3:
+        endpoint: seaweedfs:9000
+        access_key: anyadmin
+        secret_key: anypassword
+        bucket: piper-artifacts
+        use_ssl: false
     k8s:
       agent_image: %[2]q
       agent_image_pull_policy: IfNotPresent
@@ -270,6 +291,69 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:latest
+          args: ["server", "-dir=/data", "-s3", "-s3.port=9000"]
+          ports:
+            - containerPort: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: %[1]s
+spec:
+  selector:
+    app: seaweedfs
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s3-setup
+  namespace: %[1]s
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: awscli
+          image: amazon/aws-cli:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until aws s3api create-bucket --bucket piper-artifacts \
+                --endpoint-url http://seaweedfs:9000 2>/dev/null; do
+                sleep 2
+              done
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              value: anyadmin
+            - name: AWS_SECRET_ACCESS_KEY
+              value: anypassword
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
 `, ns, image)
 	kubectlInput(t, manifest, "apply", "-f", "-")
 }

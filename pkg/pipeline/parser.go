@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 
@@ -17,7 +18,9 @@ func ParseFile(path string) (*Pipeline, error) {
 
 func Parse(data []byte) (*Pipeline, error) {
 	var p Pipeline
-	if err := yaml.Unmarshal(data, &p); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&p); err != nil {
 		return nil, fmt.Errorf("failed to parse pipeline yaml: %w", err)
 	}
 	if err := validate(&p); err != nil {

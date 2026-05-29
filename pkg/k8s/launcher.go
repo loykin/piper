@@ -155,8 +155,11 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 		return fmt.Errorf("unmarshal pipeline: %w", err)
 	}
 
-	// Resolve container image: step > pipeline defaults > launcher default
-	image := step.Run.Image
+	// Resolve container image: step.runner > step.run > pipeline defaults > launcher default
+	image := step.Runner.Image
+	if image == "" {
+		image = step.Run.Image
+	}
 	if image == "" {
 		image = pl.Spec.Defaults.Image
 	}

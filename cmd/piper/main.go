@@ -39,7 +39,12 @@ func initConfig() {
 	}
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err == nil {
-		_, _ = fmt.Fprintln(os.Stderr, "using config:", viper.ConfigFileUsed())
+		used := viper.ConfigFileUsed()
+		_, _ = fmt.Fprintln(os.Stderr, "using config:", used)
+		if err := pipercmd.StrictParseConfigFile(used); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "config error:", err)
+			os.Exit(1)
+		}
 	}
 	initLogger()
 }

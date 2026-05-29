@@ -18,7 +18,7 @@ Runs as a standalone server or embedded as a Go library.
 go install github.com/piper/piper/cmd/piper@latest
 
 # Start server
-piper serve
+piper server
 
 # Run a pipeline (CLI)
 piper run examples/simple.yaml
@@ -268,7 +268,7 @@ err = p.RestartService(ctx, "fraud-detector")
 ## Library Usage
 
 ```go
-import "github.com/piper/piper/pkg/piper"
+import piper "github.com/piper/piper"
 
 p, err := piper.New(piper.Config{
     DBPath:    "./piper.db",
@@ -331,6 +331,7 @@ serving:
 
 k8s:
   agent_image: piper/piper:latest
+  agent_image_pull_policy: Always   # Always | IfNotPresent | Never (default: Always)
   namespace: piper-jobs
   in_cluster: true
   master_url: http://piper-server:8080
@@ -398,18 +399,17 @@ make test-integration   # requires a running Kubernetes cluster
 ## Project Layout
 
 ```
-cmd/piper/          CLI entry point
-pkg/piper/          library entry point (Piper, Config, Serve)
-pkg/pipeline/       YAML parsing, DAG, local runner
-pkg/runner/         shared execution logic (S3 download → exec → upload → report)
-pkg/worker/         bare-metal worker (poll, register, heartbeat)
-pkg/k8s/            Kubernetes Job launcher (ExecutionBackend implementation)
-pkg/executor/       step executors (command, python, notebook)
-pkg/serving/        ModelService lifecycle (deploy, stop, restart, proxy)
-pkg/store/          state persistence (SQLite / PostgreSQL)
-pkg/cmd/            cobra commands (reusable in embedded mode)
-pkg/ui/             embedded React SPA
-examples/           usage examples
+cmd/piper/              CLI entry point and cobra commands
+github.com/piper/piper  library entry point (Piper, Config, Serve) — root package
+pkg/pipeline/           YAML parsing, DAG, local runner
+pkg/runner/             shared execution logic (S3 download → exec → upload → report)
+pkg/worker/             bare-metal worker (poll, register, heartbeat)
+pkg/k8s/                Kubernetes Job launcher (ExecutionBackend implementation)
+pkg/executor/           step executors (command, python, notebook)
+pkg/serving/            ModelService lifecycle (deploy, stop, restart, proxy)
+internal/store/         state persistence (SQLite)
+pkg/ui/                 embedded React SPA
+examples/               usage examples
 ```
 
 ## Examples

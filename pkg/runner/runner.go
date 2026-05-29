@@ -81,19 +81,22 @@ func New(cfg Config) (*Runner, error) {
 }
 
 // Run executes a task and reports the result to the master.
-func (r *Runner) Run(ctx context.Context, task *proto.Task) {
+// Returns true if the step succeeded, false if it failed.
+// Callers in K8s agent mode should exit non-zero on false so the K8s Job
+// status reflects the actual step outcome and ReconcileJobs can detect failures.
+func (r *Runner) Run(ctx context.Context, task *proto.Task) bool {
 	startedAt := time.Now()
 
 	var step pipeline.Step
 	if err := json.Unmarshal(task.Step, &step); err != nil {
 		r.reportFailed(task, fmt.Errorf("unmarshal step: %w", err), startedAt)
-		return
+		return false
 	}
 
 	stepOutputDir := filepath.Join(r.cfg.OutputDir, task.RunID, step.Name)
 	if err := os.MkdirAll(stepOutputDir, 0755); err != nil {
 		r.reportFailed(task, err, startedAt)
-		return
+		return false
 	}
 
 	// When S3 is the artifact store, local dirs are transient working space only.
@@ -107,7 +110,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 		if err := r.downloadInputs(ctx, task.RunID, step.Inputs); err != nil {
 			slog.Error("download inputs failed", "task_id", task.ID, "err", err)
 			r.reportFailed(task, err, startedAt)
-			return
+			return false
 		}
 	}
 
@@ -141,9 +144,10 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 
 	if execErr != nil {
 		r.reportFailed(task, execErr, startedAt)
-		return
+		return false
 	}
 	r.reportDone(task, startedAt)
+	return true
 }
 
 // ─── Execution ────────────────────────────────────────────────────────────────

@@ -87,6 +87,8 @@ func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error
 		return fmt.Errorf("runner init: %w", err)
 	}
 
-	r.Run(ctx, task)
+	if !r.Run(ctx, task) {
+		return fmt.Errorf("step %q failed", task.StepName)
+	}
 	return nil
 }

@@ -84,6 +84,85 @@ spec:
 	}
 }
 
+// TestK8sE2E_ExamplePipelines runs the example YAML files that do not require
+// external infrastructure (S3, GPU, etc.) against a real K8s cluster.
+func TestK8sE2E_ExamplePipelines(t *testing.T) {
+	requireKubectlCluster(t)
+
+	image := os.Getenv("PIPER_K8S_E2E_IMAGE")
+	if image == "" {
+		image = "piper/piper:e2e"
+	}
+
+	cases := []struct {
+		name       string
+		yamlFile   string
+		wantStatus string
+	}{
+		{
+			name:       "basics/simple",
+			yamlFile:   "examples/basics/simple.yaml",
+			wantStatus: "success",
+		},
+		{
+			name:       "basics/parallel",
+			yamlFile:   "examples/basics/parallel.yaml",
+			wantStatus: "success",
+		},
+		{
+			name:       "basics/retry",
+			yamlFile:   "examples/basics/retry.yaml",
+			wantStatus: "failed", // intentionally always fails
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			yamlBytes, err := os.ReadFile(tc.yamlFile)
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.yamlFile, err)
+			}
+
+			ns := fmt.Sprintf("piper-e2e-%d", time.Now().UnixNano())
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			kubectl(t, "create", "namespace", ns)
+			t.Cleanup(func() {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cleanupCancel()
+				_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
+			})
+
+			applyK8sE2EManifests(t, ns, image)
+			kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+
+			localPort := freeK8sE2EPort(t)
+			pfCtx, pfCancel := context.WithCancel(ctx)
+			defer pfCancel()
+			pf := exec.CommandContext(pfCtx, "kubectl", "-n", ns, "port-forward", "svc/piper-server", fmt.Sprintf("%d:8080", localPort))
+			pf.Stdout = os.Stderr
+			pf.Stderr = os.Stderr
+			if err := pf.Start(); err != nil {
+				t.Fatalf("start port-forward: %v", err)
+			}
+			t.Cleanup(func() { pfCancel(); _ = pf.Wait() })
+
+			serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
+			waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+
+			runID := k8sE2EPostRun(t, serverURL, string(yamlBytes))
+			t.Logf("submitted run %s (want=%s)", runID, tc.wantStatus)
+
+			if !waitK8sE2ERunStatus(t, serverURL, runID, tc.wantStatus, 2*time.Minute) {
+				dumpK8sE2EDebug(t, ns)
+				t.Fatalf("run %s did not reach %q", runID, tc.wantStatus)
+			}
+			t.Logf("run %s reached %q", runID, tc.wantStatus)
+		})
+	}
+}
+
 func requireKubectlCluster(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("kubectl"); err != nil {

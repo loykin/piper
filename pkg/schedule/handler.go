@@ -60,7 +60,7 @@ func (h *Handler) listSchedules(c *gin.Context) {
 		if ownerID != "" && sc.OwnerID != "" && sc.OwnerID != ownerID {
 			continue
 		}
-		out = append(out, redactSchedule(sc))
+		out = append(out, sc.Redact())
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -186,7 +186,7 @@ func (h *Handler) getSchedule(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
-	c.JSON(http.StatusOK, redactSchedule(sc))
+	c.JSON(http.StatusOK, sc.Redact())
 }
 
 // PATCH /schedules/:id
@@ -292,14 +292,4 @@ func (h *Handler) canAccess(r *http.Request, sc *Schedule) bool {
 	}
 	ownerID := h.ownerID(r)
 	return ownerID == "" || sc.OwnerID == "" || sc.OwnerID == ownerID
-}
-
-func redactSchedule(sc *Schedule) *Schedule {
-	if sc == nil {
-		return nil
-	}
-	cp := *sc
-	cp.PipelineYAML = secret.RedactString(cp.PipelineYAML)
-	cp.ParamsJSON = secret.RedactString(cp.ParamsJSON)
-	return &cp
 }

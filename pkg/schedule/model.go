@@ -1,6 +1,10 @@
 package schedule
 
-import "time"
+import (
+	"time"
+
+	"github.com/piper/piper/pkg/secret"
+)
 
 type Schedule struct {
 	ID           string     `json:"id"                    db:"id"`
@@ -15,4 +19,15 @@ type Schedule struct {
 	ParamsJSON   string     `json:"params_json,omitempty" db:"params_json"`
 	CreatedAt    time.Time  `json:"created_at"            db:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"            db:"updated_at"`
+}
+
+// Redact returns a copy of the Schedule with sensitive fields masked.
+func (s *Schedule) Redact() *Schedule {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	cp.PipelineYAML = secret.RedactString(cp.PipelineYAML)
+	cp.ParamsJSON = secret.RedactString(cp.ParamsJSON)
+	return &cp
 }

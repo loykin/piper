@@ -23,38 +23,8 @@ func Parse(data []byte) (*Pipeline, error) {
 	if err := dec.Decode(&p); err != nil {
 		return nil, fmt.Errorf("failed to parse pipeline yaml: %w", err)
 	}
-	if err := validate(&p); err != nil {
+	if err := p.Validate(); err != nil {
 		return nil, err
 	}
 	return &p, nil
-}
-
-func validate(p *Pipeline) error {
-	if p.Metadata.Name == "" {
-		return fmt.Errorf("pipeline name is required")
-	}
-	if len(p.Spec.Steps) == 0 {
-		return fmt.Errorf("pipeline must have at least one step")
-	}
-
-	names := make(map[string]bool)
-	for _, s := range p.Spec.Steps {
-		if s.Name == "" {
-			return fmt.Errorf("step name is required")
-		}
-		if names[s.Name] {
-			return fmt.Errorf("duplicate step name: %s", s.Name)
-		}
-		names[s.Name] = true
-	}
-
-	// Validate depends_on references
-	for _, s := range p.Spec.Steps {
-		for _, dep := range s.DependsOn {
-			if !names[dep] {
-				return fmt.Errorf("step %q depends on unknown step %q", s.Name, dep)
-			}
-		}
-	}
-	return nil
 }

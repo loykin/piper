@@ -1,11 +1,41 @@
 package pipeline
 
+import "fmt"
+
 // Pipeline is the top-level structure of a piper YAML definition
 type Pipeline struct {
 	APIVersion string   `yaml:"apiVersion"`
 	Kind       string   `yaml:"kind"`
 	Metadata   Metadata `yaml:"metadata"`
 	Spec       Spec     `yaml:"spec"`
+}
+
+// Validate checks that the pipeline definition is structurally correct.
+func (p *Pipeline) Validate() error {
+	if p.Metadata.Name == "" {
+		return fmt.Errorf("pipeline name is required")
+	}
+	if len(p.Spec.Steps) == 0 {
+		return fmt.Errorf("pipeline must have at least one step")
+	}
+	names := make(map[string]bool)
+	for _, s := range p.Spec.Steps {
+		if s.Name == "" {
+			return fmt.Errorf("step name is required")
+		}
+		if names[s.Name] {
+			return fmt.Errorf("duplicate step name: %s", s.Name)
+		}
+		names[s.Name] = true
+	}
+	for _, s := range p.Spec.Steps {
+		for _, dep := range s.DependsOn {
+			if !names[dep] {
+				return fmt.Errorf("step %q depends on unknown step %q", s.Name, dep)
+			}
+		}
+	}
+	return nil
 }
 
 type Metadata struct {

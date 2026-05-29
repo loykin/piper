@@ -1,6 +1,10 @@
 package run
 
-import "time"
+import (
+	"time"
+
+	"github.com/piper/piper/pkg/secret"
+)
 
 const (
 	StatusRunning   = "running"
@@ -32,6 +36,17 @@ type Step struct {
 	EndedAt   *time.Time `json:"ended_at,omitempty"   db:"ended_at"`
 	Error     string     `json:"error,omitempty"      db:"error"`
 	Attempts  int        `json:"attempts"             db:"attempts"`
+}
+
+// Redact returns a copy of the Run with sensitive fields masked.
+func (r *Run) Redact() *Run {
+	if r == nil {
+		return nil
+	}
+	cp := *r
+	cp.PipelineYAML = secret.RedactString(cp.PipelineYAML)
+	cp.ParamsJSON = secret.RedactString(cp.ParamsJSON)
+	return &cp
 }
 
 type RunFilter struct {

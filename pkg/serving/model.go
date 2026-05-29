@@ -1,6 +1,10 @@
 package serving
 
-import "time"
+import (
+	"time"
+
+	"github.com/piper/piper/pkg/secret"
+)
 
 const (
 	StatusRunning = "running"
@@ -21,4 +25,22 @@ type Service struct {
 	YAML      string    `json:"yaml"       db:"yaml"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// Redact returns a copy of the Service with sensitive fields masked.
+func (s *Service) Redact() *Service {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	cp.YAML = secret.RedactString(cp.YAML)
+	return &cp
+}
+
+// K8sNamespace returns the Kubernetes namespace for the service, defaulting to "default".
+func (s *Service) K8sNamespace() string {
+	if s != nil && s.Namespace != "" {
+		return s.Namespace
+	}
+	return "default"
 }

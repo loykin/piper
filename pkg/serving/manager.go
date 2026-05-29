@@ -117,7 +117,7 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 		}
 	} else if m.k8s != nil {
 		// K8s mode: delete Deployment and Service
-		ns := k8sNamespace(svc)
+		ns := svc.K8sNamespace()
 		_ = m.k8s.AppsV1().Deployments(ns).Delete(ctx, k8sName(name), metav1.DeleteOptions{})
 		_ = m.k8s.CoreV1().Services(ns).Delete(ctx, k8sName(name), metav1.DeleteOptions{})
 	}
@@ -474,11 +474,4 @@ func k8sName(name string) string {
 		s = strings.TrimRight(s[:63], "-")
 	}
 	return s
-}
-
-func k8sNamespace(svc *Service) string {
-	if svc != nil && svc.Namespace != "" {
-		return svc.Namespace
-	}
-	return "default"
 }

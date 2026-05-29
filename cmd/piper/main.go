@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	piper "github.com/piper/piper"
 	pipercmd "github.com/piper/piper/cmd/piper/commands"
@@ -14,6 +15,7 @@ import (
 )
 
 var cfgFile string
+var configInitialized bool
 
 var rootCmd = &cobra.Command{
 	Use:   "piper",
@@ -28,6 +30,10 @@ func init() {
 }
 
 func initConfig() {
+	if configInitialized {
+		return
+	}
+	configInitialized = true
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
@@ -58,6 +64,7 @@ func initLogger() {
 }
 
 func main() {
+	preloadConfigFromArgs(os.Args[1:])
 	cfg := buildConfig()
 
 	// Create piper instance — no hooks (standalone mode)
@@ -105,6 +112,20 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func preloadConfigFromArgs(args []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--config" && i+1 < len(args):
+			cfgFile = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--config="):
+			cfgFile = strings.TrimPrefix(arg, "--config=")
+		}
+	}
+	initConfig()
 }
 
 func mustBindPFlag(key string, flag *pflag.Flag) {

@@ -1,4 +1,4 @@
-.PHONY: build ui docker test test-e2e test-integration demo clean
+.PHONY: build ui docker test test-e2e test-k8s-e2e test-integration demo clean
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
@@ -30,6 +30,10 @@ test:
 # E2E tests (fully hermetic, no external infra required)
 test-e2e:
 	go test -tags=e2e -v -timeout=120s ./...
+
+# K8s smoke E2E (requires kubectl + a cluster with $(IMAGE) available)
+test-k8s-e2e:
+	PIPER_K8S_E2E_IMAGE=$(IMAGE) go test -tags=k8s_e2e -v -timeout=5m .
 
 # Integration tests (requires a K8s cluster)
 test-integration:

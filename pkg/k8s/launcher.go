@@ -371,7 +371,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 						{
 							Name:            "agent-init",
 							Image:           l.cfg.AgentImage,
-							ImagePullPolicy: corev1.PullAlways,
+							ImagePullPolicy: corev1.PullIfNotPresent,
 							// Copy the agent binary from the agent image into the shared volume
 							Command: []string{"cp", agentBinarySrc, agentBinaryDst},
 							VolumeMounts: []corev1.VolumeMount{

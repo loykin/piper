@@ -169,3 +169,39 @@ func TestRun_s3_artifact_input_output(t *testing.T) {
 		t.Logf("output uploaded: %s", aws.ToString(obj.Key))
 	}
 }
+
+func TestRun_s3_cleansLocalWorkdirAfterRun(t *testing.T) {
+	srv, s3client := fakeS3(t)
+	_ = s3client
+	endpoint := srv.Listener.Addr().String()
+	masterSrv := fakeMasterServer(t)
+
+	outDir := t.TempDir()
+	r, err := runner.New(runner.Config{
+		MasterURL:   masterSrv.URL,
+		OutputDir:   outDir,
+		InputDir:    outDir,
+		S3Endpoint:  endpoint,
+		S3AccessKey: "test",
+		S3SecretKey: "test",
+		S3Bucket:    testBucket,
+		S3UseSSL:    false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	task := makeTask(t, pipeline.Step{
+		Name: "clean-step",
+		Run: pipeline.Run{
+			Command: []string{"sh", "-c", "echo data > $PIPER_OUTPUT_DIR/out.txt"},
+		},
+		Outputs: []pipeline.Artifact{{Name: "out", Path: "out.txt"}},
+	})
+	r.Run(context.Background(), task)
+
+	stepDir := filepath.Join(outDir, task.RunID, "clean-step")
+	if _, err := os.Stat(stepDir); !os.IsNotExist(err) {
+		t.Errorf("local step dir should be removed after S3 upload, but still exists: %s", stepDir)
+	}
+}

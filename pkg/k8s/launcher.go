@@ -2,15 +2,15 @@
 //
 // How it works (agent injection pattern):
 //  1. An initContainer copies the /piper binary from the piper image into an emptyDir
-//  2. The step container's entrypoint is replaced with /piper-tools/piper agent exec ... -- <original command>
+//  2. The step container's entrypoint is replaced with /piper-tools/piper agent exec --task=<encoded task> ...
 //  3. piper agent downloads input artifacts from S3, runs the command, uploads outputs to S3, and reports completion to the master
 //
+// The full proto.Task is base64-encoded and passed as --task; the agent decodes it and drives execution.
 // Runs natively on K8s without modifying user images.
 package k8s
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -63,7 +63,7 @@ type Config struct {
 	// DefaultImage: fallback container image when a step has no image configured
 	DefaultImage string
 
-	// AgentImagePullPolicy: image pull policy for both the initContainer and step container.
+	// AgentImagePullPolicy: image pull policy for the agent initContainer.
 	// Defaults to corev1.PullAlways when empty.
 	AgentImagePullPolicy string
 
@@ -167,22 +167,11 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 		return fmt.Errorf("step %q: no container image configured (set step.run.image, spec.defaults.image, or k8s.default_image)", step.Name)
 	}
 
-	// Base64-encode the step JSON and pass it to the agent
-	stepJSON, err := json.Marshal(step)
-	if err != nil {
-		return err
-	}
-	stepB64 := base64.StdEncoding.EncodeToString(stepJSON)
-
 	taskB64, err := runner.EncodeTask(task)
 	if err != nil {
 		return err
 	}
-	agentArgs := l.buildAgentArgs(task, taskB64, stepB64)
-	if len(step.Run.Command) > 0 {
-		agentArgs = append(agentArgs, "--")
-		agentArgs = append(agentArgs, step.Run.Command...)
-	}
+	agentArgs := l.buildAgentArgs(task, taskB64)
 
 	job := l.buildJob(task, image, agentArgs)
 
@@ -319,16 +308,12 @@ func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
 	return nil
 }
 
-func (l *Launcher) buildAgentArgs(task *proto.Task, taskB64, stepB64 string) []string {
+func (l *Launcher) buildAgentArgs(_ *proto.Task, taskB64 string) []string {
 	args := []string{
 		agentSubcmd,
 		agentExecSubcmd,
 		"--master=" + l.cfg.MasterURL,
 		"--task=" + taskB64,
-		"--task-id=" + task.ID,
-		"--run-id=" + task.RunID,
-		"--step-name=" + task.StepName,
-		"--step=" + stepB64,
 		"--output-dir=/piper-outputs",
 		"--input-dir=/piper-inputs",
 	}

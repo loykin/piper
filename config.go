@@ -87,7 +87,7 @@ type K8sConfig struct {
 	// AgentImage: image containing the piper CLI binary (used as initContainer)
 	AgentImage string `yaml:"agent_image" mapstructure:"agent_image"`
 
-	// AgentImagePullPolicy: image pull policy for both the initContainer and step container.
+	// AgentImagePullPolicy: image pull policy for the agent initContainer.
 	// Valid values: Always, IfNotPresent, Never. Defaults to Always when empty.
 	AgentImagePullPolicy string `yaml:"agent_image_pull_policy" mapstructure:"agent_image_pull_policy"`
 

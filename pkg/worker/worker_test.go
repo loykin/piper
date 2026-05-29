@@ -160,6 +160,16 @@ func TestNew_defaults_applied(t *testing.T) {
 	}
 }
 
+func TestNew_negativeConcurrencyReturnsError(t *testing.T) {
+	_, err := worker.New(worker.Config{
+		MasterURL:   "http://localhost:9999",
+		Concurrency: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative concurrency, got nil")
+	}
+}
+
 // ─── Registration ────────────────────────────────────────────────────────────
 
 func TestWorker_registers_on_start(t *testing.T) {

@@ -89,7 +89,7 @@ func TestBuildAgentArgs_contains(t *testing.T) {
 		Token:     "secret",
 	}}
 	task := &proto.Task{ID: "run-1:step-a", RunID: "run-1", StepName: "step-a"}
-	args := l.buildAgentArgs(task, "TASKB64", "STEPB64")
+	args := l.buildAgentArgs(task, "TASKB64")
 
 	contains := func(target string) bool {
 		for _, a := range args {
@@ -105,15 +105,20 @@ func TestBuildAgentArgs_contains(t *testing.T) {
 		agentExecSubcmd,
 		"--master=http://piper:8080",
 		"--task=TASKB64",
-		"--task-id=run-1:step-a",
-		"--run-id=run-1",
-		"--step-name=step-a",
-		"--step=STEPB64",
 		"--token=secret",
 	}
 	for _, c := range checks {
 		if !contains(c) {
 			t.Errorf("args missing %q, got: %v", c, args)
+		}
+	}
+
+	// Launcher must not pass legacy flags — they are redundant when --task is present.
+	for _, banned := range []string{"--task-id=", "--run-id=", "--step-name=", "--step="} {
+		for _, a := range args {
+			if len(a) >= len(banned) && a[:len(banned)] == banned {
+				t.Errorf("legacy flag must not appear in args: %q", a)
+			}
 		}
 	}
 }
@@ -126,7 +131,7 @@ func TestBuildAgentArgs_s3(t *testing.T) {
 		S3Bucket:    "piper",
 	}}
 	task := &proto.Task{ID: "r:s", RunID: "r", StepName: "s"}
-	args := l.buildAgentArgs(task, "TASKB64", "STEPB64")
+	args := l.buildAgentArgs(task, "TASKB64")
 
 	found := false
 	for _, a := range args {
@@ -142,7 +147,7 @@ func TestBuildAgentArgs_s3(t *testing.T) {
 func TestBuildAgentArgs_noToken(t *testing.T) {
 	l := &Launcher{cfg: Config{MasterURL: "http://piper:8080"}}
 	task := &proto.Task{ID: "r:s", RunID: "r", StepName: "s"}
-	args := l.buildAgentArgs(task, "TASKB64", "STEPB64")
+	args := l.buildAgentArgs(task, "TASKB64")
 
 	for _, a := range args {
 		if a == "--token=" {
@@ -193,6 +198,24 @@ func TestBuildJob_structure(t *testing.T) {
 	}
 	if got := containers[0].Command; len(got) != 1 || got[0] != agentBinaryDst {
 		t.Errorf("container command = %v, want [%s]", got, agentBinaryDst)
+	}
+}
+
+func TestBuildJob_agentPullPolicyDoesNotControlStepImage(t *testing.T) {
+	l := &Launcher{cfg: Config{
+		AgentImage:           "piper/agent:latest",
+		AgentImagePullPolicy: string(corev1.PullNever),
+	}}
+	task := &proto.Task{RunID: "r", StepName: "s"}
+	job := l.buildJob(task, "alpine:3.20", []string{agentSubcmd, agentExecSubcmd, "--task=TASK"})
+
+	init := job.Spec.Template.Spec.InitContainers[0]
+	if init.ImagePullPolicy != corev1.PullNever {
+		t.Fatalf("agent init pull policy = %q, want Never", init.ImagePullPolicy)
+	}
+	step := job.Spec.Template.Spec.Containers[0]
+	if step.ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Fatalf("step pull policy = %q, want IfNotPresent", step.ImagePullPolicy)
 	}
 }
 
@@ -453,11 +476,11 @@ func TestDispatchCreatesJobWithFullTaskAgentContract(t *testing.T) {
 	if !hasArgPrefix(stepContainer.Args, "--task=") {
 		t.Fatalf("agent args missing --task: %v", stepContainer.Args)
 	}
-	if !hasArg(stepContainer.Args, "--task-id=run-1:train") {
-		t.Fatalf("agent args missing task id: %v", stepContainer.Args)
-	}
 	if !hasArg(stepContainer.Args, "--master=http://master:8080") {
 		t.Fatalf("agent args missing master URL: %v", stepContainer.Args)
+	}
+	if hasArg(stepContainer.Args, "--") || hasArg(stepContainer.Args, "echo") || hasArg(stepContainer.Args, "train") {
+		t.Fatalf("launcher must not append command override args: %v", stepContainer.Args)
 	}
 
 	if job.Spec.Template.Spec.RestartPolicy != "Never" {

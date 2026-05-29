@@ -71,12 +71,12 @@ metadata:
   name: k8s-e2e-smoke
 spec:
   defaults:
-    image: %q
+    image: alpine:3.20
   steps:
     - name: smoke
       run:
         command: ["sh", "-c", "echo k8s-e2e-ok"]
-`, image))
+`))
 
 	if !waitK8sE2ERunStatus(t, serverURL, runID, "success", 2*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
@@ -141,10 +141,11 @@ data:
       addr: :8080
     k8s:
       agent_image: %[2]q
+      agent_image_pull_policy: IfNotPresent
       namespace: %[1]s
       in_cluster: true
       master_url: http://piper-server.%[1]s.svc.cluster.local:8080
-      default_image: %[2]q
+      default_image: alpine:3.20
       ttl_after_finished: 60
 ---
 apiVersion: apps/v1

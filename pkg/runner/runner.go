@@ -96,6 +96,12 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) {
 		return
 	}
 
+	// When S3 is the artifact store, local dirs are transient working space only.
+	// Registered before the logFile defer so it executes after logFile.Close() (LIFO).
+	if r.s3 != nil {
+		defer r.cleanLocalWorkdir(task.RunID, step.Name, step.Inputs)
+	}
+
 	// Download input artifacts from S3
 	if r.s3 != nil && len(step.Inputs) > 0 {
 		if err := r.downloadInputs(ctx, task.RunID, step.Inputs); err != nil {
@@ -347,6 +353,16 @@ func (r *Runner) setAuth(req *http.Request) {
 }
 
 // ─── S3 artifacts ─────────────────────────────────────────────────────────────
+
+// cleanLocalWorkdir removes the step's local output dir and any downloaded input
+// dirs from the local filesystem. Called only when S3 is configured; local dirs
+// are transient staging areas and the durable copy lives in S3.
+func (r *Runner) cleanLocalWorkdir(runID, stepName string, inputs []pipeline.Artifact) {
+	_ = os.RemoveAll(filepath.Join(r.cfg.OutputDir, runID, stepName))
+	for _, art := range inputs {
+		_ = os.RemoveAll(filepath.Join(r.cfg.InputDir, runID, art.Name))
+	}
+}
 
 // downloadInputs downloads step input artifacts from S3 to the local filesystem.
 // S3 key: {runID}/{fromStep}/{artifactName}/

@@ -64,6 +64,9 @@ func New(cfg Config) (*Worker, error) {
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = 3 * time.Second
 	}
+	if cfg.Concurrency < 0 {
+		return nil, fmt.Errorf("worker: concurrency must be >= 0, got %d", cfg.Concurrency)
+	}
 	if cfg.Concurrency == 0 {
 		cfg.Concurrency = 4
 	}

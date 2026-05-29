@@ -83,14 +83,19 @@ spec:
 
 ### Artifact Layout
 
-Piper stores artifacts under the same logical layout in every distributed execution mode:
+Artifact storage is configured separately from execution mode.
+The storage backend is determined by whether S3 is configured — not by which execution mode is used.
 
 ```text
-local: {outputDir}/{runID}/{stepName}/{artifactName}/...
-s3:    s3://{bucket}/{runID}/{stepName}/{artifactName}/...
+# S3 not configured → local filesystem
+{outputDir}/{runID}/{stepName}/{artifactName}/...
+
+# S3 configured → S3/MinIO
+s3://{bucket}/{runID}/{stepName}/{artifactName}/...
 ```
 
-Local in-process library execution is being aligned to this layout; current worker and Kubernetes task execution already use the run-scoped layout.
+Worker and Kubernetes modes require S3 because steps run on separate machines or Pods and cannot share a local filesystem.
+In-process mode works with either backend.
 
 ## Execution Modes
 
@@ -109,7 +114,7 @@ Server and workers run separately. Workers poll the master for tasks.
 
 ```bash
 # Terminal 1: server
-piper serve
+piper server
 
 # Terminal 2: worker (use labels to route specific steps)
 piper worker --master=http://localhost:8080 --label=gpu --concurrency=4
@@ -133,7 +138,7 @@ k8s:
 ```
 
 ```bash
-piper serve --config .piper.yaml
+piper server --config .piper.yaml
 ```
 
 No changes to user container images are required.
@@ -360,7 +365,7 @@ piper agent exec --master=<url> ...              execute a step inside a K8s Pod
 make docker   # produces piper/piper:latest
 
 # Run server
-docker run -p 8080:8080 piper/piper serve
+docker run -p 8080:8080 piper/piper server
 
 # Run on Kubernetes
 kubectl run piper --image=piper/piper:latest -- serve --config /etc/piper/.piper.yaml
@@ -392,24 +397,25 @@ git commit -m "chore: update ui dist"
 make docker
 
 # Tests
-make test
-make test-integration   # requires a running Kubernetes cluster
+make test                # unit tests
+make test-e2e            # in-process e2e (no external infra)
+make test-integration    # requires a running Kubernetes cluster
 ```
 
 ## Project Layout
 
 ```
-cmd/piper/              CLI entry point and cobra commands
-github.com/piper/piper  library entry point (Piper, Config, Serve) — root package
-pkg/pipeline/           YAML parsing, DAG, local runner
-pkg/runner/             shared execution logic (S3 download → exec → upload → report)
-pkg/worker/             bare-metal worker (poll, register, heartbeat)
-pkg/k8s/                Kubernetes Job launcher (ExecutionBackend implementation)
-pkg/executor/           step executors (command, python, notebook)
-pkg/serving/            ModelService lifecycle (deploy, stop, restart, proxy)
-internal/store/         state persistence (SQLite)
-pkg/ui/                 embedded React SPA
-examples/               usage examples
+cmd/piper/          CLI entry point and cobra commands
+piper.go, config.go library entry point — import "github.com/piper/piper"
+pkg/pipeline/       YAML parsing, DAG, local runner
+pkg/runner/         shared execution logic (S3 download → exec → upload → report)
+pkg/worker/         bare-metal worker (poll, register, heartbeat)
+pkg/k8s/            Kubernetes Job launcher (ExecutionBackend implementation)
+pkg/executor/       step executors (command, python, notebook)
+pkg/serving/        ModelService lifecycle (deploy, stop, restart, proxy)
+internal/store/     state persistence (SQLite)
+pkg/ui/             embedded React SPA
+examples/           usage examples
 ```
 
 ## Examples

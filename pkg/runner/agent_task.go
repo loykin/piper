@@ -34,8 +34,8 @@ func DecodeTask(encoded string) (*proto.Task, error) {
 // TaskFromAgentInput builds the task an agent should execute.
 //
 // New launchers should pass taskB64 so the worker and agent execute the same
-// proto.Task contract. The step-based fields remain as a compatibility path for
-// older launchers.
+// proto.Task contract. The step-based fields and commandOverride remain as a
+// compatibility path for older launchers.
 func TaskFromAgentInput(taskB64, taskID, runID, stepName, stepB64 string, commandOverride []string) (*proto.Task, error) {
 	var task *proto.Task
 	if taskB64 != "" {
@@ -44,6 +44,7 @@ func TaskFromAgentInput(taskB64, taskID, runID, stepName, stepB64 string, comman
 			return nil, err
 		}
 		task = decoded
+		return task, nil
 	} else {
 		legacy, err := taskFromLegacyAgentInput(taskID, runID, stepName, stepB64)
 		if err != nil {

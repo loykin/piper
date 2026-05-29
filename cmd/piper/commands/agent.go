@@ -9,7 +9,7 @@ import (
 )
 
 // newAgentCmd returns the "piper agent" command.
-// Used as the K8s Job entrypoint: piper agent exec --master=... --step=... -- <command>
+// Used as the K8s Job entrypoint: piper agent exec --master=... --task=...
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",

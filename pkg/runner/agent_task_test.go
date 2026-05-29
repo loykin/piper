@@ -56,8 +56,8 @@ func TestTaskFromAgentInputFullTaskPreservesContract(t *testing.T) {
 	if err := json.Unmarshal(task.Step, &decodedStep); err != nil {
 		t.Fatal(err)
 	}
-	if got := decodedStep.Run.Command; len(got) != 2 || got[1] != "new" {
-		t.Fatalf("command override = %#v, want [echo new]", got)
+	if got := decodedStep.Run.Command; len(got) != 2 || got[1] != "old" {
+		t.Fatalf("command = %#v, want original task command [echo old]", got)
 	}
 }
 

@@ -446,9 +446,12 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	q.startTaskLocked(ctx, runID, entry)
 	task := entry.task
 	go func() {
-		if err := b.Dispatch(ctx, task); err != nil {
+		// Use a background context: the caller's ctx (e.g. an HTTP request) may be
+		// cancelled as soon as the response is sent, before the Job is created.
+		dispatchCtx := context.Background()
+		if err := b.Dispatch(dispatchCtx, task); err != nil {
 			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
-			_ = q.Complete(ctx, task.ID, proto.TaskStatusFailed, err.Error(), time.Now(), time.Now(), 0)
+			_ = q.Complete(dispatchCtx, task.ID, proto.TaskStatusFailed, err.Error(), time.Now(), time.Now(), 0)
 		}
 	}()
 }
@@ -471,7 +474,7 @@ func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
 		entry.retryTimer = nil
 		entry.status = taskReady
 		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
-		q.dispatchIfNeeded(ctx, entry)
+		q.dispatchIfNeeded(context.Background(), entry)
 	}
 	entry.retryTimer = time.AfterFunc(q.retryDelay, retry)
 }

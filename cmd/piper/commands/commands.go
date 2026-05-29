@@ -3,8 +3,13 @@
 //
 //	import pipercmd "github.com/piper/piper/cmd/piper/commands"
 //
-//	// Add piper commands to the voyager CLI
-//	rootCmd.AddCommand(pipercmd.Commands(p)...)
+//	// Embed with the standard piper factory:
+//	rootCmd.AddCommand(pipercmd.Commands(pipercmd.NewPiper)...)
+//
+//	// Or inject a custom factory to override Piper construction:
+//	rootCmd.AddCommand(pipercmd.Commands(func() (*piper.Piper, error) {
+//	    return piper.New(myCustomConfig())
+//	})...)
 //
 //	// Result:
 //	// voyager pipeline run train.yaml
@@ -17,14 +22,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Commands returns a slice of cobra commands bound to the given piper instance.
-// Add the returned commands to any parent command using AddCommand.
-func Commands(p *piper.Piper) []*cobra.Command {
+// PiperFactory is a function that creates a fully configured Piper instance.
+// It is called from within RunE, after cobra has parsed all flags and the
+// config file has been loaded, so viper values are always fully initialized.
+type PiperFactory func() (*piper.Piper, error)
+
+// Commands returns piper's cobra commands.
+// Pass factory=NewPiper for the standard CLI binary; pass a custom factory
+// when embedding piper commands in another application.
+func Commands(factory PiperFactory) []*cobra.Command {
 	return []*cobra.Command{
-		newRunCmd(p),
-		newParseCmd(p),
-		newServerCmd(p),
-		newWorkerCmd(p),
+		newRunCmd(factory),
+		newParseCmd(),
+		newServerCmd(factory),
+		newWorkerCmd(),
 		newAgentCmd(),
 	}
 }

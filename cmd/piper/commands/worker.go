@@ -7,14 +7,13 @@ import (
 	"syscall"
 	"time"
 
-	piper "github.com/piper/piper"
 	"github.com/piper/piper/pkg/source"
 	"github.com/piper/piper/pkg/worker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-func newWorkerCmd(p *piper.Piper) *cobra.Command {
+func newWorkerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "worker",
 		Short: "start a piper worker (polls master for tasks)",

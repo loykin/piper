@@ -174,7 +174,7 @@ func TestIntegration_DispatchJob(t *testing.T) {
 	step := pipeline.Step{
 		Name: stepName,
 		Run: pipeline.Run{
-			Image:   "registry:2", // already present on the cluster node
+			Image:   "alpine:3.20",
 			Command: []string{"sh", "-c", "echo hello-from-piper-agent && sleep 1"},
 		},
 	}

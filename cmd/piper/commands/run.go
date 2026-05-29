@@ -5,17 +5,22 @@ import (
 	"os"
 	"time"
 
-	piper "github.com/piper/piper"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/spf13/cobra"
 )
 
-func newRunCmd(p *piper.Piper) *cobra.Command {
+func newRunCmd(factory PiperFactory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [pipeline.yaml]",
 		Short: "run a pipeline locally",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := factory()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = p.Close() }()
+
 			result, err := p.RunFile(context.Background(), args[0])
 			if err != nil {
 				return err

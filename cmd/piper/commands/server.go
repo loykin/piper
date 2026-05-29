@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,13 +11,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newServerCmd(p *piper.Piper) *cobra.Command {
+func newServerCmd(factory PiperFactory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "start the piper API server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer cancel()
+			p, err := factory()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = p.Close() }()
+
+			if p.Config().K8s.AgentImage != "" {
+				slog.Info("k8s mode enabled",
+					"agent_image", p.Config().K8s.AgentImage,
+					"namespace", p.Config().K8s.Namespace,
+				)
+			}
 
 			if kc, _ := cmd.Flags().GetString("serving-kubeconfig"); kc != "" {
 				if err := p.SetServingK8sClientset(kc); err != nil {
@@ -24,12 +35,15 @@ func newServerCmd(p *piper.Piper) *cobra.Command {
 				}
 			}
 
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+
 			addr, _ := cmd.Flags().GetString("addr")
 			return p.Serve(ctx, piper.ServeOption{Addr: addr})
 		},
 	}
 
-	cmd.Flags().String("addr", ":8080", "listen address")
+	cmd.Flags().String("addr", "", "listen address (default :8080)")
 	cmd.Flags().String("token", "", "bearer token required for API and UI requests")
 	cmd.Flags().Bool("tls", false, "enable TLS")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file")

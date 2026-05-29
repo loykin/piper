@@ -63,6 +63,10 @@ type Config struct {
 	// DefaultImage: fallback container image when a step has no image configured
 	DefaultImage string
 
+	// AgentImagePullPolicy: image pull policy for both the initContainer and step container.
+	// Defaults to corev1.PullAlways when empty.
+	AgentImagePullPolicy string
+
 	// TTLAfterFinished: seconds after which a finished Job is automatically deleted. nil means no auto-deletion.
 	TTLAfterFinished *int32
 }
@@ -128,6 +132,14 @@ func New(cfg Config) (*Launcher, error) {
 	}
 
 	return &Launcher{cfg: cfg, clientset: clientset, watched: make(map[string]watchedJob)}, nil
+}
+
+// pullPolicy returns the configured image pull policy, defaulting to PullAlways.
+func (l *Launcher) pullPolicy() corev1.PullPolicy {
+	if l.cfg.AgentImagePullPolicy != "" {
+		return corev1.PullPolicy(l.cfg.AgentImagePullPolicy)
+	}
+	return corev1.PullAlways
 }
 
 // Dispatch creates a K8s Job for the given task.
@@ -371,9 +383,8 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 						{
 							Name:            "agent-init",
 							Image:           l.cfg.AgentImage,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							// Copy the agent binary from the agent image into the shared volume
-							Command: []string{"cp", agentBinarySrc, agentBinaryDst},
+							ImagePullPolicy: l.pullPolicy(),
+							Command:         []string{"cp", agentBinarySrc, agentBinaryDst},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},
 							},

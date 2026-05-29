@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"os"
 
-	piper "github.com/piper/piper"
+	"github.com/piper/piper/pkg/pipeline"
 	"github.com/spf13/cobra"
 )
 
-func newParseCmd(p *piper.Piper) *cobra.Command {
+func newParseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "parse [pipeline.yaml]",
 		Short: "validate a pipeline YAML without running it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			pl, err := p.ParseFile(args[0])
+			pl, err := pipeline.ParseFile(args[0])
 			if err != nil {
 				return err
 			}

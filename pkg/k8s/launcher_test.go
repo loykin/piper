@@ -443,8 +443,8 @@ func TestDispatchCreatesJobWithFullTaskAgentContract(t *testing.T) {
 	if init.Image != "loykin/piper:agent" {
 		t.Fatalf("init image = %q", init.Image)
 	}
-	if init.ImagePullPolicy != "IfNotPresent" {
-		t.Fatalf("init pull policy = %q, want IfNotPresent", init.ImagePullPolicy)
+	if init.ImagePullPolicy != "Always" {
+		t.Fatalf("init pull policy = %q, want Always", init.ImagePullPolicy)
 	}
 	stepContainer := job.Spec.Template.Spec.Containers[0]
 	if stepContainer.Image != "python:3.11" {

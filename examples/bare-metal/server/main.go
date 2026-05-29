@@ -4,10 +4,10 @@
 // Workers register with this server and poll for tasks to execute.
 //
 //	# Start the server
-//	go run ./examples/server
+//	go run ./examples/bare-metal/server
 //
 //	# Start a worker in another terminal
-//	go run ./examples/worker
+//	go run ./examples/bare-metal/worker
 //
 //	# Submit a pipeline run
 //	curl -X POST http://localhost:8080/runs \
@@ -20,6 +20,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -29,11 +31,14 @@ import (
 )
 
 func main() {
+	addr := flag.String("addr", ":8080", "listen address")
+	flag.Parse()
+
 	p, err := piper.New(piper.Config{
 		DBPath:    "./piper.db",
 		OutputDir: "./piper-outputs",
 		Server: piper.ServerConfig{
-			Addr: ":8080",
+			Addr: *addr,
 		},
 	})
 	if err != nil {
@@ -44,9 +49,8 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	log.Println("piper server starting on :8080")
-	log.Println("UI: http://localhost:8080")
-	log.Println("API: http://localhost:8080/runs")
+	log.Printf("piper server starting on %s", *addr)
+	fmt.Printf("LISTEN_ADDR=%s\n", *addr)
 
 	if err := p.Serve(ctx, piper.ServeOption{}); err != nil {
 		log.Fatal(err)

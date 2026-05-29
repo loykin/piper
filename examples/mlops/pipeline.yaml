@@ -43,7 +43,7 @@ spec:
     - name: train
       depends_on: [preprocess]
       run:
-        command: ["python3", "examples/full-mlops/train.py"]
+        command: ["python3", "examples/mlops/train.py"]
       params:
         n_estimators: 100
         test_size: 0.2

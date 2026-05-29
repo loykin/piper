@@ -42,11 +42,11 @@ test-integration:
 # Full MLOps demo: SeaweedFS (S3) + piper server + worker + schedule + auto-deploy
 # Prerequisites: Docker, Python 3.9+, pip install scikit-learn
 demo: build
-	bash examples/full-mlops/setup.sh
+	bash examples/mlops/setup.sh
 
 # Tear down demo storage
 demo-down:
-	docker compose -f examples/full-mlops/docker-compose.yml down -v
+	docker compose -f examples/mlops/docker-compose.yml down -v
 
 clean:
 	rm -rf bin/ pkg/ui/dist frontend/dist

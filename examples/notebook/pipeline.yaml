@@ -14,7 +14,7 @@ spec:
     - name: train
       run:
         type: notebook
-        notebook: examples/notebooks/iris_train.ipynb
+        notebook: examples/notebook/iris_train.ipynb
       params:
         n_estimators: 100
         test_size: 0.2

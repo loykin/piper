@@ -422,12 +422,13 @@ examples/           usage examples
 
 | Example | Description |
 |---------|-------------|
+| `examples/basics/` | Sequential, parallel, and retry pipelines |
+| `examples/artifacts/` | S3 artifact passing between steps |
+| `examples/git-source/` | Fetching scripts from a Git repository |
+| `examples/notebook/` | Jupyter notebook execution via papermill |
+| `examples/bare-metal/` | Server + worker setup with label routing (Go + YAML) |
+| `examples/kubernetes/` | Per-step container images on Kubernetes |
+| `examples/serving/` | ModelService deployment and inference proxy |
 | `examples/library/` | In-process execution via `p.Run()` |
-| `examples/server/` | Standalone server mode |
-| `examples/worker/` | Bare-metal worker with label routing |
 | `examples/embedded/` | Mounting piper into an existing HTTP server |
-| `examples/simple.yaml` | Basic sequential pipeline |
-| `examples/parallel.yaml` | Fan-out / fan-in with parallel steps |
-| `examples/artifacts.yaml` | S3 artifact passing between steps |
-| `examples/labels.yaml` | Routing steps to specific workers |
-| `examples/k8s.yaml` | Per-step container images on Kubernetes |
+| `examples/mlops/` | Full MLOps demo: SeaweedFS + cron + train + auto-deploy |

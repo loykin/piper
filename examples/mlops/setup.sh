@@ -16,7 +16,7 @@
 #
 # Usage:
 #   cd <repo-root>
-#   bash examples/full-mlops/setup.sh
+#   bash examples/mlops/setup.sh
 
 set -euo pipefail
 
@@ -29,7 +29,7 @@ DEMO_CRON="${DEMO_CRON:-}"               # set to "*/5 * * * *" to run every 5 m
 
 # ── 1. Start storage ──────────────────────────────────────────────────────────
 echo "==> Starting SeaweedFS (S3) via docker-compose…"
-docker compose -f examples/full-mlops/docker-compose.yml up -d --wait
+docker compose -f examples/mlops/docker-compose.yml up -d --wait
 echo "    SeaweedFS S3 ready at http://localhost:8333"
 
 # ── 2. Build piper ────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ go build -o bin/piper ./cmd/piper
 
 # ── 3. Start piper server (background) ───────────────────────────────────────
 echo "==> Starting piper server on :8080…"
-bin/piper --config examples/full-mlops/piper.yaml server &
+bin/piper --config examples/mlops/piper.yaml server &
 PIPER_PID=$!
 echo "    piper server PID=$PIPER_PID"
 
@@ -55,7 +55,7 @@ echo "    server ready"
 
 # ── 4. Start piper worker (background) ───────────────────────────────────────
 echo "==> Starting piper worker…"
-bin/piper --config examples/full-mlops/piper.yaml worker --master "$SERVER" &
+bin/piper --config examples/mlops/piper.yaml worker --master "$SERVER" &
 WORKER_PID=$!
 echo "    worker PID=$WORKER_PID"
 
@@ -63,7 +63,7 @@ echo "    worker PID=$WORKER_PID"
 echo "==> Registering iris-predictor service…"
 SERVICE_YAML=$(python3 -c "
 import sys, json
-with open('examples/full-mlops/iris-service.yaml') as f:
+with open('examples/serving/service.yaml') as f:
     print(json.dumps(f.read()))
 ")
 curl -sf "$SERVER/services" \
@@ -77,7 +77,7 @@ ACTIVE_CRON="${DEMO_CRON:-$CRON}"
 echo "==> Creating cron schedule: '$ACTIVE_CRON'"
 PIPELINE_YAML=$(python3 -c "
 import sys, json
-with open('examples/full-mlops/iris-pipeline.yaml') as f:
+with open('examples/mlops/pipeline.yaml') as f:
     print(json.dumps(f.read()))
 ")
 SCHEDULE=$(curl -sf "$SERVER/schedules" \

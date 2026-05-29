@@ -3,8 +3,8 @@
 // Start the worker while examples/server is running.
 // The worker registers with the master, then polls for tasks to execute.
 //
-//	go run ./examples/worker
-//	go run ./examples/worker --master=http://remote-server:8080 --label=gpu
+//	go run ./examples/bare-metal/worker
+//	go run ./examples/bare-metal/worker --master=http://remote-server:8080 --label=gpu
 package main
 
 import (

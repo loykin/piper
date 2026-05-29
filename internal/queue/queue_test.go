@@ -110,7 +110,7 @@ func TestNextStrictLabelMatching(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := NewQueue(&memoryRunRepo{}, &memoryStepRepo{})
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.Add(ctx, pl, dag, "run-labels", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
 	if task := q.Next(""); task != nil {
@@ -140,7 +140,7 @@ func TestNextUnlabeledTaskMatchesAnyWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := NewQueue(&memoryRunRepo{}, &memoryStepRepo{})
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.Add(ctx, pl, dag, "run-any", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
 	task := q.Next("gpu")
@@ -167,7 +167,7 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 	}
 	runRepo := &memoryRunRepo{}
 	stepRepo := &memoryStepRepo{}
-	q := NewQueue(runRepo, stepRepo)
+	q := NewQueue(context.Background(), runRepo, stepRepo)
 	q.SetRetryPolicy(2, 0)
 	q.Add(ctx, pl, dag, "run-retry", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
@@ -224,7 +224,7 @@ func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 	}
 	runRepo := &memoryRunRepo{}
 	stepRepo := &memoryStepRepo{}
-	q := NewQueue(runRepo, stepRepo)
+	q := NewQueue(context.Background(), runRepo, stepRepo)
 	q.SetRetryPolicy(2, 0)
 	q.Add(ctx, pl, dag, "run-retry-success", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
@@ -275,7 +275,7 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := &recordingBackend{}
-	q := NewQueue(&memoryRunRepo{}, &memoryStepRepo{})
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.SetRetryPolicy(2, 0)
 	q.SetBackend(backend)
 	q.Add(ctx, pl, dag, "run-backend-retry", ".", t.TempDir(), proto.BuiltinVars{}, nil)
@@ -322,7 +322,7 @@ func TestCancelStopsPendingRetryTimer(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := &recordingBackend{}
-	q := NewQueue(&memoryRunRepo{}, &memoryStepRepo{})
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.SetRetryPolicy(2, 50*time.Millisecond)
 	q.SetBackend(backend)
 	q.Add(ctx, pl, dag, "run-retry-cancel", ".", t.TempDir(), proto.BuiltinVars{}, nil)
@@ -360,7 +360,7 @@ func TestCleanupUsesRunningStartTimeNotQueueAddedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	runRepo := &memoryRunRepo{}
-	q := NewQueue(runRepo, &memoryStepRepo{})
+	q := NewQueue(context.Background(), runRepo, &memoryStepRepo{})
 	q.Add(ctx, pl, dag, "run-cleanup", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
 	q.runs["run-cleanup"].addedAt = time.Now().Add(-time.Hour)
@@ -399,7 +399,7 @@ func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 	runRepo := &memoryRunRepo{}
 	stepRepo := &memoryStepRepo{}
 	backend := &cancelRecordingBackend{}
-	q := NewQueue(runRepo, stepRepo)
+	q := NewQueue(context.Background(), runRepo, stepRepo)
 	q.SetBackend(backend)
 	q.Add(ctx, pl, dag, "run-cancel", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 

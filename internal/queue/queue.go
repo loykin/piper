@@ -62,6 +62,7 @@ type Queue struct {
 	runRepo      run.Repository
 	stepRepo     run.StepRepository
 	backend      backend.ExecutionBackend // nil means polling mode
+	serverCtx    context.Context          // cancelled on server shutdown; used for backend dispatch
 	maxAttempts  int                      // total attempts, including the first try
 	retryDelay   time.Duration
 	OnRunSuccess func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
@@ -69,11 +70,14 @@ type Queue struct {
 }
 
 // NewQueue creates a new Queue backed by the given repositories.
-func NewQueue(runRepo run.Repository, stepRepo run.StepRepository) *Queue {
+// serverCtx is the server's lifetime context: dispatch goroutines are tied to it
+// so they are cancelled on shutdown but not on individual HTTP request completion.
+func NewQueue(serverCtx context.Context, runRepo run.Repository, stepRepo run.StepRepository) *Queue {
 	return &Queue{
 		runs:        make(map[string]*runEntry),
 		runRepo:     runRepo,
 		stepRepo:    stepRepo,
+		serverCtx:   serverCtx,
 		maxAttempts: 1,
 	}
 }
@@ -445,10 +449,8 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	runID := entry.task.RunID
 	q.startTaskLocked(ctx, runID, entry)
 	task := entry.task
+	dispatchCtx := q.serverCtx
 	go func() {
-		// Use a background context: the caller's ctx (e.g. an HTTP request) may be
-		// cancelled as soon as the response is sent, before the Job is created.
-		dispatchCtx := context.Background()
 		if err := b.Dispatch(dispatchCtx, task); err != nil {
 			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
 			_ = q.Complete(dispatchCtx, task.ID, proto.TaskStatusFailed, err.Error(), time.Now(), time.Now(), 0)

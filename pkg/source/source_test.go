@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -81,27 +82,53 @@ func TestNew_unknown(t *testing.T) {
 
 // ─── GitFetcher ───────────────────────────────────────────────────────────────
 
-// TestGitFetcher_publicRepo clones a file from a real GitHub repository.
-// Skipped when there is no network access.
-func TestGitFetcher_publicRepo(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping network test in short mode")
+// makeLocalRepo initialises a bare-minimum git repo with one committed file.
+func makeLocalRepo(t *testing.T, fileName, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
 	}
+
+	run("init", "-b", "main")
+	run("config", "user.email", "test@test")
+	run("config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", fileName)
+	run("commit", "-m", "init")
+	return dir
+}
+
+// TestGitFetcher_localRepo clones a file from a local git repository (no network).
+func TestGitFetcher_localRepo(t *testing.T) {
+	repoDir := makeLocalRepo(t, "train.py", "print('hello')\n")
 
 	f := &GitFetcher{}
 	destDir := t.TempDir()
 	run := pipeline.Run{
 		Source: "git",
-		Repo:   "https://github.com/loykin/piper",
-		Branch: "master",
-		Path:   "examples/scripts/train.py",
+		Repo:   "file://" + repoDir,
+		Branch: "main",
+		Path:   "train.py",
 	}
 
 	got, err := f.Fetch(context.Background(), run, destDir)
 	if err != nil {
 		t.Fatalf("git fetch failed: %v", err)
 	}
-
 	if filepath.Base(got) != "train.py" {
 		t.Errorf("want train.py, got %q", filepath.Base(got))
 	}

@@ -119,7 +119,7 @@ func New(cfg Config) (*Piper, error) {
 	servingMgr := serving.New(repos.Serving, modelDir, k8sClientset)
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
-	q := queue.NewQueue(repos.Run, repos.Step)
+	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
 	q.SetRetryPolicy(cfg.MaxRetries+1, cfg.RetryDelay)
 	p := &Piper{
 		cfg:     cfg,

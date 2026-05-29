@@ -174,7 +174,10 @@ func (r *Runner) execute(
 		},
 	}
 
-	return executor.New(step).Execute(ctx, step, cfg)
+	err := executor.New(step).Execute(ctx, step, cfg)
+	stdoutW.Close()
+	stderrW.Close()
+	return err
 }
 
 // lineWriter implements io.Writer and writes to batchLogger line by line.
@@ -198,6 +201,16 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		w.logger.append(w.stream, line)
 	}
 	return len(p), nil
+}
+
+func (w *lineWriter) Close() {
+	if len(w.buf) == 0 {
+		return
+	}
+	line := string(w.buf)
+	w.buf = nil
+	_, _ = fmt.Fprintln(w.tee, line)
+	w.logger.append(w.stream, line)
 }
 
 // ─── Batch logging ────────────────────────────────────────────────────────────

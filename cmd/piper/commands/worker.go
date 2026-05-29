@@ -18,6 +18,7 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 		Use:   "worker",
 		Short: "start a piper worker (polls master for tasks)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			srcCfg := p.SourceConfig()
 			cfg := worker.Config{
 				MasterURL:           viper.GetString("worker.master"),
 				Label:               viper.GetString("worker.label"),
@@ -28,7 +29,13 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 				ShutdownGracePeriod: viper.GetDuration("worker.shutdown_grace_period"),
 				OutputDir:           viper.GetString("worker.output_dir"),
 				Concurrency:         viper.GetInt("worker.concurrency"),
-				SourceCfg:           p.SourceConfig(),
+				GitUser:             srcCfg.GitUser,
+				GitToken:            srcCfg.GitToken,
+				S3Endpoint:          srcCfg.S3Endpoint,
+				S3AccessKey:         srcCfg.S3AccessKey,
+				S3SecretKey:         srcCfg.S3SecretKey,
+				S3Bucket:            srcCfg.S3Bucket,
+				S3UseSSL:            srcCfg.S3UseSSL,
 			}
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

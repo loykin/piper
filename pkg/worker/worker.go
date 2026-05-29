@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
-	"github.com/piper/piper/pkg/source"
 )
 
 // Config holds Worker configuration.
@@ -31,7 +30,8 @@ type Config struct {
 	ShutdownGracePeriod time.Duration
 	Concurrency         int
 	OutputDir           string
-	SourceCfg           source.Config // currently unused (moved to runner.Config.S3*)
+	GitUser             string
+	GitToken            string
 	// S3 artifact store
 	S3Endpoint  string
 	S3AccessKey string
@@ -68,6 +68,8 @@ func New(cfg Config) (*Worker, error) {
 		MasterURL:   cfg.MasterURL,
 		Token:       cfg.Token,
 		OutputDir:   cfg.OutputDir,
+		GitUser:     cfg.GitUser,
+		GitToken:    cfg.GitToken,
 		S3Endpoint:  cfg.S3Endpoint,
 		S3AccessKey: cfg.S3AccessKey,
 		S3SecretKey: cfg.S3SecretKey,

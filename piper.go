@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 
 	"github.com/piper/piper/internal/queue"
 	"github.com/piper/piper/pkg/artifact"
@@ -362,8 +363,13 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 		return nil, err
 	}
 
+	captureLogs := runID != ""
+	if runID == "" {
+		runID = uuid.NewString()
+	}
+
 	srcCfg := p.sourceConfig()
-	outputDir := p.cfg.OutputDir
+	outputDir := filepath.Join(p.cfg.OutputDir, runID)
 
 	execFn := func(ctx context.Context, step *pipeline.Step) error {
 		stepOutputDir := filepath.Join(outputDir, step.Name)
@@ -373,7 +379,7 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 
 		// Capture logs: persist to store
 		var stdoutW, stderrW io.Writer = os.Stdout, os.Stderr
-		if runID != "" {
+		if captureLogs {
 			stdoutW = &storeLogWriter{logs: p.logs, runID: runID, stepName: step.Name, stream: "stdout", tee: os.Stdout}
 			stderrW = &storeLogWriter{logs: p.logs, runID: runID, stepName: step.Name, stream: "stderr", tee: os.Stderr}
 		}
@@ -383,6 +389,8 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 			WorkDir:   ".",
 			InputDir:  outputDir,
 			OutputDir: stepOutputDir,
+			RunID:     runID,
+			StepName:  step.Name,
 			Params:    proto.MergeParams(step.Params, opts.Params),
 			SourceCfg: srcCfg,
 			Stdout:    stdoutW,

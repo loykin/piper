@@ -256,6 +256,35 @@ func TestRun_logs_sent_to_master(t *testing.T) {
 	}
 }
 
+func TestRun_logs_final_line_without_newline(t *testing.T) {
+	var logBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/logs") {
+			logBody, _ = io.ReadAll(r.Body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	r, err := runner.New(runner.Config{
+		MasterURL: srv.URL,
+		OutputDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	task := makeTask(t, pipeline.Step{
+		Name: "log-step",
+		Run:  pipeline.Run{Command: []string{"sh", "-c", "printf final-line"}},
+	})
+	r.Run(context.Background(), task)
+
+	if !strings.Contains(string(logBody), "final-line") {
+		t.Errorf("expected log body to contain final line without newline, got: %s", logBody)
+	}
+}
+
 // ─── Run: skip reporting when MasterURL is absent ─────────────────────────────
 
 func TestRun_no_master_no_panic(t *testing.T) {

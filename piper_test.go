@@ -2,12 +2,26 @@ package piper
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/schedule"
 )
+
+type noopBackend struct{}
+
+func (noopBackend) Dispatch(context.Context, *proto.Task) error { return nil }
 
 func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 	outputDir := t.TempDir()
@@ -43,4 +57,176 @@ func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 	if _, err := os.Stat(oldLayout); !os.IsNotExist(err) {
 		t.Fatalf("old artifact layout should not exist at %s", oldLayout)
 	}
+}
+
+func TestHandlerRejectsOversizedRequestBody(t *testing.T) {
+	p, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := strings.NewReader(strings.Repeat("x", int(maxRequestBodyBytes)+1))
+	req := httptest.NewRequest(http.MethodPost, "/runs", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	p.Handler(nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
+	p, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := p.Handler(nil)
+	body := `[{"ts":"2026-05-29T10:00:00Z","stream":"stdout","line":"PIPER_METRIC loss=0.312"}]`
+	req := httptest.NewRequest(http.MethodPost, "/runs/run-metric/steps/train/logs", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ingest status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/runs/run-metric/metrics?step=train", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var metrics []logstore.Metric
+	if err := json.NewDecoder(rec.Body).Decode(&metrics); err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics) != 1 || metrics[0].Key != "loss" || metrics[0].Value != 0.312 {
+		t.Fatalf("metrics = %#v, want loss=0.312", metrics)
+	}
+}
+
+func TestWorkerRoutesOnlyMountedInPollingMode(t *testing.T) {
+	polling, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pollingRouter := polling.newRouter(nil).(*gin.Engine)
+	if !hasRoute(pollingRouter, http.MethodGet, "/api/workers") {
+		t.Fatal("polling mode should mount worker routes")
+	}
+	if polling.registry == nil {
+		t.Fatal("polling mode should lazily create worker registry")
+	}
+
+	active, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.SetBackend(noopBackend{})
+	activeRouter := active.newRouter(nil).(*gin.Engine)
+	if hasRoute(activeRouter, http.MethodGet, "/api/workers") {
+		t.Fatal("active backend mode should not mount worker routes")
+	}
+	if hasRoute(activeRouter, http.MethodGet, "/api/tasks/next") {
+		t.Fatal("active backend mode should not mount polling task route")
+	}
+	if active.registry != nil {
+		t.Fatal("active backend mode should not hold worker registry")
+	}
+}
+
+func TestStartRunPersistsExperiment(t *testing.T) {
+	p, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pl := &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: "train"},
+		Spec: pipeline.Spec{Steps: []pipeline.Step{{
+			Name: "step",
+			Run:  pipeline.Run{Command: []string{"true"}},
+		}}},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID, err := p.startRun(context.Background(), pl, dag, StartRunOptions{
+		Experiment: "exp-v2",
+		YAML:       "metadata:\n  name: train\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := p.repos.Run.Get(context.Background(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Experiment != "exp-v2" {
+		t.Fatalf("experiment = %q, want exp-v2", got.Experiment)
+	}
+	runs, err := p.repos.Run.List(context.Background(), run.RunFilter{Experiment: "exp-v2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].ID != runID {
+		t.Fatalf("filtered runs = %#v, want %s", runs, runID)
+	}
+}
+
+func TestBackfillScheduleCreatesRunsForCronRange(t *testing.T) {
+	p, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
+	to := from.Add(2 * time.Minute)
+	yaml := "metadata:\n  name: train\nspec:\n  steps:\n    - name: step\n      run:\n        command: [\"true\"]\n"
+	sc := &schedule.Schedule{
+		ID:           "sch-backfill",
+		Name:         "train",
+		PipelineYAML: yaml,
+		ScheduleType: "cron",
+		CronExpr:     "* * * * *",
+		Enabled:      true,
+		NextRunAt:    from,
+		CreatedAt:    from,
+		UpdatedAt:    from,
+	}
+	if err := p.repos.Schedule.Create(context.Background(), sc); err != nil {
+		t.Fatal(err)
+	}
+
+	runIDs, err := p.BackfillSchedule(context.Background(), sc.ID, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runIDs) != 3 {
+		t.Fatalf("runIDs = %v, want 3 runs", runIDs)
+	}
+	runs, err := p.repos.Run.List(context.Background(), run.RunFilter{ScheduleID: sc.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("stored runs = %d, want 3", len(runs))
+	}
+	for _, r := range runs {
+		if r.ScheduledAt == nil || r.ScheduledAt.Before(from) || r.ScheduledAt.After(to) {
+			t.Fatalf("scheduled_at = %v, want within [%s, %s]", r.ScheduledAt, from, to)
+		}
+	}
+}
+
+func hasRoute(router *gin.Engine, method, path string) bool {
+	for _, route := range router.Routes() {
+		if route.Method == method && route.Path == path {
+			return true
+		}
+	}
+	return false
 }

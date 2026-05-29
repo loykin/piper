@@ -16,8 +16,8 @@ func NewRunRepo(db *sqlx.DB) run.Repository { return &runRepo{db: db} }
 
 func (r *runRepo) Create(ctx context.Context, row *run.Run) error {
 	_, err := r.db.NamedExecContext(ctx,
-		`INSERT INTO runs (id, schedule_id, owner_id, pipeline_name, status, started_at, scheduled_at, pipeline_yaml, params_json)
-		 VALUES (:id, :schedule_id, :owner_id, :pipeline_name, :status, :started_at, :scheduled_at, :pipeline_yaml, :params_json)`,
+		`INSERT INTO runs (id, schedule_id, owner_id, experiment, pipeline_name, status, started_at, scheduled_at, pipeline_yaml, params_json)
+		 VALUES (:id, :schedule_id, :owner_id, :experiment, :pipeline_name, :status, :started_at, :scheduled_at, :pipeline_yaml, :params_json)`,
 		row)
 	return err
 }
@@ -25,7 +25,7 @@ func (r *runRepo) Create(ctx context.Context, row *run.Run) error {
 func (r *runRepo) Get(ctx context.Context, id string) (*run.Run, error) {
 	var v run.Run
 	err := r.db.GetContext(ctx, &v,
-		`SELECT id, schedule_id, owner_id, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json FROM runs WHERE id=?`, id)
+		`SELECT id, schedule_id, owner_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json FROM runs WHERE id=?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -33,12 +33,16 @@ func (r *runRepo) Get(ctx context.Context, id string) (*run.Run, error) {
 }
 
 func (r *runRepo) List(ctx context.Context, filter run.RunFilter) ([]*run.Run, error) {
-	query := `SELECT id, schedule_id, owner_id, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json FROM runs`
+	query := `SELECT id, schedule_id, owner_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json FROM runs`
 	var args []any
 	var where []string
 	if filter.OwnerID != "" {
 		where = append(where, "owner_id=?")
 		args = append(args, filter.OwnerID)
+	}
+	if filter.Experiment != "" {
+		where = append(where, "experiment=?")
+		args = append(args, filter.Experiment)
 	}
 	if filter.PipelineName != "" {
 		where = append(where, "pipeline_name=?")
@@ -82,7 +86,7 @@ func (r *runRepo) Delete(ctx context.Context, id string) error {
 func (r *runRepo) GetLatestSuccessful(ctx context.Context, pipelineName string) (*run.Run, error) {
 	var v run.Run
 	err := r.db.GetContext(ctx, &v,
-		`SELECT id, schedule_id, owner_id, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json
+		`SELECT id, schedule_id, owner_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json
 		 FROM runs WHERE pipeline_name=? AND status='success' ORDER BY started_at DESC LIMIT 1`,
 		pipelineName)
 	if err == sql.ErrNoRows {

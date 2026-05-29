@@ -13,11 +13,9 @@ type Config struct {
 	RetryDelay  time.Duration `yaml:"retry_delay"  mapstructure:"retry_delay"`
 	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`
 	OutputDir   string        `yaml:"output_dir"   mapstructure:"output_dir"`
-	// DB configuration — specify only one. Priority: DB > DBDriver+DBDSN > DBPath
-	DBPath   string  `yaml:"db_path"   mapstructure:"db_path"`   // sqlite file path (default: output_dir/piper.db)
-	DBDriver string  `yaml:"db_driver" mapstructure:"db_driver"` // external DB driver, e.g. "postgres"
-	DBDSN    string  `yaml:"db_dsn"    mapstructure:"db_dsn"`    // external DB DSN
-	DB       *sql.DB `yaml:"-" mapstructure:"-"`                 // directly injected *sql.DB
+	// DB configuration — specify only one. Priority: DB > DBPath.
+	DBPath string  `yaml:"db_path"   mapstructure:"db_path"` // sqlite file path (default: output_dir/piper.db)
+	DB     *sql.DB `yaml:"-" mapstructure:"-"`               // directly injected sqlite *sql.DB
 
 	// Hooks — all extension points. nil means no-op.
 	Hooks Hooks `yaml:"-" mapstructure:"-"`
@@ -86,7 +84,7 @@ type ScheduleConfig struct {
 // K8sConfig holds the configuration required for K8s Job execution.
 // K8s mode is disabled when AgentImage is empty.
 type K8sConfig struct {
-	// AgentImage: image containing the piper-agent binary (used as initContainer)
+	// AgentImage: image containing the piper CLI binary (used as initContainer)
 	AgentImage string `yaml:"agent_image" mapstructure:"agent_image"`
 
 	// Namespace: K8s namespace in which to create Jobs (default: "default")

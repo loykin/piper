@@ -53,6 +53,7 @@ type Piper struct {
 	ctx      context.Context // cancelled on Close; passed to background goroutines and hooks
 	repos    *storemod.Repos
 	logs     logstore.LogStore
+	metrics  logstore.MetricStore
 	queue    *queue.Queue
 	registry *iworker.Registry
 	serving  servingBundle
@@ -121,12 +122,12 @@ func New(cfg Config) (*Piper, error) {
 	q := queue.NewQueue(repos.Run, repos.Step)
 	q.SetRetryPolicy(cfg.MaxRetries+1, cfg.RetryDelay)
 	p := &Piper{
-		cfg:      cfg,
-		ctx:      bgCtx,
-		repos:    repos,
-		logs:     repos.Log,
-		queue:    q,
-		registry: iworker.NewRegistry(repos.Worker),
+		cfg:     cfg,
+		ctx:     bgCtx,
+		repos:   repos,
+		logs:    repos.Log,
+		metrics: repos.Metric,
+		queue:   q,
 		serving: servingBundle{
 			manager: servingMgr,
 			proxy:   serving.NewProxy(repos.Serving),
@@ -192,7 +193,9 @@ func (p *Piper) runCleanup(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			p.registry.Cleanup()
+			if p.registry != nil {
+				p.registry.Cleanup()
+			}
 			p.reconcileBackend(ctx)
 			p.serving.manager.CheckHealth(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
@@ -305,17 +308,13 @@ func (p *Piper) Close() error {
 
 // openStore creates a Repos according to the Config priority rules
 //
-//	Priority: DB (injected) > DBDriver+DBDSN > DBPath (sqlite)
+//	Priority: DB (injected sqlite) > DBPath (sqlite)
 func openStore(cfg Config) (*storemod.Repos, error) {
 	// 1. Directly injected *sql.DB
 	if cfg.DB != nil {
 		return storemod.New(cfg.DB)
 	}
-	// 2. Driver + DSN (postgres, etc.)
-	if cfg.DBDriver != "" && cfg.DBDSN != "" {
-		return storemod.NewWithDSN(cfg.DBDriver, cfg.DBDSN)
-	}
-	// 3. sqlite file path (default)
+	// 2. sqlite file path (default)
 	dbPath := cfg.DBPath
 	if dbPath == "" {
 		dbPath = cfg.OutputDir + "/piper.db"
@@ -413,6 +412,7 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 type StartRunOptions struct {
 	OwnerID    string
 	ScheduleID string
+	Experiment string
 	Params     map[string]any
 	Vars       proto.BuiltinVars
 	YAML       string // raw YAML, persisted to DB
@@ -430,6 +430,7 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 		ID:           runID,
 		ScheduleID:   opts.ScheduleID,
 		OwnerID:      opts.OwnerID,
+		Experiment:   opts.Experiment,
 		PipelineName: pl.Metadata.Name,
 		Status:       run.StatusRunning,
 		StartedAt:    now,
@@ -489,6 +490,16 @@ func (p *Piper) sourceConfig() source.Config {
 func (p *Piper) SetBackend(b backend.ExecutionBackend) {
 	p.backend = b
 	p.queue.SetBackend(b)
+	if b != nil {
+		p.registry = nil
+	}
+}
+
+func (p *Piper) workerRegistry() *iworker.Registry {
+	if p.registry == nil {
+		p.registry = iworker.NewRegistry(p.repos.Worker)
+	}
+	return p.registry
 }
 
 func (p *Piper) Config() Config {
@@ -520,7 +531,12 @@ func (p *Piper) deployService(ctx context.Context, yamlBytes []byte, ownerID str
 		return nil, err
 	}
 
+	// Stop existing instance so the port is free. For local mode this creates a
+	// brief downtime window; if Deploy fails we mark the service "failed" so
+	// operators can see it is down rather than showing a stale "stopped" status.
+	_ = p.serving.manager.Stop(ctx, svc.Metadata.Name)
 	if err := p.serving.manager.Deploy(ctx, svc, resolved); err != nil {
+		_ = p.repos.Serving.SetStatus(ctx, svc.Metadata.Name, serving.StatusFailed)
 		return nil, fmt.Errorf("deploy service: %w", err)
 	}
 
@@ -679,9 +695,12 @@ func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, art
 			S3URI: fmt.Sprintf("s3://%s/%s/%s/%s", r.s3Bucket, runID, step, artName),
 		}, nil
 	default:
+		// LocalPath points to the step output directory, not an artifact subdirectory.
+		// Artifacts are written flat into the step output dir by the runner, so
+		// serve.py can find model.pkl at PIPER_MODEL_DIR/model.pkl.
 		return artifact.Resolved{
 			RunID:     runID,
-			LocalPath: filepath.Join(r.outputDir, runID, step, artName),
+			LocalPath: filepath.Join(r.outputDir, runID, step),
 		}, nil
 	}
 }

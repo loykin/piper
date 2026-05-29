@@ -43,6 +43,8 @@ type taskEntry struct {
 	status      taskStatus
 	attempts    int
 	maxAttempts int
+	startedAt   *time.Time
+	retryTimer  *time.Timer
 }
 
 type runEntry struct {
@@ -272,7 +274,9 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 	q.emit("step.reported", map[string]any{"run_id": runID, "step": stepName, "task_id": id, "status": status})
 
 	if status == string(taskDone) {
+		q.stopRetryTimerLocked(entry)
 		entry.status = taskDone
+		entry.startedAt = nil
 		q.emit("step.done", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts})
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
@@ -287,7 +291,9 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		}
 		q.promoteReady(ctx, r)
 	} else if entry.attempts < entry.maxAttempts {
+		q.stopRetryTimerLocked(entry)
 		entry.status = taskRetrying
+		entry.startedAt = nil
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
 			StepName:  stepName,
@@ -301,7 +307,9 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		}
 		q.scheduleRetryLocked(ctx, entry)
 	} else {
+		q.stopRetryTimerLocked(entry)
 		entry.status = taskFailed
+		entry.startedAt = nil
 		q.emit("step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": errMsg})
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
@@ -335,7 +343,9 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		q.emit("run.completed", map[string]any{"run_id": runID, "status": runStatus})
 
 		if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
-			go q.OnRunSuccess(ctx, runID, pl)
+			// Use a detached context so the callback isn't cancelled when the
+			// HTTP request context that triggered Complete() ends.
+			go q.OnRunSuccess(context.Background(), runID, pl)
 		}
 	}
 
@@ -354,7 +364,9 @@ func (q *Queue) Cancel(ctx context.Context, runID string) error {
 			case taskDone, taskFailed, taskSkipped, taskCanceled:
 				continue
 			default:
+				q.stopRetryTimerLocked(entry)
 				entry.status = taskCanceled
+				entry.startedAt = nil
 				now := time.Now()
 				if err := q.stepRepo.Upsert(ctx, &run.Step{
 					RunID:    runID,
@@ -401,6 +413,7 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 	entry.task.Attempt = entry.attempts
 	entry.status = taskRunning
 	now := time.Now()
+	entry.startedAt = &now
 	q.emit("step.running", map[string]any{"run_id": runID, "step": entry.step.Name, "task_id": entry.task.ID, "attempt": entry.attempts})
 	if err := q.stepRepo.Upsert(ctx, &run.Step{
 		RunID:     runID,
@@ -421,15 +434,12 @@ func (q *Queue) emit(eventType string, fields map[string]any) {
 }
 
 // dispatchIfNeeded immediately dispatches a task if an active ExecutionBackend is configured.
-// Passive backends (e.g. PollingBackend) are treated like nil — tasks stay ready for polling.
+// A nil backend is polling mode: tasks stay ready until a worker calls /api/tasks/next.
 // Called while holding the lock; captures the backend reference before launching
 // the goroutine to avoid a race with SetBackend.
 func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	b := q.backend // capture while holding the lock
 	if b == nil {
-		return
-	}
-	if pb, ok := b.(backend.PassiveBackend); ok && pb.IsPassive() {
 		return
 	}
 	runID := entry.task.RunID
@@ -446,21 +456,32 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
 	if q.retryDelay <= 0 {
 		entry.status = taskReady
+		entry.retryTimer = nil
 		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
 		q.dispatchIfNeeded(ctx, entry)
 		return
 	}
+	q.stopRetryTimerLocked(entry)
 	retry := func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
 		if entry.status != taskRetrying {
 			return
 		}
+		entry.retryTimer = nil
 		entry.status = taskReady
 		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
 		q.dispatchIfNeeded(ctx, entry)
 	}
-	time.AfterFunc(q.retryDelay, retry)
+	entry.retryTimer = time.AfterFunc(q.retryDelay, retry)
+}
+
+func (q *Queue) stopRetryTimerLocked(entry *taskEntry) {
+	if entry.retryTimer == nil {
+		return
+	}
+	entry.retryTimer.Stop()
+	entry.retryTimer = nil
 }
 
 func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep string) {
@@ -516,7 +537,7 @@ func depsAllDone(deps []string, done map[string]bool) bool {
 	return true
 }
 
-// Cleanup fails runs that have been stuck in the queue longer than ttl without reaching a terminal state.
+// Cleanup fails runs with actively running tasks older than ttl without reaching a terminal state.
 // This guards against orphaned runs (e.g. a K8s job that never reports back).
 func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 	q.mu.Lock()
@@ -524,14 +545,16 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 
 	cutoff := time.Now().Add(-ttl)
 	for runID, r := range q.runs {
-		if r.addedAt.Before(cutoff) {
+		if q.runExpiredLocked(r, cutoff) {
 			now := time.Now()
 			for _, entry := range r.tasks {
 				switch entry.status {
 				case taskDone, taskFailed, taskSkipped, taskCanceled:
 					continue
 				default:
+					q.stopRetryTimerLocked(entry)
 					entry.status = taskFailed
+					entry.startedAt = nil
 					if err := q.stepRepo.Upsert(ctx, &run.Step{
 						RunID:    runID,
 						StepName: entry.step.Name,
@@ -547,10 +570,22 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 			if err := q.runRepo.UpdateStatus(ctx, runID, run.StatusFailed, &now); err != nil {
 				slog.Warn("update expired run failed", "run_id", runID, "err", err)
 			}
-			q.emit("run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed, "age": time.Since(r.addedAt).Round(time.Second).String()})
+			q.emit("run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
 			delete(q.runs, runID)
 		}
 	}
+}
+
+func (q *Queue) runExpiredLocked(r *runEntry, cutoff time.Time) bool {
+	for _, entry := range r.tasks {
+		if entry.status != taskRunning || entry.startedAt == nil {
+			continue
+		}
+		if entry.startedAt.Before(cutoff) {
+			return true
+		}
+	}
+	return false
 }
 
 type Stats struct {

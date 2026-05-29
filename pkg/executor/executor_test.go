@@ -94,6 +94,25 @@ func TestCommandExecutor_capturesEnv(t *testing.T) {
 	}
 }
 
+func TestCommandExecutor_stepEnv(t *testing.T) {
+	var buf bytes.Buffer
+	step := &pipeline.Step{
+		Name: "env",
+		Env:  map[string]string{"MASTER_ADDR": "trainer-0", "WORLD_SIZE": "4"},
+		Run:  pipeline.Run{Command: []string{"sh", "-c", "printf '%s:%s' \"$MASTER_ADDR\" \"$WORLD_SIZE\""}},
+	}
+	c := cfg(t)
+	c.Stdout = &buf
+
+	ex := &CommandExecutor{}
+	if err := ex.Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "trainer-0:4" {
+		t.Errorf("stdout = %q, want trainer-0:4", got)
+	}
+}
+
 func TestCommandExecutor_emptyCommand(t *testing.T) {
 	step := &pipeline.Step{Name: "empty", Run: pipeline.Run{Command: nil}}
 	ex := &CommandExecutor{}

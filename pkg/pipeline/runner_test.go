@@ -131,6 +131,48 @@ func TestRunner_parallel(t *testing.T) {
 	}
 }
 
+func TestRunner_startsDownstreamAfterCompletionSignal(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondStarted := make(chan time.Time, 1)
+	ss := []Step{
+		{Name: "a", DependsOn: []string{}},
+		{Name: "b", DependsOn: []string{"a"}},
+	}
+	r := makeRunner(ss, func(_ context.Context, s *Step) error {
+		if s.Name == "a" {
+			close(firstStarted)
+			<-releaseFirst
+			return nil
+		}
+		secondStarted <- time.Now()
+		return nil
+	})
+
+	done := make(chan *RunResult, 1)
+	go func() {
+		done <- r.Run(context.Background())
+	}()
+
+	<-firstStarted
+	releasedAt := time.Now()
+	close(releaseFirst)
+
+	select {
+	case startedAt := <-secondStarted:
+		if delay := startedAt.Sub(releasedAt); delay > 100*time.Millisecond {
+			t.Fatalf("downstream start delay = %s, want under 100ms", delay)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("downstream step did not start")
+	}
+
+	result := <-done
+	if result.Failed() {
+		t.Fatal("expected success")
+	}
+}
+
 func TestRunner_contextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ss := []Step{{Name: "a", DependsOn: []string{}}}

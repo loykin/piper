@@ -163,7 +163,7 @@ func TestIntegration_DispatchJob(t *testing.T) {
 	// ── Launcher ─────────────────────────────────────────────────────────────
 	l := newTestLauncher(t)
 	l.cfg.AgentImage = agentImage
-	l.cfg.MasterURL = masterURL // agent Pod가 보고할 주소
+	l.cfg.MasterURL = masterURL // address agent Pods report results to
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

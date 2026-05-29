@@ -52,14 +52,6 @@ type RunnerConfig struct {
 	Concurrency int
 }
 
-func DefaultRunnerConfig() RunnerConfig {
-	return RunnerConfig{
-		MaxRetries:  2,
-		RetryDelay:  5 * time.Second,
-		Concurrency: 0,
-	}
-}
-
 type Runner struct {
 	pipeline *Pipeline
 	dag      *DAG
@@ -94,12 +86,15 @@ func (r *Runner) Run(ctx context.Context) *RunResult {
 	sem := make(chan struct{}, r.concurrency())
 	var wg sync.WaitGroup
 	inFlight := make(map[string]bool)
+	doneCh := make(chan struct{}, len(r.pipeline.Spec.Steps))
 
+loop:
 	for {
 		r.mu.Lock()
 		done := r.doneMap()
 		terminal := r.terminalMap()
 		runnable := r.dag.Runnable(done)
+		progressed := false
 
 		var toStart []*Step
 		for _, step := range runnable {
@@ -114,10 +109,12 @@ func (r *Runner) Run(ctx context.Context) *RunResult {
 			if res.Status == StatusPending && !inFlight[s.Name] && r.hasFailedDep_(s) {
 				res.Status = StatusSkipped
 				slog.Info("step skipped", "step", s.Name, "reason", "dependency failed")
+				progressed = true
 			}
 		}
 
-		allDone := len(terminal) == len(r.pipeline.Spec.Steps) && len(inFlight) == 0
+		hasInFlight := len(inFlight) > 0
+		allDone := len(terminal) == len(r.pipeline.Spec.Steps) && !hasInFlight
 		if allDone && len(toStart) == 0 {
 			r.mu.Unlock()
 			break
@@ -139,11 +136,25 @@ func (r *Runner) Run(ctx context.Context) *RunResult {
 				r.results[s.Name] = result
 				delete(inFlight, s.Name)
 				r.mu.Unlock()
+				doneCh <- struct{}{}
 			}(step)
 		}
 		r.mu.Unlock()
 
-		time.Sleep(200 * time.Millisecond)
+		if len(toStart) > 0 || progressed {
+			continue
+		}
+
+		if hasInFlight {
+			<-doneCh
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			break loop
+		case <-doneCh:
+		}
 	}
 
 	wg.Wait()

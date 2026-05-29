@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/pkg/proto"
 )
 
 type capturingRunRepo struct {
@@ -51,7 +53,7 @@ func TestListRunsPipelineNameQuery(t *testing.T) {
 		Steps: emptyStepRepo{},
 	}).RegisterRoutes(router.Group(""))
 
-	req := httptest.NewRequest(http.MethodGet, "/runs?pipeline_name=train&status=success", nil)
+	req := httptest.NewRequest(http.MethodGet, "/runs?pipeline_name=train&status=success&experiment=exp-v2", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -63,6 +65,36 @@ func TestListRunsPipelineNameQuery(t *testing.T) {
 	}
 	if repo.filter.Status != "success" {
 		t.Fatalf("Status = %q, want success", repo.filter.Status)
+	}
+	if repo.filter.Experiment != "exp-v2" {
+		t.Fatalf("Experiment = %q, want exp-v2", repo.filter.Experiment)
+	}
+}
+
+func TestCreateRunPassesExperiment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &capturingRunRepo{}
+	var gotExperiment string
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:  repo,
+		Steps: emptyStepRepo{},
+		StartRun: func(_ context.Context, _ string, _ string, _ map[string]any, _ proto.BuiltinVars, experiment string) (string, error) {
+			gotExperiment = experiment
+			return "run-1", nil
+		},
+	}).RegisterRoutes(router.Group(""))
+
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"yaml":"metadata:\n  name: train\n","experiment":"exp-v2"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotExperiment != "exp-v2" {
+		t.Fatalf("experiment = %q, want exp-v2", gotExperiment)
 	}
 }
 

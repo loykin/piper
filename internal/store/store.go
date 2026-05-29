@@ -26,6 +26,7 @@ type Repos struct {
 	Worker   worker.Repository
 	Serving  serving.Repository
 	Log      logstore.LogStore
+	Metric   logstore.MetricStore
 
 	db     *sqlx.DB
 	ownsDB bool
@@ -49,15 +50,6 @@ func New(db *sql.DB) (*Repos, error) {
 	return newRepos(sqlx.NewDb(db, "sqlite"), "sqlite", false)
 }
 
-// NewWithDSN creates Repos from a driver + DSN string.
-func NewWithDSN(driver, dsn string) (*Repos, error) {
-	db, err := sqlx.Open(driver, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
-	}
-	return newRepos(db, driver, true)
-}
-
 func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 	if err := migrate(context.Background(), db, driver); err != nil {
 		if ownsDB {
@@ -75,6 +67,7 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			Worker:   sqlite.NewWorkerRepo(db),
 			Serving:  sqlite.NewServingRepo(db),
 			Log:      logstore.NewSQLite(db.DB),
+			Metric:   logstore.NewSQLite(db.DB),
 			db:       db,
 			ownsDB:   ownsDB,
 		}, nil
@@ -106,6 +99,7 @@ func (r *Repos) DeleteRun(ctx context.Context, id string) error {
 		return err
 	}
 	for _, q := range []string{
+		`DELETE FROM run_metrics WHERE run_id=?`,
 		`DELETE FROM logs WHERE run_id=?`,
 		`DELETE FROM steps WHERE run_id=?`,
 		`DELETE FROM runs WHERE id=?`,

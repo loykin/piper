@@ -16,6 +16,7 @@ type Service struct {
 	Artifact  string    `json:"artifact"   db:"artifact"`
 	Status    string    `json:"status"     db:"status"`
 	Endpoint  string    `json:"endpoint"   db:"endpoint"`
+	Namespace string    `json:"namespace,omitempty" db:"namespace"`
 	PID       int       `json:"pid"        db:"pid"`
 	YAML      string    `json:"yaml"       db:"yaml"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`

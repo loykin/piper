@@ -23,25 +23,6 @@ type CancelableBackend interface {
 	CancelRun(ctx context.Context, runID string) error
 }
 
-// PassiveBackend is implemented by backends that do not actively dispatch tasks.
-// When the queue sees a PassiveBackend it leaves tasks in the ready state so
-// that workers can acquire them via /api/tasks/next (polling mode).
-type PassiveBackend interface {
-	ExecutionBackend
-	IsPassive() bool
-}
-
-// PollingBackend is an explicit value for worker-polling mode.
-//
-// Setting this backend is equivalent to a nil backend: the queue leaves tasks
-// ready until a worker calls /api/tasks/next.
-// Use it when you want to document the intended mode explicitly instead of
-// relying on a nil check.
-type PollingBackend struct{}
-
-func (PollingBackend) Dispatch(context.Context, *proto.Task) error { return nil }
-func (PollingBackend) IsPassive() bool                             { return true }
-
 // LocalBackend dispatches tasks to an in-process runner.
 //
 // The runner still reports task completion through its configured MasterURL.
@@ -56,5 +37,4 @@ func (b *LocalBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-var _ PassiveBackend = PollingBackend{}
 var _ ExecutionBackend = (*LocalBackend)(nil)

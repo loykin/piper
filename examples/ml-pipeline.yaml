@@ -1,0 +1,45 @@
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: iris-experiment
+  description: "End-to-end ML example: train an iris classifier, record metrics, save model"
+
+spec:
+  steps:
+    # ── Step 1: train ──────────────────────────────────────────────────────────
+    # Runs the iris_train.ipynb notebook via papermill.
+    # Override params at submission time:
+    #   POST /runs  {"yaml": "...", "params": {"n_estimators": 200}}
+    - name: train
+      run:
+        type: notebook
+        notebook: examples/notebooks/iris_train.ipynb
+      params:
+        n_estimators: 100
+        test_size: 0.2
+        random_state: 42
+      outputs:
+        - name: model
+          path: model.pkl
+        - name: metrics
+          path: metrics.json
+      env:
+        # Papermill progress bars pollute logs; turn them off
+        PAPERMILL_PROGRESS_BAR: "false"
+
+    # ── Step 2: evaluate ────────────────────────────────────────────────────────
+    # Reads metrics.json from the train step and prints a summary.
+    # In a real pipeline this could run a heavier eval suite.
+    - name: evaluate
+      depends_on: [train]
+      run:
+        command:
+          - sh
+          - -c
+          - |
+            echo "=== Evaluation Summary ==="
+            cat "$PIPER_INPUT_DIR/train/metrics/metrics.json"
+      inputs:
+        - name: metrics
+          from: train/metrics

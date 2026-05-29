@@ -224,6 +224,58 @@ func TestBuildJob_volumeMounts(t *testing.T) {
 	}
 }
 
+func TestBuildJob_stepRuntimeOptions(t *testing.T) {
+	l := &Launcher{cfg: Config{AgentImage: "piper/agent:latest"}}
+	step := pipeline.Step{
+		Name: "train",
+		Env:  map[string]string{"MASTER_ADDR": "trainer-0", "WORLD_SIZE": "4"},
+		Resources: pipeline.Resources{
+			CPU:    "2",
+			Memory: "4Gi",
+			GPU:    "1",
+		},
+		Runner: pipeline.RunnerSelector{
+			NodeSelector: map[string]string{"accelerator": "nvidia-a100"},
+			Tolerations: []pipeline.Toleration{{
+				Key:      "nvidia.com/gpu",
+				Operator: "Exists",
+				Effect:   "NoSchedule",
+			}},
+		},
+	}
+	task := makeTask("run-1", "train", step, pipeline.Pipeline{})
+
+	job := l.buildJob(task, "python:3.11", nil)
+	podSpec := job.Spec.Template.Spec
+	container := podSpec.Containers[0]
+
+	env := map[string]string{}
+	for _, item := range container.Env {
+		env[item.Name] = item.Value
+	}
+	if env["MASTER_ADDR"] != "trainer-0" || env["WORLD_SIZE"] != "4" {
+		t.Fatalf("container env = %#v", container.Env)
+	}
+	gpuLimit := container.Resources.Limits[corev1.ResourceName("nvidia.com/gpu")]
+	if got := gpuLimit.String(); got != "1" {
+		t.Fatalf("gpu limit = %q, want 1", got)
+	}
+	cpuRequest := container.Resources.Requests[corev1.ResourceCPU]
+	if got := cpuRequest.String(); got != "2" {
+		t.Fatalf("cpu request = %q, want 2", got)
+	}
+	memoryLimit := container.Resources.Limits[corev1.ResourceMemory]
+	if got := memoryLimit.String(); got != "4Gi" {
+		t.Fatalf("memory limit = %q, want 4Gi", got)
+	}
+	if podSpec.NodeSelector["accelerator"] != "nvidia-a100" {
+		t.Fatalf("nodeSelector = %#v", podSpec.NodeSelector)
+	}
+	if len(podSpec.Tolerations) != 1 || podSpec.Tolerations[0].Key != "nvidia.com/gpu" || podSpec.Tolerations[0].Operator != corev1.TolerationOpExists {
+		t.Fatalf("tolerations = %#v", podSpec.Tolerations)
+	}
+}
+
 func TestCancelRunDeletesJobsByRunLabel(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}

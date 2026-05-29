@@ -3,6 +3,7 @@ package worker_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,10 @@ type fakeMaster struct {
 	failed       int64 // atomic
 	registered   int64 // atomic: number of POST /api/workers calls
 	heartbeats   int64 // atomic
+	polled       int64 // atomic
+	runGets      int64 // atomic
 	lastWorkerID string
+	cancelEvents chan string
 }
 
 func (m *fakeMaster) handler() http.Handler {
@@ -58,6 +62,7 @@ func (m *fakeMaster) handler() http.Handler {
 
 	// Task polling
 	mux.HandleFunc("/api/tasks/next", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&m.polled, 1)
 		if m.idx >= len(m.tasks) {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -79,7 +84,23 @@ func (m *fakeMaster) handler() http.Handler {
 
 	// Log ingestion
 	mux.HandleFunc("/runs/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			atomic.AddInt64(&m.runGets, 1)
+		}
 		w.WriteHeader(http.StatusOK)
+	})
+
+	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		select {
+		case runID := <-m.cancelEvents:
+			_, _ = fmt.Fprintf(w, "event: run.canceled\ndata: {\"type\":\"run.canceled\",\"fields\":{\"run_id\":\"%s\"}}\n\n", runID)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-r.Context().Done():
+		}
 	})
 
 	return mux
@@ -258,6 +279,45 @@ func TestWorker_run_reports_failed(t *testing.T) {
 		t.Errorf("want failed report, got done=%d failed=%d", fm.done, fm.failed)
 	}
 	cancel()
+}
+
+func TestWorker_cancelEventCancelsInFlightTask(t *testing.T) {
+	fm := &fakeMaster{
+		tasks:        [][]byte{makeTaskBytes(t, "cancel", []string{"sleep", "10"})},
+		cancelEvents: make(chan string, 1),
+	}
+	srv := httptest.NewServer(fm.handler())
+	defer srv.Close()
+
+	w, err := worker.New(worker.Config{
+		MasterURL:    srv.URL,
+		OutputDir:    t.TempDir(),
+		PollInterval: 50 * time.Millisecond,
+		Concurrency:  1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = w.Run(ctx) }()
+	defer cancel()
+
+	if !waitFor(t, 3*time.Second, func() bool {
+		return atomic.LoadInt64(&fm.polled) > 0
+	}) {
+		t.Fatal("worker did not poll task")
+	}
+	fm.cancelEvents <- "run-cancel"
+
+	if !waitFor(t, 3*time.Second, func() bool {
+		return atomic.LoadInt64(&fm.failed) > 0
+	}) {
+		t.Fatalf("cancel event did not stop task, done=%d failed=%d", fm.done, fm.failed)
+	}
+	if got := atomic.LoadInt64(&fm.runGets); got != 0 {
+		t.Fatalf("worker polled run status %d times, want SSE-only cancellation", got)
+	}
 }
 
 // ─── Run: processes multiple tasks ───────────────────────────────────────────

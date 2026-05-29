@@ -6,7 +6,7 @@ import (
 )
 
 // Repository is the persistence interface for Run records.
-// Implemented per-driver in internal/store/{sqlite,postgres,mysql}/.
+// Implemented by the SQLite store in internal/store/sqlite.
 type Repository interface {
 	Create(ctx context.Context, r *Run) error
 	Get(ctx context.Context, id string) (*Run, error)

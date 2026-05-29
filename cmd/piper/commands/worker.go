@@ -8,6 +8,7 @@ import (
 	"time"
 
 	piper "github.com/piper/piper"
+	"github.com/piper/piper/pkg/source"
 	"github.com/piper/piper/pkg/worker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -18,8 +19,19 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 		Use:   "worker",
 		Short: "start a piper worker (polls master for tasks)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			srcCfg := p.SourceConfig()
-			cfg := worker.Config{
+			// Read source config directly from viper (which is fully initialized
+			// by initConfig at this point) rather than from p.SourceConfig(), which
+			// was built before viper loaded the config file.
+			srcCfg := source.Config{
+				GitUser:     viper.GetString("source.git.user"),
+				GitToken:    viper.GetString("source.git.token"),
+				S3Endpoint:  viper.GetString("source.s3.endpoint"),
+				S3AccessKey: viper.GetString("source.s3.access_key"),
+				S3SecretKey: viper.GetString("source.s3.secret_key"),
+				S3Bucket:    viper.GetString("source.s3.bucket"),
+				S3UseSSL:    viper.GetBool("source.s3.use_ssl"),
+			}
+			cfg := workerConfigFromSource(worker.Config{
 				MasterURL:           viper.GetString("worker.master"),
 				Label:               viper.GetString("worker.label"),
 				Token:               viper.GetString("worker.token"),
@@ -29,14 +41,7 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 				ShutdownGracePeriod: viper.GetDuration("worker.shutdown_grace_period"),
 				OutputDir:           viper.GetString("worker.output_dir"),
 				Concurrency:         viper.GetInt("worker.concurrency"),
-				GitUser:             srcCfg.GitUser,
-				GitToken:            srcCfg.GitToken,
-				S3Endpoint:          srcCfg.S3Endpoint,
-				S3AccessKey:         srcCfg.S3AccessKey,
-				S3SecretKey:         srcCfg.S3SecretKey,
-				S3Bucket:            srcCfg.S3Bucket,
-				S3UseSSL:            srcCfg.S3UseSSL,
-			}
+			}, srcCfg)
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
@@ -71,4 +76,15 @@ func newWorkerCmd(p *piper.Piper) *cobra.Command {
 	mustBindPFlag("worker.concurrency", cmd.Flags().Lookup("concurrency"))
 
 	return cmd
+}
+
+func workerConfigFromSource(cfg worker.Config, srcCfg source.Config) worker.Config {
+	cfg.GitUser = srcCfg.GitUser
+	cfg.GitToken = srcCfg.GitToken
+	cfg.S3Endpoint = srcCfg.S3Endpoint
+	cfg.S3AccessKey = srcCfg.S3AccessKey
+	cfg.S3SecretKey = srcCfg.S3SecretKey
+	cfg.S3Bucket = srcCfg.S3Bucket
+	cfg.S3UseSSL = srcCfg.S3UseSSL
+	return cfg
 }

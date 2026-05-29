@@ -1,0 +1,20 @@
+# Piper server configuration
+# Pass with: piper --config examples/full-mlops/piper.yaml serve
+
+run:
+  output_dir: ./piper-outputs
+  concurrency: 4
+
+server:
+  addr: :8080
+
+source:
+  s3:
+    endpoint: localhost:8333   # SeaweedFS S3 gateway (docker-compose)
+    access_key: piperadmin
+    secret_key: piperadmin
+    bucket: piper-artifacts
+    use_ssl: false
+
+retention:
+  artifact_ttl: 168h  # delete S3 artifacts older than 7 days

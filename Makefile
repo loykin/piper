@@ -1,4 +1,4 @@
-.PHONY: build ui docker test clean
+.PHONY: build ui docker test test-e2e test-integration demo clean
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
@@ -27,9 +27,22 @@ docker: build-linux
 test:
 	go test ./...
 
+# E2E tests (fully hermetic, no external infra required)
+test-e2e:
+	go test -tags=e2e -v -timeout=120s ./...
+
 # Integration tests (requires a K8s cluster)
 test-integration:
 	go test ./pkg/k8s/... -tags=integration -v
+
+# Full MLOps demo: SeaweedFS (S3) + piper server + worker + schedule + auto-deploy
+# Prerequisites: Docker, Python 3.9+, pip install scikit-learn
+demo: build
+	bash examples/full-mlops/setup.sh
+
+# Tear down demo storage
+demo-down:
+	docker compose -f examples/full-mlops/docker-compose.yml down -v
 
 clean:
 	rm -rf bin/ pkg/ui/dist frontend/dist

@@ -1,0 +1,37 @@
+services:
+  # ── S3-compatible object store (SeaweedFS single-node) ────────────────────
+  # server -s3 : master + volume + filer + S3 gateway in one process
+  # S3 endpoint (from host):        http://localhost:8333
+  # S3 endpoint (between containers): http://seaweedfs:8333
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: server -s3 -dir=/data -s3.config=/etc/weed/s3config.json
+    ports:
+      - "8333:8333"   # S3 API
+      - "9001:8888"   # Filer HTTP UI
+    volumes:
+      - weed-data:/data
+      - ./s3config.json:/etc/weed/s3config.json:ro
+
+  # Creates the artifact bucket — polls S3 API directly until SeaweedFS is ready
+  storage-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      - seaweedfs
+    environment:
+      AWS_ACCESS_KEY_ID: piperadmin
+      AWS_SECRET_ACCESS_KEY: piperadmin
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      /bin/sh -c "
+        echo 'waiting for seaweedfs s3...';
+        until aws --endpoint-url http://seaweedfs:8333 s3 ls > /dev/null 2>&1; do
+          sleep 2;
+        done;
+        aws --endpoint-url http://seaweedfs:8333 s3 mb s3://piper-artifacts --region us-east-1 2>/dev/null || true;
+        echo 'bucket piper-artifacts ready';
+      "
+    restart: on-failure
+
+volumes:
+  weed-data:

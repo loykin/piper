@@ -26,13 +26,13 @@ import (
 // Manager handles the lifecycle of ModelService deployments.
 type Manager struct {
 	repo     Repository
-	modelDir string                // base directory for downloaded model artifacts
-	k8s      *kubernetes.Clientset // nil when k8s mode is not configured
-	events   event.Publisher       // nil means no event publishing
+	modelDir string               // base directory for downloaded model artifacts
+	k8s      kubernetes.Interface // nil when k8s mode is not configured
+	events   event.Publisher      // nil means no event publishing
 }
 
 // SetK8sClientset injects a Kubernetes clientset at runtime.
-func (m *Manager) SetK8sClientset(cs *kubernetes.Clientset) {
+func (m *Manager) SetK8sClientset(cs kubernetes.Interface) {
 	m.k8s = cs
 }
 
@@ -44,7 +44,7 @@ func (m *Manager) SetEventPublisher(p event.Publisher) {
 // New creates a Manager.
 // modelDir is the root directory for local model artifact downloads.
 // clientset may be nil if K8s mode is not used.
-func New(repo Repository, modelDir string, clientset *kubernetes.Clientset) *Manager {
+func New(repo Repository, modelDir string, clientset kubernetes.Interface) *Manager {
 	return &Manager{repo: repo, modelDir: modelDir, k8s: clientset}
 }
 
@@ -117,7 +117,7 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 		}
 	} else if m.k8s != nil {
 		// K8s mode: delete Deployment and Service
-		ns := m.k8sNamespace(ctx, name)
+		ns := k8sNamespace(svc)
 		_ = m.k8s.AppsV1().Deployments(ns).Delete(ctx, k8sName(name), metav1.DeleteOptions{})
 		_ = m.k8s.CoreV1().Services(ns).Delete(ctx, k8sName(name), metav1.DeleteOptions{})
 	}
@@ -451,6 +451,7 @@ func (m *Manager) deployK8s(ctx context.Context, svc ModelService, s3URI string,
 
 	// Endpoint is the in-cluster DNS name
 	rec.Endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", name, ns, rt.Port)
+	rec.Namespace = ns
 	rec.PID = 0
 	rec.Status = StatusRunning
 	return nil
@@ -475,22 +476,9 @@ func k8sName(name string) string {
 	return s
 }
 
-// k8sNamespace resolves the namespace for a service by looking it up in the repo.
-// Falls back to "default" on any error.
-func (m *Manager) k8sNamespace(ctx context.Context, name string) string {
-	svc, err := m.repo.Get(ctx, name)
-	if err != nil || svc == nil {
-		return "default"
-	}
-	// Namespace is not persisted separately; derive from endpoint DNS if present.
-	// e.g. "http://fraud-detector.ml-prod.svc.cluster.local:8000"
-	// Extract the second label component.
-	ep := svc.Endpoint
-	ep = strings.TrimPrefix(ep, "http://")
-	ep = strings.TrimPrefix(ep, "https://")
-	parts := strings.SplitN(ep, ".", 3)
-	if len(parts) >= 2 {
-		return parts[1]
+func k8sNamespace(svc *Service) string {
+	if svc != nil && svc.Namespace != "" {
+		return svc.Namespace
 	}
 	return "default"
 }

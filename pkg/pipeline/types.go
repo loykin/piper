@@ -35,14 +35,15 @@ type Defaults struct {
 }
 
 type Step struct {
-	Name      string         `yaml:"name"`
-	Run       Run            `yaml:"run"`
-	DependsOn []string       `yaml:"depends_on"`
-	Inputs    []Artifact     `yaml:"inputs"`
-	Outputs   []Artifact     `yaml:"outputs"`
-	Params    map[string]any `yaml:"params"`
-	Resources Resources      `yaml:"resources"`
-	Runner    RunnerSelector `yaml:"runner"`
+	Name      string            `yaml:"name"`
+	Run       Run               `yaml:"run"`
+	DependsOn []string          `yaml:"depends_on"`
+	Inputs    []Artifact        `yaml:"inputs"`
+	Outputs   []Artifact        `yaml:"outputs"`
+	Params    map[string]any    `yaml:"params"`
+	Env       map[string]string `yaml:"env,omitempty"`
+	Resources Resources         `yaml:"resources"`
+	Runner    RunnerSelector    `yaml:"runner"`
 }
 
 type Run struct {
@@ -66,8 +67,19 @@ type Artifact struct {
 type Resources struct {
 	CPU    string `yaml:"cpu"`
 	Memory string `yaml:"memory"`
+	GPU    string `yaml:"gpu,omitempty"`
 }
 
 type RunnerSelector struct {
-	Label string `yaml:"label"`
+	Label        string            `yaml:"label"`
+	NodeSelector map[string]string `yaml:"node_selector,omitempty"`
+	Tolerations  []Toleration      `yaml:"tolerations,omitempty"`
+}
+
+type Toleration struct {
+	Key               string `yaml:"key,omitempty"`
+	Operator          string `yaml:"operator,omitempty"`
+	Value             string `yaml:"value,omitempty"`
+	Effect            string `yaml:"effect,omitempty"`
+	TolerationSeconds *int64 `yaml:"toleration_seconds,omitempty"`
 }

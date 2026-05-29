@@ -3,6 +3,7 @@
 package worker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
 )
@@ -50,7 +52,12 @@ type Worker struct {
 	mu       sync.Mutex
 	inFlight int
 	wg       sync.WaitGroup
-	cancels  map[string]context.CancelFunc
+	cancels  map[string]trackedCancel
+}
+
+type trackedCancel struct {
+	runID  string
+	cancel context.CancelFunc
 }
 
 func New(cfg Config) (*Worker, error) {
@@ -90,7 +97,7 @@ func New(cfg Config) (*Worker, error) {
 		id:      uuid.New().String(),
 		runner:  r,
 		poller:  &http.Client{Timeout: 10 * time.Second},
-		cancels: make(map[string]context.CancelFunc),
+		cancels: make(map[string]trackedCancel),
 	}, nil
 }
 
@@ -110,6 +117,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	// heartbeat goroutine
 	go w.heartbeatLoop(ctx)
+	go w.watchCancelEvents(ctx)
 
 	for {
 		select {
@@ -135,32 +143,34 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 
+		// Register cancel before launching the goroutine so that a run.canceled
+		// SSE event arriving between poll() and goroutine start is not dropped.
+		taskCtx, cancel := context.WithCancel(context.Background())
+		w.trackCancel(task.ID, task.RunID, cancel)
+
 		w.mu.Lock()
 		w.inFlight++
 		w.mu.Unlock()
 		w.wg.Add(1)
 
-		go func(t *proto.Task) {
-			taskCtx, cancel := context.WithCancel(context.Background())
-			w.trackCancel(t.ID, cancel)
+		go func(t *proto.Task, ctx context.Context, c context.CancelFunc) {
 			defer func() {
 				w.untrackCancel(t.ID)
-				cancel()
+				c()
 				w.mu.Lock()
 				w.inFlight--
 				w.mu.Unlock()
 				w.wg.Done()
 			}()
-			go w.watchTaskCancel(ctx, t, cancel)
-			w.runner.Run(taskCtx, t)
-		}(task)
+			w.runner.Run(ctx, t)
+		}(task, taskCtx, cancel)
 	}
 }
 
-func (w *Worker) trackCancel(taskID string, cancel context.CancelFunc) {
+func (w *Worker) trackCancel(taskID, runID string, cancel context.CancelFunc) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.cancels[taskID] = cancel
+	w.cancels[taskID] = trackedCancel{runID: runID, cancel: cancel}
 }
 
 func (w *Worker) untrackCancel(taskID string) {
@@ -172,8 +182,8 @@ func (w *Worker) untrackCancel(taskID string) {
 func (w *Worker) cancelInFlight() {
 	w.mu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(w.cancels))
-	for _, cancel := range w.cancels {
-		cancels = append(cancels, cancel)
+	for _, tracked := range w.cancels {
+		cancels = append(cancels, tracked.cancel)
 	}
 	w.mu.Unlock()
 	for _, cancel := range cancels {
@@ -198,57 +208,96 @@ func (w *Worker) waitForDrain() error {
 	}
 }
 
-func (w *Worker) watchTaskCancel(ctx context.Context, task *proto.Task, cancel context.CancelFunc) {
-	if w.cfg.MasterURL == "" || task.RunID == "" {
+func (w *Worker) cancelRun(runID string) {
+	w.mu.Lock()
+	cancels := make([]context.CancelFunc, 0)
+	for _, tracked := range w.cancels {
+		if tracked.runID == runID {
+			cancels = append(cancels, tracked.cancel)
+		}
+	}
+	w.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
+func (w *Worker) watchCancelEvents(ctx context.Context) {
+	if w.cfg.MasterURL == "" {
 		return
 	}
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			canceled, err := w.isRunCanceled(ctx, task.RunID)
-			if err != nil {
-				slog.Warn("cancel watch failed", "run_id", task.RunID, "err", err)
-				continue
-			}
-			if canceled {
-				slog.Info("task cancellation received", "task_id", task.ID, "run_id", task.RunID)
-				cancel()
+		if err := w.consumeCancelEvents(ctx); err != nil {
+			if ctx.Err() != nil {
 				return
 			}
+			slog.Warn("cancel event stream failed", "err", err)
+		}
+		w.sleep(ctx)
+		if ctx.Err() != nil {
+			return
 		}
 	}
 }
 
-func (w *Worker) isRunCanceled(ctx context.Context, runID string) (bool, error) {
-	url := fmt.Sprintf("%s/runs/%s", w.cfg.MasterURL, runID)
+func (w *Worker) consumeCancelEvents(ctx context.Context) error {
+	url := strings.TrimRight(w.cfg.MasterURL, "/") + "/events"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if w.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+w.cfg.Token)
 	}
-	resp, err := w.poller.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("run status: unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("events: unexpected status %d", resp.StatusCode)
 	}
-	var body struct {
-		Run struct {
-			Status string `json:"status"`
-		} `json:"run"`
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	eventType := ""
+	data := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			w.handleCancelEvent(eventType, data)
+			eventType = ""
+			data = ""
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			if data != "" {
+				data += "\n"
+			}
+			data += strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return false, err
+	return scanner.Err()
+}
+
+func (w *Worker) handleCancelEvent(eventType, data string) {
+	if eventType != "run.canceled" || data == "" {
+		return
 	}
-	return body.Run.Status == "canceled", nil
+	var ev event.Event
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		slog.Warn("cancel event decode failed", "err", err)
+		return
+	}
+	runID, _ := ev.Fields["run_id"].(string)
+	if runID == "" {
+		return
+	}
+	slog.Info("run cancellation received", "run_id", runID)
+	w.cancelRun(runID)
 }
 
 // register registers this worker with the master.

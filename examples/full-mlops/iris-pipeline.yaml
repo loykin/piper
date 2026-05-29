@@ -1,0 +1,92 @@
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: iris-retraining
+  description: "Periodic iris classifier retraining with S3 artifact storage and auto-deploy"
+
+spec:
+  # After every successful run, automatically redeploy the iris-predictor service
+  # with the freshly trained model.
+  on_success:
+    deploy:
+      service: iris-predictor
+
+  steps:
+    # ── Step 1: preprocess ────────────────────────────────────────────────────
+    # Simulate a lightweight data preparation step (e.g. feature engineering,
+    # validation). In a real pipeline this would load raw data from a data lake.
+    - name: preprocess
+      run:
+        command:
+          - python3
+          - -c
+          - |
+            import os, json
+            out = os.environ["PIPER_OUTPUT_DIR"]
+            os.makedirs(out, exist_ok=True)
+            # Produce a simple preprocessing report
+            report = {"rows": 150, "features": 4, "classes": 3, "missing": 0}
+            with open(f"{out}/report.json", "w") as f:
+                json.dump(report, f, indent=2)
+            print(f"PIPER_METRIC rows={report['rows']}")
+            print(f"preprocessing complete: {report}")
+      outputs:
+        - name: report
+          path: report.json
+
+    # ── Step 2: train ─────────────────────────────────────────────────────────
+    # Trains a RandomForest on the iris dataset.
+    # Outputs: model.pkl  (uploaded to S3 as {runID}/train/model/)
+    #          metrics.json
+    # PIPER_METRIC lines are parsed and stored in the run_metrics table.
+    - name: train
+      depends_on: [preprocess]
+      run:
+        command: ["python3", "examples/full-mlops/train.py"]
+      params:
+        n_estimators: 100
+        test_size: 0.2
+        random_state: 42
+      env:
+        # Pass params into the script via environment (train.py reads these)
+        N_ESTIMATORS: "100"
+        TEST_SIZE: "0.2"
+        RANDOM_STATE: "42"
+      outputs:
+        - name: model
+          path: model.pkl
+        - name: metrics
+          path: metrics.json
+
+    # ── Step 3: evaluate ──────────────────────────────────────────────────────
+    # Reads metrics.json from the train step and gates promotion.
+    # In a real pipeline this could run a shadow comparison or A/B test.
+    - name: evaluate
+      depends_on: [train]
+      run:
+        command:
+          - python3
+          - -c
+          - |
+            import os, json, sys
+            inp = os.environ["PIPER_INPUT_DIR"]
+            # Local mode: artifacts sit at {runDir}/{stepName}/{path}
+            # S3 mode:    runner downloads to {inputDir}/{artifactName}/{path}
+            for candidate in [f"{inp}/train/metrics.json", f"{inp}/metrics/metrics.json"]:
+                if os.path.exists(candidate):
+                    metrics_path = candidate
+                    break
+            else:
+                print(f"metrics.json not found under {inp}", file=sys.stderr); sys.exit(1)
+            with open(metrics_path) as f:
+                m = json.load(f)
+            print(f"accuracy={m['accuracy']:.4f}  f1={m['f1']:.4f}")
+            # Hard gate: do not deploy if accuracy < 0.90
+            if m["accuracy"] < 0.90:
+                print("GATE FAILED: accuracy below threshold 0.90", file=sys.stderr)
+                sys.exit(1)
+            print("GATE PASSED: promoting model to production")
+      inputs:
+        - name: metrics
+          from: train/metrics

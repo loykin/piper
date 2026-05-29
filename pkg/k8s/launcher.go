@@ -14,12 +14,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -341,6 +343,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 	if l.cfg.TTLAfterFinished != nil && *l.cfg.TTLAfterFinished > 0 {
 		ttl = l.cfg.TTLAfterFinished
 	}
+	step := decodeTaskStep(task)
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -361,6 +364,8 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					NodeSelector:  step.Runner.NodeSelector,
+					Tolerations:   buildTolerations(step.Runner.Tolerations),
 					// initContainer: copy the piper CLI binary into the emptyDir
 					InitContainers: []corev1.Container{
 						{
@@ -382,6 +387,8 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Command:         []string{agentBinaryDst},
 							Args:            agentArgs,
+							Env:             buildEnvVars(step.Env),
+							Resources:       buildResourceRequirements(step.Resources),
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},
 								{Name: "piper-outputs", MountPath: "/piper-outputs"},
@@ -413,6 +420,70 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 			},
 		},
 	}
+}
+
+func decodeTaskStep(task *proto.Task) pipeline.Step {
+	var step pipeline.Step
+	if len(task.Step) == 0 {
+		return step
+	}
+	_ = json.Unmarshal(task.Step, &step)
+	return step
+}
+
+func buildEnvVars(env map[string]string) []corev1.EnvVar {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]corev1.EnvVar, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, corev1.EnvVar{Name: k, Value: env[k]})
+	}
+	return out
+}
+
+func buildResourceRequirements(resources pipeline.Resources) corev1.ResourceRequirements {
+	reqs := corev1.ResourceList{}
+	limits := corev1.ResourceList{}
+	if resources.CPU != "" {
+		qty := resource.MustParse(resources.CPU)
+		reqs[corev1.ResourceCPU] = qty
+		limits[corev1.ResourceCPU] = qty
+	}
+	if resources.Memory != "" {
+		qty := resource.MustParse(resources.Memory)
+		reqs[corev1.ResourceMemory] = qty
+		limits[corev1.ResourceMemory] = qty
+	}
+	if resources.GPU != "" {
+		qty := resource.MustParse(resources.GPU)
+		name := corev1.ResourceName("nvidia.com/gpu")
+		reqs[name] = qty
+		limits[name] = qty
+	}
+	return corev1.ResourceRequirements{Requests: reqs, Limits: limits}
+}
+
+func buildTolerations(tolerations []pipeline.Toleration) []corev1.Toleration {
+	if len(tolerations) == 0 {
+		return nil
+	}
+	out := make([]corev1.Toleration, 0, len(tolerations))
+	for _, tol := range tolerations {
+		out = append(out, corev1.Toleration{
+			Key:               tol.Key,
+			Operator:          corev1.TolerationOperator(tol.Operator),
+			Value:             tol.Value,
+			Effect:            corev1.TaintEffect(tol.Effect),
+			TolerationSeconds: tol.TolerationSeconds,
+		})
+	}
+	return out
 }
 
 // jobName generates the K8s Job name.

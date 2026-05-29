@@ -20,6 +20,7 @@ type HandlerDeps struct {
 	Parse     func(yaml []byte) (*pipeline.Pipeline, error)
 	Trigger   func(ctx context.Context, sc *Schedule)
 	NextTime  func(expr string, from time.Time) (time.Time, error)
+	Backfill  func(ctx context.Context, id string, from, to time.Time) ([]string, error)
 	OwnerID   func(r *http.Request) string
 	// GenID generates a unique schedule ID prefix (e.g. "sch-run-xxx").
 	GenID func() string
@@ -42,6 +43,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/schedules/:id", h.getSchedule)
 	rg.PATCH("/schedules/:id", h.patchSchedule)
 	rg.DELETE("/schedules/:id", h.deleteSchedule)
+	rg.POST("/schedules/:id/backfill", h.backfillSchedule)
 	rg.GET("/schedules/:id/runs", h.listScheduleRuns)
 }
 
@@ -224,6 +226,38 @@ func (h *Handler) deleteSchedule(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// POST /schedules/:id/backfill
+func (h *Handler) backfillSchedule(c *gin.Context) {
+	id := c.Param("id")
+	sc, err := h.deps.Schedules.Get(c.Request.Context(), id)
+	if err != nil || !h.canAccess(c.Request, sc) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	var req struct {
+		From time.Time `json:"from"`
+		To   time.Time `json:"to"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.From.IsZero() || req.To.IsZero() || req.To.Before(req.From) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "from and to must define a valid range"})
+		return
+	}
+	if h.deps.Backfill == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Backfill not configured"})
+		return
+	}
+	runIDs, err := h.deps.Backfill(c.Request.Context(), id, req.From, req.To)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"run_ids": runIDs})
 }
 
 // GET /schedules/:id/runs

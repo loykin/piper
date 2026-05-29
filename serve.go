@@ -23,6 +23,8 @@ import (
 	"github.com/piper/piper/pkg/worker"
 )
 
+const maxRequestBodyBytes int64 = 1 << 20
+
 // ServeOption customizes the behavior of Serve
 type ServeOption struct {
 	// Extra is an additional http.Handler injected by the caller.
@@ -105,6 +107,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(limitRequestBody(maxRequestBodyBytes))
 
 	// Auth + extra handler middleware
 	r.Use(func(c *gin.Context) {
@@ -131,10 +134,13 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Run domain
 	run.NewHandler(run.HandlerDeps{
-		Runs:      p.repos.Run,
-		Steps:     p.repos.Step,
-		Logs:      p.logs,
-		StartRun:  p.StartRun,
+		Runs:    p.repos.Run,
+		Steps:   p.repos.Step,
+		Logs:    p.logs,
+		Metrics: p.metrics,
+		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error) {
+			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, experiment)
+		},
 		CancelRun: p.CancelRun,
 		RerunRun:  p.RerunRun,
 		RetryStep: p.RetryStep,
@@ -155,6 +161,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 			p.triggerSchedule(p.ctx, sc)
 		},
 		NextTime: nextScheduleTime,
+		Backfill: p.BackfillSchedule,
 		OwnerID:  ownerIDFromRequest,
 		GenID:    genScheduleID,
 	}).RegisterRoutes(r.Group(""))
@@ -169,11 +176,13 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		OwnerID:  ownerIDFromRequest,
 	}).RegisterRoutes(r.Group(""))
 
-	// Worker domain (mounted under /api)
-	worker.NewHandler(worker.HandlerDeps{
-		Registry: p.registry,
-		Queue:    p.queue,
-	}).RegisterRoutes(r.Group("/api"))
+	// Worker polling domain (mounted only when no active backend is configured)
+	if p.backend == nil {
+		worker.NewHandler(worker.HandlerDeps{
+			Registry: p.workerRegistry(),
+			Queue:    p.queue,
+		}).RegisterRoutes(r.Group("/api"))
+	}
 
 	// Health
 	r.GET("/health", func(c *gin.Context) {
@@ -186,6 +195,23 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	r.NoRoute(gin.WrapH(ui.Handler()))
 
 	return r
+}
+
+func limitRequestBody(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+			if c.Request.ContentLength > maxBytes {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
+				c.Abort()
+				return
+			}
+			if c.Request.Body != nil {
+				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+			}
+		}
+		c.Next()
+	}
 }
 
 // Handler returns the piper HTTP API handler.
@@ -266,7 +292,7 @@ func genScheduleID() string {
 
 // startRunFromAPI handles creating a run from the HTTP API, including
 // future-scheduled runs and immediate dispatch.
-func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error) {
+func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error) {
 	pl, err := p.Parse([]byte(yaml))
 	if err != nil {
 		return "", fmt.Errorf("parse: %w", err)
@@ -284,6 +310,7 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 		newRun := &run.Run{
 			ID:           runID,
 			OwnerID:      ownerID,
+			Experiment:   experiment,
 			PipelineName: pl.Metadata.Name,
 			Status:       run.StatusScheduled,
 			StartedAt:    now,
@@ -298,16 +325,17 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 	}
 
 	return p.startRun(ctx, pl, dag, StartRunOptions{
-		OwnerID: ownerID,
-		Params:  params,
-		Vars:    vars,
-		YAML:    yaml,
+		OwnerID:    ownerID,
+		Experiment: experiment,
+		Params:     params,
+		Vars:       vars,
+		YAML:       yaml,
 	})
 }
 
 // StartRun is the exported entry point for creating a run from the HTTP API.
 func (p *Piper) StartRun(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error) {
-	return p.startRunFromAPI(ctx, yaml, ownerID, params, vars)
+	return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, "")
 }
 
 // CancelRun cancels a queued or running run.
@@ -366,7 +394,11 @@ func (p *Piper) metricsHandler(c *gin.Context) {
 	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"pending\"} %d\n", stats.Pending)
 	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"ready\"} %d\n", stats.Ready)
 	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"running\"} %d\n", stats.Running)
-	_, _ = fmt.Fprintf(c.Writer, "piper_workers %d\n", len(p.registry.List()))
+	workerCount := 0
+	if p.registry != nil {
+		workerCount = len(p.registry.List())
+	}
+	_, _ = fmt.Fprintf(c.Writer, "piper_workers %d\n", workerCount)
 }
 
 func (p *Piper) rerunRun(ctx context.Context, runID string, failedOnly bool) (string, error) {

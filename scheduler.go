@@ -3,6 +3,7 @@ package piper
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -20,6 +21,53 @@ func nextScheduleTime(expr string, from time.Time) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return s.Next(from.UTC()), nil
+}
+
+func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.Time) ([]string, error) {
+	sc, err := p.repos.Schedule.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if sc.ScheduleType != "cron" {
+		return nil, fmt.Errorf("backfill requires a cron schedule")
+	}
+	cronSchedule, err := cronParser.Parse(sc.CronExpr)
+	if err != nil {
+		return nil, err
+	}
+	pl, err := pipeline.Parse([]byte(sc.PipelineYAML))
+	if err != nil {
+		return nil, err
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	if sc.ParamsJSON != "" {
+		if err := json.Unmarshal([]byte(sc.ParamsJSON), &params); err != nil {
+			return nil, err
+		}
+	}
+
+	var runIDs []string
+	for scheduledAt := cronSchedule.Next(from.UTC().Add(-time.Nanosecond)); !scheduledAt.After(to.UTC()); scheduledAt = cronSchedule.Next(scheduledAt) {
+		if len(runIDs) >= 1000 {
+			return nil, fmt.Errorf("backfill range creates more than 1000 runs")
+		}
+		runID, err := p.startRun(ctx, pl, dag, StartRunOptions{
+			ScheduleID: sc.ID,
+			OwnerID:    sc.OwnerID,
+			Params:     params,
+			Vars:       proto.BuiltinVars{ScheduledAt: &scheduledAt},
+			YAML:       sc.PipelineYAML,
+		})
+		if err != nil {
+			return nil, err
+		}
+		runIDs = append(runIDs, runID)
+	}
+	return runIDs, nil
 }
 
 func (p *Piper) runScheduler(ctx context.Context) {

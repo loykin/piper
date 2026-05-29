@@ -15,6 +15,15 @@ type Line struct {
 	Line     string    `json:"line"`
 }
 
+type Metric struct {
+	ID       int64     `json:"id"`
+	RunID    string    `json:"run_id"`
+	StepName string    `json:"step_name"`
+	Key      string    `json:"key"`
+	Value    float64   `json:"value"`
+	Ts       time.Time `json:"ts"`
+}
+
 // LogStore is the interface for appending and querying step logs.
 type LogStore interface {
 	// Append persists a batch of log lines.
@@ -23,4 +32,9 @@ type LogStore interface {
 	// Query returns log lines for a step.
 	// If afterID > 0, only lines with ID > afterID are returned (for incremental polling).
 	Query(runID, stepName string, afterID int64) ([]*Line, error)
+}
+
+type MetricStore interface {
+	AppendMetrics(metrics []*Metric) error
+	QueryMetrics(runID, stepName string) ([]*Metric, error)
 }

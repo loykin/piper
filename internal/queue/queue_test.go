@@ -309,6 +309,80 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 	}
 }
 
+func TestCancelStopsPendingRetryTimer(t *testing.T) {
+	ctx := context.Background()
+	pl := &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: "retry-cancel"},
+		Spec: pipeline.Spec{Steps: []pipeline.Step{
+			{Name: "first", Run: pipeline.Run{Command: []string{"false"}}},
+		}},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &recordingBackend{}
+	q := NewQueue(&memoryRunRepo{}, &memoryStepRepo{})
+	q.SetRetryPolicy(2, 50*time.Millisecond)
+	q.SetBackend(backend)
+	q.Add(ctx, pl, dag, "run-retry-cancel", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	var dispatched []*proto.Task
+	if !waitUntil(2*time.Second, func() bool {
+		dispatched = backend.snapshot()
+		return len(dispatched) == 1
+	}) {
+		t.Fatalf("dispatches = %d, want 1", len(dispatched))
+	}
+	now := time.Now()
+	if err := q.Complete(ctx, dispatched[0].ID, proto.TaskStatusFailed, "temporary", now, now, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Cancel(ctx, "run-retry-cancel"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := len(backend.snapshot()); got != 1 {
+		t.Fatalf("dispatches after cancel = %d, want 1", got)
+	}
+}
+
+func TestCleanupUsesRunningStartTimeNotQueueAddedAt(t *testing.T) {
+	ctx := context.Background()
+	pl := &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: "cleanup"},
+		Spec: pipeline.Spec{Steps: []pipeline.Step{
+			{Name: "first", Run: pipeline.Run{Command: []string{"sleep", "60"}}},
+		}},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRepo := &memoryRunRepo{}
+	q := NewQueue(runRepo, &memoryStepRepo{})
+	q.Add(ctx, pl, dag, "run-cleanup", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	q.runs["run-cleanup"].addedAt = time.Now().Add(-time.Hour)
+	q.Cleanup(ctx, time.Second)
+	if runRepo.status["run-cleanup"] == run.StatusFailed {
+		t.Fatal("ready task expired before it started running")
+	}
+	if stats := q.Stats(); stats.Ready != 1 {
+		t.Fatalf("stats after cleanup = %+v, want one ready task", stats)
+	}
+
+	task := q.Next("")
+	if task == nil {
+		t.Fatal("expected task to start")
+	}
+	q.runs["run-cleanup"].tasks["first"].startedAt = ptrTime(time.Now().Add(-time.Hour))
+	q.Cleanup(ctx, time.Second)
+	if runRepo.status["run-cleanup"] != run.StatusFailed {
+		t.Fatalf("run status = %q, want failed", runRepo.status["run-cleanup"])
+	}
+}
+
 func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
@@ -356,6 +430,10 @@ func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 	if err := q.Complete(ctx, "run-cancel:first", proto.TaskStatusDone, "", now, now, 1); err != nil {
 		t.Fatalf("late completion after cancel returned error: %v", err)
 	}
+}
+
+func ptrTime(t time.Time) *time.Time {
+	return &t
 }
 
 func waitUntil(timeout time.Duration, cond func() bool) bool {

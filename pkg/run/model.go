@@ -14,6 +14,7 @@ type Run struct {
 	ID           string     `json:"id"                     db:"id"`
 	ScheduleID   string     `json:"schedule_id,omitempty"  db:"schedule_id"`
 	OwnerID      string     `json:"owner_id,omitempty"     db:"owner_id"`
+	Experiment   string     `json:"experiment,omitempty"   db:"experiment"`
 	PipelineName string     `json:"pipeline_name"          db:"pipeline_name"`
 	Status       string     `json:"status"                 db:"status"`
 	StartedAt    time.Time  `json:"started_at"             db:"started_at"`
@@ -35,6 +36,7 @@ type Step struct {
 
 type RunFilter struct {
 	OwnerID      string
+	Experiment   string
 	PipelineName string
 	ScheduleID   string
 	Status       string

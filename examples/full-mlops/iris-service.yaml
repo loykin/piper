@@ -1,0 +1,24 @@
+apiVersion: piper/v1
+kind: ModelService
+
+metadata:
+  name: iris-predictor
+
+spec:
+  model:
+    # Pulls model.pkl from the most recent successful run of iris-retraining.
+    # Piper downloads the artifact from S3 to a local directory before starting
+    # the serving process.
+    from_artifact:
+      pipeline: iris-retraining
+      step: train
+      artifact: model
+      run: latest
+
+  runtime:
+    mode: local          # "local" = subprocess on the worker host; "k8s" = K8s Deployment
+    command:
+      - python3
+      - examples/full-mlops/serve.py
+    port: 9080
+    health_path: /health  # Piper polls this until 200 before marking service "running"

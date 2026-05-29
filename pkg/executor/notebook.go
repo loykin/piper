@@ -46,7 +46,7 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 	cmd.Dir = cfg.WorkDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = append(os.Environ(), cfg.Env()...)
+	cmd.Env = append(os.Environ(), append(stepEnv(step.Env), cfg.Env()...)...)
 
 	return cmd.Run()
 }

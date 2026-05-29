@@ -21,7 +21,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	}
 
 	workDir := cfg.WorkDir
-	extraEnv := cfg.Env()
+	extraEnv := append(stepEnv(step.Env), cfg.Env()...)
 
 	// If a source is specified, fetch it and run from fetchDir
 	if step.Run.Source != "" && step.Run.Source != "local" {

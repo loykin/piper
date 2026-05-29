@@ -1,0 +1,15 @@
+{
+  "identities": [
+    {
+      "name": "piper",
+      "credentials": [
+        {
+          "accessKey": "piperadmin",
+          "secretKey": "piperadmin"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write"]
+    }
+  ],
+  "signingKey": "piperadmin-signing-key-32chars!!"
+}

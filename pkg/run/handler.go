@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,8 @@ type HandlerDeps struct {
 	Runs      Repository
 	Steps     StepRepository
 	Logs      LogQuerier
-	StartRun  func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error)
+	Metrics   logstore.MetricStore
+	StartRun  func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
 	CancelRun func(ctx context.Context, runID string) error
 	RerunRun  func(ctx context.Context, runID string, failedOnly bool) (string, error)
 	RetryStep func(ctx context.Context, runID, stepName string) (string, error)
@@ -65,6 +67,12 @@ type Handler struct {
 	deps HandlerDeps
 }
 
+type ingestedLogEntry struct {
+	Ts     time.Time `json:"ts"`
+	Stream string    `json:"stream"`
+	Line   string    `json:"line"`
+}
+
 // NewHandler creates a new run Handler with the given dependencies.
 func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{deps: deps}
@@ -83,6 +91,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/runs/:id/steps/:step/logs", h.getLogs)
 	rg.GET("/runs/:id/steps/:step/logs/stream", h.streamLogs)
 	rg.POST("/runs/:id/steps/:step/logs", h.ingestLogs)
+	rg.GET("/runs/:id/metrics", h.getMetrics)
 	rg.GET("/runs/:id/artifacts", h.listArtifacts)
 	rg.GET("/runs/:id/artifacts/*path", h.downloadArtifact)
 }
@@ -99,6 +108,7 @@ func (h *Handler) listRuns(c *gin.Context) {
 		filter = f
 	}
 	filter.Status = c.Query("status")
+	filter.Experiment = c.Query("experiment")
 	if pipelineName := c.Query("pipeline_name"); pipelineName != "" {
 		if filter.PipelineName != "" && filter.PipelineName != pipelineName {
 			c.JSON(http.StatusOK, []any{})
@@ -132,10 +142,11 @@ func (h *Handler) listRuns(c *gin.Context) {
 // POST /runs
 func (h *Handler) createRun(c *gin.Context) {
 	var req struct {
-		YAML    string            `json:"yaml"`
-		Params  map[string]any    `json:"params,omitempty"`
-		OwnerID string            `json:"owner_id,omitempty"`
-		Vars    proto.BuiltinVars `json:"vars,omitempty"`
+		YAML       string            `json:"yaml"`
+		Params     map[string]any    `json:"params,omitempty"`
+		OwnerID    string            `json:"owner_id,omitempty"`
+		Experiment string            `json:"experiment,omitempty"`
+		Vars       proto.BuiltinVars `json:"vars,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -157,7 +168,7 @@ func (h *Handler) createRun(c *gin.Context) {
 		req.OwnerID = h.deps.OwnerID(c.Request)
 	}
 
-	runID, err := h.deps.StartRun(c.Request.Context(), req.YAML, req.OwnerID, req.Params, req.Vars)
+	runID, err := h.deps.StartRun(c.Request.Context(), req.YAML, req.OwnerID, req.Params, req.Vars, req.Experiment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -394,18 +405,14 @@ func (h *Handler) ingestLogs(c *gin.Context) {
 	runID := c.Param("id")
 	stepName := c.Param("step")
 
-	type logEntry struct {
-		Ts     time.Time `json:"ts"`
-		Stream string    `json:"stream"`
-		Line   string    `json:"line"`
-	}
-	var entries []logEntry
+	var entries []ingestedLogEntry
 	if err := c.ShouldBindJSON(&entries); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	lines := make([]*logstore.Line, len(entries))
+	var metrics []*logstore.Metric
 	for i, e := range entries {
 		lines[i] = &logstore.Line{
 			RunID:    runID,
@@ -414,11 +421,49 @@ func (h *Handler) ingestLogs(c *gin.Context) {
 			Stream:   e.Stream,
 			Line:     e.Line,
 		}
+		if metric, ok := parseMetricLine(runID, stepName, e); ok {
+			metrics = append(metrics, metric)
+		}
 	}
 	if err := h.deps.Logs.Append(lines); err != nil {
 		slog.Warn("append logs failed", "run_id", runID, "step", stepName, "err", err)
 	}
+	if h.deps.Metrics != nil {
+		if err := h.deps.Metrics.AppendMetrics(metrics); err != nil {
+			slog.Warn("append metrics failed", "run_id", runID, "step", stepName, "err", err)
+		}
+	}
 	c.Status(http.StatusOK)
+}
+
+func (h *Handler) getMetrics(c *gin.Context) {
+	if h.deps.Metrics == nil {
+		c.JSON(http.StatusOK, []any{})
+		return
+	}
+	metrics, err := h.deps.Metrics.QueryMetrics(c.Param("id"), c.Query("step"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, metrics)
+}
+
+func parseMetricLine(runID, stepName string, entry ingestedLogEntry) (*logstore.Metric, bool) {
+	line := strings.TrimSpace(entry.Line)
+	if !strings.HasPrefix(line, "PIPER_METRIC ") {
+		return nil, false
+	}
+	key, rawValue, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(line, "PIPER_METRIC ")), "=")
+	if !ok {
+		return nil, false
+	}
+	key = strings.TrimSpace(key)
+	value, err := strconv.ParseFloat(strings.TrimSpace(rawValue), 64)
+	if key == "" || err != nil {
+		return nil, false
+	}
+	return &logstore.Metric{RunID: runID, StepName: stepName, Key: key, Value: value, Ts: entry.Ts}, true
 }
 
 // GET /runs/:id/artifacts

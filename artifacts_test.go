@@ -81,7 +81,7 @@ func TestDownloadS3URIToLocal_prefixMultipleFiles(t *testing.T) {
 	_, client := fakeS3(t)
 	putObject(t, client, "models/v2/a.bin", "aaa")
 	putObject(t, client, "models/v2/b.bin", "bbb")
-	putObject(t, client, "models/v3/c.bin", "ccc") // 다른 prefix — 제외돼야 함
+	putObject(t, client, "models/v3/c.bin", "ccc") // different prefix — must be excluded
 
 	dest := t.TempDir()
 	if err := downloadS3URIToLocal(context.Background(), client, "s3://"+testBucket+"/models/v2", dest); err != nil {
@@ -103,7 +103,7 @@ func TestDownloadS3URIToLocal_prefixMultipleFiles(t *testing.T) {
 
 func TestDownloadS3URIToLocal_emptyPrefix(t *testing.T) {
 	_, client := fakeS3(t)
-	// 아무 객체도 없음
+	// no objects exist
 
 	err := downloadS3URIToLocal(context.Background(), client, "s3://"+testBucket+"/missing/prefix", t.TempDir())
 	if err == nil {

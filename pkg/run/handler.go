@@ -265,6 +265,12 @@ func (h *Handler) deleteRun(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
 		return
 	}
+	if h.deps.Hooks != nil {
+		if err := h.deps.Hooks.BeforeGetRun(c.Request.Context(), c.Request, runID); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	if r.Status == StatusRunning {
 		c.JSON(http.StatusConflict, gin.H{"error": "cannot delete a running run"})
 		return

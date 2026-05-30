@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +14,21 @@ import (
 	"github.com/piper/piper/pkg/secret"
 )
 
+// ScheduleFilter is the list filter returned by ScheduleHooks.BeforeListSchedules.
+type ScheduleFilter struct {
+	// OwnerID, when set, returns only schedules belonging to that owner.
+	OwnerID string
+}
+
+// ScheduleHooks provides pre-request authorization hooks for the schedule domain.
+// All methods are called with the request context enriched by the Auth hook,
+// so implementations can extract verified user identity via ctx.Value.
+type ScheduleHooks interface {
+	BeforeCreateSchedule(ctx context.Context, r *http.Request, yaml string) error
+	BeforeListSchedules(ctx context.Context, r *http.Request) (ScheduleFilter, error)
+	BeforeGetSchedule(ctx context.Context, r *http.Request, id string) error
+}
+
 // HandlerDeps holds all dependencies required by the schedule handler.
 type HandlerDeps struct {
 	Schedules Repository
@@ -22,6 +38,7 @@ type HandlerDeps struct {
 	NextTime  func(expr string, from time.Time) (time.Time, error)
 	Backfill  func(ctx context.Context, id string, from, to time.Time) ([]string, error)
 	OwnerID   func(r *http.Request) string
+	Hooks     ScheduleHooks
 	// GenID generates a unique schedule ID prefix (e.g. "sch-run-xxx").
 	GenID func() string
 }
@@ -49,12 +66,22 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // GET /schedules
 func (h *Handler) listSchedules(c *gin.Context) {
+	ownerID := h.ownerID(c.Request)
+	if h.deps.Hooks != nil {
+		f, err := h.deps.Hooks.BeforeListSchedules(c.Request.Context(), c.Request)
+		if err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		if f.OwnerID != "" {
+			ownerID = f.OwnerID
+		}
+	}
 	schedules, err := h.deps.Schedules.List(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ownerID := h.ownerID(c.Request)
 	out := make([]*Schedule, 0, len(schedules))
 	for _, sc := range schedules {
 		if ownerID != "" && sc.OwnerID != "" && sc.OwnerID != ownerID {
@@ -79,6 +106,13 @@ func (h *Handler) createSchedule(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if h.deps.Hooks != nil {
+		if err := h.deps.Hooks.BeforeCreateSchedule(c.Request.Context(), c.Request, req.YAML); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	if req.Type == "" {
@@ -182,8 +216,7 @@ func (h *Handler) getSchedule(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
 		return
 	}
-	if !h.canAccess(c.Request, sc) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	if err := h.checkScheduleAccess(c, id, sc); err != nil {
 		return
 	}
 	c.JSON(http.StatusOK, sc.Redact())
@@ -203,8 +236,12 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled is required"})
 		return
 	}
-	if sc, err := h.deps.Schedules.Get(c.Request.Context(), id); err != nil || !h.canAccess(c.Request, sc) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	sc, err := h.deps.Schedules.Get(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+		return
+	}
+	if err := h.checkScheduleAccess(c, id, sc); err != nil {
 		return
 	}
 	if err := h.deps.Schedules.SetEnabled(c.Request.Context(), id, *req.Enabled); err != nil {
@@ -217,8 +254,12 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 // DELETE /schedules/:id
 func (h *Handler) deleteSchedule(c *gin.Context) {
 	id := c.Param("id")
-	if sc, err := h.deps.Schedules.Get(c.Request.Context(), id); err != nil || !h.canAccess(c.Request, sc) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	sc, err := h.deps.Schedules.Get(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+		return
+	}
+	if err := h.checkScheduleAccess(c, id, sc); err != nil {
 		return
 	}
 	if err := h.deps.Schedules.Delete(c.Request.Context(), id); err != nil {
@@ -232,8 +273,11 @@ func (h *Handler) deleteSchedule(c *gin.Context) {
 func (h *Handler) backfillSchedule(c *gin.Context) {
 	id := c.Param("id")
 	sc, err := h.deps.Schedules.Get(c.Request.Context(), id)
-	if err != nil || !h.canAccess(c.Request, sc) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+		return
+	}
+	if err := h.checkScheduleAccess(c, id, sc); err != nil {
 		return
 	}
 	var req struct {
@@ -263,8 +307,12 @@ func (h *Handler) backfillSchedule(c *gin.Context) {
 // GET /schedules/:id/runs
 func (h *Handler) listScheduleRuns(c *gin.Context) {
 	id := c.Param("id")
-	if sc, err := h.deps.Schedules.Get(c.Request.Context(), id); err != nil || !h.canAccess(c.Request, sc) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	sc, err := h.deps.Schedules.Get(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+		return
+	}
+	if err := h.checkScheduleAccess(c, id, sc); err != nil {
 		return
 	}
 	runs, err := h.deps.Runs.List(c.Request.Context(), run.RunFilter{ScheduleID: id})
@@ -277,6 +325,24 @@ func (h *Handler) listScheduleRuns(c *gin.Context) {
 		r.ParamsJSON = secret.RedactString(r.ParamsJSON)
 	}
 	c.JSON(http.StatusOK, runs)
+}
+
+// checkScheduleAccess calls BeforeGetSchedule hook (if set) and then the
+// built-in ownership check. Returns a non-nil error and writes the response
+// if access is denied.
+func (h *Handler) checkScheduleAccess(c *gin.Context, id string, sc *Schedule) error {
+	if h.deps.Hooks != nil {
+		if err := h.deps.Hooks.BeforeGetSchedule(c.Request.Context(), c.Request, id); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return err
+		}
+	}
+	if !h.canAccess(c.Request, sc) {
+		err := fmt.Errorf("forbidden")
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return err
+	}
+	return nil
 }
 
 func (h *Handler) ownerID(r *http.Request) string {

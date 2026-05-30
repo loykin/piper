@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,5 +150,93 @@ func TestRerunUsesRerunDependency(t *testing.T) {
 	}
 	if gotRunID != "run-1" || gotFailedOnly {
 		t.Fatalf("rerun args = %q, %v; want run-1, false", gotRunID, gotFailedOnly)
+	}
+}
+
+// stubRunHooks is a configurable RunHooks for testing hook dispatch.
+type stubRunHooks struct {
+	beforeGetRun func(ctx context.Context, r *http.Request, id string) error
+}
+
+func (h *stubRunHooks) BeforeListRuns(_ context.Context, _ *http.Request) (RunFilter, error) {
+	return RunFilter{}, nil
+}
+func (h *stubRunHooks) BeforeCreateRun(_ context.Context, _ *http.Request, _ string) error {
+	return nil
+}
+func (h *stubRunHooks) BeforeGetRun(ctx context.Context, r *http.Request, id string) error {
+	if h.beforeGetRun != nil {
+		return h.beforeGetRun(ctx, r, id)
+	}
+	return nil
+}
+func (h *stubRunHooks) BeforeGetLogs(_ context.Context, _ *http.Request, _, _ string) error {
+	return nil
+}
+
+func TestDeleteRun_CallsBeforeGetRunHook(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	hookCalled := ""
+	repo := &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusFailed}}
+	deleted := ""
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:  repo,
+		Steps: emptyStepRepo{},
+		DeleteRun: func(_ context.Context, runID string) error {
+			deleted = runID
+			return nil
+		},
+		Hooks: &stubRunHooks{
+			beforeGetRun: func(_ context.Context, _ *http.Request, id string) error {
+				hookCalled = id
+				return nil
+			},
+		},
+	}).RegisterRoutes(router.Group(""))
+
+	req := httptest.NewRequest(http.MethodDelete, "/runs/run-1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body: %s", rec.Code, rec.Body)
+	}
+	if hookCalled != "run-1" {
+		t.Errorf("BeforeGetRun hook not called with run-1, got %q", hookCalled)
+	}
+	if deleted != "run-1" {
+		t.Errorf("DeleteRun not called with run-1, got %q", deleted)
+	}
+}
+
+func TestDeleteRun_HookBlocksDeletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusFailed}}
+	deleteCalled := false
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:  repo,
+		Steps: emptyStepRepo{},
+		DeleteRun: func(_ context.Context, _ string) error {
+			deleteCalled = true
+			return nil
+		},
+		Hooks: &stubRunHooks{
+			beforeGetRun: func(_ context.Context, _ *http.Request, _ string) error {
+				return fmt.Errorf("forbidden")
+			},
+		},
+	}).RegisterRoutes(router.Group(""))
+
+	req := httptest.NewRequest(http.MethodDelete, "/runs/run-1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if deleteCalled {
+		t.Error("DeleteRun should not be called when hook blocks")
 	}
 }

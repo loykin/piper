@@ -3,6 +3,7 @@ package piper
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -229,4 +230,100 @@ func hasRoute(router *gin.Engine, method, path string) bool {
 		}
 	}
 	return false
+}
+
+// TestAuth_ContextInjectedToDownstreamHooks verifies that the context returned
+// by Hooks.Auth is available in subsequent hooks (e.g. BeforeCreateRun).
+func TestAuth_ContextInjectedToDownstreamHooks(t *testing.T) {
+	type ctxKey struct{}
+
+	p, err := New(Config{
+		OutputDir: t.TempDir(),
+		Hooks: Hooks{
+			Auth: func(r *http.Request) (context.Context, error) {
+				return context.WithValue(r.Context(), ctxKey{}, "user-42"), nil
+			},
+			BeforeCreateRun: func(ctx context.Context, r *http.Request, yaml string) error {
+				if ctx.Value(ctxKey{}) != "user-42" {
+					t.Errorf("BeforeCreateRun ctx missing identity injected by Auth")
+				}
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := p.newRouter(nil)
+
+	body := `{"yaml":"metadata:\n  name: test\nspec:\n  steps: []\n"}`
+	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+}
+
+// TestAuth_RejectsOnError verifies that an Auth hook returning an error
+// produces 401 and blocks the request.
+func TestAuth_RejectsOnError(t *testing.T) {
+	p, err := New(Config{
+		OutputDir: t.TempDir(),
+		Hooks: Hooks{
+			Auth: func(r *http.Request) (context.Context, error) {
+				return nil, fmt.Errorf("invalid token")
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := p.newRouter(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+// TestExtractOwnerID_OverridesHeader verifies that Hooks.ExtractOwnerID
+// replaces the default X-Piper-Owner-ID header extraction.
+func TestExtractOwnerID_OverridesHeader(t *testing.T) {
+	p, err := New(Config{
+		OutputDir: t.TempDir(),
+		Hooks: Hooks{
+			ExtractOwnerID: func(r *http.Request) string {
+				return "jwt-user-99"
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ownerIDFromRequest should use the hook, not the header.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Piper-Owner-ID", "header-user")
+	got := p.ownerIDFromRequest(req)
+	if got != "jwt-user-99" {
+		t.Errorf("ownerIDFromRequest = %q, want jwt-user-99", got)
+	}
+}
+
+// TestExtractOwnerID_DefaultFallback verifies that without the hook,
+// the X-Piper-Owner-ID header is used.
+func TestExtractOwnerID_DefaultFallback(t *testing.T) {
+	p, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Piper-Owner-ID", "header-user")
+	got := p.ownerIDFromRequest(req)
+	if got != "header-user" {
+		t.Errorf("ownerIDFromRequest = %q, want header-user", got)
+	}
 }

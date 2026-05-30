@@ -116,11 +116,15 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 			c.Abort()
 			return
 		}
-		if err := p.cfg.Hooks.callAuth(c.Request); err != nil {
+		ctx, err := p.cfg.Hooks.callAuth(c.Request)
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			c.Abort()
 			return
 		}
+		// Replace request context so downstream hooks receive the enriched context
+		// (e.g. verified user identity injected by the Auth hook).
+		c.Request = c.Request.WithContext(ctx)
 		if extra != nil {
 			rw := &responseRecorder{ResponseWriter: c.Writer}
 			extra.ServeHTTP(rw, c.Request)
@@ -147,7 +151,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		DeleteRun: p.DeleteRun,
 		Artifacts: &piperArtifacts{p: p},
 		Hooks:     &piperRunHooks{p: p},
-		OwnerID:   ownerIDFromRequest,
+		OwnerID:   p.ownerIDFromRequest,
 	}).RegisterRoutes(r.Group(""))
 
 	// Schedule domain
@@ -162,7 +166,8 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		},
 		NextTime: nextScheduleTime,
 		Backfill: p.BackfillSchedule,
-		OwnerID:  ownerIDFromRequest,
+		OwnerID:  p.ownerIDFromRequest,
+		Hooks:    &piperScheduleHooks{p: p},
 		GenID:    genScheduleID,
 	}).RegisterRoutes(r.Group(""))
 
@@ -173,7 +178,8 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		Stop:     p.StopService,
 		Restart:  p.RestartService,
 		Proxy:    p.serving.proxy,
-		OwnerID:  ownerIDFromRequest,
+		OwnerID:  p.ownerIDFromRequest,
+		Hooks:    &piperServingHooks{p: p},
 	}).RegisterRoutes(r.Group(""))
 
 	// Worker polling domain (mounted only when no active backend is configured)
@@ -272,7 +278,17 @@ func (p *Piper) eventsHandler(c *gin.Context) {
 	})
 }
 
-func ownerIDFromRequest(r *http.Request) string {
+// ownerIDFromRequest returns the caller's owner ID. When Hooks.ExtractOwnerID
+// is set it delegates to that function, so library users can derive identity
+// from JWT claims or sessions instead of trusting a raw header.
+func (p *Piper) ownerIDFromRequest(r *http.Request) string {
+	if p.cfg.Hooks.ExtractOwnerID != nil {
+		return p.cfg.Hooks.ExtractOwnerID(r)
+	}
+	return defaultOwnerIDFromRequest(r)
+}
+
+func defaultOwnerIDFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
@@ -512,7 +528,7 @@ type piperRunHooks struct {
 func (h *piperRunHooks) BeforeListRuns(ctx context.Context, r *http.Request) (run.RunFilter, error) {
 	f, err := h.p.cfg.Hooks.callBeforeListRuns(ctx, r)
 	if f.OwnerID == "" {
-		f.OwnerID = ownerIDFromRequest(r)
+		f.OwnerID = h.p.ownerIDFromRequest(r)
 	}
 	return run.RunFilter{
 		OwnerID:      f.OwnerID,
@@ -539,7 +555,7 @@ func (h *piperRunHooks) BeforeGetLogs(ctx context.Context, r *http.Request, runI
 }
 
 func (h *piperRunHooks) checkRunOwner(ctx context.Context, r *http.Request, runID string) error {
-	ownerID := ownerIDFromRequest(r)
+	ownerID := h.p.ownerIDFromRequest(r)
 	if ownerID == "" {
 		return nil
 	}
@@ -551,6 +567,52 @@ func (h *piperRunHooks) checkRunOwner(ctx context.Context, r *http.Request, runI
 		return fmt.Errorf("forbidden")
 	}
 	return nil
+}
+
+// ── piperScheduleHooks — bridges Hooks into schedule.ScheduleHooks ──────────
+
+type piperScheduleHooks struct {
+	p *Piper
+}
+
+func (h *piperScheduleHooks) BeforeCreateSchedule(ctx context.Context, r *http.Request, yaml string) error {
+	return h.p.cfg.Hooks.callBeforeCreateSchedule(ctx, r, yaml)
+}
+
+func (h *piperScheduleHooks) BeforeListSchedules(ctx context.Context, r *http.Request) (schedule.ScheduleFilter, error) {
+	f, err := h.p.cfg.Hooks.callBeforeListSchedules(ctx, r)
+	ownerID := f.OwnerID
+	if ownerID == "" {
+		ownerID = h.p.ownerIDFromRequest(r)
+	}
+	return schedule.ScheduleFilter{OwnerID: ownerID}, err
+}
+
+func (h *piperScheduleHooks) BeforeGetSchedule(ctx context.Context, r *http.Request, id string) error {
+	return h.p.cfg.Hooks.callBeforeGetSchedule(ctx, r, id)
+}
+
+// ── piperServingHooks — bridges Hooks into serving.ServingHooks ──────────────
+
+type piperServingHooks struct {
+	p *Piper
+}
+
+func (h *piperServingHooks) BeforeCreateService(ctx context.Context, r *http.Request, yaml string) error {
+	return h.p.cfg.Hooks.callBeforeCreateService(ctx, r, yaml)
+}
+
+func (h *piperServingHooks) BeforeListServices(ctx context.Context, r *http.Request) (serving.ServingFilter, error) {
+	f, err := h.p.cfg.Hooks.callBeforeListServices(ctx, r)
+	ownerID := f.OwnerID
+	if ownerID == "" {
+		ownerID = h.p.ownerIDFromRequest(r)
+	}
+	return serving.ServingFilter{OwnerID: ownerID}, err
+}
+
+func (h *piperServingHooks) BeforeGetService(ctx context.Context, r *http.Request, name string) error {
+	return h.p.cfg.Hooks.callBeforeGetService(ctx, r, name)
 }
 
 // ── piperArtifacts — implements run.ArtifactProvider ─────────────────────────

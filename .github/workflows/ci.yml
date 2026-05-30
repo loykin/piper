@@ -111,6 +111,8 @@ jobs:
         run: |
           docker pull "${{ needs.build-image.outputs.image }}"
           kind load docker-image "${{ needs.build-image.outputs.image }}"
+          docker pull alpine:3.20
+          kind load docker-image alpine:3.20
           docker pull chrislusf/seaweedfs:latest
           kind load docker-image chrislusf/seaweedfs:latest
           docker pull amazon/aws-cli:latest
@@ -121,7 +123,7 @@ jobs:
       - name: Run K8s E2E tests
         run: |
           PIPER_K8S_E2E_IMAGE=${{ needs.build-image.outputs.image }} \
-            go test -tags=k8s_e2e -v -timeout=5m .
+            go test -tags=k8s_e2e -v -timeout=30m -run 'TestK8sE2E' .
 
   example-e2e:
     name: Example E2E

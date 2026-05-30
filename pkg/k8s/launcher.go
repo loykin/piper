@@ -189,7 +189,7 @@ func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
 // ReconcileJobs polls dispatched K8s Jobs and reports failed or disappeared Jobs
 // back to the queue. Successful Jobs are expected to report completion through
 // the piper agent before Kubernetes TTL cleanup removes them.
-func (l *Launcher) ReconcileJobs(ctx context.Context, report func(context.Context, string, string, string, time.Time, time.Time, int) error) {
+func (l *Launcher) ReconcileJobs(ctx context.Context, report func(context.Context, proto.TaskResult) error) {
 	if report == nil {
 		return
 	}
@@ -251,9 +251,16 @@ func (l *Launcher) unwatchJob(name string) {
 	delete(l.watched, name)
 }
 
-func (l *Launcher) reportWatchedJob(ctx context.Context, report func(context.Context, string, string, string, time.Time, time.Time, int) error, name string, rec watchedJob, status, msg string) {
+func (l *Launcher) reportWatchedJob(ctx context.Context, report func(context.Context, proto.TaskResult) error, name string, rec watchedJob, status, msg string) {
 	now := time.Now().UTC()
-	if err := report(ctx, rec.TaskID, status, msg, rec.StartedAt, now, rec.Attempt); err == nil || strings.Contains(err.Error(), "not found in queue") {
+	if err := report(ctx, proto.TaskResult{
+		TaskID:    rec.TaskID,
+		Status:    status,
+		Error:     msg,
+		StartedAt: rec.StartedAt,
+		EndedAt:   now,
+		Attempts:  rec.Attempt,
+	}); err == nil || strings.Contains(err.Error(), "not found in queue") {
 		l.unwatchJob(name)
 	}
 }

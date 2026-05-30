@@ -176,7 +176,7 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 		t.Fatalf("first attempt = %#v, want attempt 1", firstAttempt)
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, firstAttempt.ID, proto.TaskStatusFailed, "boom", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: firstAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if skipped := stepRepo.steps["run-retry:second"]; skipped != nil {
@@ -193,7 +193,7 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 	if secondAttempt.Attempt != 2 {
 		t.Fatalf("retry attempt = %d, want 2", secondAttempt.Attempt)
 	}
-	if err := q.Complete(ctx, secondAttempt.ID, proto.TaskStatusFailed, "boom again", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: secondAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom again", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatal(err)
 	}
 	failed := stepRepo.steps["run-retry:first"]
@@ -233,14 +233,14 @@ func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 		t.Fatal("first attempt was not dispatched")
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, firstAttempt.ID, proto.TaskStatusFailed, "temporary", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: firstAttempt.ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatal(err)
 	}
 	secondAttempt := q.Next("")
 	if secondAttempt == nil {
 		t.Fatal("retry attempt was not dispatched")
 	}
-	if err := q.Complete(ctx, secondAttempt.ID, proto.TaskStatusDone, "", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: secondAttempt.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatal(err)
 	}
 	child := q.Next("")
@@ -250,7 +250,7 @@ func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 	if child.Attempt != 1 {
 		t.Fatalf("child attempt = %d, want 1", child.Attempt)
 	}
-	if err := q.Complete(ctx, child.ID, proto.TaskStatusDone, "", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: child.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if runRepo.status["run-retry-success"] != run.StatusSuccess {
@@ -292,7 +292,7 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 	}
 
 	now := time.Now()
-	if err := q.Complete(ctx, dispatched[0].ID, proto.TaskStatusFailed, "temporary", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: dispatched[0].ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if !waitUntil(2*time.Second, func() bool {
@@ -335,7 +335,7 @@ func TestCancelStopsPendingRetryTimer(t *testing.T) {
 		t.Fatalf("dispatches = %d, want 1", len(dispatched))
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, dispatched[0].ID, proto.TaskStatusFailed, "temporary", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: dispatched[0].ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.Cancel(ctx, "run-retry-cancel"); err != nil {
@@ -427,7 +427,7 @@ func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 		t.Fatalf("got task after cancel: %#v", task)
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, "run-cancel:first", proto.TaskStatusDone, "", now, now, 1); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: "run-cancel:first", Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
 		t.Fatalf("late completion after cancel returned error: %v", err)
 	}
 }

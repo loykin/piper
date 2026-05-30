@@ -26,7 +26,7 @@ type configFile struct {
 
 type runSection struct {
 	OutputDir   string        `yaml:"output_dir"   mapstructure:"output_dir"`
-	Retries     int           `yaml:"retries"      mapstructure:"retries"`
+	Retries     *int          `yaml:"retries"      mapstructure:"retries"`
 	RetryDelay  time.Duration `yaml:"retry_delay"  mapstructure:"retry_delay"`
 	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`
 }
@@ -108,9 +108,13 @@ func StrictParseConfigFile(path string) error {
 
 // toConfig converts the configFile (populated from viper) into a piper.Config.
 func (c *configFile) toConfig() piper.Config {
+	maxRetries := -1 // negative → piper.New applies default
+	if c.Run.Retries != nil {
+		maxRetries = *c.Run.Retries
+	}
 	return piper.Config{
 		OutputDir:   c.Run.OutputDir,
-		MaxRetries:  c.Run.Retries,
+		MaxRetries:  maxRetries,
 		RetryDelay:  c.Run.RetryDelay,
 		Concurrency: c.Run.Concurrency,
 		Git: piper.GitConfig{

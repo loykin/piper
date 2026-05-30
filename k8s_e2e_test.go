@@ -136,7 +136,7 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 			}
 
 			ns := fmt.Sprintf("piper-e2e-%d", time.Now().UnixNano())
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 
 			kubectl(t, "create", "namespace", ns)

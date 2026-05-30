@@ -91,14 +91,13 @@ func (r *Runner) Run(ctx context.Context) *RunResult {
 loop:
 	for {
 		r.mu.Lock()
-		done := r.doneMap()
-		terminal := r.terminalMap()
-		runnable := r.dag.Runnable(done)
+		sm := r.buildStatusMaps()
+		runnable := r.dag.Runnable(sm.done)
 		progressed := false
 
 		var toStart []*Step
 		for _, step := range runnable {
-			if !inFlight[step.Name] && !terminal[step.Name] {
+			if !inFlight[step.Name] && !sm.terminal[step.Name] {
 				toStart = append(toStart, step)
 			}
 		}
@@ -114,7 +113,7 @@ loop:
 		}
 
 		hasInFlight := len(inFlight) > 0
-		allDone := len(terminal) == len(r.pipeline.Spec.Steps) && !hasInFlight
+		allDone := len(sm.terminal) == len(r.pipeline.Spec.Steps) && !hasInFlight
 		if allDone && len(toStart) == 0 {
 			r.mu.Unlock()
 			break
@@ -203,24 +202,24 @@ func (r *Runner) runWithRetry(ctx context.Context, step *Step) *StepResult {
 	return result
 }
 
-func (r *Runner) doneMap() map[string]bool {
-	done := make(map[string]bool)
-	for name, res := range r.results {
-		if res.Status == StatusDone || res.Status == StatusSkipped {
-			done[name] = true
-		}
-	}
-	return done
+type stepStatusMaps struct {
+	done     map[string]bool
+	terminal map[string]bool
 }
 
-func (r *Runner) terminalMap() map[string]bool {
-	terminal := make(map[string]bool)
+func (r *Runner) buildStatusMaps() stepStatusMaps {
+	done := make(map[string]bool, len(r.results))
+	terminal := make(map[string]bool, len(r.results))
 	for name, res := range r.results {
-		if res.Status == StatusDone || res.Status == StatusSkipped || res.Status == StatusFailed {
+		isDone := res.Status == StatusDone || res.Status == StatusSkipped
+		if isDone {
+			done[name] = true
+		}
+		if isDone || res.Status == StatusFailed {
 			terminal[name] = true
 		}
 	}
-	return terminal
+	return stepStatusMaps{done: done, terminal: terminal}
 }
 
 func (r *Runner) hasFailedDep_(step *Step) bool {

@@ -9,6 +9,8 @@ import (
 // Config is the global piper configuration. Accepts a struct and can be embedded.
 type Config struct {
 	// Execution
+	// MaxRetries is the number of retry attempts after the first failure.
+	// 0 means no retries (fail immediately). Negative values use the default (2).
 	MaxRetries  int           `yaml:"max_retries"  mapstructure:"max_retries"`
 	RetryDelay  time.Duration `yaml:"retry_delay"  mapstructure:"retry_delay"`
 	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`

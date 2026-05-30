@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
@@ -341,10 +340,10 @@ func TestReconcileJobsReportsFailedJob(t *testing.T) {
 	l.watchJob(job.Name, task)
 
 	var gotTaskID, gotStatus, gotErr string
-	l.ReconcileJobs(context.Background(), func(_ context.Context, taskID, status, errMsg string, _, _ time.Time, _ int) error {
-		gotTaskID = taskID
-		gotStatus = status
-		gotErr = errMsg
+	l.ReconcileJobs(context.Background(), func(_ context.Context, result proto.TaskResult) error {
+		gotTaskID = result.TaskID
+		gotStatus = result.Status
+		gotErr = result.Error
 		return nil
 	})
 	if gotTaskID != task.ID || gotStatus != proto.TaskStatusFailed || gotErr != "job failed" {

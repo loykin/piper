@@ -391,8 +391,7 @@ func (h *Handler) streamLogs(c *gin.Context) {
 
 // POST /runs/:id/steps/:step/logs  — ingest worker logs
 func (h *Handler) ingestLogs(c *gin.Context) {
-	runID := c.Param("id")
-	stepName := c.Param("step")
+	ref := stepRef{RunID: c.Param("id"), StepName: c.Param("step")}
 
 	var entries []ingestedLogEntry
 	if err := c.ShouldBindJSON(&entries); err != nil {
@@ -404,22 +403,22 @@ func (h *Handler) ingestLogs(c *gin.Context) {
 	var metrics []*logstore.Metric
 	for i, e := range entries {
 		lines[i] = &logstore.Line{
-			RunID:    runID,
-			StepName: stepName,
+			RunID:    ref.RunID,
+			StepName: ref.StepName,
 			Ts:       e.Ts,
 			Stream:   e.Stream,
 			Line:     e.Line,
 		}
-		if metric, ok := parseMetricLine(runID, stepName, e); ok {
+		if metric, ok := parseMetricLine(ref, e); ok {
 			metrics = append(metrics, metric)
 		}
 	}
 	if err := h.deps.Logs.Append(lines); err != nil {
-		slog.Warn("append logs failed", "run_id", runID, "step", stepName, "err", err)
+		slog.Warn("append logs failed", "run_id", ref.RunID, "step", ref.StepName, "err", err)
 	}
 	if h.deps.Metrics != nil {
 		if err := h.deps.Metrics.AppendMetrics(metrics); err != nil {
-			slog.Warn("append metrics failed", "run_id", runID, "step", stepName, "err", err)
+			slog.Warn("append metrics failed", "run_id", ref.RunID, "step", ref.StepName, "err", err)
 		}
 	}
 	c.Status(http.StatusOK)
@@ -438,7 +437,12 @@ func (h *Handler) getMetrics(c *gin.Context) {
 	c.JSON(http.StatusOK, metrics)
 }
 
-func parseMetricLine(runID, stepName string, entry ingestedLogEntry) (*logstore.Metric, bool) {
+type stepRef struct {
+	RunID    string
+	StepName string
+}
+
+func parseMetricLine(ref stepRef, entry ingestedLogEntry) (*logstore.Metric, bool) {
 	line := strings.TrimSpace(entry.Line)
 	if !strings.HasPrefix(line, "PIPER_METRIC ") {
 		return nil, false
@@ -452,7 +456,7 @@ func parseMetricLine(runID, stepName string, entry ingestedLogEntry) (*logstore.
 	if key == "" || err != nil {
 		return nil, false
 	}
-	return &logstore.Metric{RunID: runID, StepName: stepName, Key: key, Value: value, Ts: entry.Ts}, true
+	return &logstore.Metric{RunID: ref.RunID, StepName: ref.StepName, Key: key, Value: value, Ts: entry.Ts}, true
 }
 
 // GET /runs/:id/artifacts

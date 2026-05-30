@@ -70,7 +70,7 @@ func New(cfg Config) (*Piper, error) {
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = def.OutputDir
 	}
-	if cfg.MaxRetries == 0 {
+	if cfg.MaxRetries < 0 {
 		cfg.MaxRetries = def.MaxRetries
 	}
 	if cfg.RetryDelay == 0 {
@@ -205,7 +205,7 @@ func (p *Piper) runCleanup(ctx context.Context) {
 }
 
 type jobReconciler interface {
-	ReconcileJobs(ctx context.Context, report func(context.Context, string, string, string, time.Time, time.Time, int) error)
+	ReconcileJobs(ctx context.Context, report func(context.Context, proto.TaskResult) error)
 }
 
 func (p *Piper) reconcileBackend(ctx context.Context) {
@@ -213,8 +213,8 @@ func (p *Piper) reconcileBackend(ctx context.Context) {
 	if !ok {
 		return
 	}
-	reconciler.ReconcileJobs(ctx, func(ctx context.Context, taskID, status, errMsg string, startedAt, endedAt time.Time, attempts int) error {
-		return p.queue.Complete(ctx, taskID, status, errMsg, startedAt, endedAt, attempts)
+	reconciler.ReconcileJobs(ctx, func(ctx context.Context, result proto.TaskResult) error {
+		return p.queue.Complete(ctx, result)
 	})
 }
 
@@ -246,19 +246,17 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 			continue
 		}
 		steps, _ := p.repos.Step.List(ctx, r.ID)
-		doneSteps := map[string]bool{}
+		var recovered []queue.RecoveredStep
 		for _, s := range steps {
 			switch s.Status {
 			case "done", "skipped":
-				doneSteps[s.StepName] = true
+				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, Done: true})
 			case "running":
-				// Reset to pending; the worker may have crashed mid-task.
-				s.Status = "pending"
-				s.StartedAt = nil
-				s.Error = ""
-				if err := p.repos.Step.Upsert(ctx, s); err != nil {
-					slog.Warn("recover: reset step status failed", "run_id", r.ID, "step", s.StepName, "err", err)
+				startedAt := now
+				if s.StartedAt != nil {
+					startedAt = *s.StartedAt
 				}
+				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, StartedAt: startedAt})
 			}
 		}
 		var params map[string]any
@@ -266,7 +264,7 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
 		}
 		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
-		p.queue.Recover(ctx, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, doneSteps)
+		p.queue.Recover(ctx, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered)
 	}
 }
 

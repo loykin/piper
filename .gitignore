@@ -1,5 +1,6 @@
 # 빌드 결과물
 bin/
+/piper
 frontend/dist/
 frontend/node_modules/
 

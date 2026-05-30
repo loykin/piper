@@ -103,10 +103,11 @@ func TestStrictParseConfigFile_NonExistentFile(t *testing.T) {
 }
 
 func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
+	three := 3
 	cf := configFile{
 		Run: runSection{
 			OutputDir:   "/data",
-			Retries:     3,
+			Retries:     &three,
 			RetryDelay:  5 * time.Second,
 			Concurrency: 8,
 		},

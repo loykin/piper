@@ -9,7 +9,7 @@ Runs as a standalone server or embedded as a Go library.
 - **Three execution modes** — local (in-process) / bare-metal worker / Kubernetes Jobs
 - **Single binary** — UI included, works out of the box with `go install`
 - **Embeddable library** — mount into your existing Go app and HTTP router
-- **S3 artifact passing** — share files between steps via MinIO or AWS S3
+- **S3 artifact passing** — share files between steps via any S3-compatible store (AWS S3, SeaweedFS, etc.)
 - **Real-time logs** — SSE streaming, visible in the web UI
 
 ## Quick Start
@@ -90,7 +90,7 @@ The storage backend is determined by whether S3 is configured — not by which e
 # S3 not configured → local filesystem
 {outputDir}/{runID}/{stepName}/{artifactName}/...
 
-# S3 configured → S3/MinIO
+# S3 configured → S3-compatible store
 s3://{bucket}/{runID}/{stepName}/{artifactName}/...
 ```
 
@@ -98,6 +98,14 @@ Worker and Kubernetes modes require S3 because steps run on separate machines or
 In-process mode works with either backend.
 
 ## Execution Modes
+
+| | Local | Bare-metal Worker | Kubernetes |
+|---|---|---|---|
+| **Runs on** | single process | separate worker processes | K8s Jobs (one Pod per step) |
+| **Task delivery** | direct call | HTTP polling `/api/tasks/next` | K8s Job created per step |
+| **Artifact storage** | local filesystem | shared filesystem or S3 | S3 required |
+| **Cancellation** | context cancel | SSE event | `kubectl delete job` |
+| **Best for** | development, libraries | on-prem GPU clusters | cloud-native, auto-scaling |
 
 ### 1. Local (in-process)
 
@@ -125,7 +133,12 @@ Active workers can be listed via `GET /api/workers`.
 
 ### 3. Kubernetes Jobs
 
-Each step runs in its own Pod. An initContainer injects the `piper` binary into the step container.
+Each step runs in its own Pod. An `initContainer` copies the `piper` binary into the step container at runtime — no changes to user images required.
+
+```
+initContainer (piper image)  →  cp /piper /piper-tools/piper
+step container (user image)  →  /piper-tools/piper agent exec --task=<encoded-task> ...
+```
 
 ```yaml
 # .piper.yaml
@@ -141,7 +154,10 @@ k8s:
 piper server --config .piper.yaml
 ```
 
-No changes to user container images are required.
+> **vs Argo Workflows**: Argo is a Kubernetes operator that manages workflows as CRDs.
+> Piper is an application that uses K8s only as a compute backend — the DAG, retry logic,
+> and state live in the Piper server, not in K8s. Piper runs identically in local and bare-metal
+> modes without any K8s dependency.
 
 ## Worker Registration API
 
@@ -326,9 +342,9 @@ run:
 
 source:
   s3:
-    endpoint: localhost:9000
-    access_key: minioadmin
-    secret_key: minioadmin
+    endpoint: localhost:9000    # any S3-compatible endpoint (AWS, SeaweedFS, etc.)
+    access_key: <access-key>
+    secret_key: <secret-key>
     bucket: piper-artifacts
 
 serving:

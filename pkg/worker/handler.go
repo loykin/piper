@@ -15,7 +15,7 @@ import (
 // TaskQueuer abstracts the task queue for the worker handler.
 type TaskQueuer interface {
 	Next(label string) *proto.Task
-	Complete(ctx context.Context, taskID, action, errMsg string, startedAt, endedAt time.Time, attempts int) error
+	Complete(ctx context.Context, result proto.TaskResult) error
 }
 
 // WorkerRegistrar abstracts the worker registry for the worker handler.
@@ -115,18 +115,25 @@ func (h *Handler) taskFailed(c *gin.Context) {
 
 func (h *Handler) handleTaskComplete(c *gin.Context, action string) {
 	taskID := c.Param("id")
-	var result struct {
+	var body struct {
 		Error     string    `json:"error,omitempty"`
 		StartedAt time.Time `json:"started_at"`
 		EndedAt   time.Time `json:"ended_at"`
 		Attempts  int       `json:"attempts"`
 	}
-	if err := c.ShouldBindJSON(&result); err != nil {
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.deps.Queue.Complete(c.Request.Context(), taskID, action, result.Error, result.StartedAt, result.EndedAt, result.Attempts); err != nil {
+	if err := h.deps.Queue.Complete(c.Request.Context(), proto.TaskResult{
+		TaskID:    taskID,
+		Status:    action,
+		Error:     body.Error,
+		StartedAt: body.StartedAt,
+		EndedAt:   body.EndedAt,
+		Attempts:  body.Attempts,
+	}); err != nil {
 		slog.Warn("task complete error", "task_id", taskID, "err", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return

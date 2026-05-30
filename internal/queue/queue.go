@@ -165,13 +165,26 @@ func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DA
 	q.runs[runID] = r
 }
 
+// RecoveredStep describes the persisted state of a step from a previous server session.
+// Done == true means the step finished (done or skipped).
+// Done == false with a non-zero StartedAt means the step was running when the server crashed.
+// Steps absent from the slice are treated as pending.
+type RecoveredStep struct {
+	Name      string
+	Done      bool
+	StartedAt time.Time // meaningful only when !Done
+}
+
 // Recover re-adds an interrupted run from a previous server session.
-// doneSteps contains step names that have already completed (done or skipped) and
-// must not be re-executed. All other steps are re-queued from their pending state.
-// Runs where all steps are already terminal are finalised immediately.
-func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, doneSteps map[string]bool) {
+// recovered lists every step whose state was persisted; absent steps are treated as pending.
+func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	recoveredByName := make(map[string]RecoveredStep, len(recovered))
+	for _, rs := range recovered {
+		recoveredByName[rs.Name] = rs
+	}
 
 	pipelineJSON, _ := json.Marshal(pl)
 	r := &runEntry{
@@ -199,11 +212,20 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 			RunParams: runParams,
 		}
 		sCopy := s
-		status := taskPending
-		if doneSteps[s.Name] {
-			status = taskDone
+		entry := &taskEntry{task: task, step: &sCopy, status: taskPending, maxAttempts: q.maxAttempts}
+		if rs, ok := recoveredByName[s.Name]; ok {
+			if rs.Done {
+				entry.status = taskDone
+			} else if !rs.StartedAt.IsZero() {
+				// Step was in-flight when the server crashed. Keep it as running so
+				// the existing K8s Job or worker can still report completion.
+				// Cleanup() will expire it if it never reports back.
+				entry.status = taskRunning
+				entry.attempts = 1
+				entry.startedAt = &rs.StartedAt
+			}
 		}
-		r.tasks[s.Name] = &taskEntry{task: task, step: &sCopy, status: status, maxAttempts: q.maxAttempts}
+		r.tasks[s.Name] = entry
 	}
 
 	if q.allTerminal(r) {
@@ -222,7 +244,7 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 
 	q.promoteReady(ctx, r)
 	q.runs[runID] = r
-	slog.Info("run recovered into queue", "run_id", runID, "done_steps", len(doneSteps))
+	slog.Info("run recovered into queue", "run_id", runID, "recovered_steps", len(recovered))
 }
 
 // Next transitions a ready task matching the given label to running and returns it. Returns nil if none available.
@@ -247,11 +269,11 @@ func (q *Queue) Next(label string) *proto.Task {
 }
 
 // Complete records the task result and processes downstream steps.
-func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, startedAt, endedAt time.Time, attempts int) error {
+func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	runID, stepName, err := SplitTaskID(id)
+	runID, stepName, err := SplitTaskID(result.TaskID)
 	if err != nil {
 		return err
 	}
@@ -268,16 +290,16 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		return fmt.Errorf("step %s not found in run %s", stepName, runID)
 	}
 
-	now := endedAt
+	endedAt := result.EndedAt
 	if entry.attempts == 0 {
-		entry.attempts = attempts
+		entry.attempts = result.Attempts
 		if entry.attempts < 1 {
 			entry.attempts = 1
 		}
 	}
-	q.emit("step.reported", map[string]any{"run_id": runID, "step": stepName, "task_id": id, "status": status})
+	q.emit("step.reported", map[string]any{"run_id": runID, "step": stepName, "task_id": result.TaskID, "status": result.Status})
 
-	if status == string(taskDone) {
+	if result.Status == string(taskDone) {
 		q.stopRetryTimerLocked(entry)
 		entry.status = taskDone
 		entry.startedAt = nil
@@ -285,13 +307,13 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
 			StepName:  stepName,
-			Status:    status,
-			StartedAt: &startedAt,
-			EndedAt:   &now,
+			Status:    result.Status,
+			StartedAt: &result.StartedAt,
+			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
-			Error:     errMsg,
+			Error:     result.Error,
 		}); err != nil {
-			slog.Warn("upsert step failed", "task_id", id, "err", err)
+			slog.Warn("upsert step failed", "task_id", result.TaskID, "err", err)
 		}
 		q.promoteReady(ctx, r)
 	} else if entry.attempts < entry.maxAttempts {
@@ -302,29 +324,29 @@ func (q *Queue) Complete(ctx context.Context, id, status, errMsg string, started
 			RunID:     runID,
 			StepName:  stepName,
 			Status:    string(taskRunning),
-			StartedAt: &startedAt,
-			EndedAt:   &now,
+			StartedAt: &result.StartedAt,
+			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
-			Error:     errMsg,
+			Error:     result.Error,
 		}); err != nil {
-			slog.Warn("upsert retry step failed", "task_id", id, "err", err)
+			slog.Warn("upsert retry step failed", "task_id", result.TaskID, "err", err)
 		}
 		q.scheduleRetryLocked(ctx, entry)
 	} else {
 		q.stopRetryTimerLocked(entry)
 		entry.status = taskFailed
 		entry.startedAt = nil
-		q.emit("step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": errMsg})
+		q.emit("step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": result.Error})
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
 			StepName:  stepName,
-			Status:    status,
-			StartedAt: &startedAt,
-			EndedAt:   &now,
+			Status:    result.Status,
+			StartedAt: &result.StartedAt,
+			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
-			Error:     errMsg,
+			Error:     result.Error,
 		}); err != nil {
-			slog.Warn("upsert step failed", "task_id", id, "err", err)
+			slog.Warn("upsert step failed", "task_id", result.TaskID, "err", err)
 		}
 		q.skipDownstream(ctx, r, stepName)
 	}
@@ -453,7 +475,14 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	go func() {
 		if err := b.Dispatch(dispatchCtx, task); err != nil {
 			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
-			_ = q.Complete(dispatchCtx, task.ID, proto.TaskStatusFailed, err.Error(), time.Now(), time.Now(), 0)
+			now := time.Now()
+			_ = q.Complete(dispatchCtx, proto.TaskResult{
+				TaskID:    task.ID,
+				Status:    proto.TaskStatusFailed,
+				Error:     err.Error(),
+				StartedAt: now,
+				EndedAt:   now,
+			})
 		}
 	}()
 }

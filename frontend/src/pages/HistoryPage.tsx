@@ -5,10 +5,8 @@ import { DataPage } from '@loykin/designkit'
 import { listRuns, deleteRun, rerunRun, type Run, type Step } from '../api'
 import StatusBadge from '../components/StatusBadge'
 
-function elapsed(run: Run): string {
-  const start = new Date(run.started_at).getTime()
-  const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now()
-  const ms = end - start
+function elapsed(startedAt: string, endedAt?: string): string {
+  const ms = (endedAt ? new Date(endedAt) : new Date()).getTime() - new Date(startedAt).getTime()
   if (ms < 1000) return `${ms}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
   return `${(ms / 60000).toFixed(1)}m`
@@ -39,7 +37,7 @@ function StepDots({ steps }: { steps: Step[] }) {
   )
 }
 
-export default function RunHistoryPage() {
+export default function HistoryPage() {
   const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -62,10 +60,7 @@ export default function RunHistoryPage() {
     e.stopPropagation()
     if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
     setDeleting(run.id)
-    deleteRun(run.id)
-      .then(load)
-      .catch((err) => alert(err.message))
-      .finally(() => setDeleting(null))
+    deleteRun(run.id).then(load).catch((err) => alert(err.message)).finally(() => setDeleting(null))
   }
 
   const handleRerun = (e: React.MouseEvent, run: Run, failedOnly = false) => {
@@ -80,9 +75,7 @@ export default function RunHistoryPage() {
       accessorKey: 'id',
       header: 'Run ID',
       meta: { minWidth: 240 },
-      cell: ({ row }) => (
-        <span className="font-mono text-xs text-primary">{row.original.id}</span>
-      ),
+      cell: ({ row }) => <span className="font-mono text-xs text-primary">{row.original.id}</span>,
     },
     {
       accessorKey: 'pipeline_name',
@@ -104,16 +97,14 @@ export default function RunHistoryPage() {
     {
       accessorKey: 'started_at',
       header: 'Started',
-      meta: { minWidth: 200 },
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">{new Date(row.original.started_at).toLocaleString()}</span>
-      ),
+      meta: { minWidth: 180 },
+      cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.started_at).toLocaleString()}</span>,
     },
     {
       id: 'duration',
       header: 'Duration',
       meta: { minWidth: 100 },
-      cell: ({ row }) => <span className="text-xs text-muted-foreground">{elapsed(row.original)}</span>,
+      cell: ({ row }) => <span className="text-xs text-muted-foreground">{elapsed(row.original.started_at, row.original.ended_at)}</span>,
     },
     {
       id: 'actions',
@@ -121,28 +112,22 @@ export default function RunHistoryPage() {
       meta: { minWidth: 210, align: 'right' },
       cell: ({ row }) => (
         <div className="flex justify-end gap-1">
-          <button
-            type="button"
+          <button type="button"
             disabled={row.original.status === 'running' || row.original.status === 'scheduled'}
             onClick={(e) => handleRerun(e, row.original)}
-            className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-30"
-          >
+            className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-30">
             Rerun
           </button>
-          <button
-            type="button"
+          <button type="button"
             disabled={row.original.status !== 'failed'}
             onClick={(e) => handleRerun(e, row.original, true)}
-            className="rounded px-2 py-1 text-xs text-yellow-400 hover:bg-yellow-400/10 disabled:cursor-not-allowed disabled:opacity-30"
-          >
+            className="rounded px-2 py-1 text-xs text-yellow-400 hover:bg-yellow-400/10 disabled:cursor-not-allowed disabled:opacity-30">
             Failed
           </button>
-          <button
-            type="button"
+          <button type="button"
             disabled={row.original.status === 'running' || deleting === row.original.id}
             onClick={(e) => handleDelete(e, row.original)}
-            className="rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-30"
-          >
+            className="rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-30">
             {deleting === row.original.id ? '…' : 'Delete'}
           </button>
         </div>
@@ -154,8 +139,8 @@ export default function RunHistoryPage() {
     <DataPage>
       <DataPage.Header>
         <DataPage.TitleBlock
-          title="Run History"
-          description="All pipeline runs. Each square in Steps represents one step's status."
+          title="History"
+          description="All pipeline run records. Each square in Steps represents one step's status."
         />
       </DataPage.Header>
       <DataPage.Content>

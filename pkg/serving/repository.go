@@ -11,4 +11,5 @@ type Repository interface {
 	SetStatus(ctx context.Context, name, status string) error
 	List(ctx context.Context) ([]*Service, error)
 	Delete(ctx context.Context, name string) error
+	ListHistory(ctx context.Context) ([]*ServiceHistory, error)
 }

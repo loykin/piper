@@ -1,59 +1,135 @@
-import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
+import { useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-dom'
+import {
+  SidebarProvider,
+  Sidebar,
+  SidebarContent,
+  SidebarHeader,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarInset,
+  SidebarRail,
+} from '@/components/ui/sidebar'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { CalendarClock, History, Server, Cpu } from 'lucide-react'
 import RunDetailPage from './pages/RunDetailPage'
 import WorkflowsPage from './pages/WorkflowsPage'
 import WorkflowCreatePage from './pages/WorkflowCreatePage'
-import RunHistoryPage from './pages/RunHistoryPage'
+import HistoryPage from './pages/HistoryPage'
 import ScheduleDetailPage from './pages/ScheduleDetailPage'
-import ServicesPage from './pages/ServicesPage'
+import ServingPage from './pages/ServingPage'
+import ServingDetailPage from './pages/ServingDetailPage'
+import ServingHistoryPage from './pages/ServingHistoryPage'
+import WorkersPage from './pages/WorkersPage'
 
-function SidebarLink({ to, label }: { to: string; label: string }) {
+const navGroups = [
+  {
+    label: 'Pipelines',
+    items: [
+      { id: 'schedules', label: 'Schedules', icon: CalendarClock, to: '/schedules' },
+      { id: 'history',   label: 'History',   icon: History,       to: '/history' },
+    ],
+  },
+  {
+    label: 'Service',
+    items: [
+      { id: 'serving',         label: 'Serving',  icon: Server,  to: '/serving' },
+      { id: 'serving-history', label: 'History',  icon: History, to: '/serving/history' },
+    ],
+  },
+  {
+    label: 'Infrastructure',
+    items: [
+      { id: 'workers', label: 'Workers', icon: Cpu, to: '/workers' },
+    ],
+  },
+]
+
+function AppSidebar() {
+  const location = useLocation()
+  const navigate = useNavigate()
+
   return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        [
-          'block rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-          isActive ? 'bg-indigo-600/20 text-indigo-300' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200',
-        ].join(' ')
-      }
-    >
-      {label}
-    </NavLink>
+    <>
+      <SidebarHeader>
+        <div className="flex items-center gap-2 px-2 py-1">
+          <div className="flex h-7 w-7 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground">
+            P
+          </div>
+          <div>
+            <p className="text-sm font-semibold leading-none">piper</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">Pipeline Control</p>
+          </div>
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        {navGroups.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const isActive = location.pathname === item.to ||
+                    (item.to !== '/history' && location.pathname.startsWith(item.to))
+                  return (
+                    <SidebarMenuItem key={item.id}>
+                      <SidebarMenuButton isActive={isActive} onClick={() => navigate(item.to)}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  )
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
+      </SidebarContent>
+
+      <SidebarFooter>
+        <div className="px-2 py-1 text-xs text-muted-foreground">v0.1.0</div>
+      </SidebarFooter>
+    </>
   )
 }
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
-      <div className="mx-auto flex min-h-screen max-w-[1400px]">
-        <aside className="w-64 shrink-0 border-r border-gray-800 bg-gray-900/70 px-4 py-6">
-          <div className="mb-6 px-2">
-            <p className="text-lg font-bold tracking-tight text-indigo-300">piper</p>
-            <p className="mt-1 text-xs text-gray-500">Pipeline Control</p>
-          </div>
-
-          <nav className="space-y-1">
-            <SidebarLink to="/schedules" label="Schedule" />
-            <SidebarLink to="/history" label="History" />
-            <SidebarLink to="/services" label="Services" />
-          </nav>
-        </aside>
-
-        <main className="flex-1 px-6 py-8">
-          <Routes>
-            <Route path="/" element={<Navigate to="/schedules" replace />} />
-            <Route path="/schedules" element={<WorkflowsPage />} />
-            <Route path="/schedules/create" element={<WorkflowCreatePage />} />
-            <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
-            <Route path="/history" element={<RunHistoryPage />} />
-            <Route path="/services" element={<ServicesPage />} />
-            <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />
-            <Route path="/pipelines/create" element={<Navigate to="/schedules/create" replace />} />
-            <Route path="/run-history" element={<Navigate to="/history" replace />} />
-            <Route path="/runs/:id" element={<RunDetailPage />} />
-          </Routes>
-        </main>
-      </div>
+    <div className="h-screen dark">
+      <TooltipProvider>
+        <SidebarProvider>
+          <Sidebar>
+            <AppSidebar />
+            <SidebarRail />
+          </Sidebar>
+          <SidebarInset>
+            <div className="h-full overflow-y-auto">
+              <Routes>
+                <Route path="/" element={<Navigate to="/schedules" replace />} />
+                <Route path="/schedules" element={<WorkflowsPage />} />
+                <Route path="/schedules/create" element={<WorkflowCreatePage />} />
+                <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
+                <Route path="/history" element={<HistoryPage />} />
+                <Route path="/serving" element={<ServingPage />} />
+                <Route path="/serving/history" element={<ServingHistoryPage />} />
+                <Route path="/serving/:name" element={<ServingDetailPage />} />
+                <Route path="/runs/:id" element={<RunDetailPage />} />
+                <Route path="/workers" element={<WorkersPage />} />
+                {/* Legacy redirects */}
+                <Route path="/services" element={<Navigate to="/serving" replace />} />
+                <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />
+                <Route path="/pipelines/create" element={<Navigate to="/schedules/create" replace />} />
+                <Route path="/run-history" element={<Navigate to="/history" replace />} />
+              </Routes>
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </TooltipProvider>
     </div>
   )
 }

@@ -44,3 +44,18 @@ func (s *Service) K8sNamespace() string {
 	}
 	return "default"
 }
+
+// ServiceHistory is an immutable record of a past deployment, written when a service is deleted.
+type ServiceHistory struct {
+	ID         int       `json:"id"          db:"id"`
+	Name       string    `json:"name"        db:"name"`
+	RunID      string    `json:"run_id"      db:"run_id"`
+	Artifact   string    `json:"artifact"    db:"artifact"`
+	Status     string    `json:"status"      db:"status"`
+	Endpoint   string    `json:"endpoint"    db:"endpoint"`
+	Namespace  string    `json:"namespace,omitempty" db:"namespace"`
+	PID        int       `json:"pid"         db:"pid"`
+	YAML       string    `json:"yaml"        db:"yaml"`
+	DeployedAt time.Time `json:"deployed_at" db:"deployed_at"`
+	StoppedAt  time.Time `json:"stopped_at"  db:"stopped_at"`
+}

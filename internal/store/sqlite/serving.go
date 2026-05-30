@@ -73,6 +73,25 @@ func (r *servingRepo) List(ctx context.Context) ([]*serving.Service, error) {
 }
 
 func (r *servingRepo) Delete(ctx context.Context, name string) error {
+	// Archive to history before removing.
+	var svc serving.Service
+	if err := r.db.GetContext(ctx, &svc, `SELECT `+serviceSelectCols+` FROM services WHERE name=?`, name); err == nil {
+		_, _ = r.db.ExecContext(ctx,
+			`INSERT INTO service_history (name, run_id, artifact, status, endpoint, namespace, pid, yaml, deployed_at, stopped_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.CreatedAt, time.Now())
+	}
 	_, err := r.db.ExecContext(ctx, `DELETE FROM services WHERE name=?`, name)
 	return err
+}
+
+func (r *servingRepo) ListHistory(ctx context.Context) ([]*serving.ServiceHistory, error) {
+	var out []*serving.ServiceHistory
+	err := r.db.SelectContext(ctx, &out,
+		`SELECT id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, deployed_at, stopped_at
+		 FROM service_history ORDER BY stopped_at DESC`)
+	if out == nil {
+		out = []*serving.ServiceHistory{}
+	}
+	return out, err
 }

@@ -44,20 +44,18 @@ func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{deps: deps}
 }
 
-// RegisterRoutes mounts all /services routes onto the given router group.
+// RegisterRoutes mounts all /serving routes onto the given router group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.GET("/services", h.listServices)
-	rg.POST("/services", h.createService)
-
-	// Proxy: /services/predict/*path — registered before /services/:name to match correctly.
-	// Gin matches routes in registration order; use Any to support all methods.
+	rg.GET("/serving", h.listServices)
+	rg.POST("/serving", h.createService)
+	// Static sub-paths must be registered before /:name to avoid param capture.
+	rg.GET("/serving/history", h.listServiceHistory)
 	if h.deps.Proxy != nil {
-		rg.Any("/services/predict/*path", gin.WrapH(h.deps.Proxy))
+		rg.Any("/serving/predict/*path", gin.WrapH(h.deps.Proxy))
 	}
-
-	rg.GET("/services/:name", h.getService)
-	rg.DELETE("/services/:name", h.deleteService)
-	rg.POST("/services/:name/restart", h.restartService)
+	rg.GET("/serving/:name", h.getService)
+	rg.DELETE("/serving/:name", h.deleteService)
+	rg.POST("/serving/:name/restart", h.restartService)
 }
 
 // GET /services
@@ -113,6 +111,16 @@ func (h *Handler) createService(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, svc.Redact())
+}
+
+// GET /services/history
+func (h *Handler) listServiceHistory(c *gin.Context) {
+	history, err := h.deps.Services.ListHistory(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, history)
 }
 
 // GET /services/:name

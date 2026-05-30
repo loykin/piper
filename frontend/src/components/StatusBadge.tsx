@@ -7,6 +7,7 @@ const colors: Record<string, string> = {
   canceled:'bg-orange-500/20 text-orange-300 border-orange-500/30',
   pending: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
   skipped: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
+  stopped: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
 }
 
 export default function StatusBadge({ status }: { status: string }) {

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataPage } from '@loykin/designkit'
 import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, cancelRun, rerunRun, retryStep, type Run, type Step, type LogLine, type StepArtifacts, type ArtifactFile } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import RunDAG from '../components/RunDAG'
@@ -171,16 +172,26 @@ export default function RunDetailPage() {
     },
   ]
 
-  if (!run) return <p className="text-sm text-gray-500">Loading…</p>
+  if (!run) {
+    return (
+      <DataPage>
+        <DataPage.Content>
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        </DataPage.Content>
+      </DataPage>
+    )
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link to="/history" className="text-sm text-gray-500 hover:text-gray-300">← History</Link>
-        <span className="text-gray-600">/</span>
-        <span className="font-mono text-sm text-gray-300">{run.id}</span>
-        <StatusBadge status={run.status} />
-        <div className="ml-auto flex items-center gap-2">
+    <DataPage>
+      <DataPage.Header>
+        <DataPage.TitleBlock
+          breadcrumb={<Link to="/history" className="hover:text-foreground transition-colors">← History</Link>}
+          title={<span className="font-mono text-lg">{run.id}</span>}
+        />
+        <DataPage.Actions>
+          <StatusBadge status={run.status} />
+          <div className="flex items-center gap-2">
           <button
             type="button"
             disabled={run.status !== 'running' && run.status !== 'scheduled'}
@@ -215,13 +226,15 @@ export default function RunDetailPage() {
               if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
               deleteRun(run.id).then(() => navigate('/history')).catch((err) => alert(err.message))
             }}
-            className="rounded px-3 py-1 text-xs text-red-500 ring-1 ring-red-900 hover:bg-red-950 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30"
+            className="rounded px-3 py-1 text-xs text-destructive ring-1 ring-destructive/40 hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-30"
           >
             Delete Run
           </button>
-        </div>
-      </div>
+          </div>
+        </DataPage.Actions>
+      </DataPage.Header>
 
+      <DataPage.Content>
       {/* DAG */}
       <RunDAG
         pipelineYaml={run.pipeline_yaml}
@@ -231,36 +244,32 @@ export default function RunDetailPage() {
       />
 
       {/* Steps table */}
-      <section className="overflow-hidden rounded-xl border border-gray-800 bg-gray-950">
-        <div className="border-b border-gray-800 bg-gray-900 px-4 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-300">Steps</h2>
-        </div>
-        <DataGrid
-          data={steps}
-          columns={columns}
-          tableHeight="auto"
-          rowHeight={44}
-          rowCursor
-          onRowClick={(row) => setSelected(row.step_name)}
-          pagination={{ pageSize: 10 }}
-          footer={(table) => <DataGridPaginationBar table={table} pageSizes={[10, 20, 50]} />}
-          classNames={{
-            container: 'border-0 rounded-none bg-transparent',
-            header: 'bg-gray-900',
-            headerCell: 'text-xs uppercase tracking-wider text-gray-400',
-            row: 'bg-gray-950 hover:bg-gray-900 transition-colors',
-            cell: 'text-sm text-gray-200',
-          }}
-        />
-      </section>
+      <DataPage.Group surface="none" className="mb-4">
+        <DataPage.GroupHeader title="Steps" className="px-4 pt-3" />
+        <DataPage.GroupBody className="[&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
+          <DataGrid
+            data={steps}
+            columns={columns}
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => setSelected(row.step_name)}
+            pagination={{ pageSize: 10 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{steps.length} results</span>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
+        </DataPage.GroupBody>
+      </DataPage.Group>
 
       {/* Artifacts */}
       {artifacts.length > 0 && (
-        <section className="overflow-hidden rounded-xl border border-gray-800 bg-gray-950">
-          <div className="border-b border-gray-800 bg-gray-900 px-4 py-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-300">Artifacts</h2>
-          </div>
-          <div className="divide-y divide-gray-800">
+        <DataPage.Group surface="bordered" className="mb-4">
+          <DataPage.GroupHeader title="Artifacts" className="px-4 pt-3" />
+          <div className="divide-y divide-border">
             {artifacts.map((sa) =>
               sa.artifacts.map((art) => (
                 <div key={`${sa.step}/${art.name}`} className="px-4 py-3">
@@ -298,7 +307,7 @@ export default function RunDetailPage() {
               ))
             )}
           </div>
-        </section>
+        </DataPage.Group>
       )}
 
       <div className="flex flex-col gap-3">
@@ -363,17 +372,18 @@ export default function RunDetailPage() {
           </>
         )}
       </div>
+      </DataPage.Content>
       {preview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={() => setPreview(null)}>
-          <div className="max-h-[80vh] w-full max-w-4xl overflow-hidden rounded-lg border border-gray-800 bg-gray-950" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-              <h3 className="font-mono text-xs text-gray-300">{preview.title}</h3>
-              <button type="button" onClick={() => setPreview(null)} className="text-sm text-gray-500 hover:text-gray-200">Close</button>
+          <div className="max-h-[80vh] w-full max-w-4xl overflow-hidden rounded-lg border border-border bg-card" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="font-mono text-xs text-muted-foreground">{preview.title}</h3>
+              <button type="button" onClick={() => setPreview(null)} className="text-sm text-muted-foreground hover:text-foreground">Close</button>
             </div>
-            <pre className="max-h-[68vh] overflow-auto p-4 text-xs leading-5 text-gray-300">{preview.text}</pre>
+            <pre className="max-h-[68vh] overflow-auto p-4 text-xs leading-5 text-foreground">{preview.text}</pre>
           </div>
         </div>
       )}
-    </div>
+    </DataPage>
   )
 }

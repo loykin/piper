@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 
+	"github.com/piper/piper/internal/store/postgres"
 	"github.com/piper/piper/internal/store/sqlite"
 	"github.com/piper/piper/internal/worker"
 	"github.com/piper/piper/pkg/logstore"
@@ -28,8 +30,28 @@ type Repos struct {
 	Log      logstore.LogStore
 	Metric   logstore.MetricStore
 
-	db     *sqlx.DB
-	ownsDB bool
+	db        *sqlx.DB
+	driver    string
+	ownsDB    bool
+	closeFunc func() error
+	deleteRun func(ctx context.Context, id string) error
+}
+
+// ExternalReposConfig is used to build a Repos from externally supplied implementations.
+// Use this when embedding piper in an application that already manages its own database.
+type ExternalReposConfig struct {
+	Run      run.Repository
+	Step     run.StepRepository
+	Schedule schedule.Repository
+	Worker   worker.Repository
+	Serving  serving.Repository
+	Log      logstore.LogStore
+	Metric   logstore.MetricStore
+	// DeleteRun handles atomic deletion of a run with all its steps, logs, and metrics.
+	// If nil, DeleteRun returns an error — provide an implementation for the target database.
+	DeleteRun func(ctx context.Context, id string) error
+	// Close is called when Repos.Close() is invoked. May be nil.
+	Close func() error
 }
 
 // Open opens a SQLite file and returns Repos with all repositories wired.
@@ -48,6 +70,18 @@ func Open(path string) (*Repos, error) {
 // Calling Close does not close db — the caller retains ownership.
 func New(db *sql.DB) (*Repos, error) {
 	return newRepos(sqlx.NewDb(db, "sqlite"), "sqlite", false)
+}
+
+// OpenPostgres opens a PostgreSQL connection and returns Repos with all repositories wired.
+func OpenPostgres(dsn string) (*Repos, error) {
+	db, err := sqlx.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
+	}
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	return newRepos(db, "postgres", true)
 }
 
 func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
@@ -69,40 +103,64 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			Log:      logstore.NewSQLite(db.DB),
 			Metric:   logstore.NewSQLite(db.DB),
 			db:       db,
+			driver:   driver,
 			ownsDB:   ownsDB,
 		}, nil
+	case "postgres", "postgresql":
+		return &Repos{
+			Run:      postgres.NewRunRepo(db),
+			Step:     postgres.NewStepRepo(db),
+			Schedule: postgres.NewScheduleRepo(db),
+			Worker:   postgres.NewWorkerRepo(db),
+			Serving:  postgres.NewServingRepo(db),
+			Log:      logstore.NewPostgres(db.DB),
+			Metric:   logstore.NewPostgres(db.DB),
+			db:       db,
+			driver:   driver,
+			ownsDB:   ownsDB,
+		}, nil
+
 	default:
 		if ownsDB {
 			_ = db.Close()
 		}
-		return nil, fmt.Errorf("unsupported db driver: %s (only sqlite supported currently)", driver)
+		return nil, fmt.Errorf("unsupported db driver: %s", driver)
 	}
 }
 
-// Close closes the underlying DB if owned by this Repos.
+// Close closes the underlying DB if owned, or calls the custom closer if set.
 func (r *Repos) Close() error {
-	if r.ownsDB {
+	if r.closeFunc != nil {
+		return r.closeFunc()
+	}
+	if r.ownsDB && r.db != nil {
 		return r.db.Close()
 	}
 	return nil
 }
 
-// DB returns the underlying *sql.DB.
+// DB returns the underlying *sql.DB, or nil for externally-supplied repos.
 func (r *Repos) DB() *sql.DB {
+	if r.db == nil {
+		return nil
+	}
 	return r.db.DB
 }
 
-// DeleteRun removes a run and all its steps and logs atomically.
+// DeleteRun removes a run and all its steps, logs, and metrics atomically.
 func (r *Repos) DeleteRun(ctx context.Context, id string) error {
+	if r.deleteRun != nil {
+		return r.deleteRun(ctx, id)
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	for _, q := range []string{
-		`DELETE FROM run_metrics WHERE run_id=?`,
-		`DELETE FROM logs WHERE run_id=?`,
-		`DELETE FROM steps WHERE run_id=?`,
-		`DELETE FROM runs WHERE id=?`,
+		r.db.Rebind(`DELETE FROM run_metrics WHERE run_id=?`),
+		r.db.Rebind(`DELETE FROM logs WHERE run_id=?`),
+		r.db.Rebind(`DELETE FROM steps WHERE run_id=?`),
+		r.db.Rebind(`DELETE FROM runs WHERE id=?`),
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			_ = tx.Rollback()

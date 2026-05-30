@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	storemod "github.com/piper/piper/internal/store"
 )
 
 // Config is the global piper configuration. Accepts a struct and can be embedded.
@@ -15,9 +17,18 @@ type Config struct {
 	RetryDelay  time.Duration `yaml:"retry_delay"  mapstructure:"retry_delay"`
 	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`
 	OutputDir   string        `yaml:"output_dir"   mapstructure:"output_dir"`
-	// DB configuration — specify only one. Priority: DB > DBPath.
+	// DB configuration — specify only one. Priority: Repos > DB > DBDriver+DBDSN > DBPath.
 	DBPath string  `yaml:"db_path"   mapstructure:"db_path"` // sqlite file path (default: output_dir/piper.db)
 	DB     *sql.DB `yaml:"-" mapstructure:"-"`               // directly injected sqlite *sql.DB
+	// DBDriver selects the database driver: "sqlite" (default) or "postgres".
+	DBDriver string `yaml:"db_driver" mapstructure:"db_driver"`
+	// DBDSN is the connection string for non-SQLite databases.
+	// For PostgreSQL: "host=... port=5432 dbname=... user=... password=... sslmode=disable"
+	DBDSN string `yaml:"db_dsn" mapstructure:"db_dsn"`
+	// Repos is a fully-constructed store injected by the caller.
+	// When set, all other DB fields are ignored and piper skips migrations.
+	// Use store.NewExternalRepos() to build one from your own repository implementations.
+	Repos *storemod.Repos `yaml:"-" mapstructure:"-"`
 
 	// Hooks — all extension points. nil means no-op.
 	Hooks Hooks `yaml:"-" mapstructure:"-"`

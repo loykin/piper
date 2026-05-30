@@ -22,6 +22,7 @@ type configFile struct {
 	Retention retentionSection `yaml:"retention" mapstructure:"retention"`
 	Schedule  scheduleSection  `yaml:"schedule"  mapstructure:"schedule"`
 	Log       logSection       `yaml:"log"       mapstructure:"log"`
+	DB        dbSection        `yaml:"db"        mapstructure:"db"`
 }
 
 type runSection struct {
@@ -85,6 +86,11 @@ type scheduleSection struct {
 
 type logSection struct {
 	Format string `yaml:"format" mapstructure:"format"`
+}
+
+type dbSection struct {
+	Driver string `yaml:"driver" mapstructure:"driver"`
+	DSN    string `yaml:"dsn"    mapstructure:"dsn"`
 }
 
 // StrictParseConfigFile parses the YAML file at path with KnownFields(true)
@@ -156,6 +162,8 @@ func (c *configFile) toConfig() piper.Config {
 			DefaultImage:         c.K8s.DefaultImage,
 			TTLAfterFinished:     c.K8s.TTLAfterFinished,
 		},
+		DBDriver: c.DB.Driver,
+		DBDSN:    c.DB.DSN,
 	}
 }
 

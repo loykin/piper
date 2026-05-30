@@ -304,18 +304,30 @@ func (p *Piper) Close() error {
 	return p.repos.Close()
 }
 
-// openStore creates a Repos according to the Config priority rules
+// openStore creates a Repos according to the Config priority rules:
 //
-//	Priority: DB (injected sqlite) > DBPath (sqlite)
+//	Repos (external) > DB (injected sqlite) > DBDriver+DBDSN > DBPath (sqlite default)
 func openStore(cfg Config) (*storemod.Repos, error) {
-	// 1. Directly injected *sql.DB
+	// 1. Externally-constructed Repos — caller manages migrations and lifecycle.
+	if cfg.Repos != nil {
+		return cfg.Repos, nil
+	}
+	// 2. Directly injected *sql.DB (SQLite assumed)
 	if cfg.DB != nil {
 		return storemod.New(cfg.DB)
 	}
-	// 2. sqlite file path (default)
+	// 3. Explicit driver selection
+	switch cfg.DBDriver {
+	case "postgres", "postgresql":
+		if cfg.DBDSN == "" {
+			return nil, fmt.Errorf("db_dsn is required for postgres driver")
+		}
+		return storemod.OpenPostgres(cfg.DBDSN)
+	}
+	// 4. SQLite file path (default)
 	dbPath := cfg.DBPath
 	if dbPath == "" {
-		dbPath = cfg.OutputDir + "/piper.db"
+		dbPath = filepath.Join(cfg.OutputDir, "piper.db")
 	}
 	return storemod.Open(dbPath)
 }

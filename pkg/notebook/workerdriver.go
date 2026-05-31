@@ -24,7 +24,7 @@ func NewWorkerDriver(registry *NotebookWorkerRegistry, masterURL string) *Worker
 // ProvisionVolume picks a worker, creates the volume directory on it, and
 // populates vol.WorkDir and vol.WorkerID (stored as hostname for readability).
 // If vol.WorkerID is already set the request is pinned to that worker (node affinity).
-func (d *WorkerDriver) ProvisionVolume(ctx context.Context, vol *NotebookVolume) error {
+func (d *WorkerDriver) ProvisionVolume(ctx context.Context, vol *NotebookVolume, _ string) error {
 	var w *NotebookWorkerInfo
 	var err error
 	if vol.WorkerID != "" {

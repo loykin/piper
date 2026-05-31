@@ -197,6 +197,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		PurgeVolume:      p.notebookManager.PurgeVolume,
 		UpdateStatus:     p.notebookManager.UpdateStatus,
 		WorkerRegistry:   p.notebookWorkerRegistry,
+		DriverMode:       p.notebookDriverMode,
 	}).RegisterRoutes(r.Group(""))
 
 	// Worker polling domain (mounted only when no active backend is configured)

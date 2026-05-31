@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ArrowRight, Power, Plus, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
+import { IconButton } from '@/components/ui/icon-button'
 import { listSchedules, setScheduleEnabled, deleteSchedule, type Schedule } from '@/features/schedules/api'
 import { scheduleColumns } from '@/features/schedules/columns'
 import type { DataGridColumnDef } from '@loykin/gridkit'
@@ -32,37 +34,24 @@ export default function WorkflowsPage() {
     cell: ({ row }) => {
       const s = row.original
       return (
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => navigate(`/schedules/${s.id}`)}
-            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
-          >
-            View
-          </button>
+        <div className="flex items-center gap-0.5">
+          <IconButton icon={<ArrowRight />} label="View"
+            onClick={() => navigate(`/schedules/${s.id}`)} />
           {s.schedule_type === 'cron' && (
-            <button
-              type="button"
+            <IconButton icon={<Power />} label={s.enabled ? 'Disable' : 'Enable'}
               onClick={async (e) => {
                 e.stopPropagation()
                 try { await setScheduleEnabled(s.id, !s.enabled); await load() } catch { /* no-op */ }
               }}
-              className={`rounded border px-2 py-1 text-xs ${s.enabled ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-secondary text-muted-foreground'}`}
-            >
-              {s.enabled ? 'Enabled' : 'Disabled'}
-            </button>
+              className={s.enabled ? 'text-primary hover:bg-primary/10' : ''} />
           )}
-          <button
-            type="button"
+          <IconButton icon={<Trash2 />} label="Delete"
             onClick={async (e) => {
               e.stopPropagation()
               if (!confirm(`Delete schedule "${s.name}"?`)) return
               try { await deleteSchedule(s.id); await load() } catch { /* no-op */ }
             }}
-            className="rounded border border-destructive/40 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
-          >
-            Delete
-          </button>
+            className="text-destructive hover:bg-destructive/10" />
         </div>
       )
     },
@@ -81,9 +70,9 @@ export default function WorkflowsPage() {
           <button
             type="button"
             onClick={() => navigate('/schedules/create')}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
           >
-            + Create
+            <Plus size={14} /> Create
           </button>
         </DataPage.Actions>
       </DataPage.Header>

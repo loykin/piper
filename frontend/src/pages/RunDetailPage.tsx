@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import { RotateCcw, RefreshCw, XCircle, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
+import { IconButton } from '@/components/ui/icon-button'
 import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, cancelRun, rerunRun, retryStep, type Run, type Step, type LogLine, type StepArtifacts, type ArtifactFile } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
 import RunDAG from '@/shared/components/RunDAG'
@@ -155,8 +157,7 @@ export default function RunDetailPage() {
       header: '',
       meta: { minWidth: 90, align: 'right' },
       cell: ({ row }) => (
-        <button
-          type="button"
+        <IconButton icon={<RefreshCw />} label="Retry"
           disabled={row.original.status !== 'failed'}
           onClick={(e) => {
             e.stopPropagation()
@@ -164,10 +165,7 @@ export default function RunDetailPage() {
               .then(({ run_id }) => navigate(`/runs/${run_id}`))
               .catch((err) => alert(err.message))
           }}
-          className="rounded px-2 py-1 text-xs text-yellow-400 hover:bg-yellow-950 disabled:cursor-not-allowed disabled:opacity-30"
-        >
-          Retry
-        </button>
+          className="text-yellow-400 hover:bg-yellow-950" />
       ),
     },
   ]
@@ -191,45 +189,29 @@ export default function RunDetailPage() {
         />
         <DataPage.Actions>
           <StatusBadge status={run.status} />
-          <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={run.status !== 'running' && run.status !== 'scheduled'}
-            onClick={() => {
-              if (!confirm(`Cancel run ${run.id}?`)) return
-              cancelRun(run.id).then(load).catch((err) => alert(err.message))
-            }}
-            className="rounded px-3 py-1 text-xs text-orange-400 ring-1 ring-orange-900 hover:bg-orange-950 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Cancel Run
-          </button>
-          <button
-            type="button"
-            disabled={run.status === 'running' || run.status === 'scheduled'}
-            onClick={() => rerunRun(run.id).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
-            className="rounded px-3 py-1 text-xs text-indigo-400 ring-1 ring-indigo-900 hover:bg-indigo-950 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Rerun
-          </button>
-          <button
-            type="button"
-            disabled={run.status !== 'failed'}
-            onClick={() => rerunRun(run.id, true).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
-            className="rounded px-3 py-1 text-xs text-yellow-400 ring-1 ring-yellow-900 hover:bg-yellow-950 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Retry Failed
-          </button>
-          <button
-            type="button"
-            disabled={run.status === 'running'}
-            onClick={() => {
-              if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
-              deleteRun(run.id).then(() => navigate('/history')).catch((err) => alert(err.message))
-            }}
-            className="rounded px-3 py-1 text-xs text-destructive ring-1 ring-destructive/40 hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            Delete Run
-          </button>
+          <div className="flex items-center gap-0.5">
+            <IconButton icon={<XCircle />} label="Cancel Run"
+              disabled={run.status !== 'running' && run.status !== 'scheduled'}
+              onClick={() => {
+                if (!confirm(`Cancel run ${run.id}?`)) return
+                cancelRun(run.id).then(load).catch((err) => alert(err.message))
+              }}
+              className="text-orange-400 hover:bg-orange-950" />
+            <IconButton icon={<RotateCcw />} label="Rerun"
+              disabled={run.status === 'running' || run.status === 'scheduled'}
+              onClick={() => rerunRun(run.id).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
+              className="text-indigo-400 hover:bg-indigo-950" />
+            <IconButton icon={<RefreshCw />} label="Retry Failed"
+              disabled={run.status !== 'failed'}
+              onClick={() => rerunRun(run.id, true).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
+              className="text-yellow-400 hover:bg-yellow-950" />
+            <IconButton icon={<Trash2 />} label="Delete Run"
+              disabled={run.status === 'running'}
+              onClick={() => {
+                if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
+                deleteRun(run.id).then(() => navigate('/history')).catch((err) => alert(err.message))
+              }}
+              className="text-destructive hover:bg-destructive/10" />
           </div>
         </DataPage.Actions>
       </DataPage.Header>

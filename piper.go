@@ -61,6 +61,7 @@ type Piper struct {
 	serving                servingBundle
 	notebookManager        *notebook.Manager
 	notebookWorkerRegistry *notebook.NotebookWorkerRegistry
+	notebookDriverMode     string            // "k8s" or "worker"
 	s3Cli                  *s3sdk.Client     // nil when S3 not configured
 	resolver               artifact.Resolver // central artifact resolver
 	backend                backend.ExecutionBackend
@@ -131,9 +132,37 @@ func New(cfg Config) (*Piper, error) {
 	}
 	servingMgr := serving.New(repos.Serving, servingDriver)
 
-	// Build notebook driver: WorkerDriver (k8s notebook not yet supported).
+	// Build notebook driver: K8sDriver if k8s clientset is available and WorkerImage is set;
+	// otherwise fall back to WorkerDriver.
 	notebookWorkerReg := notebook.NewNotebookWorkerRegistry()
-	nbDriver := notebook.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
+	var nbDriver notebook.Driver
+	nbK8s := cfg.NotebookK8s
+	notebookDriverMode := "worker"
+	if k8sClientset != nil && nbK8s.WorkerImage != "" {
+		nbNs := nbK8s.Namespace
+		if nbNs == "" {
+			nbNs = cfg.K8s.Namespace
+		}
+		if nbNs == "" {
+			nbNs = "default"
+		}
+		nbDriver = notebook.NewK8sDriver(k8sClientset, notebook.K8sDriverConfig{
+			Namespace:    nbNs,
+			WorkerImage:  nbK8s.WorkerImage,
+			StorageClass: nbK8s.StorageClass,
+			StorageSize:  nbK8s.StorageSize,
+			PodDefaults: notebook.K8sPodDefaults{
+				Resources:    nbK8s.PodDefaults.Resources,
+				NodeSelector: nbK8s.PodDefaults.NodeSelector,
+				Tolerations:  nbK8s.PodDefaults.Tolerations,
+				Annotations:  nbK8s.PodDefaults.Annotations,
+			},
+		}, repos.Notebook)
+		notebookDriverMode = "k8s"
+		slog.Info("k8s notebook driver enabled", "namespace", nbNs, "image", nbK8s.WorkerImage)
+	} else {
+		nbDriver = notebook.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
+	}
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
@@ -153,6 +182,7 @@ func New(cfg Config) (*Piper, error) {
 		},
 		notebookManager:        nbMgr,
 		notebookWorkerRegistry: notebookWorkerReg,
+		notebookDriverMode:     notebookDriverMode,
 		stopCtx:                stopFn,
 		events:                 event.NewHub(),
 	}
@@ -220,6 +250,7 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			}
 			p.reconcileBackend(ctx)
 			p.serving.manager.CheckHealth(ctx)
+			p.notebookManager.CheckHealth(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.cleanupRetention(ctx)
 		}

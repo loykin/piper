@@ -74,7 +74,7 @@ func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, sp
 	name := spec.Metadata.Name
 
 	// Phase 1: provision storage
-	if err := m.driver.ProvisionVolume(ctx, vol); err != nil {
+	if err := m.driver.ProvisionVolume(ctx, vol, spec.Spec.StorageSize); err != nil {
 		slog.Error("notebook: provision volume failed", "name", name, "err", err)
 		_ = m.repo.SetStatus(ctx, name, StatusFailed)
 		_ = m.vols.Delete(ctx, vol.ID)
@@ -351,6 +351,29 @@ func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint, work
 	}
 	m.emit("notebook.status", map[string]any{"name": name, "status": status})
 	return nil
+}
+
+// CheckHealth syncs notebook status for K8s-backed notebooks.
+// For worker-backed notebooks this is a no-op (status arrives via HTTP callback).
+func (m *Manager) CheckHealth(ctx context.Context) {
+	syncer, ok := m.driver.(StatusSyncer)
+	if !ok {
+		return
+	}
+	servers, err := m.repo.List(ctx)
+	if err != nil {
+		return
+	}
+	active := make([]*NotebookServer, 0)
+	for _, s := range servers {
+		if s.Status == StatusStarting || s.Status == StatusRunning {
+			active = append(active, s)
+		}
+	}
+	if len(active) == 0 {
+		return
+	}
+	_ = syncer.SyncStatus(ctx, active)
 }
 
 func (m *Manager) emit(eventType string, fields map[string]any) {

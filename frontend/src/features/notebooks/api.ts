@@ -5,7 +5,8 @@ const BASE = ''
 export interface NotebookServer {
   name: string
   status: 'provisioning' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
-  env: string
+  env: string      // bare-metal: venv path or "conda:env-name"
+  image: string    // k8s: container image
   endpoint: string
   pid: number
   work_dir: string
@@ -112,4 +113,13 @@ export async function listNotebookWorkers(): Promise<NotebookWorkerInfo[]> {
   const res = await fetch(`${BASE}/api/notebook-workers`)
   if (!res.ok) throw new Error(`listNotebookWorkers: ${res.status}`)
   return res.json()
+}
+
+export type NotebookDriverMode = 'k8s' | 'worker'
+
+export async function getNotebookMode(): Promise<NotebookDriverMode> {
+  const res = await fetch(`${BASE}/api/notebook-mode`)
+  if (!res.ok) return 'worker'
+  const data: { mode: string } = await res.json()
+  return data.mode === 'k8s' ? 'k8s' : 'worker'
 }

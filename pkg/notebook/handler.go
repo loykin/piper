@@ -93,6 +93,8 @@ type HandlerDeps struct {
 	PurgeVolume      func(ctx context.Context, volumeID string) error
 	UpdateStatus     func(ctx context.Context, name, status, endpoint, workDir, token string, pid int, env string) error
 	WorkerRegistry   *NotebookWorkerRegistry // nil disables worker registration routes
+	// DriverMode is "k8s" when using K8sDriver, "worker" for bare-metal WorkerDriver.
+	DriverMode string
 }
 
 // Handler is the Gin HTTP handler for the /notebooks domain.
@@ -132,6 +134,17 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		rg.POST("/api/notebook-workers/:id/heartbeat", h.heartbeatWorker)
 		rg.GET("/api/notebook-workers", h.listWorkers)
 	}
+
+	rg.GET("/api/notebook-mode", h.getMode)
+}
+
+// GET /api/notebook-mode — returns the active notebook driver mode.
+func (h *Handler) getMode(c *gin.Context) {
+	mode := h.deps.DriverMode
+	if mode == "" {
+		mode = "worker"
+	}
+	c.JSON(http.StatusOK, gin.H{"mode": mode})
 }
 
 // GET /notebooks

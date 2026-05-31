@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
+import { IconButton } from '@/components/ui/icon-button'
 import { listRuns, deleteRun, rerunRun, type Run } from '@/features/runs/api'
 import { runColumns } from '@/features/runs/columns'
 
@@ -46,31 +48,19 @@ export default function RunHistoryPage() {
     header: '',
     meta: { minWidth: 210, align: 'right' },
     cell: ({ row }) => (
-      <div className="flex justify-end gap-1">
-        <button
-          type="button"
+      <div className="flex justify-end items-center gap-0.5">
+        <IconButton icon={<RotateCcw />} label="Rerun"
           disabled={row.original.status === 'running' || row.original.status === 'scheduled'}
           onClick={(e) => handleRerun(e, row.original)}
-          className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-30"
-        >
-          Rerun
-        </button>
-        <button
-          type="button"
+          className="text-primary hover:bg-primary/10" />
+        <IconButton icon={<RefreshCw />} label="Retry Failed"
           disabled={row.original.status !== 'failed'}
           onClick={(e) => handleRerun(e, row.original, true)}
-          className="rounded px-2 py-1 text-xs text-yellow-400 hover:bg-yellow-400/10 disabled:cursor-not-allowed disabled:opacity-30"
-        >
-          Failed
-        </button>
-        <button
-          type="button"
+          className="text-yellow-400 hover:bg-yellow-400/10" />
+        <IconButton icon={<Trash2 />} label="Delete"
           disabled={row.original.status === 'running' || deleting === row.original.id}
           onClick={(e) => handleDelete(e, row.original)}
-          className="rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-30"
-        >
-          {deleting === row.original.id ? '…' : 'Delete'}
-        </button>
+          className="text-destructive hover:bg-destructive/10" />
       </div>
     ),
   }

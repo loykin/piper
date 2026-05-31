@@ -9,7 +9,8 @@ type Driver interface {
 	// ProvisionVolume allocates backing storage for vol.
 	// Local: picks a worker node, creates the directory, sets vol.WorkDir and vol.WorkerID.
 	// K8s: creates a PersistentVolumeClaim, sets vol.WorkDir to the container mountPath.
-	ProvisionVolume(ctx context.Context, vol *NotebookVolume) error
+	// storageSize overrides the driver-level default when non-empty (K8s only).
+	ProvisionVolume(ctx context.Context, vol *NotebookVolume, storageSize string) error
 
 	// Start launches a notebook server with vol mounted.
 	// Local: runs jupyter-lab on vol's worker with --notebook-dir=vol.WorkDir.
@@ -23,4 +24,10 @@ type Driver interface {
 	// DeprovisionVolume permanently removes the backing storage.
 	// Local: removes the directory on vol's worker. K8s: deletes the PVC.
 	DeprovisionVolume(ctx context.Context, vol *NotebookVolume) error
+}
+
+// StatusSyncer is implemented by drivers that need periodic status reconciliation.
+// K8sDriver implements this; WorkerDriver does not (status arrives via HTTP callback).
+type StatusSyncer interface {
+	SyncStatus(ctx context.Context, servers []*NotebookServer) error
 }

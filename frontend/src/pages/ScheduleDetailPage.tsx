@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Power, Trash2 } from 'lucide-react'
 import { getSchedule, listScheduleRuns, setScheduleEnabled, deleteSchedule, type Schedule } from '@/features/schedules/api'
 import type { Run } from '@/features/runs/api'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
+import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
 import RunDAG from '@/shared/components/RunDAG'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -107,31 +109,19 @@ export default function ScheduleDetailPage() {
         />
         <DataPage.Actions>
           {isCron && (
-            <button
-              type="button"
+            <IconButton icon={<Power />} label={schedule.enabled ? 'Disable' : 'Enable'}
               onClick={async () => {
                 try { await setScheduleEnabled(schedule.id, !schedule.enabled); await load() } catch { /* no-op */ }
               }}
-              className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors ${
-                schedule.enabled
-                  ? 'border-primary/40 bg-primary/10 text-primary'
-                  : 'border-border bg-secondary text-muted-foreground'
-              }`}
-            >
-              {schedule.enabled ? 'Enabled' : 'Disabled'}
-            </button>
+              className={schedule.enabled ? 'text-primary hover:bg-primary/10' : ''} />
           )}
           <Badge variant="outline">{TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}</Badge>
-          <button
-            type="button"
+          <IconButton icon={<Trash2 />} label="Delete"
             onClick={async () => {
               if (!confirm(`Delete schedule "${schedule.name}"?`)) return
               try { await deleteSchedule(schedule.id); navigate('/schedules') } catch { /* no-op */ }
             }}
-            className="rounded border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
-          >
-            Delete
-          </button>
+            className="text-destructive hover:bg-destructive/10" />
         </DataPage.Actions>
       </DataPage.Header>
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	storemod "github.com/piper/piper/internal/store"
+	"github.com/piper/piper/pkg/pipeline"
 )
 
 // Config is the global piper configuration. Accepts a struct and can be embedded.
@@ -57,6 +58,11 @@ type Config struct {
 
 	// NotebookWorker — embedded/standalone notebook worker configuration.
 	NotebookWorker NotebookWorkerConfig `yaml:"notebook_worker" mapstructure:"notebook_worker"`
+
+	// NotebookK8s — K8s notebook driver configuration.
+	// When WorkerImage is non-empty and a K8s clientset is available, notebooks
+	// run as StatefulSets instead of delegating to a notebook-worker daemon.
+	NotebookK8s NotebookK8sConfig `yaml:"notebook_k8s" mapstructure:"notebook_k8s"`
 }
 
 type GitConfig struct {
@@ -146,6 +152,35 @@ type NotebookWorkerConfig struct {
 	// PortRange is the inclusive range from which jupyter ports are auto-allocated.
 	// Format: "START-END", e.g. "8888-9900". Defaults to "8888-9900".
 	PortRange string `yaml:"port_range" mapstructure:"port_range"`
+}
+
+// NotebookK8sConfig holds configuration for the K8s notebook driver.
+// K8s notebook mode is enabled when WorkerImage is non-empty and a K8s clientset is available.
+type NotebookK8sConfig struct {
+	// Namespace is the K8s namespace for notebook StatefulSets and PVCs.
+	Namespace string `yaml:"namespace" mapstructure:"namespace"`
+
+	// WorkerImage is the Jupyter container image (e.g. jupyter/scipy-notebook:latest).
+	// Setting this field enables the K8s notebook driver.
+	WorkerImage string `yaml:"worker_image" mapstructure:"worker_image"`
+
+	// StorageClass is the PVC storage class. Empty string uses the cluster default.
+	StorageClass string `yaml:"storage_class" mapstructure:"storage_class"`
+
+	// StorageSize is the PVC size (e.g. "10Gi"). Defaults to "10Gi".
+	StorageSize string `yaml:"storage_size" mapstructure:"storage_size"`
+
+	// PodDefaults sets cluster-wide defaults for notebook pods.
+	// Individual notebook specs can override these per-field.
+	PodDefaults NotebookPodDefaults `yaml:"pod_defaults" mapstructure:"pod_defaults"`
+}
+
+// NotebookPodDefaults holds cluster-wide default resource/scheduling settings for notebook pods.
+type NotebookPodDefaults struct {
+	Resources    pipeline.Resources    `yaml:"resources"     mapstructure:"resources"`
+	NodeSelector map[string]string     `yaml:"node_selector" mapstructure:"node_selector"`
+	Tolerations  []pipeline.Toleration `yaml:"tolerations"   mapstructure:"tolerations"`
+	Annotations  map[string]string     `yaml:"annotations"   mapstructure:"annotations"`
 }
 
 func DefaultConfig() Config {

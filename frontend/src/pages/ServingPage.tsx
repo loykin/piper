@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { RefreshCw, Square } from 'lucide-react'
+import { IconButton } from '@/components/ui/icon-button'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import {
   DataBodyTemplate, DataPage,
@@ -303,7 +305,7 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
             <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Model Source">
               <div className="grid grid-cols-2 gap-3">
                 <DataBodyTemplate.Field label="Pipeline">
-                  <Select value={form.pipeline} onValueChange={v => setField('pipeline', v)}>
+                  <Select value={form.pipeline} onValueChange={v => setField('pipeline', v ?? '')}>
                     <SelectTrigger size="sm"><SelectValue placeholder="— select pipeline —" /></SelectTrigger>
                     <SelectContent>
                       {pipelines.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
@@ -311,7 +313,7 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
                   </Select>
                 </DataBodyTemplate.Field>
                 <DataBodyTemplate.Field label="Run">
-                  <Select value={form.run} onValueChange={v => setField('run', v)} disabled={!form.pipeline}>
+                  <Select value={form.run} onValueChange={v => setField('run', v ?? '')} disabled={!form.pipeline}>
                     <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="latest">latest</SelectItem>
@@ -326,7 +328,7 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <DataBodyTemplate.Field label="Step">
-                  <Select value={form.step} onValueChange={v => setField('step', v)} disabled={steps.length === 0}>
+                  <Select value={form.step} onValueChange={v => setField('step', v ?? '')} disabled={steps.length === 0}>
                     <SelectTrigger size="sm"><SelectValue placeholder="— select step —" /></SelectTrigger>
                     <SelectContent>
                       {steps.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -334,7 +336,7 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
                   </Select>
                 </DataBodyTemplate.Field>
                 <DataBodyTemplate.Field label="Artifact">
-                  <Select value={form.artifact} onValueChange={v => setField('artifact', v)} disabled={artifactNames.length === 0}>
+                  <Select value={form.artifact} onValueChange={v => setField('artifact', v ?? '')} disabled={artifactNames.length === 0}>
                     <SelectTrigger size="sm"><SelectValue placeholder="— select artifact —" /></SelectTrigger>
                     <SelectContent>
                       {artifactNames.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
@@ -373,7 +375,7 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
 
               <div className="grid grid-cols-3 gap-3">
                 <DataBodyTemplate.Field label="Mode">
-                  <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v)}>
+                  <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')}>
                     <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="local">local</SelectItem>
@@ -391,7 +393,7 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
 
               {form.runtimeMode === 'local' && (
                 <DataBodyTemplate.Field label="Worker" description="Deploy to a specific worker node. Leave blank to auto-assign.">
-                  <Select value={form.worker} onValueChange={v => setField('worker', v)}>
+                  <Select value={form.worker} onValueChange={v => setField('worker', v ?? '')}>
                     <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="">auto assign</SelectItem>
@@ -418,7 +420,7 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
                       <Input type="number" min="1" value={form.k8sReplicas} onChange={e => setField('k8sReplicas', e.target.value)} />
                     </DataBodyTemplate.Field>
                     <DataBodyTemplate.Field label="Image Pull Policy">
-                      <Select value={form.k8sImagePullPolicy} onValueChange={v => setField('k8sImagePullPolicy', v)}>
+                      <Select value={form.k8sImagePullPolicy} onValueChange={v => setField('k8sImagePullPolicy', v ?? '')}>
                         <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Always">Always</SelectItem>
@@ -506,18 +508,15 @@ export default function ServingPage() {
     cell: ({ row }) => {
       const svc = row.original
       return (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0.5">
           {svc.status === 'running' && (
-            <button type="button" onClick={e => { e.stopPropagation(); handleRestart(svc.name) }}
-              className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-              Restart
-            </button>
+            <IconButton icon={<RefreshCw />} label="Restart"
+              onClick={e => { e.stopPropagation(); handleRestart(svc.name) }} />
           )}
           {svc.status !== 'stopped' && (
-            <button type="button" onClick={e => { e.stopPropagation(); handleStop(svc.name) }}
-              className="rounded border border-destructive/40 px-2 py-0.5 text-xs text-destructive hover:bg-destructive/10">
-              Stop
-            </button>
+            <IconButton icon={<Square />} label="Stop"
+              onClick={e => { e.stopPropagation(); handleStop(svc.name) }}
+              className="text-destructive hover:bg-destructive/10" />
           )}
         </div>
       )

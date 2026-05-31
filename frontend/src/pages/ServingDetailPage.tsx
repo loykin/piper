@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { RefreshCw, Square, Trash2 } from 'lucide-react'
 import { DataPage } from '@loykin/designkit'
+import { IconButton } from '@/components/ui/icon-button'
 import { getServing, stopServing, restartServing, type Service } from '@/features/serving/api'
 import StatusBadge from '@/shared/components/StatusBadge'
 
@@ -69,22 +71,15 @@ export default function ServingDetailPage() {
         <DataPage.Actions>
           <StatusBadge status={service.status} />
           {service.status === 'running' && (
-            <button type="button" onClick={handleRestart}
-              className="rounded border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
-              Restart
-            </button>
+            <IconButton icon={<RefreshCw />} label="Restart" onClick={handleRestart} />
           )}
           {service.status !== 'stopped' && (
-            <button type="button" onClick={handleStop}
-              className="rounded border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10">
-              Stop
-            </button>
+            <IconButton icon={<Square />} label="Stop" onClick={handleStop}
+              className="text-destructive hover:bg-destructive/10" />
           )}
           {service.status === 'stopped' && (
-            <button type="button" onClick={handleDelete}
-              className="rounded border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10">
-              Delete
-            </button>
+            <IconButton icon={<Trash2 />} label="Delete" onClick={handleDelete}
+              className="text-destructive hover:bg-destructive/10" />
           )}
         </DataPage.Actions>
       </DataPage.Header>

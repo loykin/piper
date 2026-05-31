@@ -1,5 +1,7 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
-import { Button } from '@/components/ui/button'
+import { ExternalLink, HardDriveDownload, Play, Square, Trash2 } from 'lucide-react'
+import { IconButton } from '@/components/ui/icon-button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { notebookProxyURL } from './api'
 import type { NotebookServer, NotebookVolume } from './api'
@@ -26,12 +28,14 @@ export function getNotebookColumns(
       cell: ({ row }) => <StatusBadge status={row.original.status} />,
     },
     {
-      accessorKey: 'env',
+      id: 'environment',
       header: 'Environment',
       meta: { minWidth: 200, flex: 1 },
-      cell: ({ row }) => (
-        <span className="font-mono text-xs text-muted-foreground">{row.original.env || '—'}</span>
-      ),
+      cell: ({ row }) => {
+        const { image, env } = row.original
+        const value = image || env
+        return <span className="font-mono text-xs text-muted-foreground">{value || '—'}</span>
+      },
     },
     {
       accessorKey: 'work_dir',
@@ -54,47 +58,46 @@ export function getNotebookColumns(
     {
       id: 'actions',
       header: '',
-      meta: { minWidth: 200, align: 'right' },
+      meta: { minWidth: 160, align: 'right' },
       cell: ({ row }) => {
         const { name, status } = row.original
         const isBusy = busy === name
         const isStarting = status === 'provisioning' || status === 'starting'
         const isStopping = status === 'stopping'
         return (
-          <div className="flex justify-end gap-1">
+          <div className="flex justify-end items-center gap-0.5">
             {(isStarting || isStopping) && (
-              <span className="text-xs text-muted-foreground animate-pulse px-2 py-1">
+              <span className="text-xs text-muted-foreground animate-pulse px-2">
                 {isStarting ? 'Starting…' : 'Stopping…'}
               </span>
             )}
             {status === 'running' && (
               <>
-                <a
-                  href={notebookProxyURL(name)}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={e => e.stopPropagation()}
-                  className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10"
-                >
-                  Open
-                </a>
-                <Button variant="ghost" size="xs" disabled={isBusy}
-                  onClick={e => { e.stopPropagation(); onStop(name) }}>
-                  {isBusy ? '…' : 'Stop'}
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <a
+                      href={notebookProxyURL(name)}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      className="inline-flex size-7 items-center justify-center rounded-[min(var(--radius-md),12px)] text-primary hover:bg-muted"
+                    >
+                      <ExternalLink size={16} />
+                    </a>
+                  </TooltipTrigger>
+                  <TooltipContent>Open</TooltipContent>
+                </Tooltip>
+                <IconButton icon={<Square />} label="Stop" disabled={isBusy}
+                  onClick={e => { e.stopPropagation(); onStop(name) }} />
               </>
             )}
             {(status === 'stopped' || status === 'failed') && (
-              <Button variant="ghost" size="xs" disabled={isBusy}
-                onClick={e => { e.stopPropagation(); onStart(name) }}>
-                {isBusy ? '…' : 'Start'}
-              </Button>
+              <IconButton icon={<Play />} label="Start" disabled={isBusy}
+                onClick={e => { e.stopPropagation(); onStart(name) }} />
             )}
-            <Button variant="ghost" size="xs" disabled={isBusy}
+            <IconButton icon={<Trash2 />} label="Delete" disabled={isBusy}
               onClick={e => { e.stopPropagation(); onDelete(name) }}
-              className="text-muted-foreground hover:text-foreground">
-              Delete
-            </Button>
+              className="text-muted-foreground hover:text-destructive" />
           </div>
         )
       },
@@ -163,24 +166,22 @@ export function getNotebookVolumeColumns(
     {
       id: 'actions',
       header: '',
-      meta: { minWidth: 160, align: 'right' },
+      meta: { minWidth: 120, align: 'right' },
       cell: ({ row }) => {
         const vol = row.original
         const isBusy = busy === vol.id
         return (
-          <div className="flex justify-end gap-1">
+          <div className="flex justify-end items-center gap-0.5">
             {vol.status === 'released' && (
-              <Button variant="ghost" size="xs" disabled={isBusy}
-                onClick={e => { e.stopPropagation(); onAttach(vol.id) }}>
-                Attach
-              </Button>
+              <IconButton icon={<HardDriveDownload />} label="Attach" disabled={isBusy}
+                onClick={e => { e.stopPropagation(); onAttach(vol.id) }} />
             )}
-            <Button variant="ghost" size="xs" disabled={isBusy || vol.status === 'bound'}
-              title={vol.status === 'bound' ? 'Delete the notebook server first' : undefined}
+            <IconButton
+              icon={<Trash2 />}
+              label={vol.status === 'bound' ? 'Delete the notebook server first' : 'Purge'}
+              disabled={isBusy || vol.status === 'bound'}
               onClick={e => { e.stopPropagation(); onPurge(vol) }}
-              className="text-destructive hover:bg-destructive/10 hover:text-destructive disabled:opacity-30">
-              {isBusy ? '…' : 'Purge'}
-            </Button>
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive" />
           </div>
         )
       },

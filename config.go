@@ -139,15 +139,13 @@ type ServingConfig struct {
 
 // NotebookWorkerConfig holds configuration for the embedded/standalone notebook worker.
 type NotebookWorkerConfig struct {
-	// JupyterBin is the path to the jupyter or jupyter-lab binary.
-	// Defaults to "jupyter" (searched in PATH).
-	// Example: /usr/local/opt/jupyterlab/bin/jupyter-lab
-	JupyterBin string `yaml:"jupyter_bin" mapstructure:"jupyter_bin"`
-
-	// NotebooksRoot is the base directory under which notebook work directories are created.
-	// If set, each notebook runs in {notebooks_root}/{name} and the filesystem view is
-	// restricted to that subtree. Defaults to "./notebooks".
+	// NotebooksRoot is the base directory under which per-notebook work directories are created.
+	// Each notebook runs in {notebooks_root}/{name}. Defaults to "./notebooks".
 	NotebooksRoot string `yaml:"notebooks_root" mapstructure:"notebooks_root"`
+
+	// PortRange is the inclusive range from which jupyter ports are auto-allocated.
+	// Format: "START-END", e.g. "8888-9900". Defaults to "8888-9900".
+	PortRange string `yaml:"port_range" mapstructure:"port_range"`
 }
 
 func DefaultConfig() Config {

@@ -23,14 +23,15 @@ import (
 // Repos holds all repository implementations for the selected driver.
 // Add new drivers by implementing each Repository interface and registering here.
 type Repos struct {
-	Run      run.Repository
-	Step     run.StepRepository
-	Schedule schedule.Repository
-	Worker   worker.Repository
-	Serving  serving.Repository
-	Notebook notebook.Repository
-	Log      logstore.LogStore
-	Metric   logstore.MetricStore
+	Run            run.Repository
+	Step           run.StepRepository
+	Schedule       schedule.Repository
+	Worker         worker.Repository
+	Serving        serving.Repository
+	Notebook       notebook.Repository
+	NotebookVolume notebook.VolumeRepository
+	Log            logstore.LogStore
+	Metric         logstore.MetricStore
 
 	db        *sqlx.DB
 	driver    string
@@ -98,31 +99,33 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 	switch driver {
 	case "sqlite", "sqlite3", "":
 		return &Repos{
-			Run:      sqlite.NewRunRepo(db),
-			Step:     sqlite.NewStepRepo(db),
-			Schedule: sqlite.NewScheduleRepo(db),
-			Worker:   sqlite.NewWorkerRepo(db),
-			Serving:  sqlite.NewServingRepo(db),
-			Notebook: sqlite.NewNotebookRepo(db),
-			Log:      logstore.NewSQLite(db.DB),
-			Metric:   logstore.NewSQLite(db.DB),
-			db:       db,
-			driver:   driver,
-			ownsDB:   ownsDB,
+			Run:            sqlite.NewRunRepo(db),
+			Step:           sqlite.NewStepRepo(db),
+			Schedule:       sqlite.NewScheduleRepo(db),
+			Worker:         sqlite.NewWorkerRepo(db),
+			Serving:        sqlite.NewServingRepo(db),
+			Notebook:       sqlite.NewNotebookRepo(db),
+			NotebookVolume: sqlite.NewNotebookVolumeRepo(db),
+			Log:            logstore.NewSQLite(db.DB),
+			Metric:         logstore.NewSQLite(db.DB),
+			db:             db,
+			driver:         driver,
+			ownsDB:         ownsDB,
 		}, nil
 	case "postgres", "postgresql":
 		return &Repos{
-			Run:      postgres.NewRunRepo(db),
-			Step:     postgres.NewStepRepo(db),
-			Schedule: postgres.NewScheduleRepo(db),
-			Worker:   postgres.NewWorkerRepo(db),
-			Serving:  postgres.NewServingRepo(db),
-			Notebook: postgres.NewNotebookRepo(db),
-			Log:      logstore.NewPostgres(db.DB),
-			Metric:   logstore.NewPostgres(db.DB),
-			db:       db,
-			driver:   driver,
-			ownsDB:   ownsDB,
+			Run:            postgres.NewRunRepo(db),
+			Step:           postgres.NewStepRepo(db),
+			Schedule:       postgres.NewScheduleRepo(db),
+			Worker:         postgres.NewWorkerRepo(db),
+			Serving:        postgres.NewServingRepo(db),
+			Notebook:       postgres.NewNotebookRepo(db),
+			NotebookVolume: postgres.NewNotebookVolumeRepo(db),
+			Log:            logstore.NewPostgres(db.DB),
+			Metric:         logstore.NewPostgres(db.DB),
+			db:             db,
+			driver:         driver,
+			ownsDB:         ownsDB,
 		}, nil
 
 	default:

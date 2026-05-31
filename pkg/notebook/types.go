@@ -1,40 +1,38 @@
 package notebook
 
-// NotebookServerSpec is the top-level YAML definition for a notebook server.
+// NotebookServerSpec is the YAML definition for a notebook server.
 //
-// Example:
+// Local example:
 //
-//	apiVersion: piper/v1
-//	kind: NotebookServer
 //	metadata:
 //	  name: my-notebook
 //	spec:
-//	  runtime:
-//	    mode: local   # or k8s
-//	    port: 8888
-//	    work_dir: ./notebooks
-//	  k8s:
-//	    namespace: default
-//	    image: jupyter/scipy-notebook:latest
+//	  env: /Users/me/project/venv   # or "conda:ml-env"
+//	  gpus: "0,1"
+//
+// K8s example (future):
+//
+//	metadata:
+//	  name: my-notebook
+//	spec:
+//	  image: jupyter/scipy-notebook:latest
 type NotebookServerSpec struct {
-	APIVersion string `yaml:"apiVersion"`
-	Kind       string `yaml:"kind"`
-	Metadata   struct {
+	Metadata struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
-		Runtime struct {
-			Mode    string `yaml:"mode"`
-			Port    int    `yaml:"port"`
-			WorkDir string `yaml:"work_dir"`
-			// GPUs selects GPU devices for local mode (e.g. "0", "0,1", "all", "none").
-			GPUs string `yaml:"gpus"`
-			// Worker pins startup to a specific worker agent by hostname.
-			Worker string `yaml:"worker"`
-		} `yaml:"runtime"`
-		K8s struct {
-			Namespace string `yaml:"namespace"`
-			Image     string `yaml:"image"`
-		} `yaml:"k8s"`
+		// Env is the Python environment for local mode.
+		// venv path:   /path/to/venv
+		// conda env:   conda:env-name
+		Env string `yaml:"env"`
+
+		// Image is the Docker image for k8s mode (future).
+		Image string `yaml:"image"`
+
+		// GPUs selects GPU devices, e.g. "0", "0,1", "all". Local mode only.
+		GPUs string `yaml:"gpus"`
+
+		// Worker pins launch to a specific worker node by hostname.
+		Worker string `yaml:"worker"`
 	} `yaml:"spec"`
 }

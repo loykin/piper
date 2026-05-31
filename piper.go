@@ -134,7 +134,7 @@ func New(cfg Config) (*Piper, error) {
 	// Build notebook driver: WorkerDriver (k8s notebook not yet supported).
 	notebookWorkerReg := notebook.NewNotebookWorkerRegistry()
 	nbDriver := notebook.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
-	nbMgr := notebook.New(repos.Notebook, nbDriver)
+	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)

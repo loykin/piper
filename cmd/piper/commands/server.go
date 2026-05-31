@@ -102,8 +102,8 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 				Addr:          ":7701",
 				Hostname:      hostname,
 				ID:            uuid.New().String(),
-				JupyterBin:    viper.GetString("notebook_worker.jupyter_bin"),
 				NotebooksRoot: viper.GetString("notebook_worker.notebooks_root"),
+				PortRange:     viper.GetString("notebook_worker.port_range"),
 			})
 
 			eg, gctx := errgroup.WithContext(ctx)

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataPage } from '@loykin/designkit'
-import { createSchedule } from '../api'
+import { createSchedule } from '@/features/schedules/api'
 
 type ScheduleType = 'immediate' | 'once' | 'cron'
 

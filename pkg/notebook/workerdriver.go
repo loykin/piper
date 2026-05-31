@@ -21,22 +21,84 @@ func NewWorkerDriver(registry *NotebookWorkerRegistry, masterURL string) *Worker
 	return &WorkerDriver{registry: registry, masterURL: masterURL}
 }
 
-// Start picks an available worker and sends it a start request.
-func (d *WorkerDriver) Start(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error) {
+// ProvisionVolume picks a worker, creates the volume directory on it, and
+// populates vol.WorkDir and vol.WorkerID (stored as hostname for readability).
+// If vol.WorkerID is already set the request is pinned to that worker (node affinity).
+func (d *WorkerDriver) ProvisionVolume(ctx context.Context, vol *NotebookVolume) error {
 	var w *NotebookWorkerInfo
 	var err error
-	if spec.Spec.Runtime.Worker != "" {
-		w, err = d.registry.GetByHostname(spec.Spec.Runtime.Worker)
+	if vol.WorkerID != "" {
+		w, err = d.registry.GetByHostname(vol.WorkerID)
 	} else {
 		w, err = d.registry.Pick()
 	}
 	if err != nil {
-		return nil, err
+		return err
+	}
+
+	payload, _ := json.Marshal(map[string]any{"volume_id": vol.ID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.Addr+"/volume", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("provision volume: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("provision volume: call worker %s: %w", w.Addr, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("provision volume: worker %s returned %d: %s", w.Addr, resp.StatusCode, bytes.TrimSpace(body))
+	}
+
+	var result struct {
+		WorkDir string `json:"work_dir"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	vol.WorkDir = result.WorkDir
+	vol.WorkerID = w.Hostname
+	return nil
+}
+
+// Start picks an available worker and sends it a start request.
+// Worker selection priority: vol.WorkerID (node affinity) > spec.Spec.Worker > Pick().
+func (d *WorkerDriver) Start(ctx context.Context, spec NotebookServerSpec, vol *NotebookVolume, yamlStr string) (*NotebookServer, error) {
+	var w *NotebookWorkerInfo
+	var err error
+	if vol != nil && vol.WorkerID != "" {
+		// Volume has node affinity; must start on the same worker.
+		w, err = d.registry.GetByHostname(vol.WorkerID)
+		if err != nil {
+			return nil, fmt.Errorf("volume's worker %q is unavailable: %w", vol.WorkerID, err)
+		}
+	} else if spec.Spec.Worker != "" {
+		w, err = d.registry.GetByHostname(spec.Spec.Worker)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		w, err = d.registry.Pick()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	workDir := ""
+	volumeID := ""
+	if vol != nil {
+		workDir = vol.WorkDir
+		volumeID = vol.ID
 	}
 
 	payload, err := json.Marshal(map[string]any{
 		"yaml":       yamlStr,
 		"master_url": d.masterURL,
+		"work_dir":   workDir,
+		"volume_id":  volumeID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("notebook worker start: marshal payload: %w", err)
@@ -48,6 +110,8 @@ func (d *WorkerDriver) Start(ctx context.Context, spec NotebookServerSpec, yamlS
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	// Worker returns 202 Accepted immediately; actual startup is async.
+	// Use a short timeout since the worker should respond immediately now.
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -55,34 +119,32 @@ func (d *WorkerDriver) Start(ctx context.Context, spec NotebookServerSpec, yamlS
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 300 {
+	// Handle both 200 (sync, legacy) and 202 (async) responses.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("notebook worker start: worker %s returned status %d: %s", w.Addr, resp.StatusCode, bytes.TrimSpace(body))
 	}
 
 	var result struct {
-		Endpoint string `json:"endpoint"`
-		Token    string `json:"token"`
-		PID      int    `json:"pid"`
+		Token   string `json:"token"`
+		WorkDir string `json:"work_dir"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&result)
 
 	nb := &NotebookServer{
 		Name:     spec.Metadata.Name,
-		Status:   StatusRunning,
-		Endpoint: result.Endpoint,
+		Status:   StatusStarting,
 		Token:    result.Token,
-		PID:      result.PID,
-		WorkDir:  spec.Spec.Runtime.WorkDir,
-		WorkerID: w.ID,
+		WorkDir:  result.WorkDir,
+		WorkerID: w.Hostname,
 	}
 	return nb, nil
 }
 
-// workerFor returns the worker that owns nb, falling back to Pick() if worker_id is unset or expired.
+// workerFor returns the worker that owns nb, falling back to Pick() if worker_id is unset or offline.
 func (d *WorkerDriver) workerFor(nb *NotebookServer) (*NotebookWorkerInfo, error) {
 	if nb != nil && nb.WorkerID != "" {
-		if w, err := d.registry.Get(nb.WorkerID); err == nil {
+		if w, err := d.registry.GetByHostname(nb.WorkerID); err == nil {
 			return w, nil
 		}
 	}
@@ -112,6 +174,43 @@ func (d *WorkerDriver) Stop(ctx context.Context, nb *NotebookServer) error {
 
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
 		return fmt.Errorf("notebook worker stop: worker %s returned status %d", w.Addr, resp.StatusCode)
+	}
+	return nil
+}
+
+// DeprovisionVolume asks the worker that owns the volume to permanently remove its
+// work directory. If WorkDir is empty the volume was never provisioned; nothing to do.
+func (d *WorkerDriver) DeprovisionVolume(ctx context.Context, vol *NotebookVolume) error {
+	if vol.WorkDir == "" {
+		return nil // nothing was ever provisioned
+	}
+
+	var w *NotebookWorkerInfo
+	var err error
+	if vol.WorkerID != "" {
+		w, err = d.registry.GetByHostname(vol.WorkerID)
+	} else {
+		w, err = d.registry.Pick()
+	}
+	if err != nil {
+		return nil // worker gone; treat as already cleaned up
+	}
+
+	url := fmt.Sprintf("%s/volume/%s?work_dir=%s", w.Addr, vol.ID, vol.WorkDir)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("deprovision volume: build request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("deprovision volume: call worker %s: %w", w.Addr, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("deprovision volume: worker %s returned %d", w.Addr, resp.StatusCode)
 	}
 	return nil
 }

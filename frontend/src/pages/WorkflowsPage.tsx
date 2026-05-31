@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
-import { Badge } from '@/components/ui/badge'
-import { listSchedules, setScheduleEnabled, deleteSchedule, type Schedule } from '../api'
+import { listSchedules, setScheduleEnabled, deleteSchedule, type Schedule } from '@/features/schedules/api'
+import { scheduleColumns } from '@/features/schedules/columns'
+import type { DataGridColumnDef } from '@loykin/gridkit'
 
 export default function WorkflowsPage() {
   const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -24,107 +25,50 @@ export default function WorkflowsPage() {
     return () => clearInterval(intervalRef.current)
   }, [])
 
-  const columns: DataGridColumnDef<Schedule>[] = [
-    {
-      accessorKey: 'name',
-      header: 'Name',
-      meta: { minWidth: 200, flex: 1 },
-    },
-    {
-      id: 'type',
-      header: 'Type',
-      meta: { minWidth: 100 },
-      cell: ({ row }) => (
-        <Badge variant={row.original.schedule_type === 'cron' ? 'default' : 'secondary'}>
-          {row.original.schedule_type === 'cron' ? 'Cron' : 'Once'}
-        </Badge>
-      ),
-    },
-    {
-      id: 'schedule',
-      header: 'Schedule',
-      meta: { minWidth: 200 },
-      cell: ({ row }) => (
-        <span className="font-mono text-xs text-muted-foreground">
-          {row.original.schedule_type === 'cron'
-            ? row.original.cron_expr || '-'
-            : new Date(row.original.next_run_at).toLocaleString()}
-        </span>
-      ),
-    },
-    {
-      id: 'next_run_at',
-      header: 'Next Run',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">
-          {row.original.schedule_type === 'cron'
-            ? new Date(row.original.next_run_at).toLocaleString()
-            : row.original.enabled ? new Date(row.original.next_run_at).toLocaleString() : 'Done'}
-        </span>
-      ),
-    },
-    {
-      id: 'last_run_at',
-      header: 'Last Run',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">
-          {row.original.last_run_at ? new Date(row.original.last_run_at).toLocaleString() : '-'}
-        </span>
-      ),
-    },
-    {
-      id: 'created_at',
-      header: 'Created',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">{new Date(row.original.created_at).toLocaleString()}</span>
-      ),
-    },
-    {
-      id: 'actions',
-      header: '',
-      meta: { minWidth: 220 },
-      cell: ({ row }) => {
-        const s = row.original
-        return (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigate(`/schedules/${s.id}`)}
-              className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
-            >
-              View
-            </button>
-            {s.schedule_type === 'cron' && (
-              <button
-                type="button"
-                onClick={async (e) => {
-                  e.stopPropagation()
-                  try { await setScheduleEnabled(s.id, !s.enabled); await load() } catch { /* no-op */ }
-                }}
-                className={`rounded border px-2 py-1 text-xs ${s.enabled ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-secondary text-muted-foreground'}`}
-              >
-                {s.enabled ? 'Enabled' : 'Disabled'}
-              </button>
-            )}
+  const actionColumn: DataGridColumnDef<Schedule> = {
+    id: 'actions',
+    header: '',
+    meta: { minWidth: 220 },
+    cell: ({ row }) => {
+      const s = row.original
+      return (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigate(`/schedules/${s.id}`)}
+            className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-accent"
+          >
+            View
+          </button>
+          {s.schedule_type === 'cron' && (
             <button
               type="button"
               onClick={async (e) => {
                 e.stopPropagation()
-                if (!confirm(`Delete schedule "${s.name}"?`)) return
-                try { await deleteSchedule(s.id); await load() } catch { /* no-op */ }
+                try { await setScheduleEnabled(s.id, !s.enabled); await load() } catch { /* no-op */ }
               }}
-              className="rounded border border-destructive/40 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+              className={`rounded border px-2 py-1 text-xs ${s.enabled ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-secondary text-muted-foreground'}`}
             >
-              Delete
+              {s.enabled ? 'Enabled' : 'Disabled'}
             </button>
-          </div>
-        )
-      },
+          )}
+          <button
+            type="button"
+            onClick={async (e) => {
+              e.stopPropagation()
+              if (!confirm(`Delete schedule "${s.name}"?`)) return
+              try { await deleteSchedule(s.id); await load() } catch { /* no-op */ }
+            }}
+            className="rounded border border-destructive/40 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
+          >
+            Delete
+          </button>
+        </div>
+      )
     },
-  ]
+  }
+
+  const columns = [...scheduleColumns, actionColumn]
 
   return (
     <DataPage>

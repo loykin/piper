@@ -1,6 +1,6 @@
 // Package notebookworker implements the notebook worker agent.
-// Run one of these on each bare-metal node that should execute Jupyter notebook servers.
-// It registers with the Master and accepts start/stop commands via HTTP.
+// Run one of these on each node that should execute Jupyter notebook servers.
+// It registers with the master and accepts start/stop commands via HTTP.
 package notebookworker
 
 import (
@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,8 +34,8 @@ type Config struct {
 	AdvertiseAddr string // URL advertised to master, e.g. "https://node1.internal:7701"
 	TLSCert       string // path to TLS certificate file (enables HTTPS)
 	TLSKey        string // path to TLS private key file (enables HTTPS)
-	JupyterBin    string // path to jupyter binary (default: "jupyter")
 	NotebooksRoot string // base directory for notebook work dirs (default: "./notebooks")
+	PortRange     string // "START-END", e.g. "8888-9900"
 	GPUs          []string
 	Hostname      string
 	ID            string // UUID; caller must generate
@@ -42,15 +43,15 @@ type Config struct {
 
 // Worker is the notebook worker agent.
 type Worker struct {
-	cfg        Config
-	jupyterBin string // resolved at Run() time
-	mu         sync.Mutex
-	notebooks  map[string]*localNotebook
+	cfg       Config
+	mu        sync.Mutex
+	notebooks map[string]*localNotebook
 }
 
 type localNotebook struct {
 	name string
 	pid  int
+	port int
 	cmd  *exec.Cmd
 }
 
@@ -64,22 +65,15 @@ func New(cfg Config) *Worker {
 
 // Run starts the HTTP(S) server, registers with master, and runs until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
-	augmentPATH()
-
-	bin, err := resolveJupyter(w.cfg.JupyterBin)
-	if err != nil {
-		return err
-	}
-	w.jupyterBin = bin
-	slog.Info("notebook worker: jupyter binary resolved", "bin", bin)
-
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
 
 	r.GET("/", w.healthHandler)
+	r.POST("/volume", w.provisionVolumeHandler)
 	r.POST("/start", w.startHandler)
 	r.DELETE("/notebook/:name", w.stopHandler)
+	r.DELETE("/volume/:name", w.deleteVolumeHandler)
 
 	srv := &http.Server{
 		Addr:    w.cfg.Addr,
@@ -134,8 +128,6 @@ func (w *Worker) tlsEnabled() bool {
 	return w.cfg.TLSCert != "" && w.cfg.TLSKey != ""
 }
 
-// advertiseURL returns the URL the master should use to reach this worker.
-// If AdvertiseAddr is set it is used as-is; otherwise it is derived from Addr.
 func (w *Worker) advertiseURL() string {
 	if w.cfg.AdvertiseAddr != "" {
 		return w.cfg.AdvertiseAddr
@@ -174,7 +166,8 @@ func (w *Worker) registerLoop(ctx context.Context) {
 			if err == nil {
 				_ = resp.Body.Close()
 				if resp.StatusCode < 300 {
-					slog.Info("notebook worker registered with master", "master", w.cfg.MasterURL, "id", w.cfg.ID, "addr", w.advertiseURL())
+					slog.Info("notebook worker registered with master",
+						"master", w.cfg.MasterURL, "id", w.cfg.ID, "addr", w.advertiseURL())
 					return
 				}
 			}
@@ -216,11 +209,14 @@ func (w *Worker) healthHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "id": w.cfg.ID})
 }
 
-// POST /start
+// POST /start — accepts a notebook start request and returns 202 Accepted immediately.
+// Env preparation, process start, and master callback all happen in a background goroutine.
 func (w *Worker) startHandler(c *gin.Context) {
 	var req struct {
 		YAML      string `json:"yaml"`
 		MasterURL string `json:"master_url"`
+		WorkDir   string `json:"work_dir"`  // non-empty = reuse this exact directory
+		VolumeID  string `json:"volume_id"` // UUID of the backing NotebookVolume
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -239,86 +235,96 @@ func (w *Worker) startHandler(c *gin.Context) {
 		return
 	}
 
-	port := spec.Spec.Runtime.Port
-	if port == 0 {
-		port = 8888
-	}
-	workDir := w.resolveWorkDir(name, spec.Spec.Runtime.WorkDir)
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "cannot create work_dir: " + err.Error()})
-		return
-	}
-
-	token := uuid.New().String()[:8]
-	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", name)
-
-	// "jupyter-lab" is a standalone binary; "jupyter" needs the "lab" subcommand.
-	base := filepath.Base(w.jupyterBin)
-	var command []string
-	if base == "jupyter-lab" || base == "jupyter-lab.exe" {
-		command = []string{w.jupyterBin}
-	} else {
-		command = []string{w.jupyterBin, "lab"}
-	}
-	command = append(command,
-		"--no-browser",
-		fmt.Sprintf("--port=%d", port),
-		fmt.Sprintf("--notebook-dir=%s", workDir),
-		fmt.Sprintf("--ServerApp.token=%s", token),
-		fmt.Sprintf("--ServerApp.base_url=%s", baseURL),
-	)
-
-	pspec := workload.ProcessSpec{
-		Name:    name,
-		Command: command,
-		Port:    port,
-		GPUs:    spec.Spec.Runtime.GPUs,
-	}
-
-	pid, endpoint, cmd, err := workload.StartProcess(pspec)
+	port, err := w.allocatePort()
 	if err != nil {
-		msg := err.Error()
-		if strings.Contains(msg, "executable file not found") {
-			msg += fmt.Sprintf(
-				"\n\nHint: jupyter binary %q not found. Options:\n"+
-					"  1. Install jupyterlab:  pip install jupyterlab\n"+
-					"  2. Specify the path in .piper.yaml:\n"+
-					"       notebook_worker:\n"+
-					"         jupyter_bin: /path/to/jupyter-lab\n"+
-					"  3. Find your install:   which jupyter-lab || which jupyter",
-				w.jupyterBin,
-			)
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
 
-	w.mu.Lock()
-	w.notebooks[name] = &localNotebook{name: name, pid: pid, cmd: cmd}
-	w.mu.Unlock()
+	workDir := req.WorkDir
+	if workDir == "" {
+		if req.VolumeID != "" {
+			// Use the volume UUID as the directory name so the path is independent
+			// of the server name. This prevents accidental reuse when a server is
+			// deleted and a new one with the same name is created.
+			workDir = w.volumeDir(req.VolumeID)
+		} else {
+			// Legacy fallback: no volume_id means this came from an old client.
+			workDir = w.notebookDir(name)
+		}
+	}
+
+	token := uuid.New().String()
+	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", name)
+	endpoint := fmt.Sprintf("http://localhost:%d", port)
 
 	masterURL := req.MasterURL
 	if masterURL == "" {
 		masterURL = w.cfg.MasterURL
 	}
 
-	w.callbackStatus(masterURL, name, "running", endpoint)
-
-	workload.WatchProcess(cmd, func(status string) {
-		slog.Info("notebook process exited", "name", name, "status", status)
-		w.mu.Lock()
-		delete(w.notebooks, name)
-		w.mu.Unlock()
-		w.callbackStatus(masterURL, name, status, "")
+	// Return 202 immediately so the master can persist the token/workDir while
+	// the potentially slow env preparation runs in the background.
+	c.JSON(http.StatusAccepted, gin.H{
+		"token":    token,
+		"work_dir": workDir,
 	})
 
 	go func() {
-		if err := workload.WaitReady(context.Background(), endpoint, 30*time.Second); err != nil {
-			slog.Warn("notebook health check timed out", "name", name, "endpoint", endpoint)
+		if err := os.MkdirAll(workDir, 0755); err != nil {
+			slog.Error("notebook worker: cannot create work dir", "name", name, "err", err)
+			w.callbackStatus(masterURL, name, notebook.StatusFailed, "", workDir)
+			w.releasePort(port)
+			return
 		}
-	}()
 
-	c.JSON(http.StatusOK, gin.H{"name": name, "pid": pid, "endpoint": endpoint, "token": token})
+		bin, extraArgs, envPath, err := w.prepareEnv(spec.Spec.Env, workDir)
+		if err != nil {
+			slog.Error("notebook worker: prepareEnv failed", "name", name, "err", err)
+			w.callbackStatus(masterURL, name, notebook.StatusFailed, "", workDir)
+			w.releasePort(port)
+			return
+		}
+
+		command := append(extraArgs,
+			"--no-browser",
+			fmt.Sprintf("--port=%d", port),
+			fmt.Sprintf("--notebook-dir=%s", workDir),
+			fmt.Sprintf("--IdentityProvider.token=%s", token),
+			fmt.Sprintf("--ServerApp.base_url=%s", baseURL),
+		)
+		command = append([]string{bin}, command...)
+
+		pspec := workload.ProcessSpec{
+			Name:    name,
+			Command: command,
+			Port:    port,
+			GPUs:    spec.Spec.GPUs,
+		}
+
+		pid, _, cmd, err := workload.StartProcess(pspec)
+		if err != nil {
+			slog.Error("notebook worker: start process failed", "name", name, "err", err)
+			w.callbackStatus(masterURL, name, notebook.StatusFailed, "", workDir)
+			w.releasePort(port)
+			return
+		}
+
+		w.mu.Lock()
+		w.notebooks[name] = &localNotebook{name: name, pid: pid, port: port, cmd: cmd}
+		w.mu.Unlock()
+
+		// Send full callback: status=running with endpoint, workDir, token, pid, env.
+		w.callbackStatusFull(masterURL, name, notebook.StatusRunning, endpoint, workDir, token, pid, envPath)
+
+		workload.WatchProcess(cmd, func(status string) {
+			slog.Info("notebook process exited", "name", name, "status", status)
+			w.mu.Lock()
+			delete(w.notebooks, name)
+			w.mu.Unlock()
+			w.callbackStatus(masterURL, name, status, "", "")
+		})
+	}()
 }
 
 // DELETE /notebook/:name
@@ -339,163 +345,234 @@ func (w *Worker) stopHandler(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// resolveWorkDir determines the notebook's working directory.
-// If NotebooksRoot is set, all notebooks are confined to {root}/{name} regardless
-// of what the spec requests — this prevents access outside the designated tree.
-// If NotebooksRoot is not set, the spec's work_dir is used (defaulting to "./notebooks/{name}").
-func (w *Worker) resolveWorkDir(name, specWorkDir string) string {
+// POST /volume — provisions a new notebook volume directory on this worker.
+// Returns {"work_dir": "<path>"} on success.
+func (w *Worker) provisionVolumeHandler(c *gin.Context) {
+	var req struct {
+		VolumeID string `json:"volume_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.VolumeID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "volume_id is required"})
+		return
+	}
+	dir := w.volumeDir(req.VolumeID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cannot create volume dir: " + err.Error()})
+		return
+	}
+	slog.Info("notebook volume provisioned", "volume_id", req.VolumeID, "dir", dir)
+	c.JSON(http.StatusOK, gin.H{"work_dir": dir})
+}
+
+// DELETE /volume/:name — removes a notebook volume's work directory.
+// The "work_dir" query parameter must be provided; the path is validated to be
+// under the notebooks root before deletion. The :name segment is informational only.
+func (w *Worker) deleteVolumeHandler(c *gin.Context) {
+	name := c.Param("name")
+
+	wd := c.Query("work_dir")
+	if wd == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "work_dir query parameter is required"})
+		return
+	}
+
 	root := w.cfg.NotebooksRoot
 	if root == "" {
 		root = "notebooks"
 	}
-	root, _ = filepath.Abs(root)
-	return filepath.Join(root, name)
+	absRoot, _ := filepath.Abs(root)
+	absWD, err := filepath.Abs(wd)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid work_dir: " + err.Error()})
+		return
+	}
+	// Guard against directory traversal.
+	rel, err := filepath.Rel(absRoot, absWD)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "work_dir is outside notebooks root"})
+		return
+	}
+
+	if err := os.RemoveAll(absWD); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	slog.Info("notebook volume deleted", "name", name, "dir", absWD)
+	c.Status(http.StatusNoContent)
 }
 
-// resolveJupyter returns the full path to a working jupyter binary.
-// If configured explicitly, verifies it is executable. Otherwise searches
-// every "jupyter-lab" and "jupyter" entry in PATH and returns the first one
-// that actually runs (shebang interpreter exists).
-func resolveJupyter(configured string) (string, error) {
-	if configured != "" {
-		if err := checkExecutable(configured); err != nil {
-			return "", fmt.Errorf("notebook worker: configured jupyter binary %q: %w", configured, err)
-		}
-		return configured, nil
+// notebookDir returns the legacy work directory path: {notebooks_root}/{name}.
+// Only used as a fallback for requests that carry no volume_id.
+func (w *Worker) notebookDir(name string) string {
+	root := w.cfg.NotebooksRoot
+	if root == "" {
+		root = "notebooks"
 	}
-	for _, candidate := range []string{"jupyter-lab", "jupyter"} {
-		paths, _ := lookPathAll(candidate)
-		for _, p := range paths {
-			if checkExecutable(p) == nil {
-				return p, nil
-			}
-			slog.Warn("notebook worker: skipping broken jupyter binary", "path", p)
-		}
-	}
-	return "", fmt.Errorf(
-		"notebook worker: no working jupyter binary found in PATH\n" +
-			"Install jupyterlab (pip install jupyterlab) or set notebook_worker.jupyter_bin in .piper.yaml\n" +
-			"Find your binary: which jupyter-lab || which jupyter",
-	)
+	abs, _ := filepath.Abs(root)
+	return filepath.Join(abs, name)
 }
 
-// checkExecutable verifies that p is executable by running it with --version.
-func checkExecutable(p string) error {
-	cmd := exec.Command(p, "--version")
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("not executable: %w", err)
+// volumeDir returns the canonical work directory for a volume: {notebooks_root}/{volume_id}.
+// Using the volume UUID as the directory name ensures the path is decoupled from the
+// server name, matching the K8s PV model where storage identity != workload name.
+func (w *Worker) volumeDir(volumeID string) string {
+	root := w.cfg.NotebooksRoot
+	if root == "" {
+		root = "notebooks"
+	}
+	abs, _ := filepath.Abs(root)
+	return filepath.Join(abs, volumeID)
+}
+
+// allocatePort finds a free port within the configured port range.
+func (w *Worker) allocatePort() (int, error) {
+	portRange := w.cfg.PortRange
+	if portRange == "" {
+		portRange = "8888-9900"
+	}
+	start, end, err := parsePortRange(portRange)
+	if err != nil {
+		return 0, err
+	}
+
+	w.mu.Lock()
+	used := make(map[int]bool, len(w.notebooks))
+	for _, nb := range w.notebooks {
+		used[nb.port] = true
+	}
+	w.mu.Unlock()
+
+	for port := start; port <= end; port++ {
+		if used[port] {
+			continue
+		}
+		// Test on 127.0.0.1 to match JupyterLab's actual bind address.
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			_ = ln.Close()
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("no available port in range %s", portRange)
+}
+
+func parsePortRange(s string) (int, int, error) {
+	parts := strings.SplitN(s, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid port_range %q: expected START-END", s)
+	}
+	start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || start <= 0 || end < start {
+		return 0, 0, fmt.Errorf("invalid port_range %q", s)
+	}
+	return start, end, nil
+}
+
+// prepareEnv resolves or auto-creates the Python environment for a notebook.
+//
+//   - empty        → auto-create venv at {workDir}/.venv, install jupyterlab if needed
+//   - conda:name   → use existing conda env
+//   - /path/to/venv → use existing venv (must have jupyterlab installed)
+func (w *Worker) prepareEnv(specEnv, workDir string) (bin string, extraArgs []string, envPath string, err error) {
+	if strings.HasPrefix(specEnv, "conda:") {
+		condaName := strings.TrimPrefix(specEnv, "conda:")
+		if condaName == "" {
+			return "", nil, "", fmt.Errorf("conda env name is empty in %q", specEnv)
+		}
+		conda, err := exec.LookPath("conda")
+		if err != nil {
+			return "", nil, "", fmt.Errorf("conda not found in PATH")
+		}
+		return conda, []string{"run", "--no-capture-output", "-n", condaName, "jupyter", "lab"}, "conda:" + condaName, nil
+	}
+
+	venvPath := specEnv
+	if venvPath == "" {
+		venvPath = filepath.Join(workDir, ".venv")
+	}
+
+	if err := ensureVenv(venvPath); err != nil {
+		return "", nil, "", err
+	}
+
+	for _, candidate := range []string{
+		filepath.Join(venvPath, "bin", "jupyter-lab"),
+		filepath.Join(venvPath, "bin", "jupyter"),
+	} {
+		info, statErr := os.Stat(candidate)
+		if statErr != nil || info.IsDir() {
+			continue
+		}
+		if filepath.Base(candidate) == "jupyter" {
+			return candidate, []string{"lab"}, venvPath, nil
+		}
+		return candidate, nil, venvPath, nil
+	}
+	return "", nil, "", fmt.Errorf("jupyter not found in venv %q after setup", venvPath)
+}
+
+// ensureVenv creates the venv at venvPath if it doesn't exist, then installs
+// jupyterlab if it isn't already present. Idempotent.
+func ensureVenv(venvPath string) error {
+	jupyterLab := filepath.Join(venvPath, "bin", "jupyter-lab")
+	if info, err := os.Stat(jupyterLab); err == nil && !info.IsDir() {
+		return nil
+	}
+
+	python := filepath.Join(venvPath, "bin", "python")
+	if _, err := os.Stat(python); err != nil {
+		slog.Info("creating venv", "path", venvPath)
+		out, err := exec.Command("python3", "-m", "venv", venvPath).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("create venv %q: %w: %s", venvPath, err, bytes.TrimSpace(out))
+		}
+	}
+
+	slog.Info("installing jupyterlab", "venv", venvPath)
+	pip := filepath.Join(venvPath, "bin", "pip")
+	out, err := exec.Command(pip, "install", "--quiet", "jupyterlab").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("install jupyterlab in %q: %w: %s", venvPath, err, bytes.TrimSpace(out))
 	}
 	return nil
 }
 
-// lookPathAll returns all matches for name in PATH plus well-known brew cellar
-// locations, so broken PATH symlinks don't block a working install.
-func lookPathAll(name string) ([]string, error) {
-	pathEnv := os.Getenv("PATH")
-	seen := map[string]bool{}
-	var found []string
-
-	add := func(p string) {
-		if seen[p] {
-			return
-		}
-		seen[p] = true
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			found = append(found, p)
-		}
-	}
-
-	for _, dir := range filepath.SplitList(pathEnv) {
-		add(filepath.Join(dir, name))
-	}
-
-	// Brew formula directories: /usr/local/opt/<formula>/bin and
-	// /opt/homebrew/opt/<formula>/bin — search both Intel and Apple Silicon.
-	for _, base := range []string{"/usr/local/opt", "/opt/homebrew/opt"} {
-		entries, _ := os.ReadDir(base)
-		for _, e := range entries {
-			add(filepath.Join(base, e.Name(), "bin", name))
-		}
-	}
-
-	return found, nil
-}
-
-// augmentPATH merges the PATH from the user's login shell into the current
-// process so that tools installed via brew, conda, pyenv, etc. are reachable.
-func augmentPATH() {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-
-	// Run login shell to get its PATH.
-	out, err := exec.Command(shell, "-l", "-c", "echo $PATH").Output()
-	if err == nil {
-		shellPATH := strings.TrimSpace(string(out))
-		if shellPATH != "" {
-			current := os.Getenv("PATH")
-			merged := mergePATH(current, shellPATH)
-			_ = os.Setenv("PATH", merged)
-			return
-		}
-	}
-
-	// Fallback: well-known directories.
-	home := os.Getenv("HOME")
-	extras := []string{
-		"/opt/homebrew/bin",
-		"/usr/local/bin",
-		"/opt/conda/bin",
-		home + "/.local/bin",
-		home + "/miniconda3/bin",
-		home + "/anaconda3/bin",
-		home + "/.pyenv/shims",
-	}
-	current := os.Getenv("PATH")
-	for _, p := range extras {
-		if p != "" && !strings.Contains(current, p) {
-			current = current + string(os.PathListSeparator) + p
-		}
-	}
-	_ = os.Setenv("PATH", current)
-}
-
-// mergePATH combines two colon-separated PATH strings, deduplicating entries
-// while preserving the order of the first argument.
-func mergePATH(base, extra string) string {
-	seen := make(map[string]bool)
-	var parts []string
-	for _, p := range strings.Split(base, string(os.PathListSeparator)) {
-		if p != "" && !seen[p] {
-			seen[p] = true
-			parts = append(parts, p)
-		}
-	}
-	for _, p := range strings.Split(extra, string(os.PathListSeparator)) {
-		if p != "" && !seen[p] {
-			seen[p] = true
-			parts = append(parts, p)
-		}
-	}
-	return strings.Join(parts, string(os.PathListSeparator))
-}
-
-func (w *Worker) callbackStatus(masterURL, name, status, endpoint string) {
-	body, _ := json.Marshal(map[string]string{
+// callbackStatusFull sends a full status update to the master, including endpoint,
+// workDir, token, pid, and env. Used when the process has started successfully.
+func (w *Worker) callbackStatusFull(masterURL, name, status, endpoint, workDir, token string, pid int, env string) {
+	payload, _ := json.Marshal(map[string]any{
 		"status":   status,
 		"endpoint": endpoint,
+		"work_dir": workDir,
+		"token":    token,
+		"pid":      pid,
+		"env":      env,
 	})
 	url := fmt.Sprintf("%s/api/notebooks/%s/status", masterURL, name)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, url, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(payload))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		slog.Warn("notebook worker: callback failed", "name", name, "status", status, "err", err)
+		slog.Warn("notebook worker: status callback failed", "name", name, "err", err)
 		return
 	}
 	_ = resp.Body.Close()
+}
+
+// callbackStatus sends a minimal status update to the master (no token/pid/env).
+// Used for process exit events and error states.
+func (w *Worker) callbackStatus(masterURL, name, status, endpoint, workDir string) {
+	w.callbackStatusFull(masterURL, name, status, endpoint, workDir, "", 0, "")
+}
+
+// releasePort removes the port reservation when a background start fails before
+// the localNotebook entry is registered in w.notebooks.
+func (w *Worker) releasePort(_ int) {
+	// Port is allocated by scanning w.notebooks; once the process is not added
+	// to the map (start failure path), the port becomes available automatically
+	// on the next allocatePort scan. No explicit release is needed.
 }

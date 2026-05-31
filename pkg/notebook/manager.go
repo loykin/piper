@@ -5,21 +5,23 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/google/uuid"
+
 	"github.com/piper/piper/pkg/event"
 )
 
 // Manager handles the lifecycle of NotebookServer instances.
-// It delegates actual process management to a Driver.
+// It delegates process and volume management to a Driver.
 type Manager struct {
 	repo   Repository
+	vols   VolumeRepository
 	driver Driver
 	events event.Publisher
 }
 
-// New creates a Manager backed by the given repository and driver.
-// driver must not be nil.
-func New(repo Repository, driver Driver) *Manager {
-	return &Manager{repo: repo, driver: driver}
+// New creates a Manager backed by the given repositories and driver.
+func New(repo Repository, vols VolumeRepository, driver Driver) *Manager {
+	return &Manager{repo: repo, vols: vols, driver: driver}
 }
 
 // SetEventPublisher wires an event publisher for notebook lifecycle events.
@@ -27,69 +29,323 @@ func (m *Manager) SetEventPublisher(p event.Publisher) {
 	m.events = p
 }
 
-// Start launches a notebook server according to the given spec and persists
-// the record to the repository. yamlStr is the raw YAML stored for auditing.
-func (m *Manager) Start(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error) {
+// Create provisions new storage and launches a new notebook server asynchronously.
+// Returns immediately with status=provisioning; background goroutine handles
+// volume allocation and server start. Worker callback sets final status.
+func (m *Manager) Create(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error) {
 	name := spec.Metadata.Name
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
 	}
-
-	nb, err := m.driver.Start(ctx, spec, yamlStr)
-	if err != nil {
-		return nil, fmt.Errorf("notebook: start: %w", err)
+	if existing, _ := m.repo.Get(ctx, name); existing != nil {
+		return nil, fmt.Errorf("notebook %q already exists (status: %s)", name, existing.Status)
 	}
 
-	if nb.Name == "" {
-		nb.Name = name
+	vol := &NotebookVolume{
+		ID:     uuid.NewString(),
+		Label:  name,
+		Status: VolumeStatusBound,
 	}
-	if nb.WorkDir == "" && spec.Spec.Runtime.WorkDir != "" {
-		nb.WorkDir = spec.Spec.Runtime.WorkDir
+	if err := m.vols.Create(ctx, vol); err != nil {
+		return nil, fmt.Errorf("notebook: create volume: %w", err)
 	}
 
+	nb := &NotebookServer{
+		Name:     name,
+		Status:   StatusProvisioning,
+		VolumeID: vol.ID,
+	}
 	if err := m.repo.Create(ctx, nb); err != nil {
-		return nil, fmt.Errorf("notebook: persist record: %w", err)
+		_ = m.vols.Delete(ctx, vol.ID)
+		return nil, fmt.Errorf("notebook: create server record: %w", err)
 	}
 
-	m.emit("notebook.started", map[string]any{"name": name, "endpoint": nb.Endpoint})
+	// Detach from request context so background work continues after HTTP response.
+	bgCtx := context.WithoutCancel(ctx)
+	go m.provisionAndStart(bgCtx, vol, spec, yamlStr)
+
+	m.emit("notebook.creating", map[string]any{"name": name})
 	return nb, nil
 }
 
-// Stop kills the notebook process and marks it stopped.
-func (m *Manager) Stop(ctx context.Context, name string) error {
-	nb, err := m.repo.Get(ctx, name)
-	if err != nil {
-		return fmt.Errorf("notebook: get %q: %w", name, err)
+// provisionAndStart handles the async two-phase startup: volume provisioning then server start.
+// Status transitions: provisioning → starting → (running or failed via worker callback).
+func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, spec NotebookServerSpec, yamlStr string) {
+	name := spec.Metadata.Name
+
+	// Phase 1: provision storage
+	if err := m.driver.ProvisionVolume(ctx, vol); err != nil {
+		slog.Error("notebook: provision volume failed", "name", name, "err", err)
+		_ = m.repo.SetStatus(ctx, name, StatusFailed)
+		_ = m.vols.Delete(ctx, vol.ID)
+		m.emit("notebook.failed", map[string]any{"name": name, "error": err.Error()})
+		return
 	}
-	if nb == nil {
-		return fmt.Errorf("notebook: %q not found", name)
+	if err := m.vols.Update(ctx, vol); err != nil {
+		slog.Warn("notebook: update volume after provision failed", "name", name, "err", err)
+	}
+	_ = m.repo.SetStatus(ctx, name, StatusStarting)
+
+	// Phase 2: start the server process/pod (driver.Start returns quickly; actual
+	// startup is async on the worker, which will call back with status=running).
+	fresh, err := m.driver.Start(ctx, spec, vol, yamlStr)
+	if err != nil {
+		slog.Error("notebook: start failed", "name", name, "err", err)
+		_ = m.repo.SetStatus(ctx, name, StatusFailed)
+		_ = m.driver.DeprovisionVolume(ctx, vol)
+		_ = m.vols.Delete(ctx, vol.ID)
+		m.emit("notebook.failed", map[string]any{"name": name, "error": err.Error()})
+		return
 	}
 
+	// Persist worker assignment and initial token from Start response.
+	nb, err := m.repo.Get(ctx, name)
+	if err == nil && nb != nil {
+		if fresh.WorkerID != "" {
+			nb.WorkerID = fresh.WorkerID
+		}
+		if fresh.Token != "" {
+			nb.Token = fresh.Token
+		}
+		if fresh.WorkDir != "" {
+			nb.WorkDir = fresh.WorkDir
+		}
+		// Keep status=starting; worker callback will set it to running/failed.
+		_ = m.repo.Update(ctx, nb)
+	}
+}
+
+// CreateWithVolume launches a new notebook server backed by an existing released volume.
+// Returns immediately with status=starting; background goroutine handles server start.
+func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec, volumeID string, yamlStr string) (*NotebookServer, error) {
+	name := spec.Metadata.Name
+	if name == "" {
+		return nil, fmt.Errorf("notebook: metadata.name is required")
+	}
+	vol, err := m.vols.Get(ctx, volumeID)
+	if err != nil || vol == nil {
+		return nil, fmt.Errorf("notebook: volume %q not found", volumeID)
+	}
+	if vol.Status != VolumeStatusReleased {
+		return nil, fmt.Errorf("notebook: volume %q is not released (status: %s)", volumeID, vol.Status)
+	}
+	if existing, _ := m.repo.Get(ctx, name); existing != nil {
+		return nil, fmt.Errorf("notebook %q already exists (status: %s)", name, existing.Status)
+	}
+
+	if err := m.vols.SetStatus(ctx, vol.ID, VolumeStatusBound); err != nil {
+		return nil, fmt.Errorf("notebook: bind volume: %w", err)
+	}
+
+	// Volume is already provisioned, skip straight to starting.
+	nb := &NotebookServer{
+		Name:     name,
+		Status:   StatusStarting,
+		VolumeID: vol.ID,
+	}
+	if err := m.repo.Create(ctx, nb); err != nil {
+		_ = m.vols.SetStatus(ctx, vol.ID, VolumeStatusReleased)
+		return nil, fmt.Errorf("notebook: create server record: %w", err)
+	}
+
+	bgCtx := context.WithoutCancel(ctx)
+	volCopy := *vol
+	go func() {
+		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, yamlStr)
+		if err != nil {
+			slog.Error("notebook: start with volume failed", "name", name, "err", err)
+			_ = m.repo.SetStatus(bgCtx, name, StatusFailed)
+			_ = m.vols.SetStatus(bgCtx, vol.ID, VolumeStatusReleased)
+			m.emit("notebook.failed", map[string]any{"name": name, "error": err.Error()})
+			return
+		}
+		if nb, err := m.repo.Get(bgCtx, name); err == nil && nb != nil {
+			if fresh.WorkerID != "" {
+				nb.WorkerID = fresh.WorkerID
+			}
+			if fresh.Token != "" {
+				nb.Token = fresh.Token
+			}
+			if fresh.WorkDir != "" {
+				nb.WorkDir = fresh.WorkDir
+			}
+			_ = m.repo.Update(bgCtx, nb)
+		}
+	}()
+
+	m.emit("notebook.creating", map[string]any{"name": name, "volume_id": vol.ID})
+	return nb, nil
+}
+
+// Stop halts the server process but keeps the DB record and volume.
+// Status transitions: running → stopping → stopped.
+func (m *Manager) Stop(ctx context.Context, name string) error {
+	nb, err := m.repo.Get(ctx, name)
+	if err != nil || nb == nil {
+		return fmt.Errorf("notebook %q not found", name)
+	}
+	if nb.Status == StatusStopped || nb.Status == StatusStopping {
+		return nil
+	}
+	_ = m.repo.SetStatus(ctx, name, StatusStopping)
 	if err := m.driver.Stop(ctx, nb); err != nil {
 		slog.Warn("notebook driver stop failed", "name", name, "err", err)
 	}
-
 	if err := m.repo.SetStatus(ctx, name, StatusStopped); err != nil {
-		return fmt.Errorf("notebook: set status: %w", err)
+		return fmt.Errorf("notebook: set status stopped: %w", err)
 	}
 	m.emit("notebook.stopped", map[string]any{"name": name})
 	return nil
 }
 
-// UpdateStatus updates the status and endpoint of a notebook server.
-// Used by notebook worker agents to report status changes back to master.
-func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint string) error {
+// Restart relaunches a stopped notebook on the same worker that holds its volume.
+// Returns immediately with status=starting; worker callback sets status to running/failed.
+func (m *Manager) Restart(ctx context.Context, name string) error {
 	nb, err := m.repo.Get(ctx, name)
-	if err != nil {
-		return fmt.Errorf("notebook: get %q: %w", name, err)
+	if err != nil || nb == nil {
+		return fmt.Errorf("notebook %q not found", name)
 	}
-	if nb == nil {
-		return fmt.Errorf("notebook: %q not found", name)
+	if nb.Status == StatusRunning || nb.Status == StatusStarting || nb.Status == StatusProvisioning {
+		return nil // already starting/running
+	}
+
+	var vol *NotebookVolume
+	if nb.VolumeID != "" {
+		vol, _ = m.vols.Get(ctx, nb.VolumeID)
+	}
+	if vol == nil {
+		if nb.WorkDir == "" {
+			return fmt.Errorf("notebook %q: no volume and no work_dir; cannot restart", name)
+		}
+		// Construct a minimal volume for notebooks created before the volume system.
+		vol = &NotebookVolume{ID: nb.VolumeID, WorkDir: nb.WorkDir}
+	}
+
+	spec := NotebookServerSpec{}
+	spec.Metadata.Name = nb.Name
+
+	if err := m.repo.SetStatus(ctx, name, StatusStarting); err != nil {
+		return fmt.Errorf("notebook: set status starting: %w", err)
+	}
+
+	bgCtx := context.WithoutCancel(ctx)
+	volCopy := *vol
+	go func() {
+		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, "")
+		if err != nil {
+			slog.Error("notebook: restart failed", "name", name, "err", err)
+			_ = m.repo.SetStatus(bgCtx, name, StatusFailed)
+			return
+		}
+		if nb, err := m.repo.Get(bgCtx, name); err == nil && nb != nil {
+			if fresh.WorkerID != "" {
+				nb.WorkerID = fresh.WorkerID
+			}
+			if fresh.Token != "" {
+				nb.Token = fresh.Token
+			}
+			if fresh.Endpoint != "" {
+				nb.Endpoint = fresh.Endpoint
+			}
+			if fresh.WorkDir != "" {
+				nb.WorkDir = fresh.WorkDir
+			}
+			if fresh.PID != 0 {
+				nb.PID = fresh.PID
+			}
+			_ = m.repo.Update(bgCtx, nb)
+		}
+	}()
+	return nil
+}
+
+// Delete stops the server (if running), removes the server record, and
+// sets the backing volume status to "released". The work directory is preserved
+// so the volume can be attached to a new server later.
+func (m *Manager) Delete(ctx context.Context, name string) error {
+	nb, err := m.repo.Get(ctx, name)
+	if err != nil || nb == nil {
+		return fmt.Errorf("notebook %q not found", name)
+	}
+
+	if nb.Status == StatusRunning {
+		if err := m.driver.Stop(ctx, nb); err != nil {
+			slog.Warn("notebook driver stop failed during delete", "name", name, "err", err)
+		}
+	}
+
+	// Remove the server record.
+	if err := m.repo.Delete(ctx, name); err != nil {
+		return fmt.Errorf("notebook: delete record: %w", err)
+	}
+
+	// Release the volume so it can be reattached.
+	if nb.VolumeID != "" {
+		if err := m.vols.SetStatus(ctx, nb.VolumeID, VolumeStatusReleased); err != nil {
+			slog.Warn("notebook: release volume failed", "vol_id", nb.VolumeID, "err", err)
+		}
+	}
+
+	m.emit("notebook.deleted", map[string]any{"name": name})
+	return nil
+}
+
+// PurgeVolume permanently deletes a released volume's backing storage and removes
+// the volume record. The volume must be in "released" status (not bound to a server).
+func (m *Manager) PurgeVolume(ctx context.Context, volumeID string) error {
+	vol, err := m.vols.Get(ctx, volumeID)
+	if err != nil || vol == nil {
+		return fmt.Errorf("notebook: volume %q not found", volumeID)
+	}
+	if vol.Status != VolumeStatusReleased {
+		return fmt.Errorf("notebook: volume %q is not released (status: %s); delete the server first", volumeID, vol.Status)
+	}
+
+	if err := m.driver.DeprovisionVolume(ctx, vol); err != nil {
+		slog.Warn("notebook: deprovision volume failed during purge", "vol_id", volumeID, "err", err)
+	}
+
+	if err := m.vols.Delete(ctx, volumeID); err != nil {
+		return fmt.Errorf("notebook: delete volume record: %w", err)
+	}
+	m.emit("notebook.volume.purged", map[string]any{"volume_id": volumeID})
+	return nil
+}
+
+// UpdateStatus updates the runtime state of a notebook server.
+// Called by worker agents via the PATCH /api/notebooks/:name/status callback
+// when process status changes (e.g. running, stopped, failed).
+func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint, workDir, token string, pid int, env string) error {
+	nb, err := m.repo.Get(ctx, name)
+	if err != nil || nb == nil {
+		return fmt.Errorf("notebook %q not found", name)
+	}
+	if status != "" {
+		nb.Status = status
 	}
 	if endpoint != "" {
 		nb.Endpoint = endpoint
 	}
-	nb.Status = status
+	if workDir != "" {
+		nb.WorkDir = workDir
+	}
+	if token != "" {
+		nb.Token = token
+	}
+	if pid != 0 {
+		nb.PID = pid
+	}
+	if env != "" {
+		nb.Env = env
+	}
+
+	if workDir != "" && nb.VolumeID != "" {
+		if vol, err := m.vols.Get(ctx, nb.VolumeID); err == nil && vol != nil && vol.WorkDir != workDir {
+			vol.WorkDir = workDir
+			_ = m.vols.Update(ctx, vol)
+		}
+	}
+
 	if err := m.repo.Update(ctx, nb); err != nil {
 		return fmt.Errorf("notebook: update: %w", err)
 	}

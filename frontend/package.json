@@ -13,7 +13,7 @@
     "@base-ui/react": "^1.5.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@loykin/designkit": "^0.0.1-dev.2",
-    "@loykin/gridkit": "^0.1.21",
+    "@loykin/gridkit": "^0.1.22",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.13.24",
     "@types/react-router-dom": "^5.3.3",

@@ -1,14 +1,15 @@
-# 빌드 결과물
+# Build outputs
 bin/
 /piper
 frontend/dist/
 frontend/node_modules/
 
-# pkg/ui/dist는 git에 포함 (go install 지원)
-# UI 변경 시 make ui 후 dist/ 커밋
+# pkg/ui/dist is committed to support go install.
+# After UI changes, run make ui and commit the dist output.
 
-# 런타임 생성 파일
+# Runtime-generated files
 piper-outputs/
+notebooks/
 *.db
 *.db-shm
 *.db-wal

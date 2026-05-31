@@ -15,17 +15,18 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { CalendarClock, History, Server, Cpu, BookOpen } from 'lucide-react'
-import RunDetailPage from './pages/RunDetailPage'
-import WorkflowsPage from './pages/WorkflowsPage'
-import WorkflowCreatePage from './pages/WorkflowCreatePage'
-import HistoryPage from './pages/HistoryPage'
-import ScheduleDetailPage from './pages/ScheduleDetailPage'
-import ServingPage from './pages/ServingPage'
-import ServingDetailPage from './pages/ServingDetailPage'
-import ServingHistoryPage from './pages/ServingHistoryPage'
-import WorkersPage from './pages/WorkersPage'
-import NotebooksPage from './pages/NotebooksPage'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive } from 'lucide-react'
+import RunDetailPage from '@/pages/RunDetailPage'
+import WorkflowsPage from '@/pages/WorkflowsPage'
+import WorkflowCreatePage from '@/pages/WorkflowCreatePage'
+import HistoryPage from '@/pages/HistoryPage'
+import ScheduleDetailPage from '@/pages/ScheduleDetailPage'
+import ServingPage from '@/pages/ServingPage'
+import ServingDetailPage from '@/pages/ServingDetailPage'
+import ServingHistoryPage from '@/pages/ServingHistoryPage'
+import WorkersPage from '@/pages/WorkersPage'
+import NotebooksPage from '@/pages/NotebooksPage'
+import NotebookVolumesPage from '@/pages/NotebookVolumesPage'
 
 const navGroups = [
   {
@@ -45,7 +46,8 @@ const navGroups = [
   {
     label: 'Development',
     items: [
-      { id: 'notebooks', label: 'Notebooks', icon: BookOpen, to: '/notebooks' },
+      { id: 'notebooks', label: 'Notebooks', icon: BookOpen,   to: '/notebooks' },
+      { id: 'notebook-volumes', label: 'Volumes', icon: HardDrive, to: '/notebook-volumes' },
     ],
   },
   {
@@ -128,6 +130,7 @@ export default function App() {
                 <Route path="/runs/:id" element={<RunDetailPage />} />
                 <Route path="/workers" element={<WorkersPage />} />
                 <Route path="/notebooks" element={<NotebooksPage />} />
+                <Route path="/notebook-volumes" element={<NotebookVolumesPage />} />
                 {/* Legacy redirects */}
                 <Route path="/services" element={<Navigate to="/serving" replace />} />
                 <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />

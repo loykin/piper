@@ -2,9 +2,9 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
-import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, cancelRun, rerunRun, retryStep, type Run, type Step, type LogLine, type StepArtifacts, type ArtifactFile } from '../api'
-import StatusBadge from '../components/StatusBadge'
-import RunDAG from '../components/RunDAG'
+import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, cancelRun, rerunRun, retryStep, type Run, type Step, type LogLine, type StepArtifacts, type ArtifactFile } from '@/features/runs/api'
+import StatusBadge from '@/shared/components/StatusBadge'
+import RunDAG from '@/shared/components/RunDAG'
 
 function formatStepTime(value?: string): string {
   if (!value) return '—'

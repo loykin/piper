@@ -1,0 +1,115 @@
+// notebooks feature API
+
+const BASE = ''
+
+export interface NotebookServer {
+  name: string
+  status: 'provisioning' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
+  env: string
+  endpoint: string
+  pid: number
+  work_dir: string
+  token: string
+  worker_id?: string
+  volume_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface NotebookVolume {
+  id: string
+  label: string
+  work_dir: string
+  status: 'bound' | 'released'
+  worker_id: string   // node affinity; empty for network storage (e.g. K8s CSI)
+  created_at: string
+  updated_at: string
+}
+
+export interface NotebookWorkerInfo {
+  id: string
+  addr: string
+  gpus: string[]
+  hostname: string
+  last_seen: string
+}
+
+export async function listNotebooks(): Promise<NotebookServer[]> {
+  const res = await fetch(`${BASE}/notebooks`)
+  if (!res.ok) throw new Error(`listNotebooks: ${res.status}`)
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as NotebookServer[]) : []
+}
+
+export async function getNotebook(name: string): Promise<NotebookServer> {
+  const res = await fetch(`${BASE}/notebooks/${name}`)
+  if (!res.ok) throw new Error(`getNotebook: ${res.status}`)
+  return res.json()
+}
+
+export async function createNotebook(yaml: string, volumeId?: string): Promise<NotebookServer> {
+  const res = await fetch(`${BASE}/notebooks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ yaml, ...(volumeId ? { volume_id: volumeId } : {}) }),
+  })
+  // 201 Created is the expected response for the async path.
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+export async function stopNotebook(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/notebooks/${name}/stop`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+export async function startNotebook(name: string): Promise<NotebookServer> {
+  const res = await fetch(`${BASE}/notebooks/${name}/start`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+/** Delete: removes the server record and releases the backing volume (work directory preserved). */
+export async function deleteNotebook(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/notebooks/${name}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+/** Returns the proxy URL for opening a notebook in the browser. */
+export function notebookProxyURL(name: string): string {
+  return `/notebooks/${name}/proxy/lab`
+}
+
+export async function listNotebookVolumes(): Promise<NotebookVolume[]> {
+  const res = await fetch(`${BASE}/notebook-volumes`)
+  if (!res.ok) throw new Error(`listNotebookVolumes: ${res.status}`)
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as NotebookVolume[]) : []
+}
+
+/** Purge a released volume: permanently deletes the work directory and the volume record. */
+export async function purgeNotebookVolume(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/notebook-volumes/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+export async function listNotebookWorkers(): Promise<NotebookWorkerInfo[]> {
+  const res = await fetch(`${BASE}/api/notebook-workers`)
+  if (!res.ok) throw new Error(`listNotebookWorkers: ${res.status}`)
+  return res.json()
+}

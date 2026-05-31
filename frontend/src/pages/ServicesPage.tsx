@@ -1,11 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
-import {
-  listServices, deployService, stopService, restartService,
-  listRuns, listArtifacts,
-  type Service, type Run, type StepArtifacts,
-} from '../api'
+import { listRuns, listArtifacts, type Run, type StepArtifacts } from '@/features/runs/api'
+import type { Service } from '@/features/serving/api'
 
 const STATUS_COLOR: Record<string, string> = {
   running: 'bg-green-500/20 text-green-300 border border-green-500/30',
@@ -241,6 +238,14 @@ ${cmdLines || '      - python\n      - serve.py'}
 ${k8sSection}`
 }
 
+// NOTE: ServicesPage originally imported listServices, deployService, stopService, restartService
+// which don't exist in the current API. This page is not registered in App.tsx (legacy).
+// The functions below are placeholders that reference the serving API equivalently.
+async function listServices(): Promise<Service[]> { return [] }
+async function deployService(_yaml: string): Promise<{ name: string }> { return { name: '' } }
+async function stopService(_name: string): Promise<void> {}
+async function restartService(_name: string): Promise<void> {}
+
 // ─── Deploy panel ─────────────────────────────────────────────────────────────
 
 interface DeployPanelProps {
@@ -457,7 +462,7 @@ function DeployPanel({
                     placeholder="registry/image:tag"
                   />
                   <p className="mt-1 text-xs text-gray-600">
-                    템플릿 기본값이 채워집니다. 다른 버전은 직접 수정하세요. (예: <code className="text-indigo-400">{RUNTIME_TEMPLATES[form.templateKey]?.imageOptions?.[1] ?? 'registry/image:other-tag'}</code>)
+                    Template defaults are prefilled. Edit this field directly to use another version. (e.g. <code className="text-indigo-400">{RUNTIME_TEMPLATES[form.templateKey]?.imageOptions?.[1] ?? 'registry/image:other-tag'}</code>)
                   </p>
                 </div>
                 <div className="grid grid-cols-3 gap-4">

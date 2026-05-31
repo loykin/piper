@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { getRun, listRuns, type Step } from '../api'
-import StatusBadge from '../components/StatusBadge'
+import { getRun, listRuns, type Step } from '@/features/runs/api'
+import StatusBadge from '@/shared/components/StatusBadge'
 
 interface TaskHistoryRow {
   runId: string

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import {
   DataBodyTemplate, DataPage,
@@ -9,10 +8,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   listServing, deployServing, stopServing, restartServing,
-  listRuns, listArtifacts, listServingWorkers,
-  type Service, type Run, type StepArtifacts, type ServingWorkerInfo,
-} from '../api'
-import StatusBadge from '../components/StatusBadge'
+  listServingWorkers,
+  type Service, type ServingWorkerInfo,
+} from '@/features/serving/api'
+import { listRuns, listArtifacts, type Run, type StepArtifacts } from '@/features/runs/api'
+import { serviceColumns } from '@/features/serving/columns'
 
 // ─── Runtime templates ────────────────────────────────────────────────────────
 
@@ -499,79 +499,32 @@ export default function ServingPage() {
     try { await restartServing(name); await load() } catch { /* no-op */ }
   }
 
-  const columns: DataGridColumnDef<Service>[] = [
-    {
-      accessorKey: 'name',
-      header: 'Name',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => (
-        <Link to={`/serving/${row.original.name}`} className="font-medium text-primary hover:underline">
-          {row.original.name}
-        </Link>
-      ),
+  const actionColumn: DataGridColumnDef<Service> = {
+    id: 'actions',
+    header: '',
+    meta: { minWidth: 140 },
+    cell: ({ row }) => {
+      const svc = row.original
+      return (
+        <div className="flex items-center gap-2">
+          {svc.status === 'running' && (
+            <button type="button" onClick={e => { e.stopPropagation(); handleRestart(svc.name) }}
+              className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground">
+              Restart
+            </button>
+          )}
+          {svc.status !== 'stopped' && (
+            <button type="button" onClick={e => { e.stopPropagation(); handleStop(svc.name) }}
+              className="rounded border border-destructive/40 px-2 py-0.5 text-xs text-destructive hover:bg-destructive/10">
+              Stop
+            </button>
+          )}
+        </div>
+      )
     },
-    {
-      accessorKey: 'status',
-      header: 'Status',
-      meta: { minWidth: 110 },
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
-    },
-    {
-      accessorKey: 'artifact',
-      header: 'Artifact',
-      meta: { minWidth: 180, flex: 1 },
-      cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.artifact || '—'}</span>,
-    },
-    {
-      id: 'namespace',
-      header: 'Namespace',
-      meta: { minWidth: 110 },
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">{row.original.namespace || 'local'}</span>
-      ),
-    },
-    {
-      accessorKey: 'endpoint',
-      header: 'Endpoint',
-      meta: { minWidth: 200 },
-      cell: ({ row }) => {
-        const ep = row.original.endpoint
-        return ep ? (
-          <a href={ep} target="_blank" rel="noreferrer" className="font-mono text-xs text-primary hover:underline">{ep}</a>
-        ) : <span className="text-xs text-muted-foreground">—</span>
-      },
-    },
-    {
-      accessorKey: 'updated_at',
-      header: 'Updated',
-      meta: { minWidth: 160 },
-      cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.updated_at).toLocaleString()}</span>,
-    },
-    {
-      id: 'actions',
-      header: '',
-      meta: { minWidth: 140 },
-      cell: ({ row }) => {
-        const svc = row.original
-        return (
-          <div className="flex items-center gap-2">
-            {svc.status === 'running' && (
-              <button type="button" onClick={e => { e.stopPropagation(); handleRestart(svc.name) }}
-                className="rounded border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-                Restart
-              </button>
-            )}
-            {svc.status !== 'stopped' && (
-              <button type="button" onClick={e => { e.stopPropagation(); handleStop(svc.name) }}
-                className="rounded border border-destructive/40 px-2 py-0.5 text-xs text-destructive hover:bg-destructive/10">
-                Stop
-              </button>
-            )}
-          </div>
-        )
-      },
-    },
-  ]
+  }
+
+  const columns = [...serviceColumns, actionColumn]
 
   return (
     <DataPage>

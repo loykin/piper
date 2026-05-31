@@ -23,8 +23,8 @@ func newNotebookWorkerCmd() *cobra.Command {
 			advertiseAddr, _ := cmd.Flags().GetString("advertise-addr")
 			tlsCert, _ := cmd.Flags().GetString("tls-cert")
 			tlsKey, _ := cmd.Flags().GetString("tls-key")
-			jupyterBin, _ := cmd.Flags().GetString("jupyter-bin")
 			notebooksRoot, _ := cmd.Flags().GetString("notebooks-root")
+			portRange, _ := cmd.Flags().GetString("port-range")
 			gpusStr, _ := cmd.Flags().GetString("gpus")
 			hostname, _ := cmd.Flags().GetString("hostname")
 			id, _ := cmd.Flags().GetString("id")
@@ -56,8 +56,8 @@ func newNotebookWorkerCmd() *cobra.Command {
 				AdvertiseAddr: advertiseAddr,
 				TLSCert:       tlsCert,
 				TLSKey:        tlsKey,
-				JupyterBin:    jupyterBin,
 				NotebooksRoot: notebooksRoot,
+				PortRange:     portRange,
 				GPUs:          gpus,
 				Hostname:      hostname,
 				ID:            id,
@@ -71,8 +71,8 @@ func newNotebookWorkerCmd() *cobra.Command {
 	cmd.Flags().String("advertise-addr", "", "URL advertised to master (default: derived from --addr)")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file (enables HTTPS)")
 	cmd.Flags().String("tls-key", "", "TLS private key file (enables HTTPS)")
-	cmd.Flags().String("jupyter-bin", "", "path to jupyter binary (default: jupyter in PATH)")
 	cmd.Flags().String("notebooks-root", "", "base directory for notebook work dirs (default: ./notebooks)")
+	cmd.Flags().String("port-range", "", "port range for jupyter allocation, e.g. 8888-9900 (default: 8888-9900)")
 	cmd.Flags().String("gpus", "", "comma-separated GPU device indices (e.g. 0,1)")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("id", "", "worker ID (default: random UUID)")

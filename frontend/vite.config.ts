@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
 export default defineConfig({
+  base: '/ui/',
   plugins: [react(), tailwindcss()],
   resolve: {
     dedupe: ['react', 'react-dom', '@base-ui/react'],
@@ -15,47 +16,14 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/runs': {
-        target: 'http://localhost:8080',
-        bypass(req) {
-          if (req.headers.accept?.includes('text/html')) return req.url
-          return undefined
-        },
-      },
-      '/schedules': {
-        target: 'http://localhost:8080',
-        bypass(req) {
-          // Browser navigation → SPA, API fetch (no text/html accept) → backend
-          if (req.headers.accept?.includes('text/html')) return req.url
-          return undefined
-        },
-      },
+      '/runs': 'http://localhost:8080',
+      '/schedules': 'http://localhost:8080',
       '/api': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
-      '/serving': {
-        target: 'http://localhost:8080',
-        bypass(req) {
-          if (req.headers.accept?.includes('text/html')) return req.url
-          return undefined
-        },
-      },
-      '/notebooks': {
-        target: 'http://localhost:8080',
-        ws: true,
-        bypass(req) {
-          // Proxy sub-paths must always reach the backend.
-          if (req.url?.includes('/proxy/')) return undefined
-          if (req.headers.accept?.includes('text/html')) return req.url
-          return undefined
-        },
-      },
-      '/services': {
-        target: 'http://localhost:8080',
-        bypass(req) {
-          if (req.headers.accept?.includes('text/html')) return req.url
-          return undefined
-        },
-      },
+      '/serving': 'http://localhost:8080',
+      '/notebooks': { target: 'http://localhost:8080', ws: true },
+      '/notebook-volumes': 'http://localhost:8080',
+      '/services': 'http://localhost:8080',
       '/custom': 'http://localhost:8080',
     },
   },

@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { listRuns, createRun, type Run } from '../api'
-import StatusBadge from '../components/StatusBadge'
+import { listRuns, createRun, type Run } from '@/features/runs/api'
+import StatusBadge from '@/shared/components/StatusBadge'
 
 const EXAMPLE_YAML = `apiVersion: piper/v1
 kind: Pipeline

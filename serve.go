@@ -187,11 +187,16 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Notebook domain
 	notebook.NewHandler(notebook.HandlerDeps{
-		Notebooks:      p.repos.Notebook,
-		Start:          p.notebookManager.Start,
-		Stop:           p.notebookManager.Stop,
-		UpdateStatus:   p.notebookManager.UpdateStatus,
-		WorkerRegistry: p.notebookWorkerRegistry,
+		Notebooks:        p.repos.Notebook,
+		Volumes:          p.repos.NotebookVolume,
+		Create:           p.notebookManager.Create,
+		CreateWithVolume: p.notebookManager.CreateWithVolume,
+		Stop:             p.notebookManager.Stop,
+		Restart:          p.notebookManager.Restart,
+		Delete:           p.notebookManager.Delete,
+		PurgeVolume:      p.notebookManager.PurgeVolume,
+		UpdateStatus:     p.notebookManager.UpdateStatus,
+		WorkerRegistry:   p.notebookWorkerRegistry,
 	}).RegisterRoutes(r.Group(""))
 
 	// Worker polling domain (mounted only when no active backend is configured)
@@ -215,8 +220,10 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	r.GET("/metrics", p.metricsHandler)
 	r.GET("/events", p.eventsHandler)
 
-	// SPA fallback
-	r.NoRoute(gin.WrapH(ui.Handler()))
+	// SPA — served under /ui/; root redirects for convenience
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/ui/") })
+	r.GET("/ui", func(c *gin.Context) { c.Redirect(http.StatusMovedPermanently, "/ui/") })
+	r.GET("/ui/*filepath", gin.WrapH(http.StripPrefix("/ui", ui.Handler())))
 
 	return r
 }

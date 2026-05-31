@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { DataPage } from '@loykin/designkit'
-import { getServing, stopServing, restartServing, type Service } from '../api'
-import StatusBadge from '../components/StatusBadge'
+import { getServing, stopServing, restartServing, type Service } from '@/features/serving/api'
+import StatusBadge from '@/shared/components/StatusBadge'
 
 export default function ServingDetailPage() {
   const { name } = useParams<{ name: string }>()

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { getSchedule, listScheduleRuns, setScheduleEnabled, deleteSchedule, type Schedule, type Run } from '../api'
+import { getSchedule, listScheduleRuns, setScheduleEnabled, deleteSchedule, type Schedule } from '@/features/schedules/api'
+import type { Run } from '@/features/runs/api'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { Badge } from '@/components/ui/badge'
-import RunDAG from '../components/RunDAG'
-import StatusBadge from '../components/StatusBadge'
+import RunDAG from '@/shared/components/RunDAG'
+import StatusBadge from '@/shared/components/StatusBadge'
 
 const TYPE_LABEL: Record<string, string> = {
   immediate: 'Immediate',

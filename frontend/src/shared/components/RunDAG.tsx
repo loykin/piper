@@ -12,7 +12,7 @@ import {
   useEdgesState,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import type { Step } from '../api'
+import type { Step } from '@/features/runs/api'
 
 // ── YAML parser (minimal — no external dep) ──────────────────────────────────
 

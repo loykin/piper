@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os/exec"
 	"sync"
@@ -23,11 +24,14 @@ import (
 
 // Config holds configuration for a serving worker agent.
 type Config struct {
-	MasterURL string
-	Addr      string // HTTP listen address, e.g. ":7700"
-	GPUs      []string
-	Hostname  string
-	ID        string // UUID; caller must generate
+	MasterURL     string
+	Addr          string // listen address, e.g. ":7700"
+	AdvertiseAddr string // URL advertised to master, e.g. "https://node1.internal:7700"
+	TLSCert       string // path to TLS certificate file (enables HTTPS)
+	TLSKey        string // path to TLS private key file (enables HTTPS)
+	GPUs          []string
+	Hostname      string
+	ID            string // UUID; caller must generate
 }
 
 // Worker is the serving worker agent.
@@ -51,7 +55,7 @@ func New(cfg Config) *Worker {
 	}
 }
 
-// Run starts the HTTP server, registers with master, and runs until ctx is cancelled.
+// Run starts the HTTP(S) server, registers with master, and runs until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -67,22 +71,23 @@ func (w *Worker) Run(ctx context.Context) error {
 		Handler: r,
 	}
 
-	// Start HTTP server.
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("serving worker HTTP server starting", "addr", w.cfg.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		slog.Info("serving worker HTTP server starting", "addr", w.cfg.Addr, "tls", w.tlsEnabled())
+		var err error
+		if w.tlsEnabled() {
+			err = srv.ListenAndServeTLS(w.cfg.TLSCert, w.cfg.TLSKey)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
 
-	// Register with master (with retries).
 	go w.registerLoop(ctx)
-
-	// Heartbeat loop.
 	go w.heartbeatLoop(ctx)
 
-	// Wait for shutdown.
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
@@ -94,10 +99,34 @@ func (w *Worker) Run(ctx context.Context) error {
 	return srv.Shutdown(shutCtx)
 }
 
+func (w *Worker) tlsEnabled() bool {
+	return w.cfg.TLSCert != "" && w.cfg.TLSKey != ""
+}
+
+// advertiseURL returns the URL the master should use to reach this worker.
+// If AdvertiseAddr is set it is used as-is; otherwise it is derived from Addr.
+func (w *Worker) advertiseURL() string {
+	if w.cfg.AdvertiseAddr != "" {
+		return w.cfg.AdvertiseAddr
+	}
+	scheme := "http"
+	if w.tlsEnabled() {
+		scheme = "https"
+	}
+	host, port, err := net.SplitHostPort(w.cfg.Addr)
+	if err != nil {
+		return scheme + "://" + w.cfg.Addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return scheme + "://" + net.JoinHostPort(host, port)
+}
+
 func (w *Worker) registerLoop(ctx context.Context) {
 	payload, _ := json.Marshal(serving.ServingWorkerInfo{
 		ID:       w.cfg.ID,
-		Addr:     fmt.Sprintf("http://%s", w.cfg.Addr),
+		Addr:     w.advertiseURL(),
 		GPUs:     w.cfg.GPUs,
 		Hostname: w.cfg.Hostname,
 	})
@@ -114,7 +143,7 @@ func (w *Worker) registerLoop(ctx context.Context) {
 			if err == nil {
 				_ = resp.Body.Close()
 				if resp.StatusCode < 300 {
-					slog.Info("serving worker registered with master", "master", w.cfg.MasterURL, "id", w.cfg.ID)
+					slog.Info("serving worker registered with master", "master", w.cfg.MasterURL, "id", w.cfg.ID, "addr", w.advertiseURL())
 					return
 				}
 			}
@@ -220,10 +249,8 @@ func (w *Worker) deployHandler(c *gin.Context) {
 		masterURL = w.cfg.MasterURL
 	}
 
-	// Report running status with endpoint to master.
 	w.callbackStatus(masterURL, name, "running", endpoint)
 
-	// Watch for exit.
 	workload.WatchProcess(cmd, func(status string) {
 		slog.Info("serving process exited", "name", name, "status", status)
 		w.mu.Lock()
@@ -232,7 +259,6 @@ func (w *Worker) deployHandler(c *gin.Context) {
 		w.callbackStatus(masterURL, name, status, "")
 	})
 
-	// Best-effort health check.
 	healthPath := rt.HealthPath
 	if healthPath == "" {
 		healthPath = "/"
@@ -277,7 +303,6 @@ func (w *Worker) restartHandler(c *gin.Context) {
 	if ok {
 		workload.KillPID(ls.pid)
 	}
-	// The master will follow up with a new deploy call; just acknowledge.
 	c.Status(http.StatusNoContent)
 }
 

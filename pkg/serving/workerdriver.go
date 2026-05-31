@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -25,7 +26,13 @@ func NewWorkerDriver(registry *ServingWorkerRegistry, repo Repository, masterURL
 
 // Deploy picks an available worker and sends it a deploy request.
 func (d *WorkerDriver) Deploy(ctx context.Context, spec ModelService, art artifact.Resolved, yamlStr string) (*Service, error) {
-	w, err := d.registry.Pick()
+	var w *ServingWorkerInfo
+	var err error
+	if spec.Spec.Runtime.Worker != "" {
+		w, err = d.registry.GetByHostname(spec.Spec.Runtime.Worker)
+	} else {
+		w, err = d.registry.Pick()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +61,8 @@ func (d *WorkerDriver) Deploy(ctx context.Context, spec ModelService, art artifa
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("worker deploy: worker %s returned status %d", w.Addr, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("worker deploy: worker %s returned status %d: %s", w.Addr, resp.StatusCode, bytes.TrimSpace(body))
 	}
 
 	name := spec.Metadata.Name
@@ -69,16 +77,27 @@ func (d *WorkerDriver) Deploy(ctx context.Context, spec ModelService, art artifa
 		Name:     name,
 		Artifact: artifactLabel,
 		Status:   StatusRunning,
+		WorkerID: w.ID,
 		YAML:     yamlStr,
 	}
 	return svc, nil
 }
 
+// workerFor returns the worker that owns svc, falling back to Pick() if worker_id is unset or expired.
+func (d *WorkerDriver) workerFor(svc *Service) (*ServingWorkerInfo, error) {
+	if svc != nil && svc.WorkerID != "" {
+		if w, err := d.registry.Get(svc.WorkerID); err == nil {
+			return w, nil
+		}
+	}
+	return d.registry.Pick()
+}
+
 // Stop asks the worker that owns the service to stop it.
 func (d *WorkerDriver) Stop(ctx context.Context, svc *Service) error {
-	w, err := d.registry.Pick()
+	w, err := d.workerFor(svc)
 	if err != nil {
-		// Worker may be gone; treat as already stopped.
+		// Worker gone; treat as already stopped.
 		return nil
 	}
 
@@ -101,9 +120,11 @@ func (d *WorkerDriver) Stop(ctx context.Context, svc *Service) error {
 	return nil
 }
 
-// Restart asks the worker to restart the named service.
+// Restart asks the worker that owns the service to restart it.
 func (d *WorkerDriver) Restart(ctx context.Context, spec ModelService, _ artifact.Resolved, _ string) error {
-	w, err := d.registry.Pick()
+	existing, _ := d.repo.Get(ctx, spec.Metadata.Name)
+	// workerFor handles nil gracefully via Pick() fallback.
+	w, err := d.workerFor(existing)
 	if err != nil {
 		return err
 	}

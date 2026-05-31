@@ -29,6 +29,8 @@ type NotebookServerSpec struct {
 			WorkDir string `yaml:"work_dir"`
 			// GPUs selects GPU devices for local mode (e.g. "0", "0,1", "all", "none").
 			GPUs string `yaml:"gpus"`
+			// Worker pins startup to a specific worker agent by hostname.
+			Worker string `yaml:"worker"`
 		} `yaml:"runtime"`
 		K8s struct {
 			Namespace string `yaml:"namespace"`

@@ -61,6 +61,29 @@ func (r *ServingWorkerRegistry) Pick() (*ServingWorkerInfo, error) {
 	return nil, fmt.Errorf("no serving worker available")
 }
 
+// Get returns a specific worker by ID, or an error if not found or expired.
+func (r *ServingWorkerRegistry) Get(id string) (*ServingWorkerInfo, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	w, ok := r.workers[id]
+	if !ok || time.Since(w.LastSeen) >= workerTTL {
+		return nil, fmt.Errorf("serving worker %q not available", id)
+	}
+	return w, nil
+}
+
+// GetByHostname returns the first live worker matching the given hostname.
+func (r *ServingWorkerRegistry) GetByHostname(hostname string) (*ServingWorkerInfo, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, w := range r.workers {
+		if w.Hostname == hostname && time.Since(w.LastSeen) < workerTTL {
+			return w, nil
+		}
+	}
+	return nil, fmt.Errorf("serving worker with hostname %q not available", hostname)
+}
+
 // List returns all registered workers.
 func (r *ServingWorkerRegistry) List() []*ServingWorkerInfo {
 	r.mu.RLock()

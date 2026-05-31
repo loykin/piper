@@ -391,7 +391,41 @@ export async function deleteNotebook(name: string): Promise<void> {
   }
 }
 
-/** Returns the proxy URL for opening a notebook in the browser. */
-export function notebookProxyURL(name: string): string {
-  return `/notebooks/${name}/proxy/`
+/** Returns the proxy URL for opening a notebook in the browser.
+ *  Appending ?token= lets JupyterLab authenticate and set a cookie automatically. */
+export function notebookProxyURL(name: string, token?: string): string {
+  const base = `/notebooks/${name}/proxy/lab`
+  return token ? `${base}?token=${token}` : base
+}
+
+// ─── Serving Workers ──────────────────────────────────────────────────────────
+
+export interface ServingWorkerInfo {
+  id: string
+  addr: string
+  gpus: string[]
+  hostname: string
+  last_seen: string
+}
+
+export async function listServingWorkers(): Promise<ServingWorkerInfo[]> {
+  const res = await fetch(`${BASE}/api/serving-workers`)
+  if (!res.ok) throw new Error(`listServingWorkers: ${res.status}`)
+  return res.json()
+}
+
+// ─── Notebook Workers ─────────────────────────────────────────────────────────
+
+export interface NotebookWorkerInfo {
+  id: string
+  addr: string
+  gpus: string[]
+  hostname: string
+  last_seen: string
+}
+
+export async function listNotebookWorkers(): Promise<NotebookWorkerInfo[]> {
+  const res = await fetch(`${BASE}/api/notebook-workers`)
+  if (!res.ok) throw new Error(`listNotebookWorkers: ${res.status}`)
+  return res.json()
 }

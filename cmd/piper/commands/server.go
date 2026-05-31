@@ -98,10 +98,12 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			})
 
 			nw := notebookworker.New(notebookworker.Config{
-				MasterURL: masterURL,
-				Addr:      ":7701",
-				Hostname:  hostname,
-				ID:        uuid.New().String(),
+				MasterURL:     masterURL,
+				Addr:          ":7701",
+				Hostname:      hostname,
+				ID:            uuid.New().String(),
+				JupyterBin:    viper.GetString("notebook_worker.jupyter_bin"),
+				NotebooksRoot: viper.GetString("notebook_worker.notebooks_root"),
 			})
 
 			eg, gctx := errgroup.WithContext(ctx)

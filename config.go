@@ -54,6 +54,9 @@ type Config struct {
 
 	// Serving — model serving configuration.
 	Serving ServingConfig `yaml:"serving" mapstructure:"serving"`
+
+	// NotebookWorker — embedded/standalone notebook worker configuration.
+	NotebookWorker NotebookWorkerConfig `yaml:"notebook_worker" mapstructure:"notebook_worker"`
 }
 
 type GitConfig struct {
@@ -132,6 +135,19 @@ type ServingConfig struct {
 	// ModelDir is the local directory where model artifacts are downloaded before serving.
 	// Defaults to output_dir/models.
 	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
+}
+
+// NotebookWorkerConfig holds configuration for the embedded/standalone notebook worker.
+type NotebookWorkerConfig struct {
+	// JupyterBin is the path to the jupyter or jupyter-lab binary.
+	// Defaults to "jupyter" (searched in PATH).
+	// Example: /usr/local/opt/jupyterlab/bin/jupyter-lab
+	JupyterBin string `yaml:"jupyter_bin" mapstructure:"jupyter_bin"`
+
+	// NotebooksRoot is the base directory under which notebook work directories are created.
+	// If set, each notebook runs in {notebooks_root}/{name} and the filesystem view is
+	// restricted to that subtree. Defaults to "./notebooks".
+	NotebooksRoot string `yaml:"notebooks_root" mapstructure:"notebooks_root"`
 }
 
 func DefaultConfig() Config {

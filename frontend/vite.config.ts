@@ -32,6 +32,23 @@ export default defineConfig({
       },
       '/api': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
+      '/serving': {
+        target: 'http://localhost:8080',
+        bypass(req) {
+          if (req.headers.accept?.includes('text/html')) return req.url
+          return undefined
+        },
+      },
+      '/notebooks': {
+        target: 'http://localhost:8080',
+        ws: true,
+        bypass(req) {
+          // Proxy sub-paths must always reach the backend.
+          if (req.url?.includes('/proxy/')) return undefined
+          if (req.headers.accept?.includes('text/html')) return req.url
+          return undefined
+        },
+      },
       '/services': {
         target: 'http://localhost:8080',
         bypass(req) {
@@ -39,6 +56,7 @@ export default defineConfig({
           return undefined
         },
       },
+      '/custom': 'http://localhost:8080',
     },
   },
   build: { outDir: 'dist' },

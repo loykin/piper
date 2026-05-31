@@ -2,6 +2,9 @@ package notebook
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -127,6 +130,7 @@ func (h *Handler) deleteNotebook(c *gin.Context) {
 }
 
 // ANY /notebooks/:name/proxy/*path — reverse-proxies to the notebook endpoint.
+// Handles both HTTP and WebSocket (required for Jupyter kernel communication).
 func (h *Handler) proxyNotebook(c *gin.Context) {
 	name := c.Param("name")
 	nb, err := h.deps.Notebooks.Get(c.Request.Context(), name)
@@ -145,23 +149,85 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		return
 	}
 
-	// Strip /notebooks/:name/proxy prefix so the upstream sees the raw sub-path.
 	subPath := c.Param("path")
-	if subPath == "" {
-		subPath = "/"
-	}
-	// Ensure leading slash
-	if !strings.HasPrefix(subPath, "/") {
+	if subPath == "" || !strings.HasPrefix(subPath, "/") {
 		subPath = "/" + subPath
+	}
+	// JupyterLab is started with --ServerApp.base_url=/notebooks/<name>/proxy/
+	// so the upstream expects the full path including that prefix.
+	upstreamPath := fmt.Sprintf("/notebooks/%s/proxy%s", name, subPath)
+
+	// WebSocket upgrade: tunnel raw TCP between client and upstream.
+	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+		h.proxyWebSocket(c, target, upstreamPath)
+		return
 	}
 
 	r2 := c.Request.Clone(c.Request.Context())
-	r2.URL.Path = subPath
+	r2.URL.Path = upstreamPath
 	r2.URL.RawPath = ""
+	r2.URL.RawQuery = c.Request.URL.RawQuery
 	r2.Host = target.Host
 
+	basePrefix := fmt.Sprintf("/notebooks/%s/proxy", name)
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		loc := resp.Header.Get("Location")
+		if loc == "" || strings.HasPrefix(loc, "http") || strings.HasPrefix(loc, basePrefix) {
+			return nil
+		}
+		// JupyterLab sometimes emits bare redirects like /login?next=... without
+		// the base_url prefix. Rewrite them so the browser stays under the proxy path.
+		if !strings.HasPrefix(loc, "/") {
+			loc = "/" + loc
+		}
+		resp.Header.Set("Location", basePrefix+loc)
+		return nil
+	}
 	proxy.ServeHTTP(c.Writer, r2)
+}
+
+// proxyWebSocket tunnels a WebSocket connection to the upstream Jupyter server.
+func (h *Handler) proxyWebSocket(c *gin.Context, target *url.URL, subPath string) {
+	upstreamAddr := target.Host
+	upstream, err := net.Dial("tcp", upstreamAddr)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "cannot connect to notebook"})
+		return
+	}
+	defer upstream.Close()
+
+	// Rewrite the request line to point at the upstream path.
+	r2 := c.Request.Clone(context.Background())
+	r2.URL.Path = subPath
+	r2.URL.RawQuery = c.Request.URL.RawQuery
+	r2.Host = target.Host
+	if err := r2.Write(upstream); err != nil {
+		return
+	}
+
+	hijacker, ok := c.Writer.(http.Hijacker)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "websocket not supported"})
+		return
+	}
+	conn, buf, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	// Flush any buffered data from the client side.
+	if buf.Reader.Buffered() > 0 {
+		buffered := make([]byte, buf.Reader.Buffered())
+		_, _ = buf.Read(buffered)
+		_, _ = upstream.Write(buffered)
+	}
+
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(upstream, conn); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(conn, upstream); done <- struct{}{} }()
+	<-done
 }
 
 // PATCH /api/notebooks/:name/status — called by notebook worker agents.

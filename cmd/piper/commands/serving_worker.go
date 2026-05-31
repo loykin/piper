@@ -20,6 +20,9 @@ func newServingWorkerCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			masterURL, _ := cmd.Flags().GetString("master")
 			addr, _ := cmd.Flags().GetString("addr")
+			advertiseAddr, _ := cmd.Flags().GetString("advertise-addr")
+			tlsCert, _ := cmd.Flags().GetString("tls-cert")
+			tlsKey, _ := cmd.Flags().GetString("tls-key")
 			gpusStr, _ := cmd.Flags().GetString("gpus")
 			hostname, _ := cmd.Flags().GetString("hostname")
 			id, _ := cmd.Flags().GetString("id")
@@ -46,18 +49,24 @@ func newServingWorkerCmd() *cobra.Command {
 			defer cancel()
 
 			w := servingworker.New(servingworker.Config{
-				MasterURL: masterURL,
-				Addr:      addr,
-				GPUs:      gpus,
-				Hostname:  hostname,
-				ID:        id,
+				MasterURL:     masterURL,
+				Addr:          addr,
+				AdvertiseAddr: advertiseAddr,
+				TLSCert:       tlsCert,
+				TLSKey:        tlsKey,
+				GPUs:          gpus,
+				Hostname:      hostname,
+				ID:            id,
 			})
 			return w.Run(ctx)
 		},
 	}
 
 	cmd.Flags().String("master", "", "master server URL (required)")
-	cmd.Flags().String("addr", ":7700", "HTTP listen address for this worker")
+	cmd.Flags().String("addr", ":7700", "listen address for this worker")
+	cmd.Flags().String("advertise-addr", "", "URL advertised to master (default: derived from --addr)")
+	cmd.Flags().String("tls-cert", "", "TLS certificate file (enables HTTPS)")
+	cmd.Flags().String("tls-key", "", "TLS private key file (enables HTTPS)")
 	cmd.Flags().String("gpus", "", "comma-separated GPU device indices (e.g. 0,1)")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("id", "", "worker ID (default: random UUID)")

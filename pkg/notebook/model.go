@@ -17,6 +17,7 @@ type NotebookServer struct {
 	Token     string    `json:"token"              db:"token"`
 	Image     string    `json:"image,omitempty"    db:"image"`
 	Namespace string    `json:"namespace,omitempty" db:"namespace"`
+	WorkerID  string    `json:"worker_id,omitempty" db:"worker_id"`
 	CreatedAt time.Time `json:"created_at"         db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"         db:"updated_at"`
 }

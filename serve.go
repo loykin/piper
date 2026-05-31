@@ -202,6 +202,12 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		}).RegisterRoutes(r.Group("/api"))
 	}
 
+	// JupyterLab requests /custom/custom.css as an absolute path (no base_url prefix).
+	// The file is empty by convention — it is a user customization hook.
+	r.GET("/custom/*path", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/css; charset=utf-8", nil)
+	})
+
 	// Health
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})

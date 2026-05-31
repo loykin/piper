@@ -6,7 +6,7 @@ import {
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { listNotebooks, createNotebook, deleteNotebook, notebookProxyURL, type NotebookServer } from '../api'
+import { listNotebooks, createNotebook, deleteNotebook, notebookProxyURL, listNotebookWorkers, type NotebookServer, type NotebookWorkerInfo } from '../api'
 import StatusBadge from '../components/StatusBadge'
 
 // ─── Form ─────────────────────────────────────────────────────────────────────
@@ -17,6 +17,7 @@ interface FormState {
   port: string
   workDir: string
   gpus: string
+  worker: string
   k8sNamespace: string
   k8sImage: string
 }
@@ -27,6 +28,7 @@ const DEFAULT_FORM: FormState = {
   port: '8888',
   workDir: './notebooks',
   gpus: '',
+  worker: '',
   k8sNamespace: 'default',
   k8sImage: 'jupyter/scipy-notebook:latest',
 }
@@ -42,6 +44,7 @@ const JUPYTER_IMAGES = [
 function buildYAML(f: FormState): string {
   const isK8s = f.mode === 'k8s'
   const gpuLine = !isK8s && f.gpus ? `\n    gpus: "${f.gpus}"` : ''
+  const workerLine = !isK8s && f.worker ? `\n    worker: ${f.worker}` : ''
   const k8sSection = isK8s ? `  k8s:
     namespace: ${f.k8sNamespace || 'default'}
     image: ${f.k8sImage || 'jupyter/scipy-notebook:latest'}
@@ -55,7 +58,7 @@ spec:
   runtime:
     mode: ${f.mode}
     port: ${f.port || '8888'}
-    work_dir: ${f.workDir || './notebooks'}${gpuLine}
+    work_dir: ${f.workDir || './notebooks'}${gpuLine}${workerLine}
 ${k8sSection}`
 }
 
@@ -65,6 +68,11 @@ function LaunchPanel({ onClose, onLaunched }: { onClose: () => void; onLaunched:
   const [yaml, setYaml] = useState(() => buildYAML(DEFAULT_FORM))
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState('')
+  const [notebookWorkers, setNotebookWorkers] = useState<NotebookWorkerInfo[]>([])
+
+  useEffect(() => {
+    listNotebookWorkers().then(setNotebookWorkers).catch(() => {})
+  }, [])
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(prev => {
@@ -143,9 +151,24 @@ function LaunchPanel({ onClose, onLaunched }: { onClose: () => void; onLaunched:
               </div>
 
               {form.mode === 'local' && (
-                <DataBodyTemplate.Field label="GPUs" description="e.g. 0 · 0,1 · all · none · blank = host default">
-                  <Input value={form.gpus} onChange={e => setField('gpus', e.target.value)} placeholder="0" />
-                </DataBodyTemplate.Field>
+                <>
+                  <DataBodyTemplate.Field label="GPUs" description="e.g. 0 · 0,1 · all · none · blank = host default">
+                    <Input value={form.gpus} onChange={e => setField('gpus', e.target.value)} placeholder="0" />
+                  </DataBodyTemplate.Field>
+                  <DataBodyTemplate.Field label="Worker" description="Launch on a specific worker node. Leave blank to auto-assign.">
+                    <Select value={form.worker} onValueChange={v => setField('worker', v)}>
+                      <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">auto assign</SelectItem>
+                        {notebookWorkers.map(w => (
+                          <SelectItem key={w.id} value={w.hostname}>
+                            {w.hostname}{w.gpus?.length ? ` (GPU: ${w.gpus.join(', ')})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </DataBodyTemplate.Field>
+                </>
               )}
 
               {form.mode === 'k8s' && (
@@ -274,7 +297,7 @@ export default function NotebooksPage() {
         <div className="flex justify-end gap-1">
           {row.original.status === 'running' && (
             <a
-              href={notebookProxyURL(row.original.name)}
+              href={notebookProxyURL(row.original.name, row.original.token)}
               target="_blank"
               rel="noreferrer"
               onClick={e => e.stopPropagation()}

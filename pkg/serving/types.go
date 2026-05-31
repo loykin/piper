@@ -44,6 +44,9 @@ type RuntimeSpec struct {
 	// Sets CUDA_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES.
 	// For k8s mode, use k8s.resources.gpu instead.
 	GPUs string `yaml:"gpus"`
+	// Worker pins deployment to a specific worker agent by hostname.
+	// If empty, the worker is chosen automatically.
+	Worker string `yaml:"worker"`
 }
 
 // K8sSpec holds Kubernetes-specific deployment options.

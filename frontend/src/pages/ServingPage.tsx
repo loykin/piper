@@ -9,8 +9,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   listServing, deployServing, stopServing, restartServing,
-  listRuns, listArtifacts,
-  type Service, type Run, type StepArtifacts,
+  listRuns, listArtifacts, listServingWorkers,
+  type Service, type Run, type StepArtifacts, type ServingWorkerInfo,
 } from '../api'
 import StatusBadge from '../components/StatusBadge'
 
@@ -141,6 +141,7 @@ interface FormState {
   command: string
   port: string
   healthPath: string
+  worker: string
   k8sNamespace: string
   k8sReplicas: string
   k8sCPU: string
@@ -161,6 +162,7 @@ const DEFAULT_FORM: FormState = {
   command: 'python\nserve.py',
   port: '8000',
   healthPath: '/',
+  worker: '',
   k8sNamespace: 'default',
   k8sReplicas: '1',
   k8sCPU: '',
@@ -189,6 +191,7 @@ function buildYAML(f: FormState): string {
   }
 
   const imageField = isK8s && f.image ? `    image: ${f.image}\n` : ''
+  const workerLine = !isK8s && f.worker ? `    worker: ${f.worker}\n` : ''
 
   return `apiVersion: piper/v1
 kind: ModelService
@@ -207,7 +210,7 @@ ${imageField}    command:
 ${cmdLines || '      - python\n      - serve.py'}
     port: ${f.port || '8000'}
     health_path: ${f.healthPath || '/'}
-${k8sSection}`
+${workerLine}${k8sSection}`
 }
 
 // ─── Deploy panel ─────────────────────────────────────────────────────────────
@@ -220,9 +223,11 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
   const [error, setError] = useState('')
   const [successRuns, setSuccessRuns] = useState<Run[]>([])
   const [artifacts, setArtifacts] = useState<StepArtifacts[]>([])
+  const [servingWorkers, setServingWorkers] = useState<ServingWorkerInfo[]>([])
 
   useEffect(() => {
     listRuns({ status: 'success' }).then(setSuccessRuns).catch(() => {})
+    listServingWorkers().then(setServingWorkers).catch(() => {})
   }, [])
 
   const pipelines = Array.from(new Set(successRuns.map(r => r.pipeline_name))).sort()
@@ -383,6 +388,22 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
                   <Input value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
                 </DataBodyTemplate.Field>
               </div>
+
+              {form.runtimeMode === 'local' && (
+                <DataBodyTemplate.Field label="Worker" description="Deploy to a specific worker node. Leave blank to auto-assign.">
+                  <Select value={form.worker} onValueChange={v => setField('worker', v)}>
+                    <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">auto assign</SelectItem>
+                      {servingWorkers.map(w => (
+                        <SelectItem key={w.id} value={w.hostname}>
+                          {w.hostname}{w.gpus?.length ? ` (GPU: ${w.gpus.join(', ')})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
+              )}
 
               {form.runtimeMode === 'k8s' && (
                 <>

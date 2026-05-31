@@ -127,13 +127,13 @@ func New(cfg Config) (*Piper, error) {
 	if k8sClientset != nil {
 		servingDriver = serving.NewK8sDriver(k8sClientset, repos.Serving)
 	} else {
-		servingDriver = serving.NewWorkerDriver(servingWorkerReg, repos.Serving, cfg.Server.Addr)
+		servingDriver = serving.NewWorkerDriver(servingWorkerReg, repos.Serving, listenAddrToURL(cfg.Server.Addr))
 	}
 	servingMgr := serving.New(repos.Serving, servingDriver)
 
 	// Build notebook driver: WorkerDriver (k8s notebook not yet supported).
 	notebookWorkerReg := notebook.NewNotebookWorkerRegistry()
-	nbDriver := notebook.NewWorkerDriver(notebookWorkerReg, cfg.Server.Addr)
+	nbDriver := notebook.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
 	nbMgr := notebook.New(repos.Notebook, nbDriver)
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
@@ -784,4 +784,16 @@ func buildK8sClientset(cfg K8sConfig) (*kubernetes.Clientset, error) {
 // newPiperS3Client creates an S3 client from piper's S3Config.
 func newPiperS3Client(cfg S3Config) (*s3sdk.Client, error) {
 	return s3client.New(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey, cfg.UseSSL)
+}
+
+// listenAddrToURL converts a listen address like ":8080" or "0.0.0.0:8080"
+// to a full URL like "http://localhost:8080" for use as a master callback URL.
+func listenAddrToURL(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "http://localhost" + addr
+	}
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		return "http://localhost" + addr[idx:]
+	}
+	return "http://" + addr
 }

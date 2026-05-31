@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -22,7 +23,13 @@ func NewWorkerDriver(registry *NotebookWorkerRegistry, masterURL string) *Worker
 
 // Start picks an available worker and sends it a start request.
 func (d *WorkerDriver) Start(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error) {
-	w, err := d.registry.Pick()
+	var w *NotebookWorkerInfo
+	var err error
+	if spec.Spec.Runtime.Worker != "" {
+		w, err = d.registry.GetByHostname(spec.Spec.Runtime.Worker)
+	} else {
+		w, err = d.registry.Pick()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -49,23 +56,44 @@ func (d *WorkerDriver) Start(ctx context.Context, spec NotebookServerSpec, yamlS
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("notebook worker start: worker %s returned status %d", w.Addr, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("notebook worker start: worker %s returned status %d: %s", w.Addr, resp.StatusCode, bytes.TrimSpace(body))
 	}
 
-	name := spec.Metadata.Name
+	var result struct {
+		Endpoint string `json:"endpoint"`
+		Token    string `json:"token"`
+		PID      int    `json:"pid"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+
 	nb := &NotebookServer{
-		Name:    name,
-		Status:  StatusRunning,
-		WorkDir: spec.Spec.Runtime.WorkDir,
+		Name:     spec.Metadata.Name,
+		Status:   StatusRunning,
+		Endpoint: result.Endpoint,
+		Token:    result.Token,
+		PID:      result.PID,
+		WorkDir:  spec.Spec.Runtime.WorkDir,
+		WorkerID: w.ID,
 	}
 	return nb, nil
 }
 
+// workerFor returns the worker that owns nb, falling back to Pick() if worker_id is unset or expired.
+func (d *WorkerDriver) workerFor(nb *NotebookServer) (*NotebookWorkerInfo, error) {
+	if nb != nil && nb.WorkerID != "" {
+		if w, err := d.registry.Get(nb.WorkerID); err == nil {
+			return w, nil
+		}
+	}
+	return d.registry.Pick()
+}
+
 // Stop asks the worker that owns the notebook to stop it.
 func (d *WorkerDriver) Stop(ctx context.Context, nb *NotebookServer) error {
-	w, err := d.registry.Pick()
+	w, err := d.workerFor(nb)
 	if err != nil {
-		// Worker may be gone; treat as already stopped.
+		// Worker gone; treat as already stopped.
 		return nil
 	}
 

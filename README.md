@@ -246,6 +246,50 @@ runtime:
   port: 3000
 ```
 
+### Serving Worker (bare-metal local mode)
+
+`mode: local` deploys the serving process on a **serving worker** agent — a separate process that runs on the bare-metal node where the model should be served.
+
+**Requirements**
+- The runtime binary (`tritonserver`, `python`, etc.) must be installed and in `PATH` on the worker node.
+
+**Setup**
+
+```bash
+# 1. Start the piper server
+piper server --addr :8080
+
+# 2. Start a serving worker on the inference node
+piper serving-worker \
+  --master http://<server>:8080 \
+  --addr :7700 \
+  --advertise-addr http://<this-node>:7700   # omit if same machine as master
+```
+
+**Multi-node**: run `piper serving-worker` on each inference node. To pin a deployment to a specific node, set `runtime.worker` in the ModelService YAML:
+
+```yaml
+spec:
+  runtime:
+    mode: local
+    worker: gpu-node-01   # hostname of the target serving worker
+    command: [...]
+    port: 8000
+```
+
+**TLS**
+
+```bash
+piper serving-worker \
+  --master https://master:8080 \
+  --addr :7700 \
+  --tls-cert /etc/ssl/worker.crt \
+  --tls-key  /etc/ssl/worker.key \
+  --advertise-addr https://<this-node>:7700
+```
+
+---
+
 ### Auto-deploy on Pipeline Success
 
 ```yaml
@@ -285,6 +329,137 @@ err = p.StopService(ctx, "fraud-detector")
 // Restart with latest artifact
 err = p.RestartService(ctx, "fraud-detector")
 ```
+
+---
+
+## Notebook Servers
+
+Launch Jupyter Lab servers on bare-metal nodes through the piper UI (`/notebooks`).
+
+### Requirements
+
+JupyterLab must be installed on each notebook worker node. The worker launches `jupyter-lab` as a subprocess, so it must be accessible from the system `PATH` (or configured via `notebook_worker.jupyter_bin`).
+
+**macOS (brew) — recommended**
+
+```bash
+brew install jupyterlab
+# binary lands at /usr/local/opt/jupyterlab/bin/jupyter-lab (Intel)
+#                  /opt/homebrew/opt/jupyterlab/bin/jupyter-lab (Apple Silicon)
+# brew also creates a symlink: /usr/local/bin/jupyter-lab
+```
+
+Config (`.piper.yaml`):
+```yaml
+notebook_worker:
+  jupyter_bin: /usr/local/opt/jupyterlab/bin/jupyter-lab   # Intel Mac
+  # jupyter_bin: /opt/homebrew/opt/jupyterlab/bin/jupyter-lab  # Apple Silicon
+```
+
+**Linux (pip, system-wide) — recommended for servers**
+
+```bash
+pip install jupyterlab          # installs to /usr/local/bin/jupyter or ~/.local/bin/jupyter
+# or with sudo for all users:
+sudo pip install jupyterlab
+```
+
+No config needed if `/usr/local/bin` or `~/.local/bin` is in `PATH`.
+
+**Linux/macOS (conda)**
+
+```bash
+conda install -c conda-forge jupyterlab
+# binary at: $CONDA_PREFIX/bin/jupyter-lab
+```
+
+Config:
+```yaml
+notebook_worker:
+  jupyter_bin: /opt/conda/bin/jupyter-lab   # adjust to your conda env path
+```
+
+**Virtual environment (venv)**
+
+> **Not recommended for the worker process.** The worker is a long-running daemon — venvs require activation which doesn't apply to subprocesses launched by Go. Use a system-wide or conda install instead, and point `jupyter_bin` at the full path inside the venv only if you know what you're doing:
+
+```yaml
+notebook_worker:
+  jupyter_bin: /path/to/venv/bin/jupyter-lab
+```
+
+**Verify your install**
+
+```bash
+which jupyter-lab || which jupyter
+jupyter-lab --version
+```
+
+### Setup
+
+```bash
+# 1. Start the piper server
+piper server --addr :8080
+
+# 2. Start a notebook worker on each node
+piper notebook-worker \
+  --master http://<server>:8080 \
+  --addr :7701 \
+  --advertise-addr http://<this-node>:7701   # omit if same machine as master
+```
+
+**Single-node / dev** — embed everything in one process:
+
+```bash
+piper server --local
+```
+
+### Custom jupyter binary path
+
+If jupyter is not in `PATH` (e.g. brew on macOS), configure it once in `.piper.yaml`:
+
+```yaml
+notebook_worker:
+  jupyter_bin: /usr/local/opt/jupyterlab/bin/jupyter-lab
+```
+
+Or pass directly to the standalone worker:
+
+```bash
+piper notebook-worker \
+  --master http://localhost:8080 \
+  --jupyter-bin /usr/local/opt/jupyterlab/bin/jupyter-lab
+```
+
+> **Finding your jupyter binary**: run `which jupyter-lab || which jupyter` in a terminal.
+
+### Notebook Server YAML
+
+```yaml
+apiVersion: piper/v1
+kind: NotebookServer
+metadata:
+  name: my-notebook
+spec:
+  runtime:
+    port: 8888
+    work_dir: ./notebooks
+    gpus: "0"            # GPU device index; omit for CPU-only
+    worker: gpu-node-01  # pin to a specific worker node (optional)
+```
+
+### TLS
+
+```bash
+piper notebook-worker \
+  --master https://master:8080 \
+  --addr :7701 \
+  --tls-cert /etc/ssl/worker.crt \
+  --tls-key  /etc/ssl/worker.key \
+  --advertise-addr https://<this-node>:7701
+```
+
+---
 
 ## Library Usage
 
@@ -350,6 +525,10 @@ source:
 serving:
   model_dir: ./piper-models    # local artifact download path
 
+notebook_worker:
+  jupyter_bin: ""              # path to jupyter binary (default: "jupyter" in PATH)
+                               # e.g. /usr/local/opt/jupyterlab/bin/jupyter-lab
+
 k8s:
   agent_image: piper/piper:latest
   agent_image_pull_policy: Always   # Always | IfNotPresent | Never (default: Always)
@@ -364,10 +543,13 @@ k8s:
 
 ```
 piper server                                     start server (API + UI)
+piper server --local                             start server with embedded worker/serving/notebook workers
 piper server --serving-kubeconfig=~/.kube/config start server with k8s ModelService support
 piper run <file.yaml>                            run a pipeline locally
 piper parse <file.yaml>                          validate YAML without running
-piper worker --master=<url>                      start a worker
+piper worker --master=<url>                      start a pipeline worker
+piper serving-worker --master=<url>              start a serving worker (bare-metal ModelService)
+piper notebook-worker --master=<url>             start a notebook worker (Jupyter Lab)
 piper agent exec --master=<url> ...              execute a step inside a K8s Pod (called automatically)
 ```
 

@@ -15,7 +15,7 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { CalendarClock, History, Server, Cpu } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen } from 'lucide-react'
 import RunDetailPage from './pages/RunDetailPage'
 import WorkflowsPage from './pages/WorkflowsPage'
 import WorkflowCreatePage from './pages/WorkflowCreatePage'
@@ -25,6 +25,7 @@ import ServingPage from './pages/ServingPage'
 import ServingDetailPage from './pages/ServingDetailPage'
 import ServingHistoryPage from './pages/ServingHistoryPage'
 import WorkersPage from './pages/WorkersPage'
+import NotebooksPage from './pages/NotebooksPage'
 
 const navGroups = [
   {
@@ -37,8 +38,14 @@ const navGroups = [
   {
     label: 'Service',
     items: [
-      { id: 'serving',         label: 'Serving',  icon: Server,  to: '/serving' },
-      { id: 'serving-history', label: 'History',  icon: History, to: '/serving/history' },
+      { id: 'serving',         label: 'Serving',   icon: Server,    to: '/serving' },
+      { id: 'serving-history', label: 'History',   icon: History,   to: '/serving/history' },
+    ],
+  },
+  {
+    label: 'Development',
+    items: [
+      { id: 'notebooks', label: 'Notebooks', icon: BookOpen, to: '/notebooks' },
     ],
   },
   {
@@ -120,6 +127,7 @@ export default function App() {
                 <Route path="/serving/:name" element={<ServingDetailPage />} />
                 <Route path="/runs/:id" element={<RunDetailPage />} />
                 <Route path="/workers" element={<WorkersPage />} />
+                <Route path="/notebooks" element={<NotebooksPage />} />
                 {/* Legacy redirects */}
                 <Route path="/services" element={<Navigate to="/serving" replace />} />
                 <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />

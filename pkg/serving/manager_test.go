@@ -8,12 +8,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/piper/piper/pkg/workload"
 )
 
 func TestStopK8sUsesPersistedNamespace(t *testing.T) {
 	ctx := context.Background()
 	name := "fraud-detector"
-	kname := k8sName(name)
+	kname := workload.SafeName(name)
 	clientset := fake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: kname, Namespace: "ml-prod"}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: kname, Namespace: "ml-prod"}},
@@ -26,7 +28,8 @@ func TestStopK8sUsesPersistedNamespace(t *testing.T) {
 		Endpoint:  "http://fraud-detector.wrong-ns.svc.cluster.local:8000",
 		Namespace: "ml-prod",
 	})
-	manager := New(repo, "", clientset)
+	driver := NewK8sDriver(clientset, repo)
+	manager := New(repo, driver)
 
 	if err := manager.Stop(ctx, name); err != nil {
 		t.Fatal(err)

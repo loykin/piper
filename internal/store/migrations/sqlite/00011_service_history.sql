@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE TABLE IF NOT EXISTS service_history (
     id          INTEGER   PRIMARY KEY AUTOINCREMENT,
     name        TEXT      NOT NULL,
@@ -11,3 +12,6 @@ CREATE TABLE IF NOT EXISTS service_history (
     deployed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     stopped_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- +goose Down
+DROP TABLE IF EXISTS service_history;

@@ -9,7 +9,11 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/google/uuid"
+
 	piper "github.com/piper/piper"
+	"github.com/piper/piper/pkg/notebookworker"
+	"github.com/piper/piper/pkg/servingworker"
 	"github.com/piper/piper/pkg/source"
 	"github.com/piper/piper/pkg/worker"
 	"github.com/spf13/cobra"
@@ -84,12 +88,34 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			}
 			slog.Info("embedded local worker enabled", "master", masterURL, "concurrency", localConcurrency)
 
+			hostname, _ := os.Hostname()
+
+			sw := servingworker.New(servingworker.Config{
+				MasterURL: masterURL,
+				Addr:      ":7700",
+				Hostname:  hostname,
+				ID:        uuid.New().String(),
+			})
+
+			nw := notebookworker.New(notebookworker.Config{
+				MasterURL: masterURL,
+				Addr:      ":7701",
+				Hostname:  hostname,
+				ID:        uuid.New().String(),
+			})
+
 			eg, gctx := errgroup.WithContext(ctx)
 			eg.Go(func() error {
 				return p.Serve(gctx, piper.ServeOption{Addr: addr})
 			})
 			eg.Go(func() error {
 				return w.Run(gctx)
+			})
+			eg.Go(func() error {
+				return sw.Run(gctx)
+			})
+			eg.Go(func() error {
+				return nw.Run(gctx)
 			})
 			return eg.Wait()
 		},

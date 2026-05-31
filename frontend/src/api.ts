@@ -341,3 +341,57 @@ export async function listServingHistory(): Promise<ServiceHistory[]> {
   const data: unknown = await res.json()
   return Array.isArray(data) ? (data as ServiceHistory[]) : []
 }
+
+// ─── Notebooks ────────────────────────────────────────────────────────────────
+
+export interface NotebookServer {
+  name: string
+  status: 'running' | 'stopped' | 'failed'
+  endpoint: string
+  pid: number
+  work_dir: string
+  token: string
+  image?: string
+  namespace?: string
+  created_at: string
+  updated_at: string
+}
+
+export async function listNotebooks(): Promise<NotebookServer[]> {
+  const res = await fetch(`${BASE}/notebooks`)
+  if (!res.ok) throw new Error(`listNotebooks: ${res.status}`)
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as NotebookServer[]) : []
+}
+
+export async function getNotebook(name: string): Promise<NotebookServer> {
+  const res = await fetch(`${BASE}/notebooks/${name}`)
+  if (!res.ok) throw new Error(`getNotebook: ${res.status}`)
+  return res.json()
+}
+
+export async function createNotebook(yaml: string): Promise<NotebookServer> {
+  const res = await fetch(`${BASE}/notebooks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ yaml }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+export async function deleteNotebook(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/notebooks/${name}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+}
+
+/** Returns the proxy URL for opening a notebook in the browser. */
+export function notebookProxyURL(name: string): string {
+  return `/notebooks/${name}/proxy/`
+}

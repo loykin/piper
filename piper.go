@@ -26,6 +26,7 @@ import (
 	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
+	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
@@ -37,10 +38,11 @@ import (
 	iworker "github.com/piper/piper/internal/worker"
 )
 
-// servingBundle groups the serving manager and proxy together.
+// servingBundle groups the serving manager, proxy, and worker registry together.
 type servingBundle struct {
-	manager *serving.Manager
-	proxy   *serving.Proxy
+	manager        *serving.Manager
+	proxy          *serving.Proxy
+	workerRegistry *serving.ServingWorkerRegistry
 }
 
 // Piper is the library entry point.
@@ -49,18 +51,20 @@ type servingBundle struct {
 //	p := piper.New(piper.DefaultConfig())
 //	result, err := p.RunFile(ctx, "train.yaml")
 type Piper struct {
-	cfg      Config
-	ctx      context.Context // cancelled on Close; passed to background goroutines and hooks
-	repos    *storemod.Repos
-	logs     logstore.LogStore
-	metrics  logstore.MetricStore
-	queue    *queue.Queue
-	registry *iworker.Registry
-	serving  servingBundle
-	s3Cli    *s3sdk.Client     // nil when S3 not configured
-	resolver artifact.Resolver // central artifact resolver
-	backend  backend.ExecutionBackend
-	events   *event.Hub
+	cfg                    Config
+	ctx                    context.Context // cancelled on Close; passed to background goroutines and hooks
+	repos                  *storemod.Repos
+	logs                   logstore.LogStore
+	metrics                logstore.MetricStore
+	queue                  *queue.Queue
+	registry               *iworker.Registry
+	serving                servingBundle
+	notebookManager        *notebook.Manager
+	notebookWorkerRegistry *notebook.NotebookWorkerRegistry
+	s3Cli                  *s3sdk.Client     // nil when S3 not configured
+	resolver               artifact.Resolver // central artifact resolver
+	backend                backend.ExecutionBackend
+	events                 *event.Hub
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 }
@@ -116,7 +120,21 @@ func New(cfg Config) (*Piper, error) {
 			k8sClientset = cs
 		}
 	}
-	servingMgr := serving.New(repos.Serving, modelDir, k8sClientset)
+
+	// Build serving driver: K8s if clientset available, else WorkerDriver.
+	servingWorkerReg := serving.NewServingWorkerRegistry()
+	var servingDriver serving.Driver
+	if k8sClientset != nil {
+		servingDriver = serving.NewK8sDriver(k8sClientset, repos.Serving)
+	} else {
+		servingDriver = serving.NewWorkerDriver(servingWorkerReg, repos.Serving, cfg.Server.Addr)
+	}
+	servingMgr := serving.New(repos.Serving, servingDriver)
+
+	// Build notebook driver: WorkerDriver (k8s notebook not yet supported).
+	notebookWorkerReg := notebook.NewNotebookWorkerRegistry()
+	nbDriver := notebook.NewWorkerDriver(notebookWorkerReg, cfg.Server.Addr)
+	nbMgr := notebook.New(repos.Notebook, nbDriver)
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
@@ -129,11 +147,14 @@ func New(cfg Config) (*Piper, error) {
 		metrics: repos.Metric,
 		queue:   q,
 		serving: servingBundle{
-			manager: servingMgr,
-			proxy:   serving.NewProxy(repos.Serving),
+			manager:        servingMgr,
+			proxy:          serving.NewProxy(repos.Serving),
+			workerRegistry: servingWorkerReg,
 		},
-		stopCtx: stopFn,
-		events:  event.NewHub(),
+		notebookManager:        nbMgr,
+		notebookWorkerRegistry: notebookWorkerReg,
+		stopCtx:                stopFn,
+		events:                 event.NewHub(),
 	}
 	if cfg.S3.Bucket != "" && cfg.S3.AccessKey != "" {
 		if s3c, err := newPiperS3Client(cfg.S3); err != nil {
@@ -150,6 +171,7 @@ func New(cfg Config) (*Piper, error) {
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)
+	p.notebookManager.SetEventPublisher(p.events)
 	p.recoverInterruptedRuns(context.Background())
 	go p.runCleanup(p.ctx)
 	go p.runScheduler(p.ctx)
@@ -541,11 +563,11 @@ func (p *Piper) deployService(ctx context.Context, yamlBytes []byte, ownerID str
 		return nil, err
 	}
 
-	// Stop existing instance so the port is free. For local mode this creates a
-	// brief downtime window; if Deploy fails we mark the service "failed" so
-	// operators can see it is down rather than showing a stale "stopped" status.
+	// Stop existing instance so the port is free. If Deploy fails we mark the
+	// service "failed" so operators can see it is down rather than showing a
+	// stale "stopped" status.
 	_ = p.serving.manager.Stop(ctx, svc.Metadata.Name)
-	if err := p.serving.manager.Deploy(ctx, svc, resolved); err != nil {
+	if err := p.serving.manager.Deploy(ctx, svc, resolved, string(yamlBytes)); err != nil {
 		_ = p.repos.Serving.SetStatus(ctx, svc.Metadata.Name, serving.StatusFailed)
 		return nil, fmt.Errorf("deploy service: %w", err)
 	}
@@ -731,14 +753,16 @@ func encodeParams(params map[string]any) string {
 }
 
 // SetServingK8sClientset builds a k8s clientset from the given kubeconfig path
-// and injects it into the serving manager. Call this after New() when the
-// kubeconfig path is only available at runtime (e.g. via CLI flag).
+// and swaps the serving manager's driver to K8sDriver. Call this after New()
+// when the kubeconfig path is only available at runtime (e.g. via CLI flag).
 func (p *Piper) SetServingK8sClientset(kubeconfig string) error {
 	cs, err := buildK8sClientset(K8sConfig{Kubeconfig: kubeconfig})
 	if err != nil {
 		return fmt.Errorf("build k8s clientset: %w", err)
 	}
-	p.serving.manager.SetK8sClientset(cs)
+	driver := serving.NewK8sDriver(cs, p.repos.Serving)
+	p.serving.manager = serving.New(p.repos.Serving, driver)
+	p.serving.manager.SetEventPublisher(p.events)
 	return nil
 }
 

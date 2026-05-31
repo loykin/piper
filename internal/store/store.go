@@ -14,6 +14,7 @@ import (
 	"github.com/piper/piper/internal/store/sqlite"
 	"github.com/piper/piper/internal/worker"
 	"github.com/piper/piper/pkg/logstore"
+	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
@@ -27,6 +28,7 @@ type Repos struct {
 	Schedule schedule.Repository
 	Worker   worker.Repository
 	Serving  serving.Repository
+	Notebook notebook.Repository
 	Log      logstore.LogStore
 	Metric   logstore.MetricStore
 
@@ -45,6 +47,7 @@ type ExternalReposConfig struct {
 	Schedule schedule.Repository
 	Worker   worker.Repository
 	Serving  serving.Repository
+	Notebook notebook.Repository
 	Log      logstore.LogStore
 	Metric   logstore.MetricStore
 	// DeleteRun handles atomic deletion of a run with all its steps, logs, and metrics.
@@ -100,6 +103,7 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			Schedule: sqlite.NewScheduleRepo(db),
 			Worker:   sqlite.NewWorkerRepo(db),
 			Serving:  sqlite.NewServingRepo(db),
+			Notebook: sqlite.NewNotebookRepo(db),
 			Log:      logstore.NewSQLite(db.DB),
 			Metric:   logstore.NewSQLite(db.DB),
 			db:       db,
@@ -113,6 +117,7 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			Schedule: postgres.NewScheduleRepo(db),
 			Worker:   postgres.NewWorkerRepo(db),
 			Serving:  postgres.NewServingRepo(db),
+			Notebook: postgres.NewNotebookRepo(db),
 			Log:      logstore.NewPostgres(db.DB),
 			Metric:   logstore.NewPostgres(db.DB),
 			db:       db,

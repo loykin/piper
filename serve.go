@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/piper/piper/pkg/event"
+	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
@@ -173,13 +174,24 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Serving domain
 	serving.NewHandler(serving.HandlerDeps{
-		Services: p.repos.Serving,
-		Deploy:   p.DeployServiceAs,
-		Stop:     p.StopService,
-		Restart:  p.RestartService,
-		Proxy:    p.serving.proxy,
-		OwnerID:  p.ownerIDFromRequest,
-		Hooks:    &piperServingHooks{p: p},
+		Services:       p.repos.Serving,
+		Deploy:         p.DeployServiceAs,
+		Stop:           p.StopService,
+		Restart:        p.RestartService,
+		UpdateStatus:   p.serving.manager.UpdateStatus,
+		Proxy:          p.serving.proxy,
+		OwnerID:        p.ownerIDFromRequest,
+		Hooks:          &piperServingHooks{p: p},
+		WorkerRegistry: p.serving.workerRegistry,
+	}).RegisterRoutes(r.Group(""))
+
+	// Notebook domain
+	notebook.NewHandler(notebook.HandlerDeps{
+		Notebooks:      p.repos.Notebook,
+		Start:          p.notebookManager.Start,
+		Stop:           p.notebookManager.Stop,
+		UpdateStatus:   p.notebookManager.UpdateStatus,
+		WorkerRegistry: p.notebookWorkerRegistry,
 	}).RegisterRoutes(r.Group(""))
 
 	// Worker polling domain (mounted only when no active backend is configured)

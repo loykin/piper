@@ -40,6 +40,10 @@ type RuntimeSpec struct {
 	Port       int      `yaml:"port"`
 	Mode       string   `yaml:"mode"`        // "local" | "k8s"
 	HealthPath string   `yaml:"health_path"` // HTTP path for readiness check (default: "/")
+	// GPUs selects GPU devices for local mode (e.g. "0", "0,1", "all", "none").
+	// Sets CUDA_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES.
+	// For k8s mode, use k8s.resources.gpu instead.
+	GPUs string `yaml:"gpus"`
 }
 
 // K8sSpec holds Kubernetes-specific deployment options.

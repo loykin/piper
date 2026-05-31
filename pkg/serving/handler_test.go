@@ -57,6 +57,9 @@ func (r *stubServingRepo) Delete(_ context.Context, name string) error {
 	delete(r.services, name)
 	return nil
 }
+func (r *stubServingRepo) ListHistory(_ context.Context) ([]*ServiceHistory, error) {
+	return nil, nil
+}
 
 func newServingRouter(deps HandlerDeps) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -69,7 +72,7 @@ func TestListServices(t *testing.T) {
 	repo := newStubServingRepo(&Service{Name: "fraud-detector", Status: StatusRunning})
 	router := newServingRouter(HandlerDeps{Services: repo})
 
-	req := httptest.NewRequest(http.MethodGet, "/services", nil)
+	req := httptest.NewRequest(http.MethodGet, "/serving", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -99,7 +102,7 @@ func TestCreateService(t *testing.T) {
 	})
 
 	body := `{"yaml":"apiVersion: piper/v1\nkind: ModelService\n"}`
-	req := httptest.NewRequest(http.MethodPost, "/services", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/serving", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -115,7 +118,7 @@ func TestCreateService(t *testing.T) {
 func TestGetServiceNotFound(t *testing.T) {
 	router := newServingRouter(HandlerDeps{Services: newStubServingRepo()})
 
-	req := httptest.NewRequest(http.MethodGet, "/services/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/serving/nonexistent", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -128,7 +131,7 @@ func TestGetServiceFound(t *testing.T) {
 	repo := newStubServingRepo(&Service{Name: "model-v1", Status: StatusRunning, Endpoint: "http://localhost:8000"})
 	router := newServingRouter(HandlerDeps{Services: repo})
 
-	req := httptest.NewRequest(http.MethodGet, "/services/model-v1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/serving/model-v1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -155,7 +158,7 @@ func TestDeleteService(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/services/old-model", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/serving/old-model", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -181,7 +184,7 @@ func TestRestartService(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/services/live-model/restart", nil)
+	req := httptest.NewRequest(http.MethodPost, "/serving/live-model/restart", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -243,7 +246,7 @@ func TestBeforeCreateService_Blocks(t *testing.T) {
 		},
 	})
 
-	rec := doServingJSON(router, http.MethodPost, "/services", `{"yaml":"apiVersion: piper/v1"}`)
+	rec := doServingJSON(router, http.MethodPost, "/serving", `{"yaml":"apiVersion: piper/v1"}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body)
 	}
@@ -263,7 +266,7 @@ func TestBeforeListServices_OwnerFilter(t *testing.T) {
 		},
 	})
 
-	rec := doServingJSON(router, http.MethodGet, "/services", "")
+	rec := doServingJSON(router, http.MethodGet, "/serving", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -284,7 +287,7 @@ func TestBeforeListServices_Error(t *testing.T) {
 		},
 	})
 
-	rec := doServingJSON(router, http.MethodGet, "/services", "")
+	rec := doServingJSON(router, http.MethodGet, "/serving", "")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
@@ -301,7 +304,7 @@ func TestBeforeGetService_BlocksGet(t *testing.T) {
 		},
 	})
 
-	rec := doServingJSON(router, http.MethodGet, "/services/model-v1", "")
+	rec := doServingJSON(router, http.MethodGet, "/serving/model-v1", "")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
@@ -318,7 +321,7 @@ func TestBeforeGetService_BlocksDelete(t *testing.T) {
 		},
 	})
 
-	rec := doServingJSON(router, http.MethodDelete, "/services/model-v1", "")
+	rec := doServingJSON(router, http.MethodDelete, "/serving/model-v1", "")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
@@ -343,7 +346,7 @@ func TestBeforeGetService_BlocksRestart(t *testing.T) {
 		},
 	})
 
-	rec := doServingJSON(router, http.MethodPost, "/services/model-v1/restart", "")
+	rec := doServingJSON(router, http.MethodPost, "/serving/model-v1/restart", "")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
@@ -365,7 +368,7 @@ func TestBeforeGetService_PassesName(t *testing.T) {
 		},
 	})
 
-	doServingJSON(router, http.MethodGet, "/services/my-model", "")
+	doServingJSON(router, http.MethodGet, "/serving/my-model", "")
 	if gotName != "my-model" {
 		t.Errorf("BeforeGetService called with %q, want my-model", gotName)
 	}

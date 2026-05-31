@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE TABLE IF NOT EXISTS service_history (
     id          SERIAL    PRIMARY KEY,
     name        TEXT      NOT NULL,
@@ -11,3 +12,6 @@ CREATE TABLE IF NOT EXISTS service_history (
     deployed_at TIMESTAMP NOT NULL DEFAULT NOW(),
     stopped_at  TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- +goose Down
+DROP TABLE IF EXISTS service_history;

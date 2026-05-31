@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import {
+  DataBodyTemplate, DataPage,
+  Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
+} from '@loykin/designkit'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   listServing, deployServing, stopServing, restartServing,
   listRuns, listArtifacts,
@@ -286,76 +291,55 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
 
         {tab === 'form' ? (
           <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">Service Name</label>
-              <input
-                className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none"
-                value={form.name}
-                onChange={e => setField('name', e.target.value)}
-                placeholder="my-model"
-              />
-            </div>
+            <DataBodyTemplate.Field label="Service Name">
+              <Input value={form.name} onChange={e => setField('name', e.target.value)} placeholder="my-model" />
+            </DataBodyTemplate.Field>
 
-            <fieldset className="space-y-3 rounded border border-border p-4">
-              <legend className="px-1 text-xs font-semibold text-muted-foreground">Model Source</legend>
+            <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Model Source">
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Pipeline</label>
-                  <select
-                    className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none"
-                    value={form.pipeline}
-                    onChange={e => setField('pipeline', e.target.value)}
-                  >
-                    <option value="">— select pipeline —</option>
-                    {pipelines.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Run</label>
-                  <select
-                    className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none disabled:opacity-50"
-                    value={form.run}
-                    onChange={e => setField('run', e.target.value)}
-                    disabled={!form.pipeline}
-                  >
-                    <option value="latest">latest</option>
-                    {pipelineRuns.map(r => (
-                      <option key={r.id} value={r.id}>{r.id.slice(0, 24)}… {r.started_at ? new Date(r.started_at).toLocaleDateString() : ''}</option>
-                    ))}
-                  </select>
-                </div>
+                <DataBodyTemplate.Field label="Pipeline">
+                  <Select value={form.pipeline} onValueChange={v => setField('pipeline', v)}>
+                    <SelectTrigger size="sm"><SelectValue placeholder="— select pipeline —" /></SelectTrigger>
+                    <SelectContent>
+                      {pipelines.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
+                <DataBodyTemplate.Field label="Run">
+                  <Select value={form.run} onValueChange={v => setField('run', v)} disabled={!form.pipeline}>
+                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="latest">latest</SelectItem>
+                      {pipelineRuns.map(r => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.id.slice(0, 20)}… {r.started_at ? new Date(r.started_at).toLocaleDateString() : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Step</label>
-                  <select
-                    className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none disabled:opacity-50"
-                    value={form.step}
-                    onChange={e => setField('step', e.target.value)}
-                    disabled={steps.length === 0}
-                  >
-                    <option value="">— select step —</option>
-                    {steps.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Artifact</label>
-                  <select
-                    className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none disabled:opacity-50"
-                    value={form.artifact}
-                    onChange={e => setField('artifact', e.target.value)}
-                    disabled={artifactNames.length === 0}
-                  >
-                    <option value="">— select artifact —</option>
-                    {artifactNames.map(a => <option key={a} value={a}>{a}</option>)}
-                  </select>
-                </div>
+                <DataBodyTemplate.Field label="Step">
+                  <Select value={form.step} onValueChange={v => setField('step', v)} disabled={steps.length === 0}>
+                    <SelectTrigger size="sm"><SelectValue placeholder="— select step —" /></SelectTrigger>
+                    <SelectContent>
+                      {steps.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
+                <DataBodyTemplate.Field label="Artifact">
+                  <Select value={form.artifact} onValueChange={v => setField('artifact', v)} disabled={artifactNames.length === 0}>
+                    <SelectTrigger size="sm"><SelectValue placeholder="— select artifact —" /></SelectTrigger>
+                    <SelectContent>
+                      {artifactNames.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
               </div>
-            </fieldset>
+            </DataBodyTemplate.Group>
 
-            <fieldset className="space-y-3 rounded border border-border p-4">
-              <legend className="px-1 text-xs font-semibold text-muted-foreground">Runtime</legend>
-
+            <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime">
               <div className="flex flex-wrap gap-1.5">
                 {Object.entries(RUNTIME_TEMPLATES).map(([key, tpl]) => (
                   <button
@@ -383,87 +367,55 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
               </div>
 
               <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Mode</label>
-                  <select
-                    className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none"
-                    value={form.runtimeMode}
-                    onChange={e => setField('runtimeMode', e.target.value)}
-                  >
-                    <option value="local">local</option>
-                    <option value="k8s">k8s</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Port</label>
-                  <input
-                    className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none"
-                    value={form.port}
-                    onChange={e => setField('port', e.target.value)}
-                    placeholder="8000"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted-foreground">Health Path</label>
-                  <input
-                    className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none"
-                    value={form.healthPath}
-                    onChange={e => setField('healthPath', e.target.value)}
-                    placeholder="/"
-                  />
-                </div>
+                <DataBodyTemplate.Field label="Mode">
+                  <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v)}>
+                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="local">local</SelectItem>
+                      <SelectItem value="k8s">k8s</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
+                <DataBodyTemplate.Field label="Port">
+                  <Input value={form.port} onChange={e => setField('port', e.target.value)} placeholder="8000" />
+                </DataBodyTemplate.Field>
+                <DataBodyTemplate.Field label="Health Path">
+                  <Input value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
+                </DataBodyTemplate.Field>
               </div>
 
               {form.runtimeMode === 'k8s' && (
                 <>
-                  <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Container Image</label>
-                    <input
-                      className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none"
-                      value={form.image}
-                      onChange={e => setField('image', e.target.value)}
-                      placeholder="registry/image:tag"
-                    />
+                  <DataBodyTemplate.Field label="Container Image">
+                    <Input value={form.image} onChange={e => setField('image', e.target.value)} placeholder="registry/image:tag" />
+                  </DataBodyTemplate.Field>
+                  <div className="grid grid-cols-3 gap-3">
+                    <DataBodyTemplate.Field label="Namespace">
+                      <Input value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
+                    </DataBodyTemplate.Field>
+                    <DataBodyTemplate.Field label="Replicas">
+                      <Input type="number" min="1" value={form.k8sReplicas} onChange={e => setField('k8sReplicas', e.target.value)} />
+                    </DataBodyTemplate.Field>
+                    <DataBodyTemplate.Field label="Image Pull Policy">
+                      <Select value={form.k8sImagePullPolicy} onValueChange={v => setField('k8sImagePullPolicy', v)}>
+                        <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Always">Always</SelectItem>
+                          <SelectItem value="IfNotPresent">IfNotPresent</SelectItem>
+                          <SelectItem value="Never">Never</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </DataBodyTemplate.Field>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">Namespace</label>
-                      <input className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none" value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">Replicas</label>
-                      <input className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none" type="number" min="1" value={form.k8sReplicas} onChange={e => setField('k8sReplicas', e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">Image Pull Policy</label>
-                      <select className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none" value={form.k8sImagePullPolicy} onChange={e => setField('k8sImagePullPolicy', e.target.value)}>
-                        <option value="Always">Always</option>
-                        <option value="IfNotPresent">IfNotPresent</option>
-                        <option value="Never">Never</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">CPU</label>
-                      <input className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none" value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">Memory</label>
-                      <input className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none" value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs text-muted-foreground">GPU</label>
-                      <input className="w-full rounded border border-border bg-background px-3 py-2 text-sm focus:outline-none" value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" />
-                    </div>
+                    <DataBodyTemplate.Field label="CPU"><Input value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" /></DataBodyTemplate.Field>
+                    <DataBodyTemplate.Field label="Memory"><Input value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" /></DataBodyTemplate.Field>
+                    <DataBodyTemplate.Field label="GPU"><Input value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" /></DataBodyTemplate.Field>
                   </div>
                 </>
               )}
 
-              <div>
-                <label className="mb-1 block text-xs text-muted-foreground">
-                  Command <span className="text-muted-foreground/50">(one argument per line)</span>
-                </label>
+              <DataBodyTemplate.Field label="Command" description="One argument per line. $PIPER_MODEL_DIR points to the artifact directory.">
                 <textarea
                   className="w-full resize-none rounded border border-border bg-background px-3 py-2 font-mono text-sm focus:outline-none"
                   rows={4}
@@ -471,11 +423,8 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
                   onChange={e => setField('command', e.target.value)}
                   spellCheck={false}
                 />
-                <p className="mt-0.5 text-xs text-muted-foreground/60">
-                  <code className="text-primary">$PIPER_MODEL_DIR</code> points to the artifact directory
-                </p>
-              </div>
-            </fieldset>
+              </DataBodyTemplate.Field>
+            </DataBodyTemplate.Group>
           </div>
         ) : (
           <textarea
@@ -490,14 +439,10 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
 
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onClose}
-            className="rounded border border-border px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground">
-            Cancel
-          </button>
-          <button type="button" onClick={handleDeploy} disabled={deploying}
-            className="rounded bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={handleDeploy} disabled={deploying}>
             {deploying ? 'Deploying…' : 'Deploy'}
-          </button>
+          </Button>
         </div>
       </div>
     </DataPage.Group>

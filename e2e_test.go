@@ -375,28 +375,28 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *httptest.Serv
 	return p, srv
 }
 
-// postService submits a ModelService YAML to POST /services.
+// postService submits a ModelService YAML to POST /serving.
 func postService(t *testing.T, serverURL, yaml string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": yaml})
-	resp, err := http.Post(serverURL+"/services", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(serverURL+"/serving", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("POST /services status = %d: %s", resp.StatusCode, b)
+		t.Fatalf("POST /serving status = %d: %s", resp.StatusCode, b)
 	}
 }
 
-// waitServiceRunID polls GET /services/{name} until the returned run_id matches
+// waitServiceRunID polls GET /serving/{name} until the returned run_id matches
 // wantRunID or the timeout expires.
 func waitServiceRunID(t *testing.T, serverURL, serviceName, wantRunID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/services/" + serviceName)
+		resp, err := http.Get(serverURL + "/serving/" + serviceName)
 		if err != nil {
 			time.Sleep(200 * time.Millisecond)
 			continue
@@ -446,27 +446,35 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 	// Shared output directory for server and worker.
 	outputDir := t.TempDir()
 
-	// Fake "service process": a lightweight HTTP server that accepts health checks,
-	// so that serving.deployLocal's waitReady() call returns immediately.
-	// The actual deployed command is ["sleep", "60"] which doesn't use the port,
-	// but waitReady connects to this fake server instead.
-	fakeSvcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(fakeSvcSrv.Close)
-	svcPort := extractPort(fakeSvcSrv.URL)
-	if svcPort == "" {
-		t.Fatal("could not extract port from fake service URL:", fakeSvcSrv.URL)
-	}
-
 	piperInst, srv := newE2EServerWithDir(t, outputDir)
-
-	// Stop the service at the end of the test so that the deployLocal-spawned
-	// process (sleep 60) is killed before Go's test runner closes I/O.
-	// This prevents the "Test I/O incomplete" WaitDelay warning.
 	t.Cleanup(func() {
 		_ = piperInst.StopService(context.Background(), serviceName)
 	})
+
+	// Fake serving worker: accepts deploy/stop requests so the WorkerDriver can succeed.
+	fakeWorkerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(fakeWorkerSrv.Close)
+
+	// Register the fake worker with the piper server.
+	workerPayload, _ := json.Marshal(map[string]any{
+		"id":   "fake-serving-worker",
+		"addr": fakeWorkerSrv.URL,
+	})
+	resp, err := http.Post(srv.URL+"/api/serving-workers", "application/json", bytes.NewReader(workerPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("register fake serving worker status = %d", resp.StatusCode)
+	}
+
+	svcPort := extractPort(fakeWorkerSrv.URL)
+	if svcPort == "" {
+		t.Fatal("could not extract port from fake worker URL:", fakeWorkerSrv.URL)
+	}
 
 	// Worker shares the same outputDir as the server.
 	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
@@ -492,7 +500,7 @@ spec:
 
 	// Service YAML pointing at an artifact from our pipeline.
 	// The initial deploy uses run: latest; since no run exists yet for this pipeline,
-	// we bootstrap it with from_uri so the first POST /services succeeds without
+	// we bootstrap it with from_uri so the first POST /serving succeeds without
 	// needing a pre-existing run. Subsequent auto-deploys will use from_artifact.
 	serviceYAML := fmt.Sprintf(`
 apiVersion: v1

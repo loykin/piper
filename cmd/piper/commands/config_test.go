@@ -20,6 +20,8 @@ server:
 }
 
 func TestStrictParseConfigFile_ValidFull(t *testing.T) {
+	// This test must include every top-level section defined in configFile.
+	// When adding a new section to configFile, add a sample entry here too.
 	path := writeTempConfig(t, `
 run:
   output_dir: /tmp/piper
@@ -58,9 +60,48 @@ schedule:
   misfire_grace_period: 1m
 log:
   format: json
+notebook_worker:
+  notebooks_root: /data/notebooks
+  port_range: "8888-9900"
+notebook_k8s:
+  namespace: ml-notebooks
+  worker_image: jupyter/minimal-notebook:latest
+  storage_size: 10Gi
 `)
 	if err := StrictParseConfigFile(path); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStrictParseConfigFile_NotebookK8s(t *testing.T) {
+	path := writeTempConfig(t, `
+run:
+  output_dir: /tmp/piper
+notebook_k8s:
+  namespace: ml-notebooks
+  worker_image: jupyter/minimal-notebook:latest
+  storage_class: standard
+  storage_size: 10Gi
+  pod_defaults:
+    resources:
+      cpu: "2"
+      memory: 4Gi
+    node_selector:
+      accelerator: gpu
+`)
+	if err := StrictParseConfigFile(path); err != nil {
+		t.Fatalf("unexpected error for notebook_k8s config: %v", err)
+	}
+}
+
+func TestStrictParseConfigFile_NotebookWorker(t *testing.T) {
+	path := writeTempConfig(t, `
+notebook_worker:
+  notebooks_root: /data/notebooks
+  port_range: "8888-9900"
+`)
+	if err := StrictParseConfigFile(path); err != nil {
+		t.Fatalf("unexpected error for notebook_worker config: %v", err)
 	}
 }
 

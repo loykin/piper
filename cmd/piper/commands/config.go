@@ -15,14 +15,16 @@ import (
 // configFile mirrors the piper.yaml file structure exactly.
 // Parsed with KnownFields(true) on startup to catch unknown or misspelled keys.
 type configFile struct {
-	Run       runSection       `yaml:"run"       mapstructure:"run"`
-	Source    sourceSection    `yaml:"source"    mapstructure:"source"`
-	Server    serverSection    `yaml:"server"    mapstructure:"server"`
-	K8s       k8sSection       `yaml:"k8s"       mapstructure:"k8s"`
-	Retention retentionSection `yaml:"retention" mapstructure:"retention"`
-	Schedule  scheduleSection  `yaml:"schedule"  mapstructure:"schedule"`
-	Log       logSection       `yaml:"log"       mapstructure:"log"`
-	DB        dbSection        `yaml:"db"        mapstructure:"db"`
+	Run            runSection            `yaml:"run"             mapstructure:"run"`
+	Source         sourceSection         `yaml:"source"          mapstructure:"source"`
+	Server         serverSection         `yaml:"server"          mapstructure:"server"`
+	K8s            k8sSection            `yaml:"k8s"             mapstructure:"k8s"`
+	Retention      retentionSection      `yaml:"retention"       mapstructure:"retention"`
+	Schedule       scheduleSection       `yaml:"schedule"        mapstructure:"schedule"`
+	Log            logSection            `yaml:"log"             mapstructure:"log"`
+	DB             dbSection             `yaml:"db"              mapstructure:"db"`
+	NotebookWorker notebookWorkerSection `yaml:"notebook_worker" mapstructure:"notebook_worker"`
+	NotebookK8s    notebookK8sSection    `yaml:"notebook_k8s"    mapstructure:"notebook_k8s"`
 }
 
 type runSection struct {
@@ -91,6 +93,40 @@ type logSection struct {
 type dbSection struct {
 	Driver string `yaml:"driver" mapstructure:"driver"`
 	DSN    string `yaml:"dsn"    mapstructure:"dsn"`
+}
+
+type notebookWorkerSection struct {
+	NotebooksRoot string `yaml:"notebooks_root" mapstructure:"notebooks_root"`
+	PortRange     string `yaml:"port_range"     mapstructure:"port_range"`
+}
+
+type notebookPodDefaultsSection struct {
+	Resources    resourcesSection  `yaml:"resources"     mapstructure:"resources"`
+	NodeSelector map[string]string `yaml:"node_selector" mapstructure:"node_selector"`
+	Tolerations  []tolerationItem  `yaml:"tolerations"   mapstructure:"tolerations"`
+	Annotations  map[string]string `yaml:"annotations"   mapstructure:"annotations"`
+}
+
+type resourcesSection struct {
+	CPU    string `yaml:"cpu"    mapstructure:"cpu"`
+	Memory string `yaml:"memory" mapstructure:"memory"`
+	GPU    string `yaml:"gpu"    mapstructure:"gpu"`
+}
+
+type tolerationItem struct {
+	Key               string `yaml:"key,omitempty"                mapstructure:"key"`
+	Operator          string `yaml:"operator,omitempty"           mapstructure:"operator"`
+	Value             string `yaml:"value,omitempty"              mapstructure:"value"`
+	Effect            string `yaml:"effect,omitempty"             mapstructure:"effect"`
+	TolerationSeconds *int64 `yaml:"toleration_seconds,omitempty" mapstructure:"toleration_seconds"`
+}
+
+type notebookK8sSection struct {
+	Namespace    string                     `yaml:"namespace"     mapstructure:"namespace"`
+	WorkerImage  string                     `yaml:"worker_image"  mapstructure:"worker_image"`
+	StorageClass string                     `yaml:"storage_class" mapstructure:"storage_class"`
+	StorageSize  string                     `yaml:"storage_size"  mapstructure:"storage_size"`
+	PodDefaults  notebookPodDefaultsSection `yaml:"pod_defaults"  mapstructure:"pod_defaults"`
 }
 
 // StrictParseConfigFile parses the YAML file at path with KnownFields(true)
@@ -164,6 +200,16 @@ func (c *configFile) toConfig() piper.Config {
 		},
 		DBDriver: c.DB.Driver,
 		DBDSN:    c.DB.DSN,
+		NotebookWorker: piper.NotebookWorkerConfig{
+			NotebooksRoot: c.NotebookWorker.NotebooksRoot,
+			PortRange:     c.NotebookWorker.PortRange,
+		},
+		NotebookK8s: piper.NotebookK8sConfig{
+			Namespace:    c.NotebookK8s.Namespace,
+			WorkerImage:  c.NotebookK8s.WorkerImage,
+			StorageClass: c.NotebookK8s.StorageClass,
+			StorageSize:  c.NotebookK8s.StorageSize,
+		},
 	}
 }
 

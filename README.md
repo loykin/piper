@@ -13,10 +13,12 @@ environments: the worker runs inside the cluster and opens an outbound WebSocket
 tunnel to the Piper server, so the server does not need kubeconfig access or
 inbound network access to the cluster.
 
-## Why Piper
+## Intended Use
 
-Most small and mid-sized ML teams do not need a full platform. They need a
-reliable way to:
+Piper is built for teams that need a small control plane for ML jobs,
+notebooks, and model services without operating a full ML platform.
+
+It provides a reliable way to:
 
 - run DAG-based training and batch jobs
 - route work to a local process, GPU worker, or K8s cluster
@@ -26,10 +28,11 @@ reliable way to:
 - deploy a trained artifact as a model service
 - operate across private networks without putting every kubeconfig on one server
 
-Piper keeps those concerns in one small control plane instead of requiring a
-stack of workflow, artifact, notebook, serving, and cluster-access tools.
+Piper keeps these workflows in one process instead of requiring separate tools
+for workflow execution, artifact passing, notebooks, serving, and cluster
+access.
 
-## What Piper Is Not
+## Boundaries
 
 Piper is intentionally not a full Kubeflow replacement. It does not try to be a
 feature store, distributed training runtime, Kubernetes scheduler, or heavyweight

@@ -53,6 +53,10 @@ func TestHubSendRPCRoundTrip(t *testing.T) {
 		}
 	}()
 
+	if err := hub.WaitConnected(ctx, "agent-1"); err != nil {
+		t.Fatalf("WaitConnected: %v", err)
+	}
+
 	var result struct {
 		Pong string `json:"pong"`
 	}

@@ -29,10 +29,36 @@ type Frame struct {
 type Hub struct {
 	mu      sync.RWMutex
 	tunnels map[string]*AgentTunnel
+
+	subMu sync.Mutex
+	subs  map[string][]chan struct{}
 }
 
 func NewHub() *Hub {
-	return &Hub{tunnels: make(map[string]*AgentTunnel)}
+	return &Hub{
+		tunnels: make(map[string]*AgentTunnel),
+		subs:    make(map[string][]chan struct{}),
+	}
+}
+
+// WaitConnected blocks until the named agent tunnel is registered or ctx expires.
+func (h *Hub) WaitConnected(ctx context.Context, agentID string) error {
+	h.mu.RLock()
+	ok := h.tunnels[agentID] != nil
+	h.mu.RUnlock()
+	if ok {
+		return nil
+	}
+	ch := make(chan struct{})
+	h.subMu.Lock()
+	h.subs[agentID] = append(h.subs[agentID], ch)
+	h.subMu.Unlock()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("agent tunnel %q is not connected: %w", agentID, ctx.Err())
+	case <-ch:
+		return nil
+	}
 }
 
 func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, agentID string) error {
@@ -76,6 +102,13 @@ func (h *Hub) register(t *AgentTunnel) {
 	h.mu.Unlock()
 	if old != nil {
 		old.close(websocket.StatusPolicyViolation, "replaced by newer tunnel")
+	}
+	h.subMu.Lock()
+	chans := h.subs[t.agentID]
+	delete(h.subs, t.agentID)
+	h.subMu.Unlock()
+	for _, ch := range chans {
+		close(ch)
 	}
 }
 

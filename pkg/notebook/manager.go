@@ -110,6 +110,12 @@ func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, sp
 		if fresh.WorkDir != "" {
 			nb.WorkDir = fresh.WorkDir
 		}
+		if fresh.Endpoint != "" {
+			nb.Endpoint = fresh.Endpoint
+		}
+		if fresh.Image != "" {
+			nb.Image = fresh.Image
+		}
 		// Keep status=starting; worker callback will set it to running/failed.
 		_ = m.repo.Update(ctx, nb)
 	}
@@ -168,6 +174,12 @@ func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec,
 			}
 			if fresh.WorkDir != "" {
 				nb.WorkDir = fresh.WorkDir
+			}
+			if fresh.Endpoint != "" {
+				nb.Endpoint = fresh.Endpoint
+			}
+			if fresh.Image != "" {
+				nb.Image = fresh.Image
 			}
 			_ = m.repo.Update(bgCtx, nb)
 		}

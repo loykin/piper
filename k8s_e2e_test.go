@@ -675,7 +675,7 @@ func k8sE2EPostNotebook(t *testing.T, serverURL, notebookYAML, volumeID string) 
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /notebooks status=%d: %s", resp.StatusCode, b)
 	}

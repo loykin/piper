@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 
 	piper "github.com/piper/piper"
-	"github.com/piper/piper/pkg/notebookworker"
-	"github.com/piper/piper/pkg/servingworker"
 	"github.com/piper/piper/pkg/source"
-	"github.com/piper/piper/pkg/worker"
+	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
+	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
+	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
@@ -63,7 +63,7 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 				return p.Serve(ctx, piper.ServeOption{Addr: addr})
 			}
 
-			// Embedded local worker: same pkg/worker.Worker, just pointed at localhost.
+			// Embedded local worker: same pipeline worker, just pointed at localhost.
 			// Worker registration may fail on first attempt (server not yet listening) —
 			// the heartbeat loop handles re-registration automatically.
 			masterURL := localMasterURL(addr)

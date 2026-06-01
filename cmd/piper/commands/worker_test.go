@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/piper/piper/pkg/source"
-	"github.com/piper/piper/pkg/worker"
+	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 )
 
 func TestWorkerConfigFromSourcePassesArtifactAndGitConfig(t *testing.T) {

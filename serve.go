@@ -22,7 +22,7 @@ import (
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/ui"
-	"github.com/piper/piper/pkg/worker"
+	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 )
 
 const maxRequestBodyBytes int64 = 1 << 20

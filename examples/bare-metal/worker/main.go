@@ -15,7 +15,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/piper/piper/pkg/worker"
+	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 )
 
 func main() {

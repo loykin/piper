@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/piper/piper/pkg/servingworker"
+	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
 )
 
 func newServingWorkerCmd() *cobra.Command {

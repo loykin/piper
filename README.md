@@ -1,15 +1,15 @@
 # piper
 
-Piper is a single-binary, agent-based runner for ML jobs, notebooks, and model
+Piper is a single-binary, worker-based runner for ML jobs, notebooks, and model
 services.
 
 It is for teams that need more than cron, shell scripts, or CI jobs, but do not
 want to operate a full ML platform such as Kubeflow. Piper runs as a standalone
 server or embedded Go library, and can dispatch work to local processes,
-bare-metal GPU workers, direct Kubernetes Jobs, or cluster-local K8s agents.
+bare-metal GPU workers, direct Kubernetes Jobs, or cluster-local K8s workers.
 
-The K8s agent mode is designed for on-prem, private-network, and air-gapped
-environments: the agent runs inside the cluster and opens an outbound WebSocket
+The K8s worker mode is designed for on-prem, private-network, and air-gapped
+environments: the worker runs inside the cluster and opens an outbound WebSocket
 tunnel to the Piper server, so the server does not need kubeconfig access or
 inbound network access to the cluster.
 
@@ -41,13 +41,13 @@ as the entire ML platform.
 ## Features
 
 - **DAG-based execution** — declare step dependencies with `depends_on`, automatic parallelization
-- **Four execution modes** — local (in-process) / bare-metal worker / Kubernetes Jobs / K8s Agent
+- **Four execution modes** — local (in-process) / bare-metal worker / Kubernetes Jobs / K8s Worker
 - **Single binary** — UI included, works out of the box with `go install`
 - **Embeddable library** — mount into your existing Go app and HTTP router
 - **S3 artifact passing** — share files between steps via any S3-compatible store (AWS S3, SeaweedFS, etc.)
 - **Real-time logs** — SSE streaming, visible in the web UI
 - **Notebook and model serving workflows** — run JupyterLab servers and deploy model artifacts
-- **Private-network friendly** — K8s agents connect outbound to the server for isolated clusters
+- **Private-network friendly** — K8s workers connect outbound to the server for isolated clusters
 
 ## Quick Start
 
@@ -78,6 +78,13 @@ metadata:
   name: my-pipeline
 
 spec:
+  # Optional: pin the whole run to one worker or K8s cluster.
+  # Step-level placement is intentionally unsupported.
+  placement:
+    worker: ""                 # bare-metal worker ID/hostname
+    cluster: ""                # K8s worker cluster name
+    namespace: ""              # K8s namespace for worker-created Jobs
+
   defaults:
     image: alpine:3.20        # default container image for K8s mode
 
@@ -141,13 +148,13 @@ In-process mode works with either backend.
 
 ## Execution Modes
 
-| | Local | Bare-metal Worker | Kubernetes Jobs | K8s Agent |
+| | Local | Bare-metal Worker | Kubernetes Jobs | K8s Worker |
 |---|---|---|---|---|
-| **Runs on** | single process | separate worker processes | K8s Jobs (one Pod per step) | K8s Jobs via cluster agent |
-| **Task delivery** | direct call | HTTP polling `/api/tasks/next` | K8s Job created per step | agent RPC over WebSocket tunnel |
+| **Runs on** | single process | separate worker processes | K8s Jobs (one Pod per step) | K8s Jobs via cluster worker |
+| **Task delivery** | direct call | HTTP polling `/api/tasks/next` | K8s Job created per step | worker RPC over WebSocket tunnel |
 | **Artifact storage** | local filesystem | shared filesystem or S3 | S3 required | S3 required |
-| **Cancellation** | context cancel | SSE event | `kubectl delete job` | agent RPC |
-| **Multi-cluster** | — | — | single cluster only | yes (one agent per cluster) |
+| **Cancellation** | context cancel | SSE event | `kubectl delete job` | worker RPC |
+| **Multi-cluster** | — | — | single cluster only | yes (one worker per cluster) |
 | **Best for** | development, libraries | on-prem GPU clusters | single-cluster cloud | multi-cluster, isolated networks |
 
 ### 1. Local (in-process)
@@ -173,6 +180,10 @@ piper worker --master=http://localhost:8080 --label=gpu --concurrency=4
 
 Workers register with the master on startup and send a heartbeat every 10 seconds.
 Active workers can be listed via `GET /api/workers`.
+
+To pin an entire pipeline run to one bare-metal worker, set `spec.placement.worker`.
+The worker can be addressed by worker ID or hostname. `runner.label` is still supported
+for compatibility, but `spec.placement` is the preferred run-level placement model.
 
 ### 3. Kubernetes Jobs (direct)
 
@@ -201,14 +212,14 @@ piper server --config .piper.yaml
 > and state live in the Piper server, not in K8s. Piper runs identically in local and bare-metal
 > modes without any K8s dependency.
 
-### 4. K8s Agent
+### 4. K8s Worker
 
-A lightweight `piper k8s-agent` process runs **inside the cluster** and connects to the piper master
+A lightweight `piper k8s-worker` process runs **inside the cluster** and connects to the piper master
 over an outbound WebSocket tunnel. The master never needs inbound access to the cluster — which makes
 this the right choice for isolated networks, firewall-restricted environments, or multi-cluster setups.
 
 ```
-piper-server  ←──── WebSocket tunnel ────  piper k8s-agent (in-cluster)
+piper-server  ←──── WebSocket tunnel ────  piper k8s-worker (in-cluster)
                                                     │
                                              K8s API server
                                         (Jobs / StatefulSets / PVCs)
@@ -219,19 +230,25 @@ piper-server  ←──── WebSocket tunnel ────  piper k8s-agent (in
 ```yaml
 # .piper.yaml
 k8s:
-  agent: true          # pipeline steps routed to agent
+  worker: true          # pipeline steps routed to worker
 
 notebook_k8s:
-  agent: true          # notebook servers routed to agent
+  worker: true          # notebook servers routed to worker
 
 serving:
-  agent: true          # model services routed to agent
+  worker: true          # model services routed to worker
 ```
 
-**Deploy the agent in the cluster:**
+When `worker: true` is enabled, the server still uses the same workload router for
+bare-metal and K8s targets. Bare-metal workers keep their existing direct HTTP
+transport; K8s workers use outbound WebSocket RPC. The user-facing placement model is
+the same: choose a worker or cluster, and Piper selects a worker with the required
+capability.
+
+**Deploy the worker in the cluster:**
 
 ```bash
-piper k8s-agent \
+piper k8s-worker \
   --master  http://piper-server:8080 \
   --cluster my-cluster \
   --in-cluster \
@@ -239,7 +256,7 @@ piper k8s-agent \
   --notebook-namespace  piper-notebooks \
   --serving-namespace   piper-serving \
   --notebook-image      jupyter/scipy-notebook:latest \
-  --pipeline-agent-image piper/piper:latest \
+  --pipeline-worker-image piper/piper:latest \
   --storage-class       standard \
   --storage-size        20Gi \
   --s3-endpoint         minio:9000 \
@@ -254,24 +271,24 @@ Or as a Kubernetes Deployment (recommended):
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: piper-k8s-agent
+  name: piper-k8s-worker
   namespace: piper-system
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: piper-k8s-agent
+      app: piper-k8s-worker
   template:
     metadata:
       labels:
-        app: piper-k8s-agent
+        app: piper-k8s-worker
     spec:
-      serviceAccountName: piper-k8s-agent   # needs Job/StatefulSet/PVC permissions
+      serviceAccountName: piper-k8s-worker   # needs Job/StatefulSet/PVC permissions
       containers:
-      - name: agent
+      - name: worker
         image: piper/piper:latest
         args:
-        - k8s-agent
+        - k8s-worker
         - --master=http://piper-server.piper-system.svc.cluster.local:8080
         - --cluster=production
         - --in-cluster
@@ -279,7 +296,7 @@ spec:
         - --notebook-namespace=piper-notebooks
         - --serving-namespace=piper-serving
         - --notebook-image=jupyter/scipy-notebook:latest
-        - --pipeline-agent-image=piper/piper:latest
+        - --pipeline-worker-image=piper/piper:latest
         - --storage-class=standard
         env:
         - name: S3_ENDPOINT
@@ -289,7 +306,8 @@ spec:
               key: endpoint
 ```
 
-For **multi-cluster**, deploy one `piper k8s-agent` per cluster with a different `--cluster` name.
+For **multi-cluster**, deploy one `piper k8s-worker` per cluster with a different `--cluster` name.
+Pipeline placement is run-level: one pipeline run executes on one selected worker or cluster.
 
 ## Worker Registration API
 
@@ -380,7 +398,7 @@ runtime:
 
 ### Serving Worker (bare-metal local mode)
 
-`mode: local` deploys the serving process on a **serving worker** agent — a separate process that runs on the bare-metal node where the model should be served.
+`mode: local` deploys the serving process on a **serving worker** — a separate process that runs on the bare-metal node where the model should be served.
 
 **Requirements**
 - The runtime binary (`tritonserver`, `python`, etc.) must be installed and in `PATH` on the worker node.
@@ -408,6 +426,10 @@ spec:
     command: [...]
     port: 8000
 ```
+
+If `serving.worker: true` is set, Piper uses the unified worker router. A bare-metal
+serving worker is selected by `runtime.worker`; a K8s worker is selected by cluster
+placement/config and receives the request over the WebSocket tunnel.
 
 **TLS**
 
@@ -495,6 +517,11 @@ piper notebook-worker \
 piper server --local
 ```
 
+Bare-metal notebook workers are mirrored into the unified agent registry. If
+`notebook_k8s.worker: true` is enabled and the selected notebook worker is bare-metal,
+Piper uses the existing notebook worker HTTP protocol; if it is a K8s worker, Piper
+uses tunnel RPC.
+
 ### Mode 2: Kubernetes (direct)
 
 The piper server creates StatefulSets and PVCs directly via the Kubernetes API.
@@ -522,18 +549,18 @@ notebook_k8s:
       iam.amazonaws.com/role: ml-notebook-role
 ```
 
-### Mode 3: K8s Agent
+### Mode 3: K8s Worker
 
-The notebook lifecycle is managed by a `piper k8s-agent` running inside the cluster.
+The notebook lifecycle is managed by a `piper k8s-worker` running inside the cluster.
 Use this when the piper server cannot reach the cluster API server directly (firewall, VPN, multi-cluster).
 
 ```yaml
 # .piper.yaml
 notebook_k8s:
-  agent: true
+  worker: true
 ```
 
-Then deploy `piper k8s-agent` as described in the [K8s Agent](#4-k8s-agent) section above.
+Then deploy `piper k8s-worker` as described in the [K8s Worker](#4-k8s-worker) section above.
 
 ### Notebook Server YAML
 
@@ -627,7 +654,7 @@ source:
 
 serving:
   model_dir: ./piper-models    # local artifact download path
-  agent: false                 # set true to route ModelServices to k8s-agent
+  worker: false                 # set true to route ModelServices through the worker router
 
 # Bare-metal notebook worker defaults
 notebook_worker:
@@ -636,7 +663,7 @@ notebook_worker:
 
 # Kubernetes notebook mode (direct API access)
 notebook_k8s:
-  agent: false                 # set true to route to k8s-agent instead
+  worker: false                 # set true to route notebooks through the worker router
   worker_image: jupyter/scipy-notebook:latest
   namespace: piper-notebooks
   storage_class: standard
@@ -652,7 +679,7 @@ notebook_k8s:
 
 # Kubernetes pipeline mode (direct API access)
 k8s:
-  agent: false                      # set true to route pipeline steps to k8s-agent
+  worker: false                      # set true to route pipeline steps through k8s-worker
   agent_image: piper/piper:latest
   agent_image_pull_policy: Always   # Always | IfNotPresent | Never (default: Always)
   namespace: piper-jobs
@@ -673,7 +700,7 @@ piper parse <file.yaml>                          validate YAML without running
 piper worker --master=<url>                      start a pipeline worker (bare-metal)
 piper serving-worker --master=<url>              start a serving worker (bare-metal ModelService)
 piper notebook-worker --master=<url>             start a notebook worker (bare-metal JupyterLab)
-piper k8s-agent --master=<url> --cluster=<name>  start a cluster-local K8s agent (pipelines + notebooks + serving)
+piper k8s-worker --master=<url> --cluster=<name>  start a cluster-local K8s worker (pipelines + notebooks + serving)
 piper agent exec --master=<url> ...              execute a step inside a K8s Pod (called automatically)
 ```
 
@@ -693,13 +720,13 @@ docker run -p 8080:8080 piper/piper server
 kubectl run piper --image=piper/piper:latest -- serve --config /etc/piper/.piper.yaml
 ```
 
-The same image is used as both the server, the K8s Job init container, and the K8s agent:
+The same image is used as both the server, the K8s Job init container, and the K8s worker:
 
 ```
 server:         piper server --config ...
 init container: cp /piper /piper-tools/piper
 step container: /piper-tools/piper agent exec ...
-k8s agent:      piper k8s-agent --master=... --cluster=...
+k8s worker:      piper k8s-worker --master=... --cluster=...
 ```
 
 ## Building
@@ -723,23 +750,31 @@ make docker
 # Tests
 make test                # unit tests
 make test-e2e            # in-process e2e (no external infra)
+make test-k8s-e2e        # real K8s e2e, including k8s-worker mode
 make test-integration    # requires a running Kubernetes cluster
 ```
 
 ## Project Layout
 
 ```
-cmd/piper/          CLI entry point and cobra commands
-piper.go, config.go library entry point — import "github.com/piper/piper"
-pkg/pipeline/       YAML parsing, DAG, local runner
-pkg/runner/         shared execution logic (S3 download → exec → upload → report)
-pkg/worker/         bare-metal worker (poll, register, heartbeat)
-pkg/k8s/            Kubernetes Job launcher (direct API, ExecutionBackend implementation)
-pkg/k8sagent/       cluster-local K8s agent (outbound WebSocket tunnel to master)
-pkg/executor/       step executors (command, python, notebook)
-pkg/serving/        ModelService lifecycle (deploy, stop, restart, proxy)
-pkg/notebook/       NotebookServer lifecycle (create, stop, restart, delete)
-internal/agent/     agent registry and workload router (server-side)
+cmd/piper/             CLI entry point and cobra commands
+piper.go, config.go    library entry point, import "github.com/piper/piper"
+pkg/pipeline/          YAML parsing, DAG, local runner
+pkg/runner/            shared execution logic (S3 download, exec, upload, report)
+pkg/dispatch/notebook/ master-side notebook dispatch drivers (worker, K8s, RPC)
+pkg/dispatch/serving/  master-side serving dispatch drivers (worker, K8s, RPC)
+pkg/workers/baremetal/pipeline/  bare-metal pipeline worker (poll, register, heartbeat)
+pkg/workers/baremetal/notebook/  bare-metal notebook worker
+pkg/workers/baremetal/serving/   bare-metal serving worker
+pkg/workers/k8s/                 cluster-local K8s worker coordinator (registration, tunnel, RPC)
+pkg/workers/k8s/pipeline/        K8s pipeline worker implementation
+pkg/workers/k8s/notebook/        K8s notebook worker implementation
+pkg/workers/k8s/serving/         K8s serving worker implementation
+pkg/k8s/               Kubernetes Job launcher (direct API, ExecutionBackend implementation)
+pkg/executor/          step executors (command, python, notebook)
+pkg/serving/           ModelService lifecycle (deploy, stop, restart, proxy)
+pkg/notebook/          NotebookServer lifecycle (create, stop, restart, delete)
+internal/agent/        server-side registry, routing, and RPC target model
 internal/tunnel/    WebSocket reverse tunnel hub (server-side)
 internal/store/     state persistence (SQLite / PostgreSQL)
 pkg/ui/             embedded React SPA

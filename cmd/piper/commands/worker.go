@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/piper/piper/pkg/source"
-	"github.com/piper/piper/pkg/worker"
+	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

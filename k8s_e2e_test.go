@@ -177,9 +177,9 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 	}
 }
 
-// TestK8sE2E_AgentModeWorkloads verifies the outbound k8s-agent path for the
+// TestK8sE2E_WorkerModeWorkloads verifies the outbound k8s-worker path for the
 // three K8s-backed workload families: pipeline, serving, and notebook.
-func TestK8sE2E_AgentModeWorkloads(t *testing.T) {
+func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
 	requireKubectlCluster(t)
 
 	piperImage := os.Getenv("PIPER_K8S_E2E_IMAGE")
@@ -204,7 +204,7 @@ func TestK8sE2E_AgentModeWorkloads(t *testing.T) {
 
 	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-agent", "--timeout=90s")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -225,7 +225,7 @@ func TestK8sE2E_AgentModeWorkloads(t *testing.T) {
 
 	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
 metadata:
-  name: k8s-agent-e2e
+  name: k8s-worker-e2e
 spec:
   placement:
     cluster: agent-e2e
@@ -235,21 +235,21 @@ spec:
   steps:
     - name: smoke
       run:
-        command: ["sh", "-c", "echo k8s-agent-e2e-ok"]
+        command: ["sh", "-c", "echo k8s-worker-e2e-ok"]
 `, ns))
 	if !waitK8sE2ERunStatus(t, serverURL, runID, "success", 2*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("agent-mode run %s did not reach success", runID)
+		t.Fatalf("worker-mode run %s did not reach success", runID)
 	}
-	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper", "--no-headers"); !strings.Contains(out, "k8s-agent-e2e") {
-		t.Fatalf("expected agent-created pipeline Job, got:\n%s", out)
+	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper", "--no-headers"); !strings.Contains(out, "k8s-worker-e2e") {
+		t.Fatalf("expected worker-created pipeline Job, got:\n%s", out)
 	}
 
 	k8sE2EPostService(t, serverURL, `
 apiVersion: piper/v1
 kind: ModelService
 metadata:
-  name: agent-serving
+  name: worker-serving
 spec:
   model:
     from_uri: s3://piper-artifacts/e2e-model
@@ -258,21 +258,21 @@ spec:
     command: ["sh", "-c", "sleep 3600"]
     port: 8080
 `)
-	if out := kubectl(t, "-n", ns, "get", "deploy,svc", "agent-serving", "--no-headers"); !strings.Contains(out, "agent-serving") {
+	if out := kubectl(t, "-n", ns, "get", "deploy,svc", "worker-serving", "--no-headers"); !strings.Contains(out, "worker-serving") {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("expected agent-created serving Deployment/Service, got:\n%s", out)
+		t.Fatalf("expected worker-created serving Deployment/Service, got:\n%s", out)
 	}
 
-	const nbName = "agent-notebook"
+	const nbName = "worker-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  image: %s\n  storage_size: 1Gi\n", nbName, nbImage)
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 8*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("agent-mode notebook %s did not reach running", nbName)
+		t.Fatalf("worker-mode notebook %s did not reach running", nbName)
 	}
-	if out := kubectl(t, "-n", ns, "get", "statefulset,svc,pvc", "--no-headers"); !strings.Contains(out, "piper-nb-agent-notebook") {
+	if out := kubectl(t, "-n", ns, "get", "statefulset,svc,pvc", "--no-headers"); !strings.Contains(out, "piper-nb-worker-notebook") {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("expected agent-created notebook resources, got:\n%s", out)
+		t.Fatalf("expected worker-created notebook resources, got:\n%s", out)
 	}
 }
 
@@ -469,13 +469,13 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: piper-k8s-agent
+  name: piper-k8s-worker
   namespace: %[1]s
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: piper-k8s-agent
+  name: piper-k8s-worker
   namespace: %[1]s
 rules:
   - apiGroups: ["apps"]
@@ -494,16 +494,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: piper-k8s-agent
+  name: piper-k8s-worker
   namespace: %[1]s
 subjects:
   - kind: ServiceAccount
-    name: piper-k8s-agent
+    name: piper-k8s-worker
     namespace: %[1]s
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: piper-k8s-agent
+  name: piper-k8s-worker
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -525,7 +525,7 @@ data:
         bucket: piper-artifacts
         use_ssl: false
     k8s:
-      agent: true
+      worker: true
       agent_image: %[2]q
       agent_image_pull_policy: IfNotPresent
       namespace: %[1]s
@@ -534,9 +534,9 @@ data:
       default_image: alpine:3.20
       ttl_after_finished: 60
     serving:
-      agent: true
+      worker: true
     notebook_k8s:
-      agent: true
+      worker: true
       namespace: %[1]s
       worker_image: %[3]q
       storage_size: 1Gi
@@ -575,25 +575,25 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: piper-k8s-agent
+  name: piper-k8s-worker
   namespace: %[1]s
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: piper-k8s-agent
+      app: piper-k8s-worker
   template:
     metadata:
       labels:
-        app: piper-k8s-agent
+        app: piper-k8s-worker
     spec:
-      serviceAccountName: piper-k8s-agent
+      serviceAccountName: piper-k8s-worker
       containers:
         - name: agent
           image: %[2]q
           imagePullPolicy: IfNotPresent
           args:
-            - k8s-agent
+            - k8s-worker
             - --master=http://piper-server.%[1]s.svc.cluster.local:8080
             - --cluster=agent-e2e
             - --namespaces=%[1]s
@@ -601,7 +601,7 @@ spec:
             - --serving-namespace=%[1]s
             - --pipeline-namespace=%[1]s
             - --notebook-image=%[3]s
-            - --pipeline-agent-image=%[2]s
+            - --pipeline-worker-image=%[2]s
             - --agent-image-pull-policy=IfNotPresent
             - --default-image=alpine:3.20
             - --s3-endpoint=seaweedfs:9000

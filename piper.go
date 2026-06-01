@@ -25,6 +25,8 @@ import (
 	"github.com/piper/piper/internal/tunnel"
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/backend"
+	notebookdispatch "github.com/piper/piper/pkg/dispatch/notebook"
+	servingdispatch "github.com/piper/piper/pkg/dispatch/serving"
 	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/logstore"
@@ -131,29 +133,28 @@ func New(cfg Config) (*Piper, error) {
 	workloadRouter := iagent.NewRouter(agentReg)
 	tunnelHub := tunnel.NewHub()
 
-	// Build serving driver: K8s if clientset available, else WorkerDriver.
+	// Build serving dispatch driver: worker RPC, legacy direct K8s, or bare-metal HTTP.
 	servingWorkerReg := serving.NewServingWorkerRegistry()
 	servingWorkerReg.SetAgentRegistry(agentReg)
 	var servingDriver serving.Driver
-	if cfg.Serving.Agent {
-		servingDriver = serving.NewAgentDriver(workloadRouter, tunnelHub, repos.Serving, listenAddrToURL(cfg.Server.Addr))
+	if cfg.Serving.Worker {
+		servingDriver = servingdispatch.NewAgentDriver(workloadRouter, tunnelHub, repos.Serving, listenAddrToURL(cfg.Server.Addr))
 	} else if k8sClientset != nil {
-		servingDriver = serving.NewK8sDriver(k8sClientset, repos.Serving)
+		servingDriver = servingdispatch.NewK8sDriver(k8sClientset, repos.Serving)
 	} else {
-		servingDriver = serving.NewWorkerDriver(servingWorkerReg, repos.Serving, listenAddrToURL(cfg.Server.Addr))
+		servingDriver = servingdispatch.NewWorkerDriver(servingWorkerReg, repos.Serving, listenAddrToURL(cfg.Server.Addr))
 	}
 	servingMgr := serving.New(repos.Serving, servingDriver)
 
-	// Build notebook driver: K8sDriver if k8s clientset is available and WorkerImage is set;
-	// otherwise fall back to WorkerDriver.
+	// Build notebook dispatch driver: worker RPC, legacy direct K8s, or bare-metal HTTP.
 	notebookWorkerReg := notebook.NewNotebookWorkerRegistry()
 	notebookWorkerReg.SetAgentRegistry(agentReg)
 	var nbDriver notebook.Driver
 	nbK8s := cfg.NotebookK8s
 	notebookDriverMode := "worker"
-	if nbK8s.Agent {
-		nbDriver = notebook.NewAgentDriver(workloadRouter, tunnelHub, repos.Notebook)
-		notebookDriverMode = "agent"
+	if nbK8s.Worker {
+		nbDriver = notebookdispatch.NewAgentDriver(workloadRouter, tunnelHub, repos.Notebook)
+		notebookDriverMode = "worker"
 	} else if k8sClientset != nil && nbK8s.WorkerImage != "" {
 		nbNs := nbK8s.Namespace
 		if nbNs == "" {
@@ -162,12 +163,12 @@ func New(cfg Config) (*Piper, error) {
 		if nbNs == "" {
 			nbNs = "default"
 		}
-		nbDriver = notebook.NewK8sDriver(k8sClientset, notebook.K8sDriverConfig{
+		nbDriver = notebookdispatch.NewK8sDriver(k8sClientset, notebookdispatch.K8sDriverConfig{
 			Namespace:    nbNs,
 			WorkerImage:  nbK8s.WorkerImage,
 			StorageClass: nbK8s.StorageClass,
 			StorageSize:  nbK8s.StorageSize,
-			PodDefaults: notebook.K8sPodDefaults{
+			PodDefaults: notebookdispatch.K8sPodDefaults{
 				Resources:    nbK8s.PodDefaults.Resources,
 				NodeSelector: nbK8s.PodDefaults.NodeSelector,
 				Tolerations:  nbK8s.PodDefaults.Tolerations,
@@ -177,7 +178,7 @@ func New(cfg Config) (*Piper, error) {
 		notebookDriverMode = "k8s"
 		slog.Info("k8s notebook driver enabled", "namespace", nbNs, "image", nbK8s.WorkerImage)
 	} else {
-		nbDriver = notebook.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
+		nbDriver = notebookdispatch.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
 	}
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 
@@ -217,7 +218,7 @@ func New(cfg Config) (*Piper, error) {
 		outputDir: cfg.OutputDir,
 		s3Bucket:  cfg.S3.Bucket,
 	}
-	if cfg.K8s.Agent {
+	if cfg.K8s.Worker {
 		p.SetBackend(backend.NewAgentBackend(workloadRouter, tunnelHub))
 	}
 	q.OnRunSuccess = p.handleRunSuccess
@@ -807,14 +808,14 @@ func encodeParams(params map[string]any) string {
 }
 
 // SetServingK8sClientset builds a k8s clientset from the given kubeconfig path
-// and swaps the serving manager's driver to K8sDriver. Call this after New()
+// and swaps the serving manager's driver to the legacy direct-K8s dispatch driver. Call this after New()
 // when the kubeconfig path is only available at runtime (e.g. via CLI flag).
 func (p *Piper) SetServingK8sClientset(kubeconfig string) error {
 	cs, err := buildK8sClientset(K8sConfig{Kubeconfig: kubeconfig})
 	if err != nil {
 		return fmt.Errorf("build k8s clientset: %w", err)
 	}
-	driver := serving.NewK8sDriver(cs, p.repos.Serving)
+	driver := servingdispatch.NewK8sDriver(cs, p.repos.Serving)
 	p.serving.manager = serving.New(p.repos.Serving, driver)
 	p.serving.manager.SetEventPublisher(p.events)
 	return nil

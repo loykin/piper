@@ -67,7 +67,7 @@ type tlsSection struct {
 }
 
 type k8sSection struct {
-	Agent                bool   `yaml:"agent"                  mapstructure:"agent"`
+	Worker               bool   `yaml:"worker"                 mapstructure:"worker"`
 	AgentImage           string `yaml:"agent_image"             mapstructure:"agent_image"`
 	AgentImagePullPolicy string `yaml:"agent_image_pull_policy" mapstructure:"agent_image_pull_policy"`
 	Namespace            string `yaml:"namespace"               mapstructure:"namespace"`
@@ -91,7 +91,7 @@ type scheduleSection struct {
 
 type servingSection struct {
 	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
-	Agent    bool   `yaml:"agent"     mapstructure:"agent"`
+	Worker   bool   `yaml:"worker"    mapstructure:"worker"`
 }
 
 type logSection struct {
@@ -130,7 +130,7 @@ type tolerationItem struct {
 }
 
 type notebookK8sSection struct {
-	Agent        bool                       `yaml:"agent"         mapstructure:"agent"`
+	Worker       bool                       `yaml:"worker"        mapstructure:"worker"`
 	Namespace    string                     `yaml:"namespace"     mapstructure:"namespace"`
 	WorkerImage  string                     `yaml:"worker_image"  mapstructure:"worker_image"`
 	StorageClass string                     `yaml:"storage_class" mapstructure:"storage_class"`
@@ -198,10 +198,10 @@ func (c *configFile) toConfig() piper.Config {
 		},
 		Serving: piper.ServingConfig{
 			ModelDir: c.Serving.ModelDir,
-			Agent:    c.Serving.Agent,
+			Worker:   c.Serving.Worker,
 		},
 		K8s: piper.K8sConfig{
-			Agent:                c.K8s.Agent,
+			Worker:               c.K8s.Worker,
 			AgentImage:           c.K8s.AgentImage,
 			AgentImagePullPolicy: c.K8s.AgentImagePullPolicy,
 			Namespace:            c.K8s.Namespace,
@@ -219,7 +219,7 @@ func (c *configFile) toConfig() piper.Config {
 			PortRange:     c.NotebookWorker.PortRange,
 		},
 		NotebookK8s: piper.NotebookK8sConfig{
-			Agent:        c.NotebookK8s.Agent,
+			Worker:       c.NotebookK8s.Worker,
 			Namespace:    c.NotebookK8s.Namespace,
 			WorkerImage:  c.NotebookK8s.WorkerImage,
 			StorageClass: c.NotebookK8s.StorageClass,
@@ -264,7 +264,7 @@ func NewPiper() (*piper.Piper, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.K8s.AgentImage != "" && !cfg.K8s.Agent {
+	if cfg.K8s.AgentImage != "" && !cfg.K8s.Worker {
 		ttl := cfg.K8s.TTLAfterFinished
 		var ttlPtr *int32
 		if ttl > 0 {

@@ -106,8 +106,8 @@ type ScheduleConfig struct {
 // K8sConfig holds the configuration required for K8s Job execution.
 // K8s mode is disabled when AgentImage is empty.
 type K8sConfig struct {
-	// Agent delegates pipeline K8s Job lifecycle to a cluster-local K8s agent.
-	Agent bool `yaml:"agent" mapstructure:"agent"`
+	// Worker delegates pipeline K8s Job lifecycle to a cluster-local K8s worker.
+	Worker bool `yaml:"worker" mapstructure:"worker"`
 
 	// AgentImage: image containing the piper CLI binary (used as initContainer)
 	AgentImage string `yaml:"agent_image" mapstructure:"agent_image"`
@@ -145,8 +145,8 @@ type ServingConfig struct {
 	// Defaults to output_dir/models.
 	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
 
-	// Agent delegates serving lifecycle to an agent selected through the unified registry.
-	Agent bool `yaml:"agent" mapstructure:"agent"`
+	// Worker delegates serving lifecycle to a worker selected through the unified registry.
+	Worker bool `yaml:"worker" mapstructure:"worker"`
 }
 
 // NotebookWorkerConfig holds configuration for the embedded/standalone notebook worker.
@@ -163,9 +163,9 @@ type NotebookWorkerConfig struct {
 // NotebookK8sConfig holds configuration for the K8s notebook driver.
 // K8s notebook mode is enabled when WorkerImage is non-empty and a K8s clientset is available.
 type NotebookK8sConfig struct {
-	// Agent delegates notebook lifecycle to a cluster-local K8s agent instead of
+	// Worker delegates notebook lifecycle to a cluster-local K8s worker instead of
 	// letting piper-server call the K8s API directly.
-	Agent bool `yaml:"agent" mapstructure:"agent"`
+	Worker bool `yaml:"worker" mapstructure:"worker"`
 
 	// Namespace is the K8s namespace for notebook StatefulSets and PVCs.
 	Namespace string `yaml:"namespace" mapstructure:"namespace"`

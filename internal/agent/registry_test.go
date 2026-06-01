@@ -12,7 +12,7 @@ func TestRouterSelectExplicitWorker(t *testing.T) {
 		t.Fatalf("Select returned error: %v", err)
 	}
 	if got.ID != "a1" {
-		t.Fatalf("agent ID = %q, want a1", got.ID)
+		t.Fatalf("worker ID = %q, want a1", got.ID)
 	}
 }
 
@@ -26,7 +26,7 @@ func TestRouterSelectExplicitWorkerByHostname(t *testing.T) {
 		t.Fatalf("Select returned error: %v", err)
 	}
 	if got.ID != "a1" {
-		t.Fatalf("agent ID = %q, want a1", got.ID)
+		t.Fatalf("worker ID = %q, want a1", got.ID)
 	}
 }
 
@@ -52,7 +52,7 @@ func TestRouterSelectsCluster(t *testing.T) {
 		t.Fatalf("Select returned error: %v", err)
 	}
 	if got.ID != "a2" {
-		t.Fatalf("agent ID = %q, want a2", got.ID)
+		t.Fatalf("worker ID = %q, want a2", got.ID)
 	}
 }
 

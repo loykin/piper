@@ -27,7 +27,8 @@ type Driver interface {
 }
 
 // StatusSyncer is implemented by drivers that need periodic status reconciliation.
-// K8sDriver implements this; WorkerDriver does not (status arrives via HTTP callback).
+// Direct K8s and tunnel/RPC drivers implement this; bare-metal HTTP workers report
+// status through callbacks instead.
 type StatusSyncer interface {
 	SyncStatus(ctx context.Context, servers []*NotebookServer) error
 }

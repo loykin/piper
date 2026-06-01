@@ -24,8 +24,8 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	_ "modernc.org/sqlite"
 
-	"github.com/piper/piper/pkg/servingworker"
-	"github.com/piper/piper/pkg/worker"
+	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
+	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
 )
 
 const e2eBucket = "piper-e2e"
@@ -241,8 +241,8 @@ spec:
 	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
 }
 
-func TestE2E_BareMetalAgentModePlacement(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:e2e_baremetal_agent?mode=memory&cache=shared")
+func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:e2e_baremetal_worker?mode=memory&cache=shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,10 +257,10 @@ func TestE2E_BareMetalAgentModePlacement(t *testing.T) {
 			Addr: fmt.Sprintf("127.0.0.1:%d", serverPort),
 		},
 		Serving: ServingConfig{
-			Agent: true,
+			Worker: true,
 		},
 		NotebookK8s: NotebookK8sConfig{
-			Agent: true,
+			Worker: true,
 		},
 	})
 	if err != nil {
@@ -284,14 +284,14 @@ func TestE2E_BareMetalAgentModePlacement(t *testing.T) {
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
 metadata:
-  name: e2e-baremetal-agent
+  name: e2e-baremetal-worker
 spec:
   placement:
     worker: %s
   steps:
     - name: hello
       run:
-        command: ["echo", "baremetal-agent-ok"]
+        command: ["echo", "baremetal-worker-ok"]
 `, pipelineAgentID))
 	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
 
@@ -299,7 +299,7 @@ spec:
 apiVersion: piper/v1
 kind: ModelService
 metadata:
-  name: baremetal-agent-service
+  name: baremetal-worker-service
 spec:
   model:
     from_uri: file:///tmp/model
@@ -308,8 +308,8 @@ spec:
     command: ["sleep", "60"]
     port: 18080
 `)
-	t.Cleanup(func() { _ = p.StopService(context.Background(), "baremetal-agent-service") })
-	svc := getE2EService(t, srv.URL, "baremetal-agent-service")
+	t.Cleanup(func() { _ = p.StopService(context.Background(), "baremetal-worker-service") })
+	svc := getE2EService(t, srv.URL, "baremetal-worker-service")
 	if svc.WorkerID != "serving-agent" {
 		t.Fatalf("service worker_id = %q, want serving-agent", svc.WorkerID)
 	}

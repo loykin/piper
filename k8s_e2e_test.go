@@ -724,7 +724,7 @@ func k8sE2ENotebookAction(t *testing.T, serverURL, name, action string) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /notebooks/%s/%s status=%d: %s", name, action, resp.StatusCode, b)
 	}

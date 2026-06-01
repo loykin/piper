@@ -1,7 +1,42 @@
 # piper
 
-A lightweight pipeline orchestrator inspired by GitHub Actions and GitLab CI.
-Runs as a standalone server or embedded as a Go library.
+Piper is a single-binary, agent-based runner for ML jobs, notebooks, and model
+services.
+
+It is for teams that need more than cron, shell scripts, or CI jobs, but do not
+want to operate a full ML platform such as Kubeflow. Piper runs as a standalone
+server or embedded Go library, and can dispatch work to local processes,
+bare-metal GPU workers, direct Kubernetes Jobs, or cluster-local K8s agents.
+
+The K8s agent mode is designed for on-prem, private-network, and air-gapped
+environments: the agent runs inside the cluster and opens an outbound WebSocket
+tunnel to the Piper server, so the server does not need kubeconfig access or
+inbound network access to the cluster.
+
+## Why Piper
+
+Most small and mid-sized ML teams do not need a full platform. They need a
+reliable way to:
+
+- run DAG-based training and batch jobs
+- route work to a local process, GPU worker, or K8s cluster
+- pass artifacts between steps through local storage or S3-compatible storage
+- capture logs, metrics, params, and run history
+- launch notebooks close to the compute
+- deploy a trained artifact as a model service
+- operate across private networks without putting every kubeconfig on one server
+
+Piper keeps those concerns in one small control plane instead of requiring a
+stack of workflow, artifact, notebook, serving, and cluster-access tools.
+
+## What Piper Is Not
+
+Piper is intentionally not a full Kubeflow replacement. It does not try to be a
+feature store, distributed training runtime, Kubernetes scheduler, or heavyweight
+model governance platform. For large organizations that need complex approval
+flows, deep experiment tracking, custom resource schedulers, or full model
+registry workflows, Piper is better used as a lightweight execution layer than
+as the entire ML platform.
 
 ## Features
 
@@ -11,6 +46,8 @@ Runs as a standalone server or embedded as a Go library.
 - **Embeddable library** — mount into your existing Go app and HTTP router
 - **S3 artifact passing** — share files between steps via any S3-compatible store (AWS S3, SeaweedFS, etc.)
 - **Real-time logs** — SSE streaming, visible in the web UI
+- **Notebook and model serving workflows** — run JupyterLab servers and deploy model artifacts
+- **Private-network friendly** — K8s agents connect outbound to the server for isolated clusters
 
 ## Quick Start
 

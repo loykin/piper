@@ -15,12 +15,18 @@ import (
 type NotebookExecutor struct{}
 
 func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) error {
-	fetcher, err := source.New(step.Run, cfg.SourceCfg)
+	run := step.Run
+	// Notebook field is a shorthand for: type=notebook, source=local, path=<value>
+	if run.Notebook != "" && run.Path == "" {
+		run.Source = "local"
+		run.Path = run.Notebook
+	}
+	fetcher, err := source.New(run, cfg.SourceCfg)
 	if err != nil {
 		return err
 	}
 
-	notebookPath, err := fetcher.Fetch(ctx, step.Run, cfg.fetchDir(step.Run))
+	notebookPath, err := fetcher.Fetch(ctx, run, cfg.fetchDir(run))
 	if err != nil {
 		return fmt.Errorf("fetch failed: %w", err)
 	}

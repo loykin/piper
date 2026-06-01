@@ -169,6 +169,7 @@ func (r *Runner) execute(
 		OutputDir: outputDir,
 		RunID:     task.RunID,
 		StepName:  step.Name,
+		GPUs:      step.Resources.GPU,
 		Params:    proto.MergeParams(step.Params, task.RunParams),
 		Stdout:    stdoutW,
 		Stderr:    stderrW,

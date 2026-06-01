@@ -80,6 +80,11 @@ func (d *WorkerDriver) Start(ctx context.Context, spec NotebookServerSpec, vol *
 		if err != nil {
 			return nil, err
 		}
+	} else if spec.Spec.GPUs != "" {
+		w, err = d.registry.PickForGPU(spec.Spec.GPUs)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		w, err = d.registry.Pick()
 		if err != nil {

@@ -369,8 +369,13 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 			TTLSecondsAfterFinished: ttl,
 			BackoffLimit:            &backoffLimit,
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      step.Runner.PodLabels,
+					Annotations: step.Runner.PodAnnotations,
+				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					SchedulerName: step.Runner.SchedulerName,
 					NodeSelector:  step.Runner.NodeSelector,
 					Tolerations:   buildTolerations(step.Runner.Tolerations),
 					// initContainer: copy the piper CLI binary into the emptyDir

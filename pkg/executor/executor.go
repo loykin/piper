@@ -19,6 +19,7 @@ type ExecConfig struct {
 	OutputDir string
 	RunID     string
 	StepName  string
+	GPUs      string // CUDA_VISIBLE_DEVICES value, e.g. "0,1" (bare-metal only)
 	Params    map[string]any
 	SourceCfg source.Config
 	Stdout    io.Writer         // if nil, defaults to os.Stdout
@@ -54,6 +55,9 @@ func (c ExecConfig) Env() []string {
 		// RFC3339 UTC matches Airflow's execution_date semantics:
 		// the logical/scheduled time regardless of when the run actually started.
 		env = append(env, "PIPER_SCHEDULED_AT="+v.UTC().Format(time.RFC3339))
+	}
+	if c.GPUs != "" {
+		env = append(env, "CUDA_VISIBLE_DEVICES="+c.GPUs)
 	}
 	return env
 }

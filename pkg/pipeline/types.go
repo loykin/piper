@@ -77,15 +77,16 @@ type Step struct {
 }
 
 type Run struct {
-	Type    string   `yaml:"type"`   // notebook | python | command
-	Source  string   `yaml:"source"` // git | s3 | http | local
-	Repo    string   `yaml:"repo"`
-	Branch  string   `yaml:"branch"`
-	Path    string   `yaml:"path"`
-	Dir     string   `yaml:"dir"` // sub-directory name for the source checkout (defaults to step name)
-	URL     string   `yaml:"url"` // http/https URL (source: http)
-	Command []string `yaml:"command"`
-	Image   string   `yaml:"image"` // Docker image to use for this step (optional)
+	Type     string   `yaml:"type"`   // notebook | python | command
+	Source   string   `yaml:"source"` // git | s3 | http | local
+	Repo     string   `yaml:"repo"`
+	Branch   string   `yaml:"branch"`
+	Path     string   `yaml:"path"`
+	Notebook string   `yaml:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
+	Dir      string   `yaml:"dir"`                // sub-directory name for the source checkout (defaults to step name)
+	URL      string   `yaml:"url"`                // http/https URL (source: http)
+	Command  []string `yaml:"command"`
+	Image    string   `yaml:"image"` // Docker image to use for this step (optional)
 }
 
 type Artifact struct {
@@ -101,10 +102,13 @@ type Resources struct {
 }
 
 type RunnerSelector struct {
-	Image        string            `yaml:"image"`
-	Label        string            `yaml:"label"`
-	NodeSelector map[string]string `yaml:"node_selector,omitempty"`
-	Tolerations  []Toleration      `yaml:"tolerations,omitempty"`
+	Image          string            `yaml:"image"`
+	Label          string            `yaml:"label"`
+	NodeSelector   map[string]string `yaml:"node_selector,omitempty"`
+	Tolerations    []Toleration      `yaml:"tolerations,omitempty"`
+	PodLabels      map[string]string `yaml:"pod_labels,omitempty"`
+	PodAnnotations map[string]string `yaml:"pod_annotations,omitempty"`
+	SchedulerName  string            `yaml:"scheduler_name,omitempty"`
 }
 
 type Toleration struct {

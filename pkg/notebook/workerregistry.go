@@ -2,6 +2,7 @@ package notebook
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,6 +60,36 @@ func (r *NotebookWorkerRegistry) Pick() (*NotebookWorkerInfo, error) {
 		}
 	}
 	return nil, fmt.Errorf("no notebook worker available")
+}
+
+// PickForGPU returns an available worker that has all required GPU indices.
+// gpus is a comma-separated list of GPU indices, e.g. "0,1".
+func (r *NotebookWorkerRegistry) PickForGPU(gpus string) (*NotebookWorkerInfo, error) {
+	required := strings.Split(gpus, ",")
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, w := range r.workers {
+		if time.Since(w.LastSeen) >= workerTTL {
+			continue
+		}
+		if workerHasGPUs(w.GPUs, required) {
+			return w, nil
+		}
+	}
+	return nil, fmt.Errorf("no notebook worker with GPU(s) %q available", gpus)
+}
+
+func workerHasGPUs(available []string, required []string) bool {
+	set := make(map[string]bool, len(available))
+	for _, g := range available {
+		set[strings.TrimSpace(g)] = true
+	}
+	for _, g := range required {
+		if !set[strings.TrimSpace(g)] {
+			return false
+		}
+	}
+	return true
 }
 
 // Get returns a specific worker by ID, or an error if not found or expired.

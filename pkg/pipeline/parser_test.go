@@ -149,3 +149,21 @@ func TestParseFile_notFound(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestExamplePipelines(t *testing.T) {
+	files, err := filepath.Glob("../../examples/*/pipeline.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no example pipeline files found")
+	}
+	for _, f := range files {
+		f := f
+		t.Run(filepath.Dir(f), func(t *testing.T) {
+			if _, err := ParseFile(f); err != nil {
+				t.Errorf("ParseFile(%q): %v", f, err)
+			}
+		})
+	}
+}

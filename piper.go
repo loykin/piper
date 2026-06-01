@@ -20,7 +20,9 @@ import (
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 
+	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/queue"
+	"github.com/piper/piper/internal/tunnel"
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/event"
@@ -61,7 +63,10 @@ type Piper struct {
 	serving                servingBundle
 	notebookManager        *notebook.Manager
 	notebookWorkerRegistry *notebook.NotebookWorkerRegistry
-	notebookDriverMode     string            // "k8s" or "worker"
+	notebookDriverMode     string // "k8s" or "worker"
+	agentRegistry          *iagent.Registry
+	workloadRouter         *iagent.Router
+	tunnelHub              *tunnel.Hub
 	s3Cli                  *s3sdk.Client     // nil when S3 not configured
 	resolver               artifact.Resolver // central artifact resolver
 	backend                backend.ExecutionBackend
@@ -122,10 +127,17 @@ func New(cfg Config) (*Piper, error) {
 		}
 	}
 
+	agentReg := iagent.NewRegistry()
+	workloadRouter := iagent.NewRouter(agentReg)
+	tunnelHub := tunnel.NewHub()
+
 	// Build serving driver: K8s if clientset available, else WorkerDriver.
 	servingWorkerReg := serving.NewServingWorkerRegistry()
+	servingWorkerReg.SetAgentRegistry(agentReg)
 	var servingDriver serving.Driver
-	if k8sClientset != nil {
+	if cfg.Serving.Agent {
+		servingDriver = serving.NewAgentDriver(workloadRouter, tunnelHub, repos.Serving, listenAddrToURL(cfg.Server.Addr))
+	} else if k8sClientset != nil {
 		servingDriver = serving.NewK8sDriver(k8sClientset, repos.Serving)
 	} else {
 		servingDriver = serving.NewWorkerDriver(servingWorkerReg, repos.Serving, listenAddrToURL(cfg.Server.Addr))
@@ -135,10 +147,14 @@ func New(cfg Config) (*Piper, error) {
 	// Build notebook driver: K8sDriver if k8s clientset is available and WorkerImage is set;
 	// otherwise fall back to WorkerDriver.
 	notebookWorkerReg := notebook.NewNotebookWorkerRegistry()
+	notebookWorkerReg.SetAgentRegistry(agentReg)
 	var nbDriver notebook.Driver
 	nbK8s := cfg.NotebookK8s
 	notebookDriverMode := "worker"
-	if k8sClientset != nil && nbK8s.WorkerImage != "" {
+	if nbK8s.Agent {
+		nbDriver = notebook.NewAgentDriver(workloadRouter, tunnelHub, repos.Notebook)
+		notebookDriverMode = "agent"
+	} else if k8sClientset != nil && nbK8s.WorkerImage != "" {
 		nbNs := nbK8s.Namespace
 		if nbNs == "" {
 			nbNs = cfg.K8s.Namespace
@@ -183,6 +199,9 @@ func New(cfg Config) (*Piper, error) {
 		notebookManager:        nbMgr,
 		notebookWorkerRegistry: notebookWorkerReg,
 		notebookDriverMode:     notebookDriverMode,
+		agentRegistry:          agentReg,
+		workloadRouter:         workloadRouter,
+		tunnelHub:              tunnelHub,
 		stopCtx:                stopFn,
 		events:                 event.NewHub(),
 	}
@@ -197,6 +216,9 @@ func New(cfg Config) (*Piper, error) {
 		runRepo:   repos.Run,
 		outputDir: cfg.OutputDir,
 		s3Bucket:  cfg.S3.Bucket,
+	}
+	if cfg.K8s.Agent {
+		p.SetBackend(backend.NewAgentBackend(workloadRouter, tunnelHub))
 	}
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
@@ -453,7 +475,6 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 			OutputDir: stepOutputDir,
 			RunID:     runID,
 			StepName:  step.Name,
-			GPUs:      step.Resources.GPU,
 			Params:    proto.MergeParams(step.Params, opts.Params),
 			SourceCfg: srcCfg,
 			Stdout:    stdoutW,
@@ -562,6 +583,7 @@ func (p *Piper) SetBackend(b backend.ExecutionBackend) {
 func (p *Piper) workerRegistry() *iworker.Registry {
 	if p.registry == nil {
 		p.registry = iworker.NewRegistry(p.repos.Worker)
+		p.registry.SetAgentRegistry(p.agentRegistry)
 	}
 	return p.registry
 }

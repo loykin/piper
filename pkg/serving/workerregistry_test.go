@@ -3,6 +3,8 @@ package serving
 import (
 	"testing"
 	"time"
+
+	"github.com/piper/piper/internal/agent"
 )
 
 func TestServingWorkerRegistry_RegisterAndPick(t *testing.T) {
@@ -139,5 +141,26 @@ func TestServingWorkerRegistry_List(t *testing.T) {
 	list := r.List()
 	if len(list) != 2 {
 		t.Errorf("List() len = %d, want 2", len(list))
+	}
+}
+
+func TestServingWorkerRegistryMirrorsToAgentRegistry(t *testing.T) {
+	agents := agent.NewRegistry()
+	r := &ServingWorkerRegistry{
+		workers: make(map[string]*ServingWorkerInfo),
+	}
+	r.SetAgentRegistry(agents)
+
+	r.Register(&ServingWorkerInfo{ID: "svc1", Addr: "http://node:7700", Hostname: "node", GPUs: []string{"0"}})
+
+	got, err := agents.Get("svc1")
+	if err != nil {
+		t.Fatalf("agent not registered: %v", err)
+	}
+	if got.Addr != "http://node:7700" {
+		t.Fatalf("addr = %q", got.Addr)
+	}
+	if len(got.Capabilities) != 1 || got.Capabilities[0] != agent.CapabilityServing {
+		t.Fatalf("capabilities = %#v, want serving", got.Capabilities)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	_ "modernc.org/sqlite"
 
+	"github.com/piper/piper/pkg/servingworker"
 	"github.com/piper/piper/pkg/worker"
 )
 
@@ -79,6 +81,90 @@ func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go func() { _ = w.Run(ctx) }()
+}
+
+func startE2EServingWorker(t *testing.T, masterURL, id string) {
+	t.Helper()
+	port := freeE2EPort(t)
+	w := servingworker.New(servingworker.Config{
+		MasterURL:     masterURL,
+		Addr:          fmt.Sprintf("127.0.0.1:%d", port),
+		AdvertiseAddr: fmt.Sprintf("http://127.0.0.1:%d", port),
+		Hostname:      id,
+		ID:            id,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = w.Run(ctx) }()
+	waitE2EAgent(t, masterURL, id, 5*time.Second)
+}
+
+func freeE2EPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func waitE2EAgent(t *testing.T, serverURL, id string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(serverURL + "/api/agents")
+		if err == nil {
+			var agents []struct {
+				ID string `json:"id"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			resp.Body.Close()
+			for _, agent := range agents {
+				if agent.ID == id {
+					return
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("agent %q did not register within %s", id, timeout)
+}
+
+func findE2EAgentByCapability(t *testing.T, serverURL, capability string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(serverURL + "/api/agents")
+		if err == nil {
+			var agents []struct {
+				ID           string   `json:"id"`
+				Capabilities []string `json:"capabilities"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			resp.Body.Close()
+			for _, agent := range agents {
+				for _, got := range agent.Capabilities {
+					if got == capability {
+						return agent.ID
+					}
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	resp, err := http.Get(serverURL + "/api/agents")
+	if err == nil {
+		defer resp.Body.Close()
+		var agents []struct {
+			ID           string   `json:"id"`
+			Capabilities []string `json:"capabilities"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&agents)
+		t.Fatalf("no agent with capability %q: %+v", capability, agents)
+	}
+	t.Fatalf("no agent with capability %q", capability)
+	return ""
 }
 
 // postRun submits a pipeline YAML to the server and returns the run ID.
@@ -153,6 +239,80 @@ spec:
 `
 	runID := postRun(t, srv.URL, yaml)
 	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
+}
+
+func TestE2E_BareMetalAgentModePlacement(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:e2e_baremetal_agent?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+
+	serverPort := freeE2EPort(t)
+	p, err := New(Config{
+		OutputDir: t.TempDir(),
+		DB:        db,
+		Server: ServerConfig{
+			Addr: fmt.Sprintf("127.0.0.1:%d", serverPort),
+		},
+		Serving: ServingConfig{
+			Agent: true,
+		},
+		NotebookK8s: NotebookK8sConfig{
+			Agent: true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(p.Handler(nil))
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(func() {
+		srv.Close()
+		_ = p.Close()
+	})
+
+	startE2EWorker(t, srv.URL)
+	startE2EServingWorker(t, srv.URL, "serving-agent")
+	pipelineAgentID := findE2EAgentByCapability(t, srv.URL, "pipeline")
+
+	runID := postRun(t, srv.URL, fmt.Sprintf(`
+metadata:
+  name: e2e-baremetal-agent
+spec:
+  placement:
+    worker: %s
+  steps:
+    - name: hello
+      run:
+        command: ["echo", "baremetal-agent-ok"]
+`, pipelineAgentID))
+	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
+
+	postService(t, srv.URL, `
+apiVersion: piper/v1
+kind: ModelService
+metadata:
+  name: baremetal-agent-service
+spec:
+  model:
+    from_uri: file:///tmp/model
+  runtime:
+    worker: serving-agent
+    command: ["sleep", "60"]
+    port: 18080
+`)
+	t.Cleanup(func() { _ = p.StopService(context.Background(), "baremetal-agent-service") })
+	svc := getE2EService(t, srv.URL, "baremetal-agent-service")
+	if svc.WorkerID != "serving-agent" {
+		t.Fatalf("service worker_id = %q, want serving-agent", svc.WorkerID)
+	}
 }
 
 // TestE2E_RunCancellation verifies that canceling a run via the API propagates
@@ -412,6 +572,28 @@ func waitServiceRunID(t *testing.T, serverURL, serviceName, wantRunID string, ti
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("service %q run_id did not become %q within %s", serviceName, wantRunID, timeout)
+}
+
+func getE2EService(t *testing.T, serverURL, serviceName string) struct {
+	WorkerID string `json:"worker_id"`
+} {
+	t.Helper()
+	resp, err := http.Get(serverURL + "/serving/" + serviceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET /serving/%s status = %d: %s", serviceName, resp.StatusCode, b)
+	}
+	var svc struct {
+		WorkerID string `json:"worker_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&svc); err != nil {
+		t.Fatal(err)
+	}
+	return svc
 }
 
 // extractPort returns the numeric port string from a URL like "http://127.0.0.1:PORT".

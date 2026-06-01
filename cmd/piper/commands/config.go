@@ -8,6 +8,7 @@ import (
 
 	piper "github.com/piper/piper"
 	"github.com/piper/piper/pkg/k8s"
+	"github.com/piper/piper/pkg/pipeline"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
@@ -21,6 +22,7 @@ type configFile struct {
 	K8s            k8sSection            `yaml:"k8s"             mapstructure:"k8s"`
 	Retention      retentionSection      `yaml:"retention"       mapstructure:"retention"`
 	Schedule       scheduleSection       `yaml:"schedule"        mapstructure:"schedule"`
+	Serving        servingSection        `yaml:"serving"         mapstructure:"serving"`
 	Log            logSection            `yaml:"log"             mapstructure:"log"`
 	DB             dbSection             `yaml:"db"              mapstructure:"db"`
 	NotebookWorker notebookWorkerSection `yaml:"notebook_worker" mapstructure:"notebook_worker"`
@@ -65,6 +67,7 @@ type tlsSection struct {
 }
 
 type k8sSection struct {
+	Agent                bool   `yaml:"agent"                  mapstructure:"agent"`
 	AgentImage           string `yaml:"agent_image"             mapstructure:"agent_image"`
 	AgentImagePullPolicy string `yaml:"agent_image_pull_policy" mapstructure:"agent_image_pull_policy"`
 	Namespace            string `yaml:"namespace"               mapstructure:"namespace"`
@@ -84,6 +87,11 @@ type retentionSection struct {
 type scheduleSection struct {
 	MisfirePolicy      string        `yaml:"misfire_policy"       mapstructure:"misfire_policy"`
 	MisfireGracePeriod time.Duration `yaml:"misfire_grace_period" mapstructure:"misfire_grace_period"`
+}
+
+type servingSection struct {
+	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
+	Agent    bool   `yaml:"agent"     mapstructure:"agent"`
 }
 
 type logSection struct {
@@ -122,6 +130,7 @@ type tolerationItem struct {
 }
 
 type notebookK8sSection struct {
+	Agent        bool                       `yaml:"agent"         mapstructure:"agent"`
 	Namespace    string                     `yaml:"namespace"     mapstructure:"namespace"`
 	WorkerImage  string                     `yaml:"worker_image"  mapstructure:"worker_image"`
 	StorageClass string                     `yaml:"storage_class" mapstructure:"storage_class"`
@@ -187,7 +196,12 @@ func (c *configFile) toConfig() piper.Config {
 			MisfirePolicy:      c.Schedule.MisfirePolicy,
 			MisfireGracePeriod: c.Schedule.MisfireGracePeriod,
 		},
+		Serving: piper.ServingConfig{
+			ModelDir: c.Serving.ModelDir,
+			Agent:    c.Serving.Agent,
+		},
 		K8s: piper.K8sConfig{
+			Agent:                c.K8s.Agent,
 			AgentImage:           c.K8s.AgentImage,
 			AgentImagePullPolicy: c.K8s.AgentImagePullPolicy,
 			Namespace:            c.K8s.Namespace,
@@ -205,10 +219,21 @@ func (c *configFile) toConfig() piper.Config {
 			PortRange:     c.NotebookWorker.PortRange,
 		},
 		NotebookK8s: piper.NotebookK8sConfig{
+			Agent:        c.NotebookK8s.Agent,
 			Namespace:    c.NotebookK8s.Namespace,
 			WorkerImage:  c.NotebookK8s.WorkerImage,
 			StorageClass: c.NotebookK8s.StorageClass,
 			StorageSize:  c.NotebookK8s.StorageSize,
+			PodDefaults: piper.NotebookPodDefaults{
+				Resources: pipeline.Resources{
+					CPU:    c.NotebookK8s.PodDefaults.Resources.CPU,
+					Memory: c.NotebookK8s.PodDefaults.Resources.Memory,
+					GPU:    c.NotebookK8s.PodDefaults.Resources.GPU,
+				},
+				NodeSelector: c.NotebookK8s.PodDefaults.NodeSelector,
+				Tolerations:  notebookTolerations(c.NotebookK8s.PodDefaults.Tolerations),
+				Annotations:  c.NotebookK8s.PodDefaults.Annotations,
+			},
 		},
 	}
 }
@@ -239,7 +264,7 @@ func NewPiper() (*piper.Piper, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.K8s.AgentImage != "" {
+	if cfg.K8s.AgentImage != "" && !cfg.K8s.Agent {
 		ttl := cfg.K8s.TTLAfterFinished
 		var ttlPtr *int32
 		if ttl > 0 {
@@ -268,4 +293,21 @@ func NewPiper() (*piper.Piper, error) {
 		p.SetBackend(launcher)
 	}
 	return p, nil
+}
+
+func notebookTolerations(items []tolerationItem) []pipeline.Toleration {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]pipeline.Toleration, len(items))
+	for i, t := range items {
+		out[i] = pipeline.Toleration{
+			Key:               t.Key,
+			Operator:          t.Operator,
+			Value:             t.Value,
+			Effect:            t.Effect,
+			TolerationSeconds: t.TolerationSeconds,
+		}
+	}
+	return out
 }

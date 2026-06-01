@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/piper/piper/internal/agent"
 )
 
 const workerTTL = 60 * time.Second
@@ -22,6 +24,7 @@ type NotebookWorkerInfo struct {
 type NotebookWorkerRegistry struct {
 	mu      sync.RWMutex
 	workers map[string]*NotebookWorkerInfo
+	agents  *agent.Registry
 }
 
 // NewNotebookWorkerRegistry creates a registry and starts the TTL reaper.
@@ -33,12 +36,27 @@ func NewNotebookWorkerRegistry() *NotebookWorkerRegistry {
 	return r
 }
 
+func (r *NotebookWorkerRegistry) SetAgentRegistry(agents *agent.Registry) {
+	r.mu.Lock()
+	r.agents = agents
+	r.mu.Unlock()
+}
+
 // Register adds or updates a worker entry.
 func (r *NotebookWorkerRegistry) Register(info *NotebookWorkerInfo) {
 	info.LastSeen = time.Now()
 	r.mu.Lock()
 	r.workers[info.ID] = info
+	agents := r.agents
 	r.mu.Unlock()
+	if agents != nil {
+		agents.Register(agent.FromNotebookWorker(agent.NotebookWorker{
+			ID:       info.ID,
+			Addr:     info.Addr,
+			GPUs:     info.GPUs,
+			Hostname: info.Hostname,
+		}))
+	}
 }
 
 // Heartbeat refreshes the LastSeen timestamp for a worker.
@@ -47,7 +65,11 @@ func (r *NotebookWorkerRegistry) Heartbeat(id string) {
 	if w, ok := r.workers[id]; ok {
 		w.LastSeen = time.Now()
 	}
+	agents := r.agents
 	r.mu.Unlock()
+	if agents != nil {
+		_ = agents.Heartbeat(id)
+	}
 }
 
 // Pick returns the first available worker. Returns an error if none are registered.
@@ -145,6 +167,10 @@ func (r *NotebookWorkerRegistry) reap() {
 				delete(r.workers, id)
 			}
 		}
+		agents := r.agents
 		r.mu.Unlock()
+		if agents != nil {
+			agents.Cleanup()
+		}
 	}
 }

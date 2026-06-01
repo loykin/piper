@@ -12,15 +12,15 @@ type servingRepo struct{ db *sqlx.DB }
 
 func NewServingRepo(db *sqlx.DB) serving.Repository { return &servingRepo{db: db} }
 
-const serviceSelectCols = `name, owner_id, run_id, artifact, status, endpoint, namespace, pid, yaml, created_at, updated_at`
+const serviceSelectCols = `name, owner_id, run_id, artifact, status, endpoint, namespace, pid, worker_id, yaml, created_at, updated_at`
 
 func (r *servingRepo) Create(ctx context.Context, svc *serving.Service) error {
 	now := time.Now()
 	svc.CreatedAt = now
 	svc.UpdatedAt = now
 	_, err := r.db.NamedExecContext(ctx,
-		`INSERT INTO services (name, owner_id, run_id, artifact, status, endpoint, namespace, pid, yaml, created_at, updated_at)
-		 VALUES (:name, :owner_id, :run_id, :artifact, :status, :endpoint, :namespace, :pid, :yaml, :created_at, :updated_at)`,
+		`INSERT INTO services (name, owner_id, run_id, artifact, status, endpoint, namespace, pid, worker_id, yaml, created_at, updated_at)
+		 VALUES (:name, :owner_id, :run_id, :artifact, :status, :endpoint, :namespace, :pid, :worker_id, :yaml, :created_at, :updated_at)`,
 		svc)
 	return err
 }
@@ -37,22 +37,22 @@ func (r *servingRepo) Get(ctx context.Context, name string) (*serving.Service, e
 
 func (r *servingRepo) Update(ctx context.Context, svc *serving.Service) error {
 	svc.UpdatedAt = time.Now()
-	q := r.db.Rebind(`UPDATE services SET owner_id=?, run_id=?, artifact=?, status=?, endpoint=?, namespace=?, pid=?, yaml=?, updated_at=? WHERE name=?`)
+	q := r.db.Rebind(`UPDATE services SET owner_id=?, run_id=?, artifact=?, status=?, endpoint=?, namespace=?, pid=?, worker_id=?, yaml=?, updated_at=? WHERE name=?`)
 	_, err := r.db.ExecContext(ctx, q,
-		svc.OwnerID, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.UpdatedAt, svc.Name)
+		svc.OwnerID, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.WorkerID, svc.YAML, svc.UpdatedAt, svc.Name)
 	return err
 }
 
 func (r *servingRepo) Upsert(ctx context.Context, svc *serving.Service) error {
 	now := time.Now()
 	svc.UpdatedAt = now
-	q := r.db.Rebind(`INSERT INTO services (name, owner_id, run_id, artifact, status, endpoint, namespace, pid, yaml, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	q := r.db.Rebind(`INSERT INTO services (name, owner_id, run_id, artifact, status, endpoint, namespace, pid, worker_id, yaml, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(name) DO UPDATE SET
 		 	owner_id=EXCLUDED.owner_id, run_id=EXCLUDED.run_id, artifact=EXCLUDED.artifact, status=EXCLUDED.status,
-		 	endpoint=EXCLUDED.endpoint, namespace=EXCLUDED.namespace, pid=EXCLUDED.pid, yaml=EXCLUDED.yaml, updated_at=EXCLUDED.updated_at`)
+		 	endpoint=EXCLUDED.endpoint, namespace=EXCLUDED.namespace, pid=EXCLUDED.pid, worker_id=EXCLUDED.worker_id, yaml=EXCLUDED.yaml, updated_at=EXCLUDED.updated_at`)
 	_, err := r.db.ExecContext(ctx, q,
-		svc.Name, svc.OwnerID, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, now, now)
+		svc.Name, svc.OwnerID, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.WorkerID, svc.YAML, now, now)
 	return err
 }
 

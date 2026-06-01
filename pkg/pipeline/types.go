@@ -45,8 +45,18 @@ type Metadata struct {
 
 type Spec struct {
 	Defaults  Defaults   `yaml:"defaults"`
+	Placement Placement  `yaml:"placement,omitempty"`
 	Steps     []Step     `yaml:"steps"`
 	OnSuccess *OnSuccess `yaml:"on_success,omitempty"`
+}
+
+// Placement selects where the entire pipeline run should execute.
+// Step-level placement is intentionally unsupported.
+type Placement struct {
+	Worker    string            `yaml:"worker,omitempty"`
+	Cluster   string            `yaml:"cluster,omitempty"`
+	Namespace string            `yaml:"namespace,omitempty"`
+	Labels    map[string]string `yaml:"labels,omitempty"`
 }
 
 // OnSuccess defines actions to run when all pipeline steps succeed.

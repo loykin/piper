@@ -154,6 +154,7 @@ func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DA
 			OutputDir: outputDir,
 			CreatedAt: time.Now(),
 			Label:     s.Runner.Label,
+			WorkerID:  pl.Spec.Placement.Worker,
 			Vars:      vars,
 			RunParams: runParams,
 		}
@@ -208,6 +209,7 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 			OutputDir: outputDir,
 			CreatedAt: time.Now(),
 			Label:     s.Runner.Label,
+			WorkerID:  pl.Spec.Placement.Worker,
 			Vars:      vars,
 			RunParams: runParams,
 		}
@@ -249,12 +251,20 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 
 // Next transitions a ready task matching the given label to running and returns it. Returns nil if none available.
 func (q *Queue) Next(label string) *proto.Task {
+	return q.NextForWorker("", label)
+}
+
+// NextForWorker transitions a ready task matching the worker and label to running.
+func (q *Queue) NextForWorker(workerID, label string) *proto.Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	for _, r := range q.runs {
 		for _, entry := range r.tasks {
 			if entry.status != taskReady {
+				continue
+			}
+			if entry.task.WorkerID != "" && entry.task.WorkerID != workerID {
 				continue
 			}
 			if entry.task.Label != "" && entry.task.Label != label {

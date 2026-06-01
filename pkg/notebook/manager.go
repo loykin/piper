@@ -98,9 +98,13 @@ func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, sp
 		return
 	}
 
-	// Persist worker assignment and initial token from Start response.
+	// Persist worker assignment, endpoint, image, and initial token from Start response.
 	nb, err := m.repo.Get(ctx, name)
-	if err == nil && nb != nil {
+	if err != nil {
+		slog.Error("notebook: get record after start failed", "name", name, "err", err)
+		return
+	}
+	if nb != nil {
 		if fresh.WorkerID != "" {
 			nb.WorkerID = fresh.WorkerID
 		}

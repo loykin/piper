@@ -3,6 +3,8 @@ package worker
 import (
 	"testing"
 	"time"
+
+	"github.com/piper/piper/internal/agent"
 )
 
 func TestRegistry_RegisterAndList(t *testing.T) {
@@ -115,5 +117,27 @@ func TestRegistry_ReRegister_UpdatesInfo(t *testing.T) {
 	}
 	if workers[0].Label != "new" {
 		t.Errorf("Label = %q, want new", workers[0].Label)
+	}
+}
+
+func TestRegistryMirrorsPipelineWorkerToAgentRegistry(t *testing.T) {
+	agents := agent.NewRegistry()
+	r := NewRegistry(nil)
+	r.SetAgentRegistry(agents)
+
+	r.Register(Info{ID: "w1", Label: "gpu", Hostname: "node-1"})
+
+	got, err := agents.Get("w1")
+	if err != nil {
+		t.Fatalf("agent not registered: %v", err)
+	}
+	if got.Kind != agent.KindBareMetal {
+		t.Fatalf("kind = %q, want %q", got.Kind, agent.KindBareMetal)
+	}
+	if got.Labels["label"] != "gpu" {
+		t.Fatalf("label = %q, want gpu", got.Labels["label"])
+	}
+	if len(got.Capabilities) != 1 || got.Capabilities[0] != agent.CapabilityPipeline {
+		t.Fatalf("capabilities = %#v, want pipeline", got.Capabilities)
 	}
 }

@@ -3,6 +3,8 @@ package notebook
 import (
 	"testing"
 	"time"
+
+	"github.com/piper/piper/internal/agent"
 )
 
 func TestNotebookWorkerRegistry_RegisterAndPick(t *testing.T) {
@@ -135,5 +137,26 @@ func TestNotebookWorkerRegistry_List(t *testing.T) {
 	list := r.List()
 	if len(list) != 2 {
 		t.Errorf("List() len = %d, want 2", len(list))
+	}
+}
+
+func TestNotebookWorkerRegistryMirrorsToAgentRegistry(t *testing.T) {
+	agents := agent.NewRegistry()
+	r := &NotebookWorkerRegistry{
+		workers: make(map[string]*NotebookWorkerInfo),
+	}
+	r.SetAgentRegistry(agents)
+
+	r.Register(&NotebookWorkerInfo{ID: "nb1", Addr: "http://node:7701", Hostname: "node", GPUs: []string{"0"}})
+
+	got, err := agents.Get("nb1")
+	if err != nil {
+		t.Fatalf("agent not registered: %v", err)
+	}
+	if got.Addr != "http://node:7701" {
+		t.Fatalf("addr = %q", got.Addr)
+	}
+	if len(got.Capabilities) != 1 || got.Capabilities[0] != agent.CapabilityNotebook {
+		t.Fatalf("capabilities = %#v, want notebook", got.Capabilities)
 	}
 }

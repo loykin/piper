@@ -15,6 +15,7 @@ import (
 // TaskQueuer abstracts the task queue for the worker handler.
 type TaskQueuer interface {
 	Next(label string) *proto.Task
+	NextForWorker(workerID, label string) *proto.Task
 	Complete(ctx context.Context, result proto.TaskResult) error
 }
 
@@ -95,7 +96,7 @@ func (h *Handler) taskNext(c *gin.Context) {
 	h.deps.Registry.Touch(workerID)
 
 	label := c.Query("label")
-	task := h.deps.Queue.Next(label)
+	task := h.deps.Queue.NextForWorker(workerID, label)
 	if task == nil {
 		c.Status(http.StatusNoContent)
 		return

@@ -100,12 +100,7 @@ type watchedJob struct {
 // If InCluster is true, it uses in-cluster config;
 // otherwise it uses the kubeconfig at Kubeconfig path (or the default location).
 func New(cfg Config) (*Launcher, error) {
-	if cfg.Namespace == "" {
-		cfg.Namespace = "default"
-	}
-	if cfg.AgentImage == "" {
-		cfg.AgentImage = "piper/piper:latest"
-	}
+	cfg = normalizeConfig(cfg)
 
 	var restCfg *rest.Config
 	var err error
@@ -131,7 +126,22 @@ func New(cfg Config) (*Launcher, error) {
 		return nil, fmt.Errorf("k8s clientset: %w", err)
 	}
 
-	return &Launcher{cfg: cfg, clientset: clientset, watched: make(map[string]watchedJob)}, nil
+	return NewWithClient(cfg, clientset), nil
+}
+
+func NewWithClient(cfg Config, clientset kubernetes.Interface) *Launcher {
+	cfg = normalizeConfig(cfg)
+	return &Launcher{cfg: cfg, clientset: clientset, watched: make(map[string]watchedJob)}
+}
+
+func normalizeConfig(cfg Config) Config {
+	if cfg.Namespace == "" {
+		cfg.Namespace = "default"
+	}
+	if cfg.AgentImage == "" {
+		cfg.AgentImage = "piper/piper:latest"
+	}
+	return cfg
 }
 
 // pullPolicy returns the configured image pull policy, defaulting to PullAlways.

@@ -128,6 +128,36 @@ func TestNextStrictLabelMatching(t *testing.T) {
 	}
 }
 
+func TestNextForWorkerHonorsPipelinePlacementWorker(t *testing.T) {
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
+	pl := &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: "p"},
+		Spec: pipeline.Spec{
+			Placement: pipeline.Placement{Worker: "worker-a"},
+			Steps: []pipeline.Step{{
+				Name: "s1",
+				Run:  pipeline.Run{Command: []string{"echo", "ok"}},
+			}},
+		},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Add(context.Background(), pl, dag, "run-1", "", "", proto.BuiltinVars{}, nil)
+
+	if task := q.NextForWorker("worker-b", ""); task != nil {
+		t.Fatalf("worker-b got task %s, want nil", task.ID)
+	}
+	task := q.NextForWorker("worker-a", "")
+	if task == nil {
+		t.Fatal("worker-a got nil task")
+	}
+	if task.WorkerID != "worker-a" {
+		t.Fatalf("worker id = %q, want worker-a", task.WorkerID)
+	}
+}
+
 func TestNextUnlabeledTaskMatchesAnyWorker(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{

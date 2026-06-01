@@ -177,6 +177,105 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 	}
 }
 
+// TestK8sE2E_AgentModeWorkloads verifies the outbound k8s-agent path for the
+// three K8s-backed workload families: pipeline, serving, and notebook.
+func TestK8sE2E_AgentModeWorkloads(t *testing.T) {
+	requireKubectlCluster(t)
+
+	piperImage := os.Getenv("PIPER_K8S_E2E_IMAGE")
+	if piperImage == "" {
+		piperImage = "piper/piper:e2e"
+	}
+	nbImage := os.Getenv("PIPER_K8S_E2E_NOTEBOOK_IMAGE")
+	if nbImage == "" {
+		nbImage = "jupyter/minimal-notebook:latest"
+	}
+
+	ns := fmt.Sprintf("piper-agent-e2e-%d", time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	kubectl(t, "create", "namespace", ns)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cleanupCancel()
+		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
+	})
+
+	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-agent", "--timeout=90s")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
+	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+
+	localPort := freeK8sE2EPort(t)
+	pfCtx, pfCancel := context.WithCancel(ctx)
+	defer pfCancel()
+	pf := exec.CommandContext(pfCtx, "kubectl", "-n", ns, "port-forward", "svc/piper-server", fmt.Sprintf("%d:8080", localPort))
+	pf.Stdout = os.Stderr
+	pf.Stderr = os.Stderr
+	if err := pf.Start(); err != nil {
+		t.Fatalf("start port-forward: %v", err)
+	}
+	t.Cleanup(func() { pfCancel(); _ = pf.Wait() })
+
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
+	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook", "serving", "pipeline"}, 30*time.Second)
+
+	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
+metadata:
+  name: k8s-agent-e2e
+spec:
+  placement:
+    cluster: agent-e2e
+    namespace: %[1]s
+  defaults:
+    image: alpine:3.20
+  steps:
+    - name: smoke
+      run:
+        command: ["sh", "-c", "echo k8s-agent-e2e-ok"]
+`, ns))
+	if !waitK8sE2ERunStatus(t, serverURL, runID, "success", 2*time.Minute) {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("agent-mode run %s did not reach success", runID)
+	}
+	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper", "--no-headers"); !strings.Contains(out, "k8s-agent-e2e") {
+		t.Fatalf("expected agent-created pipeline Job, got:\n%s", out)
+	}
+
+	k8sE2EPostService(t, serverURL, `
+apiVersion: piper/v1
+kind: ModelService
+metadata:
+  name: agent-serving
+spec:
+  model:
+    from_uri: s3://piper-artifacts/e2e-model
+  runtime:
+    image: alpine:3.20
+    command: ["sh", "-c", "sleep 3600"]
+    port: 8080
+`)
+	if out := kubectl(t, "-n", ns, "get", "deploy,svc", "agent-serving", "--no-headers"); !strings.Contains(out, "agent-serving") {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("expected agent-created serving Deployment/Service, got:\n%s", out)
+	}
+
+	const nbName = "agent-notebook"
+	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  image: %s\n  storage_size: 1Gi\n", nbName, nbImage)
+	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
+	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 8*time.Minute) {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("agent-mode notebook %s did not reach running", nbName)
+	}
+	if out := kubectl(t, "-n", ns, "get", "statefulset,svc,pvc", "--no-headers"); !strings.Contains(out, "piper-nb-agent-notebook") {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("expected agent-created notebook resources, got:\n%s", out)
+	}
+}
+
 func requireKubectlCluster(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("kubectl"); err != nil {
@@ -358,6 +457,237 @@ spec:
 	kubectlInput(t, manifest, "apply", "-f", "-")
 }
 
+func applyK8sE2EAgentManifests(t *testing.T, ns, piperImage, nbImage string) {
+	t.Helper()
+	manifest := fmt.Sprintf(`
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: piper-server
+  namespace: %[1]s
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: piper-k8s-agent
+  namespace: %[1]s
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: piper-k8s-agent
+  namespace: %[1]s
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "services"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: piper-k8s-agent
+  namespace: %[1]s
+subjects:
+  - kind: ServiceAccount
+    name: piper-k8s-agent
+    namespace: %[1]s
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: piper-k8s-agent
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: piper-config
+  namespace: %[1]s
+data:
+  piper.yaml: |
+    run:
+      output_dir: /tmp/piper-outputs
+      retries: 0
+    server:
+      addr: :8080
+    source:
+      s3:
+        endpoint: seaweedfs:9000
+        access_key: anyadmin
+        secret_key: anypassword
+        bucket: piper-artifacts
+        use_ssl: false
+    k8s:
+      agent: true
+      agent_image: %[2]q
+      agent_image_pull_policy: IfNotPresent
+      namespace: %[1]s
+      in_cluster: true
+      master_url: http://piper-server.%[1]s.svc.cluster.local:8080
+      default_image: alpine:3.20
+      ttl_after_finished: 60
+    serving:
+      agent: true
+    notebook_k8s:
+      agent: true
+      namespace: %[1]s
+      worker_image: %[3]q
+      storage_size: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: piper-server
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: piper-server
+  template:
+    metadata:
+      labels:
+        app: piper-server
+    spec:
+      serviceAccountName: piper-server
+      containers:
+        - name: piper
+          image: %[2]q
+          imagePullPolicy: IfNotPresent
+          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /etc/piper
+      volumes:
+        - name: config
+          configMap:
+            name: piper-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: piper-k8s-agent
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: piper-k8s-agent
+  template:
+    metadata:
+      labels:
+        app: piper-k8s-agent
+    spec:
+      serviceAccountName: piper-k8s-agent
+      containers:
+        - name: agent
+          image: %[2]q
+          imagePullPolicy: IfNotPresent
+          args:
+            - k8s-agent
+            - --master=http://piper-server.%[1]s.svc.cluster.local:8080
+            - --cluster=agent-e2e
+            - --namespaces=%[1]s
+            - --notebook-namespace=%[1]s
+            - --serving-namespace=%[1]s
+            - --pipeline-namespace=%[1]s
+            - --notebook-image=%[3]s
+            - --pipeline-agent-image=%[2]s
+            - --agent-image-pull-policy=IfNotPresent
+            - --default-image=alpine:3.20
+            - --s3-endpoint=seaweedfs:9000
+            - --s3-access-key=anyadmin
+            - --s3-secret-key=anypassword
+            - --s3-bucket=piper-artifacts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: piper-server
+  namespace: %[1]s
+spec:
+  selector:
+    app: piper-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+  namespace: %[1]s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:latest
+          args: ["server", "-dir=/data", "-s3", "-s3.port=9000"]
+          ports:
+            - containerPort: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: %[1]s
+spec:
+  selector:
+    app: seaweedfs
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s3-setup
+  namespace: %[1]s
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: awscli
+          image: amazon/aws-cli:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until aws s3api create-bucket --bucket piper-artifacts \
+                --endpoint-url http://seaweedfs:9000 2>/dev/null; do
+                sleep 2
+              done
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              value: anyadmin
+            - name: AWS_SECRET_ACCESS_KEY
+              value: anypassword
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+`, ns, piperImage, nbImage)
+	kubectlInput(t, manifest, "apply", "-f", "-")
+}
+
 func kubectl(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := kubectlContext(context.Background(), nil, args...)
@@ -412,6 +742,43 @@ func waitK8sE2EHTTP(t *testing.T, url string, timeout time.Duration) {
 	t.Fatalf("%s not ready within %s", url, timeout)
 }
 
+func waitK8sE2EAgentRegistered(t *testing.T, serverURL, cluster string, capabilities []string, timeout time.Duration) {
+	t.Helper()
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(serverURL + "/api/agents") //nolint:noctx
+		if err == nil {
+			var agents []struct {
+				ClusterName  string   `json:"cluster_name"`
+				Capabilities []string `json:"capabilities"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			resp.Body.Close()
+			for _, agent := range agents {
+				if agent.ClusterName == cluster && hasK8sE2ECapabilities(agent.Capabilities, capabilities) {
+					return
+				}
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("agent for cluster %q with capabilities %v not registered within %s", cluster, capabilities, timeout)
+}
+
+func hasK8sE2ECapabilities(got, want []string) bool {
+	set := make(map[string]bool, len(got))
+	for _, capability := range got {
+		set[capability] = true
+	}
+	for _, capability := range want {
+		if !set[capability] {
+			return false
+		}
+	}
+	return true
+}
+
 func k8sE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": pipelineYAML})
@@ -434,6 +801,20 @@ func k8sE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 		t.Fatal("run_id is empty")
 	}
 	return result.RunID
+}
+
+func k8sE2EPostService(t *testing.T, serverURL, serviceYAML string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"yaml": serviceYAML})
+	resp, err := http.Post(serverURL+"/serving", "application/json", bytes.NewReader(body)) //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /serving status=%d body=%s", resp.StatusCode, b)
+	}
 }
 
 func waitK8sE2ERunStatus(t *testing.T, serverURL, runID, want string, timeout time.Duration) bool {

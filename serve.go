@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
@@ -207,6 +208,14 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 			Queue:    p.queue,
 		}).RegisterRoutes(r.Group("/api"))
 	}
+
+	// Unified agent registry domain.
+	iagent.NewHandler(p.agentRegistry).RegisterRoutes(r.Group("/api"))
+	r.GET("/api/agents/:id/tunnel", func(c *gin.Context) {
+		if err := p.tunnelHub.Accept(c.Writer, c.Request, c.Param("id")); err != nil {
+			slog.Warn("agent tunnel closed", "agent_id", c.Param("id"), "err", err)
+		}
+	})
 
 	// JupyterLab requests /custom/custom.css as an absolute path (no base_url prefix).
 	// The file is empty by convention — it is a user customization hook.

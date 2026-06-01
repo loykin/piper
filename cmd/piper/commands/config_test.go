@@ -46,6 +46,7 @@ server:
     cert_file: ""
     key_file: ""
 k8s:
+  agent: true
   agent_image: piper/piper:latest
   namespace: default
   in_cluster: true
@@ -58,12 +59,16 @@ retention:
 schedule:
   misfire_policy: skip
   misfire_grace_period: 1m
+serving:
+  model_dir: /data/models
+  agent: true
 log:
   format: json
 notebook_worker:
   notebooks_root: /data/notebooks
   port_range: "8888-9900"
 notebook_k8s:
+  agent: true
   namespace: ml-notebooks
   worker_image: jupyter/minimal-notebook:latest
   storage_size: 10Gi
@@ -78,6 +83,7 @@ func TestStrictParseConfigFile_NotebookK8s(t *testing.T) {
 run:
   output_dir: /tmp/piper
 notebook_k8s:
+  agent: true
   namespace: ml-notebooks
   worker_image: jupyter/minimal-notebook:latest
   storage_class: standard
@@ -175,6 +181,7 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 			},
 		},
 		K8s: k8sSection{
+			Agent:                true,
 			AgentImage:           "piper/piper:v1",
 			AgentImagePullPolicy: "IfNotPresent",
 			Namespace:            "ml",
@@ -190,6 +197,17 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 		Schedule: scheduleSection{
 			MisfirePolicy:      "run_once",
 			MisfireGracePeriod: 2 * time.Minute,
+		},
+		Serving: servingSection{
+			ModelDir: "/data/models",
+			Agent:    true,
+		},
+		NotebookK8s: notebookK8sSection{
+			Agent:        true,
+			Namespace:    "ml-notebooks",
+			WorkerImage:  "jupyter/minimal-notebook:latest",
+			StorageClass: "standard",
+			StorageSize:  "10Gi",
 		},
 	}
 
@@ -231,6 +249,9 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 	if cfg.K8s.AgentImage != "piper/piper:v1" {
 		t.Errorf("K8s.AgentImage = %q, want piper/piper:v1", cfg.K8s.AgentImage)
 	}
+	if !cfg.K8s.Agent {
+		t.Error("K8s.Agent = false, want true")
+	}
 	if cfg.K8s.Namespace != "ml" {
 		t.Errorf("K8s.Namespace = %q, want ml", cfg.K8s.Namespace)
 	}
@@ -242,6 +263,21 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 	}
 	if cfg.Schedule.MisfirePolicy != "run_once" {
 		t.Errorf("Schedule.MisfirePolicy = %q, want run_once", cfg.Schedule.MisfirePolicy)
+	}
+	if cfg.Serving.ModelDir != "/data/models" {
+		t.Errorf("Serving.ModelDir = %q, want /data/models", cfg.Serving.ModelDir)
+	}
+	if !cfg.Serving.Agent {
+		t.Error("Serving.Agent = false, want true")
+	}
+	if !cfg.NotebookK8s.Agent {
+		t.Error("NotebookK8s.Agent = false, want true")
+	}
+	if cfg.NotebookK8s.Namespace != "ml-notebooks" {
+		t.Errorf("NotebookK8s.Namespace = %q, want ml-notebooks", cfg.NotebookK8s.Namespace)
+	}
+	if cfg.NotebookK8s.WorkerImage != "jupyter/minimal-notebook:latest" {
+		t.Errorf("NotebookK8s.WorkerImage = %q, want jupyter/minimal-notebook:latest", cfg.NotebookK8s.WorkerImage)
 	}
 }
 

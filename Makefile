@@ -15,7 +15,7 @@ build-linux:
 
 # Build the React UI and update pkg/ui/dist (commit after building)
 ui:
-	cd frontend && npm run build
+	cd frontend && pnpm run build
 	rm -rf pkg/ui/dist
 	cp -r frontend/dist pkg/ui/dist
 	@echo "UI built. Commit pkg/ui/dist/ to include in go install."

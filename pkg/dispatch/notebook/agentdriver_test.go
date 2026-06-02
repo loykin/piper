@@ -24,23 +24,15 @@ func (r *recordingAgentRPC) SendRPC(_ context.Context, agentID, method string, p
 	r.calls = append(r.calls, agentRPCCall{AgentID: agentID, Method: method, Payload: payload})
 	switch method {
 	case iagent.MethodNotebookProvisionVolume:
-		res := result.(*struct {
-			WorkDir string `json:"work_dir"`
-		})
-		res.WorkDir = "/home/jovyan"
+		res := result.(*notebook.WorkerProvisionVolumeResponse)
+		res.WorkDir = notebook.ContainerWorkDir
 	case iagent.MethodNotebookStart:
-		res := result.(*struct {
-			Token    string `json:"token"`
-			WorkDir  string `json:"work_dir"`
-			Endpoint string `json:"endpoint"`
-		})
+		res := result.(*notebook.WorkerStartResponse)
 		res.Token = "token"
-		res.WorkDir = "/home/jovyan"
+		res.WorkDir = notebook.ContainerWorkDir
 		res.Endpoint = "tunnel://agent-1/nb/demo"
 	case iagent.MethodNotebookSyncStatus:
-		res := result.(*struct {
-			Statuses map[string]string `json:"statuses"`
-		})
+		res := result.(*notebook.WorkerSyncStatusResponse)
 		res.Statuses = map[string]string{"demo": notebook.StatusRunning}
 	}
 	return nil
@@ -65,7 +57,7 @@ func TestAgentDriverProvisionVolume(t *testing.T) {
 	if err := driver.ProvisionVolume(context.Background(), vol, "5Gi"); err != nil {
 		t.Fatalf("ProvisionVolume returned error: %v", err)
 	}
-	if vol.WorkDir != "/home/jovyan" {
+	if vol.WorkDir != notebook.ContainerWorkDir {
 		t.Fatalf("work dir = %q", vol.WorkDir)
 	}
 	if vol.WorkerID != "agent-1" {
@@ -81,7 +73,7 @@ func TestAgentDriverStartUsesVolumeAgent(t *testing.T) {
 	spec := notebook.NotebookServerSpec{}
 	spec.Metadata.Name = "demo"
 
-	nb, err := driver.Start(context.Background(), spec, &notebook.NotebookVolume{ID: "vol-1", WorkerID: "agent-1", WorkDir: "/home/jovyan"}, "metadata:\n  name: demo\n")
+	nb, err := driver.Start(context.Background(), spec, &notebook.NotebookVolume{ID: "vol-1", WorkerID: "agent-1", WorkDir: notebook.ContainerWorkDir}, "metadata:\n  name: demo\n")
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}

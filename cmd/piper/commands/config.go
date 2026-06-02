@@ -17,6 +17,7 @@ import (
 type configFile struct {
 	Run            runSection            `yaml:"run"             mapstructure:"run"`
 	Source         sourceSection         `yaml:"source"          mapstructure:"source"`
+	Storage        storageSection        `yaml:"storage"         mapstructure:"storage"`
 	Server         serverSection         `yaml:"server"          mapstructure:"server"`
 	K8s            k8sSection            `yaml:"k8s"             mapstructure:"k8s"`
 	Retention      retentionSection      `yaml:"retention"       mapstructure:"retention"`
@@ -26,6 +27,11 @@ type configFile struct {
 	DB             dbSection             `yaml:"db"              mapstructure:"db"`
 	NotebookWorker notebookWorkerSection `yaml:"notebook_worker" mapstructure:"notebook_worker"`
 	NotebookK8s    notebookK8sSection    `yaml:"notebook_k8s"    mapstructure:"notebook_k8s"`
+}
+
+type storageSection struct {
+	URL   string `yaml:"url"   mapstructure:"url"`
+	Token string `yaml:"token" mapstructure:"token"`
 }
 
 type runSection struct {
@@ -297,6 +303,33 @@ func notebookTolerations(items []tolerationItem) []pipeline.Toleration {
 		}
 	}
 	return out
+}
+
+// resolveStorageURLFromViper derives the storage URL for workers/embedded workers.
+// Priority: storage.url > source.s3.* (backward compat with pre-blobstore configs).
+func resolveStorageURLFromViper() string {
+	if u := viper.GetString("storage.url"); u != "" {
+		return u
+	}
+	bucket := viper.GetString("source.s3.bucket")
+	if bucket == "" {
+		return ""
+	}
+	scheme := "http"
+	if viper.GetBool("source.s3.use_ssl") {
+		scheme = "https"
+	}
+	q := "s3ForcePathStyle=true"
+	if ak := viper.GetString("source.s3.access_key"); ak != "" {
+		q += "&accessKey=" + ak
+	}
+	if sk := viper.GetString("source.s3.secret_key"); sk != "" {
+		q += "&secretKey=" + sk
+	}
+	if ep := viper.GetString("source.s3.endpoint"); ep != "" {
+		q += "&endpoint=" + scheme + "://" + ep
+	}
+	return "s3://" + bucket + "?" + q
 }
 
 func notebookWorkerDockerVolumes(items []notebookWorkerDockerVolume) []piper.NotebookWorkerDockerVolume {

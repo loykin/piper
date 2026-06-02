@@ -13,7 +13,7 @@ type Driver interface {
 	ProvisionVolume(ctx context.Context, vol *NotebookVolume, storageSize string) error
 
 	// Start launches a notebook server with vol mounted.
-	// Local: runs jupyter-lab on vol's worker with --notebook-dir=vol.WorkDir.
+	// Local: runs JupyterLab on vol's worker with ServerApp.root_dir=vol.WorkDir.
 	// K8s: creates a Pod/StatefulSet with the PVC mounted.
 	Start(ctx context.Context, spec NotebookServerSpec, vol *NotebookVolume, yamlStr string) (*NotebookServer, error)
 

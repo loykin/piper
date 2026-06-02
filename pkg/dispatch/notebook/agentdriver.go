@@ -40,9 +40,7 @@ func (d *AgentDriver) ProvisionVolume(ctx context.Context, vol *notebook.Noteboo
 	if agentInfo.Kind == iagent.KindBareMetal {
 		return d.provisionBareMetalVolume(ctx, agentInfo, vol)
 	}
-	var result struct {
-		WorkDir string `json:"work_dir"`
-	}
+	var result notebook.WorkerProvisionVolumeResponse
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookProvisionVolume, map[string]any{
 		"volume_id":    vol.ID,
 		"storage_size": storageSize,
@@ -73,15 +71,11 @@ func (d *AgentDriver) Start(ctx context.Context, spec notebook.NotebookServerSpe
 		workDir = vol.WorkDir
 		volumeID = vol.ID
 	}
-	var result struct {
-		Token    string `json:"token"`
-		WorkDir  string `json:"work_dir"`
-		Endpoint string `json:"endpoint"`
-	}
-	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStart, map[string]any{
-		"yaml":      yamlStr,
-		"work_dir":  workDir,
-		"volume_id": volumeID,
+	var result notebook.WorkerStartResponse
+	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStart, notebook.WorkerStartRequest{
+		YAML:     yamlStr,
+		WorkDir:  workDir,
+		VolumeID: volumeID,
 	}, &result); err != nil {
 		return nil, fmt.Errorf("notebook agent start: %w", err)
 	}
@@ -132,10 +126,8 @@ func (d *AgentDriver) DeprovisionVolume(ctx context.Context, vol *notebook.Noteb
 }
 
 func (d *AgentDriver) provisionBareMetalVolume(ctx context.Context, agentInfo *iagent.Info, vol *notebook.NotebookVolume) error {
-	var result struct {
-		WorkDir string `json:"work_dir"`
-	}
-	if err := postBareMetalJSON(ctx, agentInfo.Addr+"/volume", map[string]any{"volume_id": vol.ID}, &result, http.StatusOK); err != nil {
+	var result notebook.WorkerProvisionVolumeResponse
+	if err := postBareMetalJSON(ctx, agentInfo.Addr+"/volume", notebook.WorkerProvisionVolumeRequest{VolumeID: vol.ID}, &result, http.StatusOK); err != nil {
 		return fmt.Errorf("notebook bare-metal provision volume: %w", err)
 	}
 	vol.WorkDir = result.WorkDir
@@ -150,14 +142,11 @@ func (d *AgentDriver) startBareMetal(ctx context.Context, agentInfo *iagent.Info
 		workDir = vol.WorkDir
 		volumeID = vol.ID
 	}
-	var result struct {
-		Token   string `json:"token"`
-		WorkDir string `json:"work_dir"`
-	}
-	if err := postBareMetalJSON(ctx, agentInfo.Addr+"/start", map[string]any{
-		"yaml":      yamlStr,
-		"work_dir":  workDir,
-		"volume_id": volumeID,
+	var result notebook.WorkerStartResponse
+	if err := postBareMetalJSON(ctx, agentInfo.Addr+"/start", notebook.WorkerStartRequest{
+		YAML:     yamlStr,
+		WorkDir:  workDir,
+		VolumeID: volumeID,
 	}, &result, http.StatusOK, http.StatusAccepted); err != nil {
 		return nil, fmt.Errorf("notebook bare-metal start: %w", err)
 	}
@@ -249,12 +238,8 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 		byAgent[agentInfo.ID] = append(byAgent[agentInfo.ID], nb.Name)
 	}
 	for agentID, names := range byAgent {
-		var result struct {
-			Statuses map[string]string `json:"statuses"`
-		}
-		if err := d.rpc.SendRPC(ctx, agentID, iagent.MethodNotebookSyncStatus, map[string]any{
-			"names": names,
-		}, &result); err != nil {
+		var result notebook.WorkerSyncStatusResponse
+		if err := d.rpc.SendRPC(ctx, agentID, iagent.MethodNotebookSyncStatus, notebook.WorkerSyncStatusRequest{Names: names}, &result); err != nil {
 			return fmt.Errorf("notebook agent sync status: %w", err)
 		}
 		for name, status := range result.Statuses {

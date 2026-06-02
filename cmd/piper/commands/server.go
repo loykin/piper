@@ -59,8 +59,9 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			// the heartbeat loop handles re-registration automatically.
 			masterURL := localMasterURL(addr)
 			srcCfg := source.Config{
-				GitUser:  viper.GetString("source.git.user"),
-				GitToken: viper.GetString("source.git.token"),
+				GitUser:    viper.GetString("source.git.user"),
+				GitToken:   viper.GetString("source.git.token"),
+				StorageURL: resolveStorageURLFromViper(),
 			}
 			wCfg := workerConfigFromSource(worker.Config{
 				MasterURL:   masterURL,

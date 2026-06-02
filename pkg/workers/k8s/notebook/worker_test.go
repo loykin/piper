@@ -8,6 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/piper/piper/pkg/notebook"
 )
 
 func TestNotebookProvisionVolumeCreatesPVC(t *testing.T) {
@@ -20,11 +22,11 @@ func TestNotebookProvisionVolumeCreatesPVC(t *testing.T) {
 		StorageSize: "5Gi",
 	})
 
-	resp, err := a.provisionNotebookVolume(context.Background(), notebookProvisionVolumeRequest{VolumeID: "vol-1234567890abcdef"})
+	resp, err := a.provisionNotebookVolume(context.Background(), notebook.WorkerProvisionVolumeRequest{VolumeID: "vol-1234567890abcdef"})
 	if err != nil {
 		t.Fatalf("provisionNotebookVolume returned error: %v", err)
 	}
-	if resp.WorkDir != "/home/jovyan" {
+	if resp.WorkDir != notebook.ContainerWorkDir {
 		t.Fatalf("work dir = %q", resp.WorkDir)
 	}
 	pvc, err := client.CoreV1().PersistentVolumeClaims("notebooks").Get(context.Background(), "piper-nb-vol-vol123456789", metav1.GetOptions{})
@@ -49,7 +51,7 @@ func TestNotebookStartCreatesStatefulSetAndService(t *testing.T) {
 		Image:       "jupyter/minimal-notebook:latest",
 	})
 
-	resp, err := a.startNotebook(context.Background(), notebookStartRequest{
+	resp, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
 		YAML: `
 metadata:
   name: My Notebook
@@ -69,6 +71,16 @@ spec: {}
 	}
 	if sts.Spec.Template.Spec.Containers[0].Image != "jupyter/minimal-notebook:latest" {
 		t.Fatalf("image = %q", sts.Spec.Template.Spec.Containers[0].Image)
+	}
+	wantArgs := notebook.JupyterStartArgs("/notebooks/My Notebook/proxy/", resp.Token, notebook.ContainerWorkDir, 8888)
+	gotArgs := sts.Spec.Template.Spec.Containers[0].Args
+	for i, want := range wantArgs {
+		if gotArgs[i] != want {
+			t.Fatalf("args[%d] = %q, want %q", i, gotArgs[i], want)
+		}
+	}
+	if sts.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath != notebook.ContainerWorkDir {
+		t.Fatalf("mount path = %q", sts.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath)
 	}
 	if sts.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "piper-nb-vol-volabc" {
 		t.Fatalf("claim name = %q", sts.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName)
@@ -92,7 +104,7 @@ func TestNotebookStopScalesStatefulSetToZero(t *testing.T) {
 	})
 	a := New(Config{AgentID: "agent-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
-	if err := a.stopNotebook(context.Background(), notebookStopRequest{Name: "demo"}); err != nil {
+	if err := a.stopNotebook(context.Background(), notebook.WorkerStopRequest{Name: "demo"}); err != nil {
 		t.Fatalf("stopNotebook returned error: %v", err)
 	}
 	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-demo", metav1.GetOptions{})
@@ -110,7 +122,7 @@ func TestNotebookDeprovisionDeletesPVC(t *testing.T) {
 	})
 	a := New(Config{AgentID: "agent-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
-	if err := a.deprovisionNotebookVolume(context.Background(), notebookDeprovisionVolumeRequest{VolumeID: "vol-abc"}); err != nil {
+	if err := a.deprovisionNotebookVolume(context.Background(), notebook.WorkerDeprovisionVolumeRequest{VolumeID: "vol-abc"}); err != nil {
 		t.Fatalf("deprovisionNotebookVolume returned error: %v", err)
 	}
 	if _, err := client.CoreV1().PersistentVolumeClaims("notebooks").Get(context.Background(), "piper-nb-vol-volabc", metav1.GetOptions{}); err == nil {
@@ -137,7 +149,7 @@ func TestNotebookStartUpdatesExistingStatefulSet(t *testing.T) {
 		Image:       "new-image",
 	})
 
-	if _, err := a.startNotebook(context.Background(), notebookStartRequest{
+	if _, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
 		YAML:     "metadata:\n  name: demo\nspec: {}\n",
 		VolumeID: "vol-demo",
 	}); err != nil {
@@ -165,7 +177,7 @@ func TestNotebookSyncStatusReportsReadyStatefulSet(t *testing.T) {
 	})
 	a := New(Config{AgentID: "agent-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
-	resp, err := a.syncNotebookStatus(context.Background(), notebookSyncStatusRequest{Names: []string{"demo"}})
+	resp, err := a.syncNotebookStatus(context.Background(), notebook.WorkerSyncStatusRequest{Names: []string{"demo"}})
 	if err != nil {
 		t.Fatalf("syncNotebookStatus returned error: %v", err)
 	}

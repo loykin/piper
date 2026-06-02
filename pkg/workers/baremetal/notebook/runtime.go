@@ -62,13 +62,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		return nil, err
 	}
 
-	command := append(extraArgs,
-		"--no-browser",
-		fmt.Sprintf("--port=%d", req.Port),
-		fmt.Sprintf("--notebook-dir=%s", req.WorkDir),
-		fmt.Sprintf("--IdentityProvider.token=%s", req.Token),
-		fmt.Sprintf("--ServerApp.base_url=%s", req.BaseURL),
-	)
+	command := append(extraArgs, notebook.JupyterStartArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
 	command = append([]string{bin}, command...)
 
 	pid, endpoint, cmd, err := workload.StartProcess(workload.ProcessSpec{

@@ -46,57 +46,19 @@ func Register(dispatcher Dispatcher, cfg Config) {
 	New(cfg).register(dispatcher)
 }
 
-type notebookProvisionVolumeRequest struct {
-	VolumeID    string `json:"volume_id"`
-	StorageSize string `json:"storage_size,omitempty"`
-}
-
-type notebookProvisionVolumeResponse struct {
-	WorkDir string `json:"work_dir"`
-}
-
-type notebookStartRequest struct {
-	YAML      string `json:"yaml"`
-	MasterURL string `json:"master_url"`
-	WorkDir   string `json:"work_dir"`
-	VolumeID  string `json:"volume_id"`
-}
-
-type notebookStartResponse struct {
-	Token    string `json:"token"`
-	WorkDir  string `json:"work_dir"`
-	Endpoint string `json:"endpoint"`
-}
-
-type notebookStopRequest struct {
-	Name string `json:"name"`
-}
-
-type notebookDeprovisionVolumeRequest struct {
-	VolumeID string `json:"volume_id"`
-}
-
-type notebookSyncStatusRequest struct {
-	Names []string `json:"names"`
-}
-
-type notebookSyncStatusResponse struct {
-	Statuses map[string]string `json:"statuses"`
-}
-
 func (a *Worker) register(dispatcher Dispatcher) {
 	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookProvisionVolume, a.provisionNotebookVolume)
 	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookStart, a.startNotebook)
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookStop, func(ctx context.Context, req notebookStopRequest) (any, error) {
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookStop, func(ctx context.Context, req notebook.WorkerStopRequest) (any, error) {
 		return nil, a.stopNotebook(ctx, req)
 	})
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookDeprovision, func(ctx context.Context, req notebookDeprovisionVolumeRequest) (any, error) {
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookDeprovision, func(ctx context.Context, req notebook.WorkerDeprovisionVolumeRequest) (any, error) {
 		return nil, a.deprovisionNotebookVolume(ctx, req)
 	})
 	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookSyncStatus, a.syncNotebookStatus)
 }
 
-func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebookProvisionVolumeRequest) (*notebookProvisionVolumeResponse, error) {
+func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.WorkerProvisionVolumeRequest) (*notebook.WorkerProvisionVolumeResponse, error) {
 	if req.VolumeID == "" {
 		return nil, fmt.Errorf("volume_id is required")
 	}
@@ -136,10 +98,10 @@ func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebookProvis
 	if _, err := a.cfg.Client.CoreV1().PersistentVolumeClaims(ns).Create(ctx, pvc, metav1.CreateOptions{}); err != nil && !k8serrors.IsAlreadyExists(err) {
 		return nil, err
 	}
-	return &notebookProvisionVolumeResponse{WorkDir: "/home/jovyan"}, nil
+	return &notebook.WorkerProvisionVolumeResponse{WorkDir: notebook.ContainerWorkDir}, nil
 }
 
-func (a *Worker) startNotebook(ctx context.Context, req notebookStartRequest) (*notebookStartResponse, error) {
+func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequest) (*notebook.WorkerStartResponse, error) {
 	if req.VolumeID == "" {
 		return nil, fmt.Errorf("volume_id is required")
 	}
@@ -164,7 +126,7 @@ func (a *Worker) startNotebook(ctx context.Context, req notebookStartRequest) (*
 	token := uuid.NewString()
 	workDir := req.WorkDir
 	if workDir == "" {
-		workDir = "/home/jovyan"
+		workDir = notebook.ContainerWorkDir
 	}
 	labels := a.k8sLabels("notebook", spec.Metadata.Name)
 	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", spec.Metadata.Name)
@@ -181,19 +143,11 @@ func (a *Worker) startNotebook(ctx context.Context, req notebookStartRequest) (*
 					Containers: []corev1.Container{{
 						Name:  "notebook",
 						Image: image,
-						Args: []string{
-							"start-notebook.py",
-							"--ServerApp.base_url=" + baseURL,
-							"--ServerApp.token=" + token,
-							"--ServerApp.root_dir=/home/jovyan",
-							"--ServerApp.allow_origin=*",
-							"--no-browser",
-							"--port=8888",
-						},
+						Args:  notebook.JupyterStartArgs(baseURL, token, notebook.ContainerWorkDir, 8888),
 						Ports: []corev1.ContainerPort{{Name: "notebook", ContainerPort: 8888}},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "data",
-							MountPath: "/home/jovyan",
+							MountPath: notebook.ContainerWorkDir,
 						}},
 					}},
 					Volumes: []corev1.Volume{{
@@ -235,14 +189,14 @@ func (a *Worker) startNotebook(ctx context.Context, req notebookStartRequest) (*
 		return nil, err
 	}
 
-	return &notebookStartResponse{
+	return &notebook.WorkerStartResponse{
 		Token:    token,
 		WorkDir:  workDir,
 		Endpoint: fmt.Sprintf("tunnel://%s/nb/%s", a.cfg.AgentID, spec.Metadata.Name),
 	}, nil
 }
 
-func (a *Worker) stopNotebook(ctx context.Context, req notebookStopRequest) error {
+func (a *Worker) stopNotebook(ctx context.Context, req notebook.WorkerStopRequest) error {
 	if req.Name == "" {
 		return fmt.Errorf("name is required")
 	}
@@ -261,7 +215,7 @@ func (a *Worker) stopNotebook(ctx context.Context, req notebookStopRequest) erro
 	return err
 }
 
-func (a *Worker) deprovisionNotebookVolume(ctx context.Context, req notebookDeprovisionVolumeRequest) error {
+func (a *Worker) deprovisionNotebookVolume(ctx context.Context, req notebook.WorkerDeprovisionVolumeRequest) error {
 	if req.VolumeID == "" {
 		return fmt.Errorf("volume_id is required")
 	}
@@ -272,7 +226,7 @@ func (a *Worker) deprovisionNotebookVolume(ctx context.Context, req notebookDepr
 	return nil
 }
 
-func (a *Worker) syncNotebookStatus(ctx context.Context, req notebookSyncStatusRequest) (notebookSyncStatusResponse, error) {
+func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSyncStatusRequest) (notebook.WorkerSyncStatusResponse, error) {
 	statuses := make(map[string]string, len(req.Names))
 	for _, name := range req.Names {
 		sts, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).Get(ctx, notebookWorkloadName(name), metav1.GetOptions{})
@@ -293,7 +247,7 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebookSyncStatusR
 			statuses[name] = notebook.StatusStopped
 		}
 	}
-	return notebookSyncStatusResponse{Statuses: statuses}, nil
+	return notebook.WorkerSyncStatusResponse{Statuses: statuses}, nil
 }
 
 func (a *Worker) notebookNamespace() string {

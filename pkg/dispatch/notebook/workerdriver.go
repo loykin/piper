@@ -38,7 +38,7 @@ func (d *WorkerDriver) ProvisionVolume(ctx context.Context, vol *notebook.Notebo
 		return err
 	}
 
-	payload, _ := json.Marshal(map[string]any{"volume_id": vol.ID})
+	payload, _ := json.Marshal(notebook.WorkerProvisionVolumeRequest{VolumeID: vol.ID})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.Addr+"/volume", bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("provision volume: build request: %w", err)
@@ -57,9 +57,7 @@ func (d *WorkerDriver) ProvisionVolume(ctx context.Context, vol *notebook.Notebo
 		return fmt.Errorf("provision volume: worker %s returned %d: %s", w.Addr, resp.StatusCode, bytes.TrimSpace(body))
 	}
 
-	var result struct {
-		WorkDir string `json:"work_dir"`
-	}
+	var result notebook.WorkerProvisionVolumeResponse
 	_ = json.NewDecoder(resp.Body).Decode(&result)
 	vol.WorkDir = result.WorkDir
 	vol.WorkerID = w.Hostname
@@ -101,11 +99,11 @@ func (d *WorkerDriver) Start(ctx context.Context, spec notebook.NotebookServerSp
 		volumeID = vol.ID
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"yaml":       yamlStr,
-		"master_url": d.masterURL,
-		"work_dir":   workDir,
-		"volume_id":  volumeID,
+	payload, err := json.Marshal(notebook.WorkerStartRequest{
+		YAML:      yamlStr,
+		MasterURL: d.masterURL,
+		WorkDir:   workDir,
+		VolumeID:  volumeID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("notebook worker start: marshal payload: %w", err)
@@ -132,10 +130,7 @@ func (d *WorkerDriver) Start(ctx context.Context, spec notebook.NotebookServerSp
 		return nil, fmt.Errorf("notebook worker start: worker %s returned status %d: %s", w.Addr, resp.StatusCode, bytes.TrimSpace(body))
 	}
 
-	var result struct {
-		Token   string `json:"token"`
-		WorkDir string `json:"work_dir"`
-	}
+	var result notebook.WorkerStartResponse
 	_ = json.NewDecoder(resp.Body).Decode(&result)
 
 	nb := &notebook.NotebookServer{

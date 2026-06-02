@@ -17,10 +17,11 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
+
+	"github.com/piper/piper/pkg/notebook"
 )
 
 const (
-	dockerWorkDir       = "/home/jovyan/work"
 	dockerNotebookPort  = "8888/tcp"
 	dockerManagedLabel  = "piper.managed"
 	dockerNotebookLabel = "piper.notebook"
@@ -226,15 +227,7 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 		dockerManagedLabel:  "true",
 		dockerNotebookLabel: req.Name,
 	}
-	cmd := []string{
-		"start-notebook.py",
-		"--ServerApp.base_url=" + req.BaseURL,
-		"--ServerApp.token=" + req.Token,
-		"--ServerApp.root_dir=" + dockerWorkDir,
-		"--ServerApp.allow_origin=*",
-		"--no-browser",
-		"--port=8888",
-	}
+	cmd := notebook.JupyterStartArgs(req.BaseURL, req.Token, notebook.ContainerWorkDir, 8888)
 	cmd = append(cmd, r.cfg.ExtraArgs...)
 	port := network.MustParsePort(dockerNotebookPort)
 	return dockerclient.ContainerCreateOptions{
@@ -243,7 +236,7 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 			Image:        image,
 			Cmd:          cmd,
 			User:         r.cfg.User,
-			WorkingDir:   dockerWorkDir,
+			WorkingDir:   notebook.ContainerWorkDir,
 			Labels:       labels,
 			ExposedPorts: network.PortSet{port: struct{}{}},
 		},
@@ -335,9 +328,9 @@ func dockerMounts(workDir string, vols []DockerVolume) ([]mount.Mount, error) {
 	mounts := []mount.Mount{{
 		Type:   mount.TypeBind,
 		Source: absWorkDir,
-		Target: dockerWorkDir,
+		Target: notebook.ContainerWorkDir,
 	}}
-	targets := map[string]bool{dockerWorkDir: true}
+	targets := map[string]bool{notebook.ContainerWorkDir: true}
 	for _, vol := range vols {
 		if targets[vol.ContainerPath] {
 			return nil, fmt.Errorf("duplicate docker volume container_path %q", vol.ContainerPath)
@@ -388,7 +381,7 @@ func normalizeDockerConfig(cfg DockerConfig) (DockerConfig, error) {
 		return cfg, fmt.Errorf("notebook_worker.docker.network must be bridge or none")
 	}
 	seenNames := map[string]bool{}
-	seenTargets := map[string]bool{dockerWorkDir: true}
+	seenTargets := map[string]bool{notebook.ContainerWorkDir: true}
 	for i, vol := range cfg.Volumes {
 		if vol.Name == "" {
 			return cfg, fmt.Errorf("notebook_worker.docker.volumes[%d].name is required", i)
@@ -404,7 +397,7 @@ func normalizeDockerConfig(cfg DockerConfig) (DockerConfig, error) {
 		if !filepath.IsAbs(vol.ContainerPath) {
 			return cfg, fmt.Errorf("docker volume %q container_path must be absolute", vol.Name)
 		}
-		if vol.ContainerPath == dockerWorkDir || strings.HasPrefix(vol.ContainerPath, dockerWorkDir+"/") {
+		if vol.ContainerPath == notebook.ContainerWorkDir || strings.HasPrefix(vol.ContainerPath, notebook.ContainerWorkDir+"/") {
 			return cfg, fmt.Errorf("docker volume %q overlaps notebook work dir", vol.Name)
 		}
 		if seenTargets[vol.ContainerPath] {

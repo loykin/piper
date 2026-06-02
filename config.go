@@ -41,8 +41,8 @@ type Config struct {
 	// When empty, falls back to S3 (if S3.Bucket is set) or the built-in file server.
 	Storage StorageConfig `yaml:"storage" mapstructure:"storage"`
 
-	// S3 is deprecated. Use Storage.URL instead.
-	// Retained for backward compatibility with existing piper.yaml files.
+	// S3 keeps compatibility with existing piper.yaml files.
+	// Prefer Storage.URL for new configurations.
 	S3 S3Config `yaml:"s3" mapstructure:"s3"`
 
 	// Server (not required in embedded mode)

@@ -228,12 +228,7 @@ func (w *Worker) healthHandler(c *gin.Context) {
 // POST /start — accepts a notebook start request and returns 202 Accepted immediately.
 // Env preparation, process start, and master callback all happen in a background goroutine.
 func (w *Worker) startHandler(c *gin.Context) {
-	var req struct {
-		YAML      string `json:"yaml"`
-		MasterURL string `json:"master_url"`
-		WorkDir   string `json:"work_dir"`  // non-empty = reuse this exact directory
-		VolumeID  string `json:"volume_id"` // UUID of the backing NotebookVolume
-	}
+	var req notebook.WorkerStartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -277,10 +272,7 @@ func (w *Worker) startHandler(c *gin.Context) {
 
 	// Return 202 immediately so the master can persist the token/workDir while
 	// the potentially slow env preparation runs in the background.
-	c.JSON(http.StatusAccepted, gin.H{
-		"token":    token,
-		"work_dir": workDir,
-	})
+	c.JSON(http.StatusAccepted, notebook.WorkerStartResponse{Token: token, WorkDir: workDir})
 
 	go func() {
 		if err := os.MkdirAll(workDir, 0755); err != nil {
@@ -349,9 +341,7 @@ func (w *Worker) stopHandler(c *gin.Context) {
 // POST /volume — provisions a new notebook volume directory on this worker.
 // Returns {"work_dir": "<path>"} on success.
 func (w *Worker) provisionVolumeHandler(c *gin.Context) {
-	var req struct {
-		VolumeID string `json:"volume_id"`
-	}
+	var req notebook.WorkerProvisionVolumeRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.VolumeID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "volume_id is required"})
 		return
@@ -362,7 +352,7 @@ func (w *Worker) provisionVolumeHandler(c *gin.Context) {
 		return
 	}
 	slog.Info("notebook volume provisioned", "volume_id", req.VolumeID, "dir", dir)
-	c.JSON(http.StatusOK, gin.H{"work_dir": dir})
+	c.JSON(http.StatusOK, notebook.WorkerProvisionVolumeResponse{WorkDir: dir})
 }
 
 // DELETE /volume/:name — removes a notebook volume's work directory.

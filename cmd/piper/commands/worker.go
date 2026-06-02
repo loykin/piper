@@ -22,8 +22,9 @@ func newWorkerCmd() *cobra.Command {
 			// by initConfig at this point) rather than from p.SourceConfig(), which
 			// was built before viper loaded the config file.
 			srcCfg := source.Config{
-				GitUser:  viper.GetString("source.git.user"),
-				GitToken: viper.GetString("source.git.token"),
+				GitUser:    viper.GetString("source.git.user"),
+				GitToken:   viper.GetString("source.git.token"),
+				StorageURL: resolveStorageURLFromViper(),
 			}
 			cfg := workerConfigFromSource(worker.Config{
 				MasterURL:           viper.GetString("worker.master"),

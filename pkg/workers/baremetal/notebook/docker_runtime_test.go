@@ -78,6 +78,12 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	if got := opts.Config.Cmd[len(opts.Config.Cmd)-1]; got != "--ServerApp.disable_check_xsrf=true" {
 		t.Fatalf("last command arg = %q", got)
 	}
+	wantArgs := notebook.JupyterStartArgs("/notebooks/analysis/proxy/", "tok", notebook.ContainerWorkDir, 8888)
+	for i, want := range wantArgs {
+		if opts.Config.Cmd[i] != want {
+			t.Fatalf("cmd[%d] = %q, want %q", i, opts.Config.Cmd[i], want)
+		}
+	}
 }
 
 func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {

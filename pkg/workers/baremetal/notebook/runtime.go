@@ -57,7 +57,13 @@ func newProcessRuntime() *processRuntime {
 }
 
 func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
-	bin, extraArgs, envPath, err := prepareProcessEnv(req.Spec.Spec.Env, req.WorkDir)
+	var env, gpus string
+	if req.Spec.Spec.Process != nil {
+		env = req.Spec.Spec.Process.Env
+		gpus = req.Spec.Spec.Process.GPUs
+	}
+
+	bin, extraArgs, envPath, err := prepareProcessEnv(env, req.WorkDir)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +76,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		Command: command,
 		Dir:     req.WorkDir,
 		Port:    req.Port,
-		GPUs:    req.Spec.Spec.GPUs,
+		GPUs:    gpus,
 	})
 	if err != nil {
 		return nil, err

@@ -66,6 +66,22 @@ jobs:
           PIPER_NOTEBOOK_DOCKER_E2E_IMAGE=jupyter/minimal-notebook:latest \
             go test ./pkg/workers/baremetal/notebook -run TestDockerRuntimeE2E_StartStopNotebook -v -timeout=3m
 
+  examples-e2e:
+    name: Examples E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run examples e2e (library, bare-metal, YAML parsing)
+        run: go test -tags=example_e2e -v -timeout=120s ./examples/
+
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
@@ -136,8 +152,8 @@ jobs:
           kind load docker-image alpine:3.20
           docker pull chrislusf/seaweedfs:latest
           kind load docker-image chrislusf/seaweedfs:latest
-          docker pull amazon/aws-cli:latest
-          kind load docker-image amazon/aws-cli:latest
+          docker pull public.ecr.aws/aws-cli/aws-cli:latest
+          kind load docker-image public.ecr.aws/aws-cli/aws-cli:latest
           docker pull python:3.12-slim
           kind load docker-image python:3.12-slim
           docker pull jupyter/minimal-notebook:latest

@@ -14,16 +14,16 @@ type notebookRepo struct{ db *sqlx.DB }
 // NewNotebookRepo returns a notebook.Repository backed by SQLite.
 func NewNotebookRepo(db *sqlx.DB) notebook.Repository { return &notebookRepo{db: db} }
 
-const notebookCols = `name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, created_at, updated_at`
+const notebookCols = `name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_at, updated_at`
 
 func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) error {
 	now := time.Now()
 	nb.CreatedAt = now
 	nb.UpdatedAt = now
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO notebook_servers (name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image,
+		`INSERT INTO notebook_servers (name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.YAML,
 		nb.CreatedAt, nb.UpdatedAt)
 	return err
 }
@@ -41,8 +41,8 @@ func (r *notebookRepo) Get(ctx context.Context, name string) (*notebook.Notebook
 func (r *notebookRepo) Update(ctx context.Context, nb *notebook.NotebookServer) error {
 	nb.UpdatedAt = time.Now()
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, worker_id=?, volume_id=?, image=?, updated_at=? WHERE name=?`,
-		nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.UpdatedAt, nb.Name)
+		`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, worker_id=?, volume_id=?, image=?, yaml=?, updated_at=? WHERE name=?`,
+		nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.YAML, nb.UpdatedAt, nb.Name)
 	return err
 }
 

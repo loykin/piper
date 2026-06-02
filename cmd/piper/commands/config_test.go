@@ -101,11 +101,15 @@ notebook_k8s:
   storage_class: standard
   storage_size: 10Gi
   pod_defaults:
-    resources:
-      cpu: "2"
-      memory: 4Gi
-    node_selector:
-      accelerator: gpu
+    spec:
+      nodeSelector:
+        accelerator: gpu
+      containers:
+      - name: notebook
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
 `)
 	if err := StrictParseConfigFile(path); err != nil {
 		t.Fatalf("unexpected error for notebook_k8s config: %v", err)

@@ -1,0 +1,19 @@
+apiVersion: piper/v1
+kind: NotebookServer
+
+metadata:
+  name: my-notebook
+
+spec:
+  # placement pins this notebook to a specific registered worker.
+  # Omit to let piper pick any available worker.
+  placement:
+    worker: gpu-server-1
+
+  process:
+    # conda env name, venv path, or empty (auto-creates .venv in work dir)
+    env: conda:ml-env
+
+    # Comma-separated GPU indices passed as CUDA_VISIBLE_DEVICES.
+    # "all" to expose every GPU, omit for CPU-only.
+    gpus: "0,1"

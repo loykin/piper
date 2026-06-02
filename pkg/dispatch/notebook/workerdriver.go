@@ -65,7 +65,7 @@ func (d *WorkerDriver) ProvisionVolume(ctx context.Context, vol *notebook.Notebo
 }
 
 // Start picks an available worker and sends it a start request.
-// Worker selection priority: vol.WorkerID (node affinity) > spec.Spec.Worker > Pick().
+// Worker selection priority: vol.WorkerID (node affinity) > placement.worker > GPU request > Pick().
 func (d *WorkerDriver) Start(ctx context.Context, spec notebook.NotebookServerSpec, vol *notebook.NotebookVolume, yamlStr string) (*notebook.NotebookServer, error) {
 	var w *notebook.NotebookWorkerInfo
 	var err error
@@ -75,13 +75,13 @@ func (d *WorkerDriver) Start(ctx context.Context, spec notebook.NotebookServerSp
 		if err != nil {
 			return nil, fmt.Errorf("volume's worker %q is unavailable: %w", vol.WorkerID, err)
 		}
-	} else if spec.Spec.Worker != "" {
-		w, err = d.registry.GetByHostname(spec.Spec.Worker)
+	} else if workerID := spec.WorkerID(); workerID != "" {
+		w, err = d.registry.GetByHostname(workerID)
 		if err != nil {
 			return nil, err
 		}
-	} else if spec.Spec.GPUs != "" {
-		w, err = d.registry.PickForGPU(spec.Spec.GPUs)
+	} else if gpuReq := spec.GPURequest(); gpuReq != "" {
+		w, err = d.registry.PickForGPU(gpuReq)
 		if err != nil {
 			return nil, err
 		}

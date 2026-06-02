@@ -40,8 +40,20 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	}
 	var spec notebook.NotebookServerSpec
 	spec.Metadata.Name = "analysis"
-	spec.Spec.GPUs = "0,1"
-	spec.Spec.Volumes = []string{"datasets"}
+	spec.Spec.Docker = &notebook.NotebookDockerSpec{
+		Volumes: []string{"datasets"},
+		Deploy: &notebook.DockerDeploySpec{
+			Resources: notebook.DockerDeployResources{
+				Reservations: notebook.DockerReservations{
+					Devices: []notebook.DockerDeviceSpec{{
+						Driver:       "nvidia",
+						DeviceIDs:    []string{"0", "1"},
+						Capabilities: []string{"gpu"},
+					}},
+				},
+			},
+		},
+	}
 
 	opts, err := rt.containerCreateOptions(RuntimeStartRequest{
 		Name:    "analysis",
@@ -93,7 +105,9 @@ func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {
 	}
 	var spec notebook.NotebookServerSpec
 	spec.Metadata.Name = "analysis"
-	spec.Spec.Volumes = []string{"host-root"}
+	spec.Spec.Docker = &notebook.NotebookDockerSpec{
+		Volumes: []string{"host-root"},
+	}
 
 	if _, err := rt.containerCreateOptions(RuntimeStartRequest{
 		Name:    "analysis",
@@ -115,14 +129,41 @@ func TestDockerContainerNameSanitization(t *testing.T) {
 }
 
 func TestDockerGPUResources(t *testing.T) {
-	all, err := dockerResources(DockerConfig{}, "all")
+	allDS := &notebook.NotebookDockerSpec{
+		Deploy: &notebook.DockerDeploySpec{
+			Resources: notebook.DockerDeployResources{
+				Reservations: notebook.DockerReservations{
+					Devices: []notebook.DockerDeviceSpec{{
+						Driver:       "nvidia",
+						Count:        "all",
+						Capabilities: []string{"gpu"},
+					}},
+				},
+			},
+		},
+	}
+	all, err := dockerResources(DockerConfig{}, allDS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if all.resources.DeviceRequests[0].Count != -1 {
 		t.Fatalf("all GPU count = %d", all.resources.DeviceRequests[0].Count)
 	}
-	selected, err := dockerResources(DockerConfig{}, "0,1")
+
+	selectedDS := &notebook.NotebookDockerSpec{
+		Deploy: &notebook.DockerDeploySpec{
+			Resources: notebook.DockerDeployResources{
+				Reservations: notebook.DockerReservations{
+					Devices: []notebook.DockerDeviceSpec{{
+						Driver:       "nvidia",
+						DeviceIDs:    []string{"0", "1"},
+						Capabilities: []string{"gpu"},
+					}},
+				},
+			},
+		},
+	}
+	selected, err := dockerResources(DockerConfig{}, selectedDS)
 	if err != nil {
 		t.Fatal(err)
 	}

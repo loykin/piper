@@ -6,7 +6,7 @@ import (
 	"time"
 
 	storemod "github.com/piper/piper/internal/store"
-	"github.com/piper/piper/pkg/pipeline"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // Config is the global piper configuration. Accepts a struct and can be embedded.
@@ -189,17 +189,10 @@ type NotebookK8sConfig struct {
 	// StorageSize is the PVC size (e.g. "10Gi"). Defaults to "10Gi".
 	StorageSize string `yaml:"storage_size" mapstructure:"storage_size"`
 
-	// PodDefaults sets cluster-wide defaults for notebook pods.
-	// Individual notebook specs can override these per-field.
-	PodDefaults NotebookPodDefaults `yaml:"pod_defaults" mapstructure:"pod_defaults"`
-}
-
-// NotebookPodDefaults holds cluster-wide default resource/scheduling settings for notebook pods.
-type NotebookPodDefaults struct {
-	Resources    pipeline.Resources    `yaml:"resources"     mapstructure:"resources"`
-	NodeSelector map[string]string     `yaml:"node_selector" mapstructure:"node_selector"`
-	Tolerations  []pipeline.Toleration `yaml:"tolerations"   mapstructure:"tolerations"`
-	Annotations  map[string]string     `yaml:"annotations"   mapstructure:"annotations"`
+	// PodDefaults sets cluster-wide defaults applied to every notebook pod.
+	// Uses native corev1.PodTemplateSpec format — same as a Kubernetes manifest.
+	// Per-notebook spec.k8s.pod_template overlays on top; piper required fields are always last.
+	PodDefaults corev1.PodTemplateSpec `yaml:"pod_defaults" mapstructure:"pod_defaults"`
 }
 
 func DefaultConfig() Config {

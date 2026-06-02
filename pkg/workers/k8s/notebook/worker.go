@@ -32,6 +32,9 @@ type Config struct {
 	Image        string
 	StorageClass string
 	StorageSize  string
+	// PodDefaults are cluster-wide defaults applied to every notebook pod.
+	// Merged before the per-notebook pod_template (defaults lose on conflict).
+	PodDefaults corev1.PodTemplateSpec
 }
 
 type Worker struct {
@@ -115,51 +118,75 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 
 	ns := a.notebookNamespace()
 	name := notebookWorkloadName(spec.Metadata.Name)
-	image := spec.Spec.Image
-	if image == "" {
-		image = a.cfg.Image
-	}
-	if image == "" {
-		image = "jupyter/scipy-notebook:latest"
-	}
-
+	labels := a.k8sLabels("notebook", spec.Metadata.Name)
+	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", spec.Metadata.Name)
 	token := uuid.NewString()
 	workDir := req.WorkDir
 	if workDir == "" {
 		workDir = notebook.ContainerWorkDir
 	}
-	labels := a.k8sLabels("notebook", spec.Metadata.Name)
-	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", spec.Metadata.Name)
 	replicas := int32(1)
+
+	// ── Stage 1: deep copy server-level PodDefaults ───────────────────────────
+	podTemplate := *a.cfg.PodDefaults.DeepCopy()
+
+	// ── Stage 2: merge per-notebook pod_template on top ──────────────────────
+	if spec.Spec.K8s != nil {
+		mergePodTemplate(&podTemplate, &spec.Spec.K8s.PodTemplate)
+	}
+
+	// ── Stage 3: apply piper-required fields (always last) ───────────────────
+
+	// Resolve image: spec.k8s.image > notebook container image in merged template
+	// > cfg.Image > hardcoded default.
+	image := resolveImage(a.cfg.Image, spec.Spec.K8s, podTemplate)
+
+	// Piper selector labels must be present; merged template labels are preserved.
+	if podTemplate.Labels == nil {
+		podTemplate.Labels = make(map[string]string)
+	}
+	for k, v := range labels {
+		podTemplate.Labels[k] = v
+	}
+
+	// Find or create the notebook container.
+	nbIdx := containerIndex(podTemplate.Spec.Containers, "notebook")
+	if nbIdx < 0 {
+		podTemplate.Spec.Containers = append(podTemplate.Spec.Containers, corev1.Container{Name: "notebook"})
+		nbIdx = len(podTemplate.Spec.Containers) - 1
+	}
+	c := &podTemplate.Spec.Containers[nbIdx]
+	c.Image = image
+	// piper required args appended last so they win on duplicate flags.
+	c.Args = append(c.Args, notebook.JupyterStartArgs(baseURL, token, notebook.ContainerWorkDir, 8888)...)
+	c.Ports = []corev1.ContainerPort{{Name: "notebook", ContainerPort: 8888}}
+
+	// Ensure the piper-data volume mount is present (fixed name avoids user collisions).
+	if !hasMountName(c.VolumeMounts, piperDataVolume) {
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name:      piperDataVolume,
+			MountPath: notebook.ContainerWorkDir,
+		})
+	}
+
+	// Ensure the PVC volume is present.
+	if !hasVolumeName(podTemplate.Spec.Volumes, piperDataVolume) {
+		podTemplate.Spec.Volumes = append(podTemplate.Spec.Volumes, corev1.Volume{
+			Name: piperDataVolume,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: notebookPVCName(req.VolumeID),
+				},
+			},
+		})
+	}
 
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  "notebook",
-						Image: image,
-						Args:  notebook.JupyterStartArgs(baseURL, token, notebook.ContainerWorkDir, 8888),
-						Ports: []corev1.ContainerPort{{Name: "notebook", ContainerPort: 8888}},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "data",
-							MountPath: notebook.ContainerWorkDir,
-						}},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "data",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: notebookPVCName(req.VolumeID),
-							},
-						},
-					}},
-				},
-			},
+			Template: podTemplate,
 		},
 	}
 	if _, err := a.cfg.Client.AppsV1().StatefulSets(ns).Create(ctx, sts, metav1.CreateOptions{}); err != nil {
@@ -274,4 +301,140 @@ func notebookPVCName(volumeID string) string {
 		clean = clean[:12]
 	}
 	return "piper-nb-vol-" + clean
+}
+
+// piperDataVolume is the fixed name for the piper-managed PVC volume and mount.
+// Using a piper-prefixed name avoids collisions with user-defined volumes.
+const piperDataVolume = "piper-data"
+
+// mergePodTemplate overlays src onto dst in-place.
+// For each field: src wins if set, dst keeps its value otherwise.
+// Containers and Volumes are merged by name (src entry replaces dst entry with same name;
+// src-only entries are appended).
+func mergePodTemplate(dst, src *corev1.PodTemplateSpec) {
+	// Labels and Annotations: src merged into dst (src wins on conflict).
+	dst.Labels = mergeStringMaps(dst.Labels, src.Labels)
+	dst.Annotations = mergeStringMaps(dst.Annotations, src.Annotations)
+
+	// PodSpec scalar fields: src wins if non-zero.
+	if src.Spec.ServiceAccountName != "" {
+		dst.Spec.ServiceAccountName = src.Spec.ServiceAccountName
+	}
+	if src.Spec.SchedulerName != "" {
+		dst.Spec.SchedulerName = src.Spec.SchedulerName
+	}
+	if src.Spec.NodeName != "" {
+		dst.Spec.NodeName = src.Spec.NodeName
+	}
+
+	// NodeSelector: src merged into dst.
+	dst.Spec.NodeSelector = mergeStringMaps(dst.Spec.NodeSelector, src.Spec.NodeSelector)
+
+	// Tolerations: append src (duplicates allowed — k8s deduplicates).
+	dst.Spec.Tolerations = append(dst.Spec.Tolerations, src.Spec.Tolerations...)
+
+	// Containers: merge by name.
+	dst.Spec.Containers = mergeContainers(dst.Spec.Containers, src.Spec.Containers)
+	dst.Spec.InitContainers = mergeContainers(dst.Spec.InitContainers, src.Spec.InitContainers)
+
+	// Volumes: src replaces dst entry with same name; src-only entries appended.
+	dst.Spec.Volumes = mergeVolumes(dst.Spec.Volumes, src.Spec.Volumes)
+}
+
+// mergeContainers merges src containers into dst by name.
+// src entries replace dst entries with the same name; src-only entries are appended.
+func mergeContainers(dst, src []corev1.Container) []corev1.Container {
+	if len(src) == 0 {
+		return dst
+	}
+	out := make([]corev1.Container, len(dst))
+	copy(out, dst)
+	for _, sc := range src {
+		idx := containerIndex(out, sc.Name)
+		if idx >= 0 {
+			out[idx] = sc
+		} else {
+			out = append(out, sc)
+		}
+	}
+	return out
+}
+
+// mergeVolumes merges src volumes into dst by name.
+func mergeVolumes(dst, src []corev1.Volume) []corev1.Volume {
+	if len(src) == 0 {
+		return dst
+	}
+	out := make([]corev1.Volume, len(dst))
+	copy(out, dst)
+	for _, sv := range src {
+		idx := volumeIndex(out, sv.Name)
+		if idx >= 0 {
+			out[idx] = sv
+		} else {
+			out = append(out, sv)
+		}
+	}
+	return out
+}
+
+func mergeStringMaps(dst, src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return dst
+	}
+	out := make(map[string]string, len(dst)+len(src))
+	for k, v := range dst {
+		out[k] = v
+	}
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+// resolveImage returns the image to use for the notebook container.
+// Priority: spec.k8s.image > pod_template notebook container image > cfg.Image > default.
+func resolveImage(cfgImage string, k8sSpec *notebook.NotebookK8sSpec, tpl corev1.PodTemplateSpec) string {
+	if k8sSpec != nil && k8sSpec.Image != "" {
+		return k8sSpec.Image
+	}
+	idx := containerIndex(tpl.Spec.Containers, "notebook")
+	if idx >= 0 && tpl.Spec.Containers[idx].Image != "" {
+		return tpl.Spec.Containers[idx].Image
+	}
+	if cfgImage != "" {
+		return cfgImage
+	}
+	return "jupyter/scipy-notebook:latest"
+}
+
+func containerIndex(containers []corev1.Container, name string) int {
+	for i, c := range containers {
+		if c.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func volumeIndex(volumes []corev1.Volume, name string) int {
+	for i, v := range volumes {
+		if v.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func hasMountName(mounts []corev1.VolumeMount, name string) bool {
+	for _, m := range mounts {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasVolumeName(volumes []corev1.Volume, name string) bool {
+	return volumeIndex(volumes, name) >= 0
 }

@@ -56,6 +56,7 @@ func newK8sWorkerCmd() *cobra.Command {
 				return err
 			}
 
+			cfg, _ := buildConfig()
 			return k8sworker.New(k8sworker.Config{
 				MasterURL:            masterURL,
 				Token:                token,
@@ -73,6 +74,7 @@ func newK8sWorkerCmd() *cobra.Command {
 				DefaultImage:         defaultImage,
 				AgentImagePullPolicy: agentImagePullPolicy,
 				StorageURL:           storageURL,
+				PodDefaults:          cfg.NotebookK8s.PodDefaults,
 			}).Run(ctx)
 		},
 	}

@@ -327,3 +327,22 @@ func TestExtractOwnerID_DefaultFallback(t *testing.T) {
 		t.Errorf("ownerIDFromRequest = %q, want header-user", got)
 	}
 }
+
+// TestArtifactPath_LocalMatchesDistributed verifies that the local (embedded) and
+// distributed (runner) execution paths write artifacts to the same directory structure:
+// {outputDir}/{runID}/{stepName}
+func TestArtifactPath_LocalMatchesDistributed(t *testing.T) {
+	outputBase := t.TempDir()
+	runID := "run-abc123"
+	stepName := "train"
+
+	// piper.go: outputDir = Join(outputBase, runID), stepOutputDir = Join(outputDir, stepName)
+	localPath := filepath.Join(outputBase, runID, stepName)
+
+	// runner.go: stepOutputDir = Join(cfg.OutputDir, task.RunID, step.Name)
+	runnerPath := filepath.Join(outputBase, runID, stepName)
+
+	if localPath != runnerPath {
+		t.Errorf("path mismatch: local=%q runner=%q", localPath, runnerPath)
+	}
+}

@@ -24,6 +24,7 @@ type NotebookServer struct {
 	WorkerID  string    `json:"worker_id"  db:"worker_id"`
 	VolumeID  string    `json:"volume_id"  db:"volume_id"`
 	Image     string    `json:"image"      db:"image"`
+	YAML      string    `json:"yaml"       db:"yaml"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }

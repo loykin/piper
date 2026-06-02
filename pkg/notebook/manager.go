@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 
 	"github.com/piper/piper/pkg/event"
 )
@@ -54,6 +55,7 @@ func (m *Manager) Create(ctx context.Context, spec NotebookServerSpec, yamlStr s
 		Name:     name,
 		Status:   StatusProvisioning,
 		VolumeID: vol.ID,
+		YAML:     yamlStr,
 	}
 	if err := m.repo.Create(ctx, nb); err != nil {
 		_ = m.vols.Delete(ctx, vol.ID)
@@ -74,7 +76,7 @@ func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, sp
 	name := spec.Metadata.Name
 
 	// Phase 1: provision storage
-	if err := m.driver.ProvisionVolume(ctx, vol, spec.Spec.StorageSize); err != nil {
+	if err := m.driver.ProvisionVolume(ctx, vol, spec.StorageSize()); err != nil {
 		slog.Error("notebook: provision volume failed", "name", name, "err", err)
 		_ = m.repo.SetStatus(ctx, name, StatusFailed)
 		_ = m.vols.Delete(ctx, vol.ID)
@@ -152,6 +154,7 @@ func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec,
 		Name:     name,
 		Status:   StatusStarting,
 		VolumeID: vol.ID,
+		YAML:     yamlStr,
 	}
 	if err := m.repo.Create(ctx, nb); err != nil {
 		_ = m.vols.SetStatus(ctx, vol.ID, VolumeStatusReleased)
@@ -239,6 +242,9 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 
 	spec := NotebookServerSpec{}
 	spec.Metadata.Name = nb.Name
+	if nb.YAML != "" {
+		_ = parseYAML(nb.YAML, &spec)
+	}
 
 	if err := m.repo.SetStatus(ctx, name, StatusStarting); err != nil {
 		return fmt.Errorf("notebook: set status starting: %w", err)
@@ -396,4 +402,8 @@ func (m *Manager) emit(eventType string, fields map[string]any) {
 	if m.events != nil {
 		m.events.Publish(event.New(eventType, fields))
 	}
+}
+
+func parseYAML(src string, dst any) error {
+	return yaml.Unmarshal([]byte(src), dst)
 }

@@ -175,6 +175,7 @@ func (r *Runner) execute(
 		Stdout:    stdoutW,
 		Stderr:    stderrW,
 		Vars:      task.Vars,
+		GPUs:      step.Resources.GPU,
 		SourceCfg: source.Config{
 			GitToken: r.cfg.GitToken,
 			GitUser:  r.cfg.GitUser,

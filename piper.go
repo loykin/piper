@@ -141,7 +141,7 @@ func New(cfg Config) (*Piper, error) {
 	notebookDriverMode := "worker"
 	if nbK8s.Worker {
 		nbDriver = notebookdispatch.NewAgentDriver(workloadRouter, tunnelHub, repos.Notebook)
-		notebookDriverMode = "worker"
+		notebookDriverMode = "k8s"
 	} else {
 		nbDriver = notebookdispatch.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
 	}
@@ -452,6 +452,7 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 			Stdout:    stdoutW,
 			Stderr:    stderrW,
 			Vars:      opts.Vars,
+			GPUs:      step.Resources.GPU,
 		})
 	}
 

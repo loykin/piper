@@ -491,7 +491,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: awscli
-          image: amazon/aws-cli:latest
+          image: public.ecr.aws/aws-cli/aws-cli:latest
           command:
             - /bin/sh
             - -c

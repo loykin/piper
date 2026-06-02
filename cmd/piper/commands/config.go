@@ -7,9 +7,10 @@ import (
 	"time"
 
 	piper "github.com/piper/piper"
-	"github.com/piper/piper/pkg/pipeline"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // configFile mirrors the piper.yaml file structure exactly.
@@ -126,34 +127,15 @@ type notebookWorkerDockerVolume struct {
 	ReadOnly      bool   `yaml:"read_only"      mapstructure:"read_only"`
 }
 
-type notebookPodDefaultsSection struct {
-	Resources    resourcesSection  `yaml:"resources"     mapstructure:"resources"`
-	NodeSelector map[string]string `yaml:"node_selector" mapstructure:"node_selector"`
-	Tolerations  []tolerationItem  `yaml:"tolerations"   mapstructure:"tolerations"`
-	Annotations  map[string]string `yaml:"annotations"   mapstructure:"annotations"`
-}
-
-type resourcesSection struct {
-	CPU    string `yaml:"cpu"    mapstructure:"cpu"`
-	Memory string `yaml:"memory" mapstructure:"memory"`
-	GPU    string `yaml:"gpu"    mapstructure:"gpu"`
-}
-
-type tolerationItem struct {
-	Key               string `yaml:"key,omitempty"                mapstructure:"key"`
-	Operator          string `yaml:"operator,omitempty"           mapstructure:"operator"`
-	Value             string `yaml:"value,omitempty"              mapstructure:"value"`
-	Effect            string `yaml:"effect,omitempty"             mapstructure:"effect"`
-	TolerationSeconds *int64 `yaml:"toleration_seconds,omitempty" mapstructure:"toleration_seconds"`
-}
-
 type notebookK8sSection struct {
-	Worker       bool                       `yaml:"worker"        mapstructure:"worker"`
-	Namespace    string                     `yaml:"namespace"     mapstructure:"namespace"`
-	WorkerImage  string                     `yaml:"worker_image"  mapstructure:"worker_image"`
-	StorageClass string                     `yaml:"storage_class" mapstructure:"storage_class"`
-	StorageSize  string                     `yaml:"storage_size"  mapstructure:"storage_size"`
-	PodDefaults  notebookPodDefaultsSection `yaml:"pod_defaults"  mapstructure:"pod_defaults"`
+	Worker       bool   `yaml:"worker"        mapstructure:"worker"`
+	Namespace    string `yaml:"namespace"     mapstructure:"namespace"`
+	WorkerImage  string `yaml:"worker_image"  mapstructure:"worker_image"`
+	StorageClass string `yaml:"storage_class" mapstructure:"storage_class"`
+	StorageSize  string `yaml:"storage_size"  mapstructure:"storage_size"`
+	// PodDefaults is parsed as raw map to allow native k8s JSON/YAML field names.
+	// Conversion to corev1.PodTemplateSpec happens in toConfig() via sigs.k8s.io/yaml.
+	PodDefaults map[string]interface{} `yaml:"pod_defaults"  mapstructure:"pod_defaults"`
 }
 
 // StrictParseConfigFile parses the YAML file at path with KnownFields(true)
@@ -246,16 +228,7 @@ func (c *configFile) toConfig() piper.Config {
 			WorkerImage:  c.NotebookK8s.WorkerImage,
 			StorageClass: c.NotebookK8s.StorageClass,
 			StorageSize:  c.NotebookK8s.StorageSize,
-			PodDefaults: piper.NotebookPodDefaults{
-				Resources: pipeline.Resources{
-					CPU:    c.NotebookK8s.PodDefaults.Resources.CPU,
-					Memory: c.NotebookK8s.PodDefaults.Resources.Memory,
-					GPU:    c.NotebookK8s.PodDefaults.Resources.GPU,
-				},
-				NodeSelector: c.NotebookK8s.PodDefaults.NodeSelector,
-				Tolerations:  notebookTolerations(c.NotebookK8s.PodDefaults.Tolerations),
-				Annotations:  c.NotebookK8s.PodDefaults.Annotations,
-			},
+			PodDefaults:  parsePodDefaults(c.NotebookK8s.PodDefaults),
 		},
 	}
 }
@@ -288,23 +261,6 @@ func NewPiper() (*piper.Piper, error) {
 	return p, nil
 }
 
-func notebookTolerations(items []tolerationItem) []pipeline.Toleration {
-	if len(items) == 0 {
-		return nil
-	}
-	out := make([]pipeline.Toleration, len(items))
-	for i, t := range items {
-		out[i] = pipeline.Toleration{
-			Key:               t.Key,
-			Operator:          t.Operator,
-			Value:             t.Value,
-			Effect:            t.Effect,
-			TolerationSeconds: t.TolerationSeconds,
-		}
-	}
-	return out
-}
-
 // resolveStorageURLFromViper derives the storage URL for workers/embedded workers.
 // Priority: storage.url > source.s3.* (backward compat with pre-blobstore configs).
 func resolveStorageURLFromViper() string {
@@ -330,6 +286,23 @@ func resolveStorageURLFromViper() string {
 		q += "&endpoint=" + scheme + "://" + ep
 	}
 	return "s3://" + bucket + "?" + q
+}
+
+// parsePodDefaults converts the raw map (from yaml.v3 or viper) to corev1.PodTemplateSpec
+// by round-tripping through JSON using sigs.k8s.io/yaml, which honours k8s json struct tags.
+func parsePodDefaults(raw map[string]interface{}) corev1.PodTemplateSpec {
+	if len(raw) == 0 {
+		return corev1.PodTemplateSpec{}
+	}
+	data, err := sigsyaml.Marshal(raw)
+	if err != nil {
+		return corev1.PodTemplateSpec{}
+	}
+	var pt corev1.PodTemplateSpec
+	if err := sigsyaml.Unmarshal(data, &pt); err != nil {
+		return corev1.PodTemplateSpec{}
+	}
+	return pt
 }
 
 func notebookWorkerDockerVolumes(items []notebookWorkerDockerVolume) []piper.NotebookWorkerDockerVolume {

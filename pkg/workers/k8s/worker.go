@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -39,6 +40,8 @@ type Config struct {
 	TTLAfterFinished     *int32
 	// StorageURL selects the artifact store backend for pipeline jobs.
 	StorageURL string
+	// PodDefaults are cluster-wide defaults applied to every notebook pod.
+	PodDefaults corev1.PodTemplateSpec
 }
 
 type Worker struct {
@@ -65,6 +68,7 @@ func New(cfg Config) *Worker {
 			Image:        cfg.NotebookImage,
 			StorageClass: cfg.StorageClass,
 			StorageSize:  cfg.StorageSize,
+			PodDefaults:  cfg.PodDefaults,
 		})
 		k8sserving.Register(a.client.Dispatcher(), k8sserving.Config{
 			ClusterName: cfg.ClusterName,

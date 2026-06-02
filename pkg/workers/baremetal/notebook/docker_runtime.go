@@ -15,7 +15,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
-	"github.com/moby/moby/api/types/network"
+	network_ "github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
 
 	"github.com/piper/piper/pkg/notebook"
@@ -197,24 +197,37 @@ func (r *dockerRuntime) KillAll(ctx context.Context) error {
 }
 
 func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerclient.ContainerCreateOptions, error) {
-	image := req.Spec.Spec.Image
-	if image == "" {
-		image = r.cfg.Image
+	ds := req.Spec.Spec.Docker // per-notebook overrides (may be nil)
+
+	image := r.cfg.Image
+	if ds != nil && ds.Image != "" {
+		image = ds.Image
 	}
 	if image == "" {
 		return dockerclient.ContainerCreateOptions{}, fmt.Errorf("docker image is required")
 	}
 	containerName := dockerContainerName(req.Name)
-	tmpfs := make(map[string]string, len(r.cfg.Tmpfs))
-	for _, path := range r.cfg.Tmpfs {
+
+	// Merge tmpfs: server-level defaults, overridden by per-notebook spec.
+	tmpfsPaths := r.cfg.Tmpfs
+	if ds != nil && len(ds.Tmpfs) > 0 {
+		tmpfsPaths = ds.Tmpfs
+	}
+	tmpfs := make(map[string]string, len(tmpfsPaths))
+	for _, path := range tmpfsPaths {
 		tmpfs[path] = ""
 	}
 
-	resources, err := dockerResources(r.cfg, req.Spec.Spec.GPUs)
+	resources, err := dockerResources(r.cfg, ds)
 	if err != nil {
 		return dockerclient.ContainerCreateOptions{}, err
 	}
-	selected, err := selectDockerVolumes(r.cfg.Volumes, req.Spec.Spec.Volumes)
+
+	var volumeNames []string
+	if ds != nil {
+		volumeNames = ds.Volumes
+	}
+	selected, err := selectDockerVolumes(r.cfg.Volumes, volumeNames)
 	if err != nil {
 		return dockerclient.ContainerCreateOptions{}, err
 	}
@@ -223,27 +236,41 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 		return dockerclient.ContainerCreateOptions{}, err
 	}
 
+	// Per-notebook overrides take precedence over server-level config defaults.
+	user := r.cfg.User
+	if ds != nil && ds.User != "" {
+		user = ds.User
+	}
+	network := r.cfg.Network
+	if ds != nil && ds.NetworkMode != "" {
+		network = ds.NetworkMode
+	}
+	readOnly := r.cfg.ReadOnlyRoot
+	if ds != nil && ds.ReadOnly {
+		readOnly = ds.ReadOnly
+	}
+
 	labels := map[string]string{
 		dockerManagedLabel:  "true",
 		dockerNotebookLabel: req.Name,
 	}
 	cmd := notebook.JupyterStartArgs(req.BaseURL, req.Token, notebook.ContainerWorkDir, 8888)
 	cmd = append(cmd, r.cfg.ExtraArgs...)
-	port := network.MustParsePort(dockerNotebookPort)
+	port := network_.MustParsePort(dockerNotebookPort)
 	return dockerclient.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
 			Image:        image,
 			Cmd:          cmd,
-			User:         r.cfg.User,
+			User:         user,
 			WorkingDir:   notebook.ContainerWorkDir,
 			Labels:       labels,
-			ExposedPorts: network.PortSet{port: struct{}{}},
+			ExposedPorts: network_.PortSet{port: struct{}{}},
 		},
 		HostConfig: &container.HostConfig{
-			NetworkMode:    container.NetworkMode(r.cfg.Network),
-			PortBindings:   network.PortMap{port: []network.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: strconv.Itoa(req.Port)}}},
-			ReadonlyRootfs: r.cfg.ReadOnlyRoot,
+			NetworkMode:    container.NetworkMode(network),
+			PortBindings:   network_.PortMap{port: []network_.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: strconv.Itoa(req.Port)}}},
+			ReadonlyRootfs: readOnly,
 			Tmpfs:          tmpfs,
 			CapDrop:        []string{"ALL"},
 			SecurityOpt:    []string{"no-new-privileges"},
@@ -275,48 +302,91 @@ type dockerResourceSpec struct {
 	shmSize   int64
 }
 
-func dockerResources(cfg DockerConfig, gpus string) (dockerResourceSpec, error) {
+// dockerResources merges server-level DockerConfig with per-notebook NotebookDockerSpec.
+// Per-notebook values override server-level defaults when set.
+func dockerResources(cfg DockerConfig, ds *notebook.NotebookDockerSpec) (dockerResourceSpec, error) {
 	var out dockerResourceSpec
-	if cfg.Memory != "" {
-		n, err := units.RAMInBytes(cfg.Memory)
+
+	// Memory: per-notebook mem_limit overrides server-level memory.
+	memory := cfg.Memory
+	if ds != nil && ds.MemLimit != "" {
+		memory = ds.MemLimit
+	}
+	if memory != "" {
+		n, err := units.RAMInBytes(memory)
 		if err != nil {
-			return out, fmt.Errorf("invalid docker memory %q: %w", cfg.Memory, err)
+			return out, fmt.Errorf("invalid docker memory %q: %w", memory, err)
 		}
 		out.resources.Memory = n
 	}
-	if cfg.ShmSize != "" {
-		n, err := units.RAMInBytes(cfg.ShmSize)
+
+	// ShmSize: per-notebook overrides server-level.
+	shmSize := cfg.ShmSize
+	if ds != nil && ds.ShmSize != "" {
+		shmSize = ds.ShmSize
+	}
+	if shmSize != "" {
+		n, err := units.RAMInBytes(shmSize)
 		if err != nil {
-			return out, fmt.Errorf("invalid docker shm_size %q: %w", cfg.ShmSize, err)
+			return out, fmt.Errorf("invalid docker shm_size %q: %w", shmSize, err)
 		}
 		out.shmSize = n
 	}
-	if cfg.CPUs != "" {
-		cpus, err := strconv.ParseFloat(cfg.CPUs, 64)
+
+	// CPUs: per-notebook overrides server-level.
+	cpuStr := cfg.CPUs
+	if ds != nil && ds.CPUs != "" {
+		cpuStr = ds.CPUs
+	}
+	if cpuStr != "" {
+		cpus, err := strconv.ParseFloat(cpuStr, 64)
 		if err != nil || cpus <= 0 {
-			return out, fmt.Errorf("invalid docker cpus %q", cfg.CPUs)
+			return out, fmt.Errorf("invalid docker cpus %q", cpuStr)
 		}
 		out.resources.NanoCPUs = int64(cpus * 1_000_000_000)
 	}
-	switch strings.TrimSpace(gpus) {
-	case "", "none":
-	case "all":
-		out.resources.DeviceRequests = []container.DeviceRequest{{
-			Driver:       "nvidia",
-			Count:        -1,
-			Capabilities: [][]string{{"gpu"}},
-		}}
-	default:
-		ids := splitCSV(gpus)
-		if len(ids) == 0 {
-			return out, fmt.Errorf("invalid gpu request %q", gpus)
+
+	// GPU: extracted from per-notebook Docker Compose deploy.resources spec.
+	if ds != nil && ds.Deploy != nil {
+		for _, dev := range ds.Deploy.Resources.Reservations.Devices {
+			isGPU := false
+			for _, cap := range dev.Capabilities {
+				if cap == "gpu" {
+					isGPU = true
+					break
+				}
+			}
+			if !isGPU {
+				continue
+			}
+			driver := dev.Driver
+			if driver == "" {
+				driver = "nvidia"
+			}
+			if len(dev.DeviceIDs) > 0 {
+				out.resources.DeviceRequests = append(out.resources.DeviceRequests, container.DeviceRequest{
+					Driver:       driver,
+					DeviceIDs:    dev.DeviceIDs,
+					Capabilities: [][]string{{"gpu"}},
+				})
+			} else {
+				count := -1 // "all"
+				if dev.Count != "" && dev.Count != "all" {
+					n, err := strconv.Atoi(dev.Count)
+					if err != nil || n <= 0 {
+						return out, fmt.Errorf("invalid docker device count %q", dev.Count)
+					}
+					count = n
+				}
+				out.resources.DeviceRequests = append(out.resources.DeviceRequests, container.DeviceRequest{
+					Driver:       driver,
+					Count:        count,
+					Capabilities: [][]string{{"gpu"}},
+				})
+			}
 		}
-		out.resources.DeviceRequests = []container.DeviceRequest{{
-			Driver:       "nvidia",
-			DeviceIDs:    ids,
-			Capabilities: [][]string{{"gpu"}},
-		}}
 	}
+
 	return out, nil
 }
 
@@ -440,17 +510,6 @@ func secureHostPath(path string) (string, error) {
 		return "", fmt.Errorf("host_path must be a directory")
 	}
 	return resolved, nil
-}
-
-func splitCSV(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
 }
 
 var dockerNamePattern = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)

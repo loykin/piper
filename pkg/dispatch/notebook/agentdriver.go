@@ -53,7 +53,7 @@ func (d *AgentDriver) ProvisionVolume(ctx context.Context, vol *notebook.Noteboo
 }
 
 func (d *AgentDriver) Start(ctx context.Context, spec notebook.NotebookServerSpec, vol *notebook.NotebookVolume, yamlStr string) (*notebook.NotebookServer, error) {
-	workerID := spec.Spec.Worker
+	workerID := spec.WorkerID()
 	if vol != nil && vol.WorkerID != "" {
 		workerID = vol.WorkerID
 	}

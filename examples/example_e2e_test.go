@@ -5,12 +5,13 @@
 //
 // Run with:
 //
-//	go test -tags=example_e2e -v -timeout=120s ./examples/
+//	go test -tags=example_e2e -v -timeout=5m ./examples/
 package examples
 
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -21,9 +22,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
+
+	piper "github.com/piper/piper"
+	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/pipeline"
+	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
+	"gopkg.in/yaml.v3"
 )
 
-// freePort returns a random available TCP port.
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -35,12 +45,11 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// buildBinary compiles the Go package at pkgPath into a temp binary and returns its path.
 func buildBinary(t *testing.T, pkgPath string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), filepath.Base(pkgPath))
 	cmd := exec.Command("go", "build", "-o", bin, pkgPath)
-	cmd.Dir = filepath.Join(moduleRoot(t))
+	cmd.Dir = moduleRoot(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build %s: %v\n%s", pkgPath, err, out)
@@ -48,7 +57,6 @@ func buildBinary(t *testing.T, pkgPath string) string {
 	return bin
 }
 
-// moduleRoot returns the module root directory (where go.mod lives).
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	out, err := exec.Command("go", "env", "GOMOD").Output()
@@ -58,7 +66,6 @@ func moduleRoot(t *testing.T) string {
 	return filepath.Dir(strings.TrimSpace(string(out)))
 }
 
-// waitReady polls url until it responds 200 (or 404) within timeout.
 func waitReady(t *testing.T, url string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -71,6 +78,100 @@ func waitReady(t *testing.T, url string, timeout time.Duration) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("server at %s did not become ready within %s", url, timeout)
+}
+
+// submitPipeline posts a pipeline YAML to baseURL/runs and returns the run ID.
+func submitPipeline(t *testing.T, baseURL, yamlStr string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"yaml": yamlStr})
+	resp, err := http.Post(baseURL+"/runs", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /runs: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /runs returned %d", resp.StatusCode)
+	}
+	var result struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode /runs response: %v", err)
+	}
+	if result.RunID == "" {
+		t.Fatal("empty run_id in response")
+	}
+	return result.RunID
+}
+
+// pollRunStatus polls GET baseURL/runs/{id} until the run reaches a terminal
+// status ("success", "failed", "canceled"), then returns it.
+func pollRunStatus(t *testing.T, baseURL, runID string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		r, err := http.Get(fmt.Sprintf("%s/runs/%s", baseURL, runID))
+		if err != nil {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		var body struct {
+			Run struct {
+				Status string `json:"status"`
+			} `json:"run"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		r.Body.Close()
+		switch body.Run.Status {
+		case "success", "failed", "canceled":
+			return body.Run.Status
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	t.Fatalf("run %s did not reach terminal status within %s", runID, timeout)
+	return ""
+}
+
+// startBareMetalFixture builds the server and worker binaries, starts them,
+// waits for readiness, and registers t.Cleanup to kill both.
+// Returns the server base URL.
+func startBareMetalFixture(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	serverBin := buildBinary(t, "./examples/bare-metal/server")
+	workerBin := buildBinary(t, "./examples/bare-metal/worker")
+
+	port := freePort(t)
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	tmpDir := t.TempDir()
+
+	serverCmd := exec.CommandContext(ctx, serverBin, fmt.Sprintf("--addr=:%d", port))
+	serverCmd.Dir = tmpDir
+	serverCmd.Env = append(os.Environ(), "HOME="+tmpDir)
+	serverCmd.Stdout = os.Stdout
+	serverCmd.Stderr = os.Stderr
+	if err := serverCmd.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	t.Cleanup(func() { _ = serverCmd.Process.Kill() })
+
+	waitReady(t, baseURL+"/runs", 15*time.Second)
+
+	workerCmd := exec.CommandContext(ctx, workerBin,
+		"--master="+baseURL,
+		"--concurrency=4",
+	)
+	workerCmd.Dir = tmpDir
+	workerCmd.Env = append(os.Environ(), "HOME="+tmpDir)
+	workerCmd.Stdout = os.Stdout
+	workerCmd.Stderr = os.Stderr
+	if err := workerCmd.Start(); err != nil {
+		t.Fatalf("start worker: %v", err)
+	}
+	t.Cleanup(func() { _ = workerCmd.Process.Kill() })
+
+	// Allow worker registration to complete.
+	time.Sleep(500 * time.Millisecond)
+	return baseURL
 }
 
 // ─── Library example ─────────────────────────────────────────────────────────
@@ -92,13 +193,18 @@ func TestExampleLibrary(t *testing.T) {
 	t.Logf("output:\n%s", out)
 }
 
-// ─── Bare-metal server + worker example ──────────────────────────────────────
+// ─── Bare-metal server + worker: smoke test ───────────────────────────────────
 
-const bareMetalPipeline = `
+func TestExampleBareMetalServerWorker(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	baseURL := startBareMetalFixture(t, ctx)
+
+	const yaml = `
 apiVersion: piper/v1
 kind: Pipeline
 metadata:
-  name: e2e-bare-metal
+  name: e2e-smoke
 spec:
   steps:
   - name: hello
@@ -106,105 +212,164 @@ spec:
       type: command
       command: ["echo", "bare-metal e2e ok"]
 `
+	runID := submitPipeline(t, baseURL, yaml)
+	if status := pollRunStatus(t, baseURL, runID, 30*time.Second); status != "success" {
+		t.Fatalf("run %s: status=%q, want success", runID, status)
+	}
+}
 
-func TestExampleBareMetalServerWorker(t *testing.T) {
-	// Build binaries once.
-	serverBin := buildBinary(t, "./examples/bare-metal/server")
-	workerBin := buildBinary(t, "./examples/bare-metal/worker")
+// ─── Example pipeline execution via bare-metal server+worker ─────────────────
+
+// TestExamplePipelines_Run submits the example pipelines from basics/ against a
+// real bare-metal server+worker and verifies the expected terminal status.
+//
+// basics/retry.yaml deliberately exits 1 on every attempt, so its expected
+// status is "failed" — this verifies that the retry logic exhausts correctly.
+func TestExamplePipelines_Run(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	baseURL := startBareMetalFixture(t, ctx)
+	root := moduleRoot(t)
+
+	cases := []struct {
+		file          string
+		wantStatus    string
+		timeoutPerRun time.Duration
+	}{
+		// simple sequential pipeline
+		{"examples/basics/simple.yaml", "success", 30 * time.Second},
+		// fan-out / fan-in with parallel steps
+		{"examples/basics/parallel.yaml", "success", 60 * time.Second},
+		// step always exits 1 — verifies retry exhaustion → failed
+		{"examples/basics/retry.yaml", "failed", 90 * time.Second},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		name := strings.TrimSuffix(filepath.Base(tc.file), ".yaml")
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(root, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			runID := submitPipeline(t, baseURL, string(data))
+			t.Logf("submitted run %s for %s", runID, tc.file)
+			status := pollRunStatus(t, baseURL, runID, tc.timeoutPerRun)
+			if status != tc.wantStatus {
+				t.Errorf("status=%q, want %q", status, tc.wantStatus)
+			}
+		})
+	}
+}
+
+// ─── Artifact passing via in-process server + worker ─────────────────────────
+
+// TestExampleArtifacts runs artifacts/pipeline.yaml through a real in-process
+// piper server + worker so that the full artifact upload/download path is
+// exercised without requiring an external S3 or storage service.
+//
+// The server's built-in HTTP store (served at /store/) acts as the artifact
+// backend.  The worker uploads step outputs there and downloads inputs from it.
+func TestExampleArtifacts(t *testing.T) {
+	root := moduleRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "examples", "artifacts", "pipeline.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	port := freePort(t)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	baseURL := "http://" + addr
-
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	tmpDir := t.TempDir()
 
-	// Start server.
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	storeDir := filepath.Join(tmpDir, "store")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := piper.New(piper.Config{
+		DB:        db,
+		OutputDir: filepath.Join(tmpDir, "server-outputs"),
+		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
+		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	serverCmd := exec.CommandContext(ctx, serverBin,
-		"--addr="+":"+fmt.Sprint(port),
-	)
-	serverCmd.Dir = tmpDir
-	serverCmd.Env = append(os.Environ(), "HOME="+tmpDir)
-	serverCmd.Stdout = os.Stdout
-	serverCmd.Stderr = os.Stderr
-	if err := serverCmd.Start(); err != nil {
-		t.Fatalf("start server: %v", err)
-	}
-	defer func() { _ = serverCmd.Process.Kill() }()
+	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
+	waitReady(t, serverURL+"/runs", 10*time.Second)
 
-	waitReady(t, baseURL+"/runs", 15*time.Second)
-
-	// Start worker.
-	workerOutDir := filepath.Join(tmpDir, "worker-outputs")
-	workerCmd := exec.CommandContext(ctx, workerBin,
-		"--master="+baseURL,
-		"--concurrency=2",
-	)
-	workerCmd.Dir = tmpDir
-	workerCmd.Env = append(os.Environ(),
-		"HOME="+tmpDir,
-		// Worker writes output to a temp dir inside HOME by default.
-	)
-	workerCmd.Stdout = os.Stdout
-	workerCmd.Stderr = os.Stderr
-	if err := workerCmd.Start(); err != nil {
-		t.Fatalf("start worker: %v", err)
-	}
-	defer func() { _ = workerCmd.Process.Kill() }()
-	_ = workerOutDir // referenced for clarity
-
-	// Wait for worker to register.
-	time.Sleep(500 * time.Millisecond)
-
-	// Submit pipeline.
-	body, _ := json.Marshal(map[string]string{"yaml": bareMetalPipeline})
-	resp, err := http.Post(baseURL+"/runs", "application/json", bytes.NewReader(body))
+	w, err := worker.New(worker.Config{
+		MasterURL:   serverURL,
+		OutputDir:   filepath.Join(tmpDir, "worker-outputs"),
+		StorageURL:  serverURL + "/store",
+		Concurrency: 4,
+	})
 	if err != nil {
-		t.Fatalf("POST /runs: %v", err)
+		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /runs returned %d", resp.StatusCode)
-	}
+	go func() { _ = w.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
 
-	var runResp struct {
-		RunID string `json:"run_id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&runResp); err != nil {
-		t.Fatalf("decode run response: %v", err)
-	}
-	runID := runResp.RunID
-	if runID == "" {
-		t.Fatal("run ID is empty")
-	}
+	runID := submitPipeline(t, serverURL, string(data))
 	t.Logf("submitted run %s", runID)
 
-	// Poll until success or timeout.
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		r, err := http.Get(fmt.Sprintf("%s/runs/%s", baseURL, runID))
-		if err != nil {
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-		var body struct {
-			Run struct {
-				Status string `json:"status"`
-			} `json:"run"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		r.Body.Close()
-
-		switch body.Run.Status {
-		case "success":
-			t.Logf("run %s succeeded", runID)
-			return
-		case "failed", "canceled":
-			t.Fatalf("run %s ended with status=%s", runID, body.Run.Status)
-		}
-		time.Sleep(500 * time.Millisecond)
+	status := pollRunStatus(t, serverURL, runID, 60*time.Second)
+	if status != "success" {
+		t.Errorf("run %s: status=%q, want success", runID, status)
 	}
-	t.Fatalf("run %s did not complete within timeout", runID)
+}
+
+// ─── Example YAML parsing (static) ───────────────────────────────────────────
+
+// TestExamplePipelineYAMLs parses every Pipeline YAML in the examples tree.
+func TestExamplePipelineYAMLs(t *testing.T) {
+	root := moduleRoot(t)
+	files, err := filepath.Glob(filepath.Join(root, "examples", "*", "pipeline.yaml"))
+	if err != nil || len(files) == 0 {
+		t.Fatal("no example pipeline.yaml files found")
+	}
+	for _, f := range files {
+		f := f
+		t.Run(strings.TrimPrefix(f, root+"/"), func(t *testing.T) {
+			if _, err := pipeline.ParseFile(f); err != nil {
+				t.Fatalf("ParseFile: %v", err)
+			}
+		})
+	}
+}
+
+// TestExampleNotebookServerYAMLs parses every NotebookServer YAML in the examples tree.
+func TestExampleNotebookServerYAMLs(t *testing.T) {
+	root := moduleRoot(t)
+	files, err := filepath.Glob(filepath.Join(root, "examples", "notebook", "server-*.yaml"))
+	if err != nil || len(files) == 0 {
+		t.Fatal("no example server-*.yaml files found")
+	}
+	for _, f := range files {
+		f := f
+		t.Run(filepath.Base(f), func(t *testing.T) {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var spec notebook.NotebookServerSpec
+			if err := yaml.Unmarshal(data, &spec); err != nil {
+				t.Fatalf("yaml.Unmarshal: %v", err)
+			}
+			if spec.Metadata.Name == "" {
+				t.Fatal("metadata.name is empty")
+			}
+		})
+	}
 }

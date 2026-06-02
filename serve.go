@@ -212,8 +212,10 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	// Unified agent registry domain.
 	iagent.NewHandler(p.agentRegistry).RegisterRoutes(r.Group("/api"))
 	r.GET("/api/agents/:id/tunnel", func(c *gin.Context) {
-		if err := p.tunnelHub.Accept(c.Writer, c.Request, c.Param("id")); err != nil {
-			slog.Warn("agent tunnel closed", "agent_id", c.Param("id"), "err", err)
+		agentID := c.Param("id")
+		onPing := func() { p.agentRegistry.Touch(agentID) }
+		if err := p.tunnelHub.Accept(c.Writer, c.Request, agentID, onPing); err != nil {
+			slog.Warn("agent tunnel closed", "agent_id", agentID, "err", err)
 		}
 	})
 

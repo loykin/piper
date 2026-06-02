@@ -14,8 +14,9 @@ import (
 
 func TestHubSendRPCRoundTrip(t *testing.T) {
 	hub := NewHub()
+	touched := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := hub.Accept(w, r, "agent-1"); err != nil {
+		if err := hub.Accept(w, r, "agent-1", func() { touched++ }); err != nil {
 			t.Logf("accept ended: %v", err)
 		}
 	}))

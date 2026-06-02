@@ -13,14 +13,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/tunnel"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/workers/k8s/internal/meta"
-	"github.com/piper/piper/pkg/workers/k8s/internal/rpcutil"
 	"github.com/piper/piper/pkg/workload"
 	"k8s.io/client-go/kubernetes"
 )
 
-type Dispatcher = rpcutil.Dispatcher
+type Dispatcher = *tunnel.Dispatcher
 
 type Config struct {
 	ClusterName string
@@ -57,11 +57,11 @@ type servingStopRequest struct {
 }
 
 func (a *Worker) register(dispatcher Dispatcher) {
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodServingDeploy, a.deployServing)
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodServingStop, func(ctx context.Context, req servingStopRequest) (any, error) {
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodServingDeploy, a.deployServing)
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodServingStop, func(ctx context.Context, req servingStopRequest) (any, error) {
 		return nil, a.stopServing(ctx, req)
 	})
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodServingRestart, func(ctx context.Context, req servingDeployRequest) (any, error) {
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodServingRestart, func(ctx context.Context, req servingDeployRequest) (any, error) {
 		var spec serving.ModelService
 		if err := yaml.Unmarshal([]byte(req.YAML), &spec); err != nil {
 			return nil, err

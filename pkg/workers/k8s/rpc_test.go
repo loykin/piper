@@ -10,7 +10,7 @@ import (
 )
 
 func TestRPCDispatcherHandlesRegisteredMethod(t *testing.T) {
-	d := NewRPCDispatcher()
+	d := tunnel.NewDispatcher()
 	if err := d.Register("echo", func(ctx context.Context, payload json.RawMessage) (any, error) {
 		var req struct {
 			Message string `json:"message"`
@@ -38,7 +38,7 @@ func TestRPCDispatcherHandlesRegisteredMethod(t *testing.T) {
 }
 
 func TestRPCDispatcherRejectsUnknownMethod(t *testing.T) {
-	resp := NewRPCDispatcher().Handle(context.Background(), tunnel.Frame{
+	resp := tunnel.NewDispatcher().Handle(context.Background(), tunnel.Frame{
 		Type:   tunnel.FrameRPCRequest,
 		ID:     "1",
 		Method: "missing",

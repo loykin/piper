@@ -26,7 +26,7 @@ func TestWorkloadHandlersAreRegisteredWhenK8sClientExists(t *testing.T) {
 	a := New(Config{ID: "agent-1", ClusterName: "gpu-a", K8sClient: fake.NewSimpleClientset()})
 	payload, _ := json.Marshal(map[string]string{"volume_id": "vol-123"})
 
-	resp := a.dispatcher.Handle(context.Background(), tunnel.Frame{
+	resp := a.client.Dispatcher().Handle(context.Background(), tunnel.Frame{
 		Type:    tunnel.FrameRPCRequest,
 		ID:      "1",
 		Method:  iagent.MethodNotebookProvisionVolume,
@@ -40,7 +40,7 @@ func TestWorkloadHandlersAreRegisteredWhenK8sClientExists(t *testing.T) {
 func TestWorkloadHandlersAreNotRegisteredWithoutK8sClient(t *testing.T) {
 	a := New(Config{ID: "agent-1", ClusterName: "gpu-a"})
 
-	resp := a.dispatcher.Handle(context.Background(), tunnel.Frame{
+	resp := a.client.Dispatcher().Handle(context.Background(), tunnel.Frame{
 		Type:   tunnel.FrameRPCRequest,
 		ID:     "1",
 		Method: iagent.MethodNotebookProvisionVolume,

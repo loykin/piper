@@ -61,7 +61,10 @@ func (h *Hub) WaitConnected(ctx context.Context, agentID string) error {
 	}
 }
 
-func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, agentID string) error {
+// Accept upgrades the HTTP connection to a WebSocket tunnel for agentID.
+// onPing is called after each successful ping round-trip; use it to touch the
+// agent registry so the agent is not marked as lost while the tunnel is alive.
+func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, agentID string, onPing func()) error {
 	if agentID == "" {
 		http.Error(w, "agent id is required", http.StatusBadRequest)
 		return nil
@@ -76,7 +79,7 @@ func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, agentID string) err
 	t := newAgentTunnel(agentID, conn)
 	h.register(t)
 	defer h.unregister(agentID, t)
-	return t.readLoop(r.Context())
+	return t.readLoop(r.Context(), onPing)
 }
 
 func (h *Hub) SendRPC(ctx context.Context, agentID, method string, payload any, result any) error {
@@ -166,8 +169,16 @@ func (t *AgentTunnel) SendRPC(ctx context.Context, method string, payload any, r
 	}
 }
 
-func (t *AgentTunnel) readLoop(ctx context.Context) error {
+const pingInterval = 30 * time.Second
+const pingTimeout = 10 * time.Second
+
+func (t *AgentTunnel) readLoop(ctx context.Context, onPing func()) error {
 	defer func() { _ = t.conn.CloseNow() }()
+
+	pingCtx, pingCancel := context.WithCancel(ctx)
+	defer pingCancel()
+	go t.pingLoop(pingCtx, onPing)
+
 	for {
 		var frame Frame
 		if err := wsjson.Read(ctx, t.conn, &frame); err != nil {
@@ -180,6 +191,30 @@ func (t *AgentTunnel) readLoop(ctx context.Context) error {
 				case ch <- frame:
 				default:
 				}
+			}
+		}
+	}
+}
+
+// pingLoop sends a WebSocket ping every pingInterval. The client library
+// automatically replies with pong. A successful round-trip calls onPing so
+// the caller can refresh the agent registry entry.
+func (t *AgentTunnel) pingLoop(ctx context.Context, onPing func()) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+			err := t.conn.Ping(pCtx)
+			cancel()
+			if err != nil {
+				return
+			}
+			if onPing != nil {
+				onPing()
 			}
 		}
 	}

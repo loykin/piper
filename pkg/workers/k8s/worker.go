@@ -6,14 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"k8s.io/client-go/kubernetes"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -49,19 +45,21 @@ type Config struct {
 }
 
 type Worker struct {
-	cfg        Config
-	client     *http.Client
-	dispatcher *RPCDispatcher
+	cfg    Config
+	client *tunnel.Client
 }
 
 func New(cfg Config) *Worker {
 	a := &Worker{
-		cfg:        cfg,
-		client:     &http.Client{Timeout: 10 * time.Second},
-		dispatcher: NewRPCDispatcher(),
+		cfg: cfg,
+		client: tunnel.NewClient(tunnel.ClientConfig{
+			MasterURL: cfg.MasterURL,
+			AgentID:   cfg.ID,
+			Token:     cfg.Token,
+		}),
 	}
 	if cfg.K8sClient != nil {
-		k8snotebook.Register(a.dispatcher, k8snotebook.Config{
+		k8snotebook.Register(a.client.Dispatcher(), k8snotebook.Config{
 			AgentID:      cfg.ID,
 			ClusterName:  cfg.ClusterName,
 			Namespaces:   cfg.Namespaces,
@@ -71,13 +69,13 @@ func New(cfg Config) *Worker {
 			StorageClass: cfg.StorageClass,
 			StorageSize:  cfg.StorageSize,
 		})
-		k8sserving.Register(a.dispatcher, k8sserving.Config{
+		k8sserving.Register(a.client.Dispatcher(), k8sserving.Config{
 			ClusterName: cfg.ClusterName,
 			Namespaces:  cfg.Namespaces,
 			Client:      cfg.K8sClient,
 			Namespace:   cfg.ServingNamespace,
 		})
-		k8spipeline.Register(a.dispatcher, k8spipeline.Config{
+		k8spipeline.Register(a.client.Dispatcher(), k8spipeline.Config{
 			MasterURL:            cfg.MasterURL,
 			Token:                cfg.Token,
 			Namespaces:           cfg.Namespaces,
@@ -98,29 +96,10 @@ func New(cfg Config) *Worker {
 }
 
 func (a *Worker) Run(ctx context.Context) error {
-	if a.cfg.MasterURL == "" {
-		return fmt.Errorf("k8s worker: master url is required")
-	}
-	if a.cfg.ID == "" {
-		return fmt.Errorf("k8s worker: id is required")
-	}
 	if a.cfg.ClusterName == "" {
 		return fmt.Errorf("k8s worker: cluster name is required")
 	}
-
-	for {
-		if err := a.register(ctx); err != nil {
-			return err
-		}
-		if err := a.connectTunnel(ctx); err != nil && ctx.Err() == nil {
-			slog.Warn("k8s worker tunnel disconnected", "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(5 * time.Second):
-		}
-	}
+	return a.client.Run(ctx, a.register)
 }
 
 func (a *Worker) register(ctx context.Context) error {
@@ -138,7 +117,9 @@ func (a *Worker) register(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.cfg.MasterURL, "/")+"/api/agents", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(a.cfg.MasterURL, "/")+"/api/agents",
+		bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -146,7 +127,8 @@ func (a *Worker) register(ctx context.Context) error {
 	if a.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+a.cfg.Token)
 	}
-	resp, err := a.client.Do(req)
+	c := &http.Client{Timeout: 10 * time.Second}
+	resp, err := c.Do(req)
 	if err != nil {
 		return err
 	}
@@ -157,50 +139,8 @@ func (a *Worker) register(ctx context.Context) error {
 	return nil
 }
 
-func (a *Worker) connectTunnel(ctx context.Context) error {
-	tunnelURL, err := BuildTunnelURL(a.cfg.MasterURL, a.cfg.ID)
-	if err != nil {
-		return err
-	}
-	opts := &websocket.DialOptions{}
-	if a.cfg.Token != "" {
-		opts.HTTPHeader = http.Header{"Authorization": []string{"Bearer " + a.cfg.Token}}
-	}
-	conn, _, err := websocket.Dial(ctx, tunnelURL, opts)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-
-	for {
-		var frame tunnel.Frame
-		if err := wsjson.Read(ctx, conn, &frame); err != nil {
-			return err
-		}
-		if frame.Type != tunnel.FrameRPCRequest {
-			continue
-		}
-		if err := wsjson.Write(ctx, conn, a.dispatcher.Handle(ctx, frame)); err != nil {
-			return err
-		}
-	}
-}
-
+// BuildTunnelURL is kept for backward compatibility with tests.
+// Prefer tunnel.TunnelURL directly.
 func BuildTunnelURL(masterURL, agentID string) (string, error) {
-	u, err := url.Parse(masterURL)
-	if err != nil {
-		return "", err
-	}
-	switch u.Scheme {
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
-	case "ws", "wss":
-	default:
-		return "", fmt.Errorf("unsupported master url scheme %q", u.Scheme)
-	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/agents/" + agentID + "/tunnel"
-	u.RawQuery = ""
-	return u.String(), nil
+	return tunnel.TunnelURL(masterURL, agentID)
 }

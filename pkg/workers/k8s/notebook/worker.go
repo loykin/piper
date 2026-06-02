@@ -14,14 +14,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/tunnel"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/workers/k8s/internal/meta"
-	"github.com/piper/piper/pkg/workers/k8s/internal/rpcutil"
 	"github.com/piper/piper/pkg/workload"
 	"k8s.io/client-go/kubernetes"
 )
 
-type Dispatcher = rpcutil.Dispatcher
+type Dispatcher = *tunnel.Dispatcher
 
 type Config struct {
 	AgentID      string
@@ -85,15 +85,15 @@ type notebookSyncStatusResponse struct {
 }
 
 func (a *Worker) register(dispatcher Dispatcher) {
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodNotebookProvisionVolume, a.provisionNotebookVolume)
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodNotebookStart, a.startNotebook)
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodNotebookStop, func(ctx context.Context, req notebookStopRequest) (any, error) {
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookProvisionVolume, a.provisionNotebookVolume)
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookStart, a.startNotebook)
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookStop, func(ctx context.Context, req notebookStopRequest) (any, error) {
 		return nil, a.stopNotebook(ctx, req)
 	})
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodNotebookDeprovision, func(ctx context.Context, req notebookDeprovisionVolumeRequest) (any, error) {
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookDeprovision, func(ctx context.Context, req notebookDeprovisionVolumeRequest) (any, error) {
 		return nil, a.deprovisionNotebookVolume(ctx, req)
 	})
-	_ = rpcutil.RegisterJSON(dispatcher, iagent.MethodNotebookSyncStatus, a.syncNotebookStatus)
+	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookSyncStatus, a.syncNotebookStatus)
 }
 
 func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebookProvisionVolumeRequest) (*notebookProvisionVolumeResponse, error) {

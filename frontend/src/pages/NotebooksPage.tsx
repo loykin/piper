@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
@@ -9,16 +9,12 @@ import {
   type NotebookServer, type NotebookVolume,
 } from '@/features/notebooks/api'
 import { getNotebookColumns } from '@/features/notebooks/columns'
-import LaunchPanel from '@/features/notebooks/components/LaunchPanel'
 
 export default function NotebooksPage() {
-  const location = useLocation()
-  const attachVolumeId = (location.state as { attachVolumeId?: string } | null)?.attachVolumeId
+  const navigate = useNavigate()
   const [notebooks, setNotebooks] = useState<NotebookServer[]>([])
   const [releasedVolumes, setReleasedVolumes] = useState<NotebookVolume[]>([])
   const [loading, setLoading] = useState(true)
-  const [showLaunch, setShowLaunch] = useState(!!attachVolumeId)
-  const [initialVolumeId, setInitialVolumeId] = useState<string | undefined>(attachVolumeId)
   const [busy, setBusy] = useState<string | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
 
@@ -58,16 +54,6 @@ export default function NotebooksPage() {
     void withBusy(name, () => deleteNotebook(name))
   }
 
-  // Open the launch panel with a specific volume pre-selected.
-  const openLaunch = (volId?: string) => {
-    setInitialVolumeId(volId)
-    setShowLaunch(true)
-  }
-  const closeLaunch = () => {
-    setShowLaunch(false)
-    setInitialVolumeId(undefined)
-  }
-
   const columns = useMemo(
     () => getNotebookColumns(busy, handleStop, handleStart, handleDelete),
     [busy],
@@ -80,23 +66,12 @@ export default function NotebooksPage() {
           title="Notebooks"
           description="Jupyter notebook servers. Click Open to launch in a new tab."
         />
-        {!showLaunch && (
-          <DataPage.Actions>
-            <Button size="sm" onClick={() => openLaunch()}>Launch</Button>
-          </DataPage.Actions>
-        )}
+        <DataPage.Actions>
+          <Button size="sm" onClick={() => navigate('/notebooks/create')}>Launch</Button>
+        </DataPage.Actions>
       </DataPage.Header>
 
       <DataPage.Content>
-        {showLaunch && (
-          <LaunchPanel
-            onClose={closeLaunch}
-            onLaunched={() => void load()}
-            initialVolumeId={initialVolumeId}
-            releasedVolumes={releasedVolumes}
-          />
-        )}
-
         {loading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading…</div>
         ) : notebooks.length === 0 ? (
@@ -124,7 +99,7 @@ export default function NotebooksPage() {
                       <button
                         type="button"
                         className="text-xs text-primary hover:underline"
-                        onClick={() => openLaunch(releasedVolumes[0].id)}
+                        onClick={() => navigate(`/notebooks/create?volume=${releasedVolumes[0].id}`)}
                       >
                         {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
                       </button>

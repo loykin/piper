@@ -26,6 +26,7 @@ import ServingDetailPage from '@/pages/ServingDetailPage'
 import ServingHistoryPage from '@/pages/ServingHistoryPage'
 import WorkersPage from '@/pages/WorkersPage'
 import NotebooksPage from '@/pages/NotebooksPage'
+import NotebookCreatePage from '@/pages/NotebookCreatePage'
 import NotebookVolumesPage from '@/pages/NotebookVolumesPage'
 
 const navGroups = [
@@ -130,6 +131,7 @@ export default function App() {
                 <Route path="/runs/:id" element={<RunDetailPage />} />
                 <Route path="/workers" element={<WorkersPage />} />
                 <Route path="/notebooks" element={<NotebooksPage />} />
+                <Route path="/notebooks/create" element={<NotebookCreatePage />} />
                 <Route path="/notebook-volumes" element={<NotebookVolumesPage />} />
                 {/* Legacy redirects */}
                 <Route path="/services" element={<Navigate to="/serving" replace />} />

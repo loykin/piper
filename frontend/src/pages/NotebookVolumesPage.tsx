@@ -47,7 +47,7 @@ export default function NotebookVolumesPage() {
   }
 
   const handleAttach = (volId: string) => {
-    navigate('/notebooks', { state: { attachVolumeId: volId } })
+    navigate(`/notebooks/create?volume=${volId}`)
   }
 
   const columns = useMemo(

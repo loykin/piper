@@ -3,7 +3,7 @@
 // Both the worker (polling) and agent (K8s one-shot) use this package.
 // The only difference is how they receive a task — the execution logic is identical.
 //
-//	receive task → download S3 inputs → run command → upload S3 outputs → report
+//	receive task → download inputs → run command → upload outputs → report
 package runner
 
 import (
@@ -20,12 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/piper/piper/pkg/blobstore"
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/s3client"
 	"github.com/piper/piper/pkg/source"
 )
 
@@ -36,12 +34,10 @@ type Config struct {
 	OutputDir string // local output root directory
 	InputDir  string // local input root directory
 
-	// S3 artifact store (local filesystem only when empty)
-	S3Endpoint  string
-	S3AccessKey string
-	S3SecretKey string
-	S3Bucket    string
-	S3UseSSL    bool
+	// StorageURL selects the artifact store backend.
+	// Supported schemes: s3://, file://, http://, https://.
+	// Empty means local filesystem only (no artifact transfer between steps).
+	StorageURL string
 
 	// Source fetch configuration (notebook/python source: git|s3|http)
 	GitToken string
@@ -52,7 +48,9 @@ type Config struct {
 type Runner struct {
 	cfg    Config
 	client *http.Client
-	s3     *s3.Client // nil means S3 is not used
+	store  blobstore.Store // nil means local filesystem only (no artifact transfer)
+	// cleanWorkdir is true when artifacts are stored remotely and local dirs are transient.
+	cleanWorkdir bool
 }
 
 // New creates a Runner.
@@ -69,12 +67,16 @@ func New(cfg Config) (*Runner, error) {
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
 
-	if cfg.S3Endpoint != "" && cfg.S3Bucket != "" {
-		cli, err := s3client.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL)
+	if cfg.StorageURL != "" {
+		st, err := blobstore.Open(cfg.StorageURL, cfg.Token)
 		if err != nil {
-			return nil, fmt.Errorf("s3 client: %w", err)
+			return nil, fmt.Errorf("artifact store: %w", err)
 		}
-		r.s3 = cli
+		r.store = st
+		// Local work dirs are transient when the store is remote (S3, HTTP).
+		// If it's a LocalStore, the local dir IS the durable copy.
+		_, isLocal := st.(*blobstore.LocalStore)
+		r.cleanWorkdir = !isLocal
 	}
 
 	return r, nil
@@ -99,14 +101,14 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) bool {
 		return false
 	}
 
-	// When S3 is the artifact store, local dirs are transient working space only.
+	// When using a remote store, local dirs are transient staging areas only.
 	// Registered before the logFile defer so it executes after logFile.Close() (LIFO).
-	if r.s3 != nil {
+	if r.cleanWorkdir {
 		defer r.cleanLocalWorkdir(task.RunID, step.Name, step.Inputs)
 	}
 
-	// Download input artifacts from S3
-	if r.s3 != nil && len(step.Inputs) > 0 {
+	// Download input artifacts from the store
+	if r.store != nil && len(step.Inputs) > 0 {
 		if err := r.downloadInputs(ctx, task.RunID, step.Inputs); err != nil {
 			slog.Error("download inputs failed", "task_id", task.ID, "err", err)
 			r.reportFailed(task, err, startedAt)
@@ -134,8 +136,8 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) bool {
 	stopFlush()
 	logger.flush(ctx)
 
-	// Upload output artifacts to S3 (on success)
-	if execErr == nil && r.s3 != nil && len(step.Outputs) > 0 {
+	// Upload output artifacts to the store (on success)
+	if execErr == nil && r.store != nil && len(step.Outputs) > 0 {
 		if err := r.uploadOutputs(ctx, task.RunID, step.Name, stepOutputDir, step.Outputs); err != nil {
 			slog.Error("upload outputs failed", "task_id", task.ID, "err", err)
 			execErr = err
@@ -174,13 +176,8 @@ func (r *Runner) execute(
 		Stderr:    stderrW,
 		Vars:      task.Vars,
 		SourceCfg: source.Config{
-			GitToken:    r.cfg.GitToken,
-			GitUser:     r.cfg.GitUser,
-			S3Endpoint:  r.cfg.S3Endpoint,
-			S3AccessKey: r.cfg.S3AccessKey,
-			S3SecretKey: r.cfg.S3SecretKey,
-			S3Bucket:    r.cfg.S3Bucket,
-			S3UseSSL:    r.cfg.S3UseSSL,
+			GitToken: r.cfg.GitToken,
+			GitUser:  r.cfg.GitUser,
 		},
 	}
 
@@ -356,11 +353,10 @@ func (r *Runner) setAuth(req *http.Request) {
 	}
 }
 
-// ─── S3 artifacts ─────────────────────────────────────────────────────────────
+// ─── Artifact transfer ────────────────────────────────────────────────────────
 
 // cleanLocalWorkdir removes the step's local output dir and any downloaded input
-// dirs from the local filesystem. Called only when S3 is configured; local dirs
-// are transient staging areas and the durable copy lives in S3.
+// dirs. Called only when using a remote store; local dirs are transient staging areas.
 func (r *Runner) cleanLocalWorkdir(runID, stepName string, inputs []pipeline.Artifact) {
 	_ = os.RemoveAll(filepath.Join(r.cfg.OutputDir, runID, stepName))
 	for _, art := range inputs {
@@ -368,9 +364,9 @@ func (r *Runner) cleanLocalWorkdir(runID, stepName string, inputs []pipeline.Art
 	}
 }
 
-// downloadInputs downloads step input artifacts from S3 to the local filesystem.
-// S3 key: {runID}/{fromStep}/{artifactName}/
-// Local:  {inputDir}/{runID}/{artifactName}/
+// downloadInputs downloads step input artifacts from the store to the local filesystem.
+// Store key: {runID}/{fromStep}/{artifactName}/…
+// Local:     {inputDir}/{runID}/{artifactName}/…
 func (r *Runner) downloadInputs(ctx context.Context, runID string, inputs []pipeline.Artifact) error {
 	for _, art := range inputs {
 		if art.From == "" {
@@ -381,10 +377,10 @@ func (r *Runner) downloadInputs(ctx context.Context, runID string, inputs []pipe
 			return fmt.Errorf("artifact %q: invalid from %q (expected stepName/artifactName)", art.Name, art.From)
 		}
 		fromStep, fromArtifact := parts[0], parts[1]
-		prefix := fmt.Sprintf("%s/%s/%s/", runID, fromStep, fromArtifact)
+		prefix := fmt.Sprintf("%s/%s/%s", runID, fromStep, fromArtifact)
 		destDir := filepath.Join(r.cfg.InputDir, runID, art.Name)
 
-		if err := s3DownloadPrefix(ctx, r.s3, r.cfg.S3Bucket, prefix, destDir); err != nil {
+		if err := blobstore.DownloadDir(ctx, r.store, prefix+"/", destDir); err != nil {
 			return fmt.Errorf("download %q: %w", art.Name, err)
 		}
 		slog.Info("artifact downloaded", "name", art.Name, "prefix", prefix)
@@ -392,102 +388,23 @@ func (r *Runner) downloadInputs(ctx context.Context, runID string, inputs []pipe
 	return nil
 }
 
-// uploadOutputs uploads step output artifacts to S3.
-// Local:  {outputDir}/{artifact.Path}
-// S3 key: {runID}/{stepName}/{artifactName}/
+// uploadOutputs uploads step output artifacts to the store.
+// Local:      {outputDir}/{artifact.Path}
+// Store key:  {runID}/{stepName}/{artifactName}/…
 func (r *Runner) uploadOutputs(ctx context.Context, runID, stepName, outputDir string, outputs []pipeline.Artifact) error {
 	for _, art := range outputs {
 		if art.Path == "" {
 			continue
 		}
 		localPath := filepath.Join(outputDir, art.Path)
-		prefix := fmt.Sprintf("%s/%s/%s/", runID, stepName, art.Name)
+		prefix := fmt.Sprintf("%s/%s/%s", runID, stepName, art.Name)
 
-		if err := s3UploadPath(ctx, r.s3, r.cfg.S3Bucket, localPath, prefix); err != nil {
+		if err := blobstore.UploadPath(ctx, r.store, localPath, prefix); err != nil {
 			return fmt.Errorf("upload %q: %w", art.Name, err)
 		}
 		slog.Info("artifact uploaded", "name", art.Name, "prefix", prefix)
 	}
 	return nil
-}
-
-func s3DownloadPrefix(ctx context.Context, client *s3.Client, bucket, prefix, destDir string) error {
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
-	}
-	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return err
-		}
-		for _, obj := range page.Contents {
-			key := aws.ToString(obj.Key)
-			rel := strings.TrimPrefix(key, prefix)
-			dest := filepath.Join(destDir, rel)
-			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-				return err
-			}
-			if err := s3GetFile(ctx, client, bucket, key, dest); err != nil {
-				return fmt.Errorf("get %q: %w", key, err)
-			}
-		}
-	}
-	return nil
-}
-
-func s3UploadPath(ctx context.Context, client *s3.Client, bucket, localPath, s3Prefix string) error {
-	info, err := os.Stat(localPath)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return s3PutFile(ctx, client, bucket, s3Prefix+info.Name(), localPath)
-	}
-	return filepath.Walk(localPath, func(path string, fi os.FileInfo, err error) error {
-		if err != nil || fi.IsDir() {
-			return err
-		}
-		rel, _ := filepath.Rel(localPath, path)
-		return s3PutFile(ctx, client, bucket, s3Prefix+rel, path)
-	})
-}
-
-func s3GetFile(ctx context.Context, client *s3.Client, bucket, key, destPath string) error {
-	out, err := client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Body.Close() }()
-
-	f, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = io.Copy(f, out.Body)
-	return err
-}
-
-func s3PutFile(ctx context.Context, client *s3.Client, bucket, key, localPath string) error {
-	f, err := os.Open(localPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	_, err = client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   f,
-	})
-	return err
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

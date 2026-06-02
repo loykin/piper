@@ -34,12 +34,9 @@ type Config struct {
 	OutputDir           string
 	GitUser             string
 	GitToken            string
-	// S3 artifact store
-	S3Endpoint  string
-	S3AccessKey string
-	S3SecretKey string
-	S3Bucket    string
-	S3UseSSL    bool
+	// StorageURL selects the artifact store backend.
+	// Supported schemes: s3://, file://, http://, https://
+	StorageURL string
 }
 
 // Worker polls the master and executes tasks.
@@ -75,16 +72,12 @@ func New(cfg Config) (*Worker, error) {
 	}
 
 	r, err := runner.New(runner.Config{
-		MasterURL:   cfg.MasterURL,
-		Token:       cfg.Token,
-		OutputDir:   cfg.OutputDir,
-		GitUser:     cfg.GitUser,
-		GitToken:    cfg.GitToken,
-		S3Endpoint:  cfg.S3Endpoint,
-		S3AccessKey: cfg.S3AccessKey,
-		S3SecretKey: cfg.S3SecretKey,
-		S3Bucket:    cfg.S3Bucket,
-		S3UseSSL:    cfg.S3UseSSL,
+		MasterURL:  cfg.MasterURL,
+		Token:      cfg.Token,
+		OutputDir:  cfg.OutputDir,
+		GitUser:    cfg.GitUser,
+		GitToken:   cfg.GitToken,
+		StorageURL: cfg.StorageURL,
 	})
 	if err != nil {
 		return nil, err

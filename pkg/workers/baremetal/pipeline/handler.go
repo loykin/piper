@@ -46,10 +46,23 @@ func NewHandler(deps HandlerDeps) *Handler {
 // RegisterRoutes mounts all worker and task routes onto the given router group.
 // rg should be pre-configured as the /api group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
+	h.RegisterPollRoutes(rg)
+	h.RegisterCompletionRoutes(rg)
+}
+
+// RegisterPollRoutes mounts worker registration and task polling routes.
+// Only needed when workers pull tasks via HTTP (no active backend).
+func (h *Handler) RegisterPollRoutes(rg *gin.RouterGroup) {
 	rg.POST("/workers", h.registerWorker)
 	rg.GET("/workers", h.listWorkers)
 	rg.POST("/workers/:id/heartbeat", h.workerHeartbeat)
 	rg.GET("/tasks/next", h.taskNext)
+}
+
+// RegisterCompletionRoutes mounts the task done/failed reporting routes.
+// Must always be registered so that piper agent exec in K8s Job pods can
+// report results back to the master regardless of backend mode.
+func (h *Handler) RegisterCompletionRoutes(rg *gin.RouterGroup) {
 	rg.POST("/tasks/:id/done", h.taskDone)
 	rg.POST("/tasks/:id/failed", h.taskFailed)
 }

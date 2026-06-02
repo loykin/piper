@@ -279,11 +279,7 @@ func NewPiper() (*piper.Piper, error) {
 			MasterURL:            cfg.K8s.MasterURL,
 			Token:                cfg.K8s.Token,
 			DefaultImage:         cfg.K8s.DefaultImage,
-			S3Endpoint:           cfg.S3.Endpoint,
-			S3AccessKey:          cfg.S3.AccessKey,
-			S3SecretKey:          cfg.S3.SecretKey,
-			S3Bucket:             cfg.S3.Bucket,
-			S3UseSSL:             cfg.S3.UseSSL,
+			StorageURL:           cfg.ResolveStorageURL(),
 			TTLAfterFinished:     ttlPtr,
 		})
 		if err != nil {

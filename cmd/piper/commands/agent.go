@@ -20,21 +20,16 @@ func newAgentCmd() *cobra.Command {
 }
 
 type agentExecFlags struct {
-	master    string
-	token     string
-	taskB64   string
-	taskID    string
-	runID     string
-	stepName  string
-	stepB64   string
-	outputDir string
-	inputDir  string
-	// S3
-	s3Endpoint  string
-	s3AccessKey string
-	s3SecretKey string
-	s3Bucket    string
-	s3UseSSL    bool
+	master     string
+	token      string
+	taskB64    string
+	taskID     string
+	runID      string
+	stepName   string
+	stepB64    string
+	outputDir  string
+	inputDir   string
+	storageURL string
 }
 
 func newAgentExecCmd() *cobra.Command {
@@ -57,11 +52,7 @@ func newAgentExecCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.stepB64, "step", "", "base64-encoded pipeline.Step JSON")
 	cmd.Flags().StringVar(&f.outputDir, "output-dir", "/piper-outputs", "local output directory")
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
-	cmd.Flags().StringVar(&f.s3Endpoint, "s3-endpoint", "", "S3 endpoint")
-	cmd.Flags().StringVar(&f.s3AccessKey, "s3-access-key", "", "S3 access key")
-	cmd.Flags().StringVar(&f.s3SecretKey, "s3-secret-key", "", "S3 secret key")
-	cmd.Flags().StringVar(&f.s3Bucket, "s3-bucket", "", "S3 bucket")
-	cmd.Flags().BoolVar(&f.s3UseSSL, "s3-use-ssl", false, "enable SSL for S3")
+	cmd.Flags().StringVar(&f.storageURL, "storage-url", "", "artifact store URL (s3://, file://, http://)")
 
 	return cmd
 }
@@ -73,15 +64,11 @@ func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error
 	}
 
 	r, err := runner.New(runner.Config{
-		MasterURL:   f.master,
-		Token:       f.token,
-		OutputDir:   f.outputDir,
-		InputDir:    f.inputDir,
-		S3Endpoint:  f.s3Endpoint,
-		S3AccessKey: f.s3AccessKey,
-		S3SecretKey: f.s3SecretKey,
-		S3Bucket:    f.s3Bucket,
-		S3UseSSL:    f.s3UseSSL,
+		MasterURL:  f.master,
+		Token:      f.token,
+		OutputDir:  f.outputDir,
+		InputDir:   f.inputDir,
+		StorageURL: f.storageURL,
 	})
 	if err != nil {
 		return fmt.Errorf("runner init: %w", err)

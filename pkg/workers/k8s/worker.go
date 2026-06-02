@@ -37,11 +37,8 @@ type Config struct {
 	AgentImagePullPolicy string
 	DefaultImage         string
 	TTLAfterFinished     *int32
-	S3Endpoint           string
-	S3AccessKey          string
-	S3SecretKey          string
-	S3Bucket             string
-	S3UseSSL             bool
+	// StorageURL selects the artifact store backend for pipeline jobs.
+	StorageURL string
 }
 
 type Worker struct {
@@ -85,11 +82,7 @@ func New(cfg Config) *Worker {
 			AgentImagePullPolicy: cfg.AgentImagePullPolicy,
 			DefaultImage:         cfg.DefaultImage,
 			TTLAfterFinished:     cfg.TTLAfterFinished,
-			S3Endpoint:           cfg.S3Endpoint,
-			S3AccessKey:          cfg.S3AccessKey,
-			S3SecretKey:          cfg.S3SecretKey,
-			S3Bucket:             cfg.S3Bucket,
-			S3UseSSL:             cfg.S3UseSSL,
+			StorageURL:           cfg.StorageURL,
 		})
 	}
 	return a

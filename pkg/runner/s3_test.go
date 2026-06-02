@@ -2,74 +2,74 @@ package runner_test
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+	"github.com/piper/piper/pkg/blobstore"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/runner"
 )
 
+func mustReader(s string) *strings.Reader { return strings.NewReader(s) }
+
 const testBucket = "piper-test"
 
-// fakeS3 starts an in-process S3 server and returns an AWS SDK v2 client.
-func fakeS3(t *testing.T) (*httptest.Server, *s3.Client) {
+// fakeS3 starts an in-process S3 server and returns a blobstore.S3Store.
+func fakeS3(t *testing.T) (*httptest.Server, *blobstore.S3Store) {
 	t.Helper()
 
 	faker := gofakes3.New(s3mem.New())
 	srv := httptest.NewServer(faker.Server())
 	t.Cleanup(srv.Close)
 
-	client := newTestS3Client(t, srv.URL)
-
-	// Create bucket
-	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return srv, client
-}
-
-func newTestS3Client(t *testing.T, endpoint string) *s3.Client {
-	t.Helper()
-	awsCfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")),
+	// Create the bucket — gofakes3 requires explicit bucket creation.
+	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+		awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(endpoint)
+	cli := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(srv.URL)
 		o.UsePathStyle = true
 	})
+	if _, err := cli.CreateBucket(context.Background(), &s3.CreateBucketInput{Bucket: aws.String(testBucket)}); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := blobstore.NewS3Store(testBucket, "us-east-1", srv.URL, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv, store
+}
+
+func fakeS3StorageURL(srv *httptest.Server) string {
+	return fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test",
+		testBucket, srv.URL)
 }
 
 // ─── S3 upload / download ─────────────────────────────────────────────────────
 
 func TestRun_s3_artifact_upload(t *testing.T) {
-	srv, s3client := fakeS3(t)
-	endpoint := srv.Listener.Addr().String()
+	srv, store := fakeS3(t)
 	masterSrv := fakeMasterServer(t)
 
 	r, err := runner.New(runner.Config{
-		MasterURL:   masterSrv.URL,
-		OutputDir:   t.TempDir(),
-		S3Endpoint:  endpoint,
-		S3AccessKey: "test",
-		S3SecretKey: "test",
-		S3Bucket:    testBucket,
-		S3UseSSL:    false,
+		MasterURL:  masterSrv.URL,
+		OutputDir:  t.TempDir(),
+		StorageURL: fakeS3StorageURL(srv),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,54 +86,41 @@ func TestRun_s3_artifact_upload(t *testing.T) {
 	})
 	r.Run(context.Background(), task)
 
-	// Verify that the file was uploaded to S3
+	// Verify that the file was uploaded to the store
 	prefix := task.RunID + "/upload-step/result/"
-	out, err := s3client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
-		Bucket: aws.String(testBucket),
-		Prefix: aws.String(prefix),
-	})
+	objs, err := store.List(context.Background(), prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Contents) == 0 {
+	if len(objs) == 0 {
 		t.Errorf("no objects found under prefix %q", prefix)
 	}
-	for _, obj := range out.Contents {
-		t.Logf("uploaded: %s (%d bytes)", aws.ToString(obj.Key), obj.Size)
+	for _, obj := range objs {
+		t.Logf("uploaded: %s (%d bytes)", obj.Key, obj.Size)
 	}
 }
 
 func TestRun_s3_artifact_input_output(t *testing.T) {
-	srv, s3client := fakeS3(t)
-	endpoint := srv.Listener.Addr().String()
+	srv, store := fakeS3(t)
 	masterSrv := fakeMasterServer(t)
 
-	// Upload an input file to S3 as if a previous step had done so
+	// Upload an input file to the store as if a previous step had done so
 	runID := "run-s3-test"
-	tmpFile := filepath.Join(t.TempDir(), "input.txt")
-	_ = os.WriteFile(tmpFile, []byte("hello from previous step\n"), 0644)
-
-	f, _ := os.Open(tmpFile)
-	defer func() { _ = f.Close() }()
-	_, err := s3client.PutObject(context.Background(), &s3.PutObjectInput{
-		Bucket: aws.String(testBucket),
-		Key:    aws.String(runID + "/prev-step/data/input.txt"),
-		Body:   f,
-	})
+	err := store.Put(context.Background(),
+		runID+"/prev-step/data/input.txt",
+		mustReader("hello from previous step\n"),
+		-1,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	outDir := t.TempDir()
 	r, err := runner.New(runner.Config{
-		MasterURL:   masterSrv.URL,
-		OutputDir:   outDir,
-		InputDir:    outDir,
-		S3Endpoint:  endpoint,
-		S3AccessKey: "test",
-		S3SecretKey: "test",
-		S3Bucket:    testBucket,
-		S3UseSSL:    false,
+		MasterURL:  masterSrv.URL,
+		OutputDir:  outDir,
+		InputDir:   outDir,
+		StorageURL: fakeS3StorageURL(srv),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,39 +140,30 @@ func TestRun_s3_artifact_input_output(t *testing.T) {
 	}, runID)
 	r.Run(context.Background(), task)
 
-	// Verify that the output was uploaded to S3
+	// Verify that the output was uploaded to the store
 	outPrefix := runID + "/consume-step/out/"
-	out, err := s3client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
-		Bucket: aws.String(testBucket),
-		Prefix: aws.String(outPrefix),
-	})
+	objs, err := store.List(context.Background(), outPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Contents) == 0 {
-		t.Errorf("output artifact not found in S3 under %q", outPrefix)
+	if len(objs) == 0 {
+		t.Errorf("output artifact not found in store under %q", outPrefix)
 	}
-	for _, obj := range out.Contents {
-		t.Logf("output uploaded: %s", aws.ToString(obj.Key))
+	for _, obj := range objs {
+		t.Logf("output uploaded: %s", obj.Key)
 	}
 }
 
 func TestRun_s3_cleansLocalWorkdirAfterRun(t *testing.T) {
-	srv, s3client := fakeS3(t)
-	_ = s3client
-	endpoint := srv.Listener.Addr().String()
+	srv, _ := fakeS3(t)
 	masterSrv := fakeMasterServer(t)
 
 	outDir := t.TempDir()
 	r, err := runner.New(runner.Config{
-		MasterURL:   masterSrv.URL,
-		OutputDir:   outDir,
-		InputDir:    outDir,
-		S3Endpoint:  endpoint,
-		S3AccessKey: "test",
-		S3SecretKey: "test",
-		S3Bucket:    testBucket,
-		S3UseSSL:    false,
+		MasterURL:  masterSrv.URL,
+		OutputDir:  outDir,
+		InputDir:   outDir,
+		StorageURL: fakeS3StorageURL(srv),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +180,6 @@ func TestRun_s3_cleansLocalWorkdirAfterRun(t *testing.T) {
 
 	stepDir := filepath.Join(outDir, task.RunID, "clean-step")
 	if _, err := os.Stat(stepDir); !os.IsNotExist(err) {
-		t.Errorf("local step dir should be removed after S3 upload, but still exists: %s", stepDir)
+		t.Errorf("local step dir should be removed after store upload, but still exists: %s", stepDir)
 	}
 }

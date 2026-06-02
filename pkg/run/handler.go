@@ -97,14 +97,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // GET /runs
 func (h *Handler) listRuns(c *gin.Context) {
-	filter := RunFilter{}
-	if h.deps.Hooks != nil {
-		f, err := h.deps.Hooks.BeforeListRuns(c.Request.Context(), c.Request)
-		if err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		filter = f
+	filter, ok := h.resolveFilter(c)
+	if !ok {
+		return
 	}
 	filter.Status = c.Query("status")
 	filter.Experiment = c.Query("experiment")
@@ -519,6 +514,21 @@ func splitN(s, sep string, n int) []string {
 	}
 	result = append(result, s)
 	return result
+}
+
+// resolveFilter returns the effective RunFilter for a list request, applying
+// the BeforeListRuns hook when present.
+// Returns (RunFilter{}, false) if the hook rejected the request (response already written).
+func (h *Handler) resolveFilter(c *gin.Context) (RunFilter, bool) {
+	if h.deps.Hooks == nil {
+		return RunFilter{}, true
+	}
+	f, err := h.deps.Hooks.BeforeListRuns(c.Request.Context(), c.Request)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return RunFilter{}, false
+	}
+	return f, true
 }
 
 func indexOf(s, sub string) int {

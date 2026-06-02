@@ -3,16 +3,13 @@ package piper
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/piper/piper/pkg/blobstore"
 )
 
 type artifactFile struct {
@@ -97,43 +94,33 @@ func listArtifactsLocal(outputDir, runID string) ([]stepArtifacts, error) {
 	return result, nil
 }
 
-// listArtifactsS3 lists objects under prefix runID/ grouped by step/artifact.
-func listArtifactsS3(ctx context.Context, client *s3.Client, bucket, runID string) ([]stepArtifacts, error) {
+// listArtifactsStore lists objects under prefix runID/ from a blobstore.
+func listArtifactsStore(ctx context.Context, st blobstore.Store, runID string) ([]stepArtifacts, error) {
 	prefix := runID + "/"
-	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
+	objs, err := st.List(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
 	type mk struct{ step, artifact string }
 	filesMap := map[mk][]artifactFile{}
 	var orderedKeys []mk
 	seen := map[mk]bool{}
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return nil, err
+	for _, obj := range objs {
+		rel := strings.TrimPrefix(obj.Key, prefix)
+		parts := strings.SplitN(rel, "/", 3)
+		if len(parts) < 3 || parts[2] == "" {
+			continue
 		}
-		for _, obj := range page.Contents {
-			rel := strings.TrimPrefix(aws.ToString(obj.Key), prefix)
-			parts := strings.SplitN(rel, "/", 3)
-			if len(parts) < 3 || parts[2] == "" {
-				continue
-			}
-			key := mk{parts[0], parts[1]}
-			if !seen[key] {
-				seen[key] = true
-				orderedKeys = append(orderedKeys, key)
-			}
-			var modAt time.Time
-			if obj.LastModified != nil {
-				modAt = *obj.LastModified
-			}
-			filesMap[key] = append(filesMap[key], artifactFile{
-				Path:       parts[2],
-				Size:       aws.ToInt64(obj.Size),
-				ModifiedAt: modAt,
-			})
+		key := mk{parts[0], parts[1]}
+		if !seen[key] {
+			seen[key] = true
+			orderedKeys = append(orderedKeys, key)
 		}
+		filesMap[key] = append(filesMap[key], artifactFile{
+			Path:       parts[2],
+			Size:       obj.Size,
+			ModifiedAt: obj.ModifiedAt,
+		})
 	}
 	stepMap := map[string][]artifactEntry{}
 	var stepOrder []string
@@ -152,15 +139,24 @@ func listArtifactsS3(ctx context.Context, client *s3.Client, bucket, runID strin
 	return result, nil
 }
 
-// deleteArtifacts removes all artifact files for a run (local or S3).
-func deleteArtifacts(ctx context.Context, cli *s3.Client, bucket, outputDir, runID string) error {
-	if cli != nil && bucket != "" {
-		return deleteArtifactsS3(ctx, cli, bucket, runID)
+// deleteArtifacts removes all artifact files for a run.
+// Uses the blobstore if configured; falls back to local filesystem.
+func deleteArtifacts(ctx context.Context, st blobstore.Store, outputDir, runID string) error {
+	if st != nil {
+		// List all keys under runID/ and delete them.
+		objs, err := st.List(ctx, runID+"/")
+		if err != nil {
+			return err
+		}
+		if len(objs) > 0 {
+			keys := make([]string, len(objs))
+			for i, o := range objs {
+				keys[i] = o.Key
+			}
+			return st.Delete(ctx, keys...)
+		}
+		return nil
 	}
-	return deleteArtifactsLocal(outputDir, runID)
-}
-
-func deleteArtifactsLocal(outputDir, runID string) error {
 	runDir := filepath.Join(outputDir, runID)
 	if err := os.RemoveAll(runDir); err != nil && !os.IsNotExist(err) {
 		return err
@@ -168,119 +164,14 @@ func deleteArtifactsLocal(outputDir, runID string) error {
 	return nil
 }
 
-func deleteArtifactsS3(ctx context.Context, client *s3.Client, bucket, runID string) error {
-	prefix := runID + "/"
-	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return err
-		}
-		var objs []types.ObjectIdentifier
-		for _, obj := range page.Contents {
-			key := obj.Key
-			objs = append(objs, types.ObjectIdentifier{Key: key})
-		}
-		if len(objs) == 0 {
-			continue
-		}
-		if _, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-			Bucket: aws.String(bucket),
-			Delete: &types.Delete{Objects: objs, Quiet: aws.Bool(true)},
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// downloadArtifactS3Raw streams an S3 artifact file to an http.ResponseWriter.
-func downloadArtifactS3Raw(w http.ResponseWriter, r *http.Request, client *s3.Client, bucket, runID, step, rest string) {
+// downloadArtifactStore streams an artifact from the store to an http.ResponseWriter.
+func downloadArtifactStore(w http.ResponseWriter, r *http.Request, st blobstore.Store, runID, step, rest string) {
 	key := fmt.Sprintf("%s/%s/%s", runID, step, rest)
-	out, err := client.GetObject(r.Context(), &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		http.Error(w, "artifact not found", http.StatusNotFound)
-		return
-	}
-	defer func() { _ = out.Body.Close() }()
 	filename := filepath.Base(rest)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	if out.ContentLength != nil {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", *out.ContentLength))
+	if err := blobstore.ServeHTTP(r.Context(), st, key, w); err != nil {
+		http.Error(w, "artifact not found", http.StatusNotFound)
 	}
-	_, _ = io.Copy(w, out.Body)
-}
-
-// downloadS3URIToLocal downloads all objects under an s3://bucket/prefix URI into destDir,
-// preserving the key structure relative to the prefix.
-// If the URI points to a single object (no trailing slash, no sub-keys), it is downloaded directly.
-func downloadS3URIToLocal(ctx context.Context, client *s3.Client, s3URI, destDir string) error {
-	// s3://bucket/key/path
-	without := strings.TrimPrefix(s3URI, "s3://")
-	slash := strings.IndexByte(without, '/')
-	if slash < 0 {
-		return fmt.Errorf("invalid s3 URI %q: missing key", s3URI)
-	}
-	bucket := without[:slash]
-	prefix := without[slash+1:]
-
-	// List all objects under the prefix
-	paginator := s3.NewListObjectsV2Paginator(client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	})
-
-	downloaded := 0
-	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(ctx)
-		if err != nil {
-			return err
-		}
-		for _, obj := range page.Contents {
-			key := aws.ToString(obj.Key)
-			if strings.HasSuffix(key, "/") {
-				continue // directory marker
-			}
-			rel := strings.TrimPrefix(key, prefix)
-			rel = strings.TrimPrefix(rel, "/")
-			if rel == "" {
-				rel = filepath.Base(key)
-			}
-			dest := filepath.Join(destDir, filepath.FromSlash(rel))
-			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-				return err
-			}
-			out, err := client.GetObject(ctx, &s3.GetObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    aws.String(key),
-			})
-			if err != nil {
-				return fmt.Errorf("get object %s: %w", key, err)
-			}
-			f, createErr := os.Create(dest)
-			if createErr != nil {
-				_ = out.Body.Close()
-				return createErr
-			}
-			_, copyErr := io.Copy(f, out.Body)
-			_ = out.Body.Close()
-			_ = f.Close()
-			if copyErr != nil {
-				return fmt.Errorf("write %s: %w", dest, copyErr)
-			}
-			downloaded++
-		}
-	}
-	if downloaded == 0 {
-		return fmt.Errorf("no objects found at %s", s3URI)
-	}
-	return nil
 }
 
 // downloadArtifactLocal streams a local artifact file to an http.ResponseWriter.

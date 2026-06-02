@@ -241,8 +241,8 @@ spec:
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("worker-mode run %s did not reach success", runID)
 	}
-	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper", "--no-headers"); !strings.Contains(out, "k8s-worker-e2e") {
-		t.Fatalf("expected worker-created pipeline Job, got:\n%s", out)
+	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper", "--no-headers"); !strings.Contains(out, "smoke") {
+		t.Fatalf("expected worker-created pipeline Job for step 'smoke', got:\n%s", out)
 	}
 
 	k8sE2EPostService(t, serverURL, `

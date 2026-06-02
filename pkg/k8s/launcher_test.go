@@ -122,24 +122,20 @@ func TestBuildAgentArgs_contains(t *testing.T) {
 	}
 }
 
-func TestBuildAgentArgs_s3(t *testing.T) {
-	l := &Launcher{cfg: Config{
-		S3Endpoint:  "minio:9000",
-		S3AccessKey: "access",
-		S3SecretKey: "secret",
-		S3Bucket:    "piper",
-	}}
+func TestBuildAgentArgs_storage(t *testing.T) {
+	storageURL := "s3://piper?endpoint=http://minio:9000&s3ForcePathStyle=true&accessKey=access&secretKey=secret"
+	l := &Launcher{cfg: Config{StorageURL: storageURL}}
 	task := &proto.Task{ID: "r:s", RunID: "r", StepName: "s"}
 	args := l.buildAgentArgs(task, "TASKB64")
 
 	found := false
 	for _, a := range args {
-		if a == "--s3-endpoint=minio:9000" {
+		if a == "--storage-url="+storageURL {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("S3 endpoint not in args: %v", args)
+		t.Errorf("--storage-url not in args: %v", args)
 	}
 }
 

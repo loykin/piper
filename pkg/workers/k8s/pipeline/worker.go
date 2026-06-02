@@ -25,11 +25,8 @@ type Config struct {
 	AgentImagePullPolicy string
 	DefaultImage         string
 	TTLAfterFinished     *int32
-	S3Endpoint           string
-	S3AccessKey          string
-	S3SecretKey          string
-	S3Bucket             string
-	S3UseSSL             bool
+	// StorageURL selects the artifact store backend passed to K8s Job agents.
+	StorageURL string
 }
 
 type Worker struct {
@@ -82,11 +79,7 @@ func (a *Worker) pipelineLauncher(namespace string) *k8s.Launcher {
 		Namespace:            a.pipelineNamespace(namespace),
 		MasterURL:            a.cfg.MasterURL,
 		Token:                a.cfg.Token,
-		S3Endpoint:           a.cfg.S3Endpoint,
-		S3AccessKey:          a.cfg.S3AccessKey,
-		S3SecretKey:          a.cfg.S3SecretKey,
-		S3Bucket:             a.cfg.S3Bucket,
-		S3UseSSL:             a.cfg.S3UseSSL,
+		StorageURL:           a.cfg.StorageURL,
 		DefaultImage:         a.cfg.DefaultImage,
 		AgentImagePullPolicy: a.cfg.AgentImagePullPolicy,
 		TTLAfterFinished:     a.cfg.TTLAfterFinished,

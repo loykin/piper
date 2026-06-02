@@ -215,14 +215,29 @@ func (d *K8sDriver) Start(ctx context.Context, spec notebook.NotebookServerSpec,
 			return nil, fmt.Errorf("notebook k8s: create statefulset %s: %w", safeName, err)
 		}
 		// StatefulSet exists (stopped state) — patch replicas back to 1 with new spec.
-		existing, gErr := d.k8s.AppsV1().StatefulSets(d.ns).Get(ctx, safeName, metav1.GetOptions{})
-		if gErr != nil {
-			return nil, fmt.Errorf("notebook k8s: get statefulset %s for restart: %w", safeName, gErr)
+		// Retry on conflict: the object may be modified between Get and Update.
+		const maxRetries = 5
+		var lastErr error
+		for i := range maxRetries {
+			_ = i
+			existing, gErr := d.k8s.AppsV1().StatefulSets(d.ns).Get(ctx, safeName, metav1.GetOptions{})
+			if gErr != nil {
+				return nil, fmt.Errorf("notebook k8s: get statefulset %s for restart: %w", safeName, gErr)
+			}
+			existing.Spec.Replicas = sts.Spec.Replicas
+			existing.Spec.Template = sts.Spec.Template
+			if _, uErr := d.k8s.AppsV1().StatefulSets(d.ns).Update(ctx, existing, metav1.UpdateOptions{}); uErr != nil {
+				if k8serrors.IsConflict(uErr) {
+					lastErr = uErr
+					continue
+				}
+				return nil, fmt.Errorf("notebook k8s: restart statefulset %s: %w", safeName, uErr)
+			}
+			lastErr = nil
+			break
 		}
-		existing.Spec.Replicas = sts.Spec.Replicas
-		existing.Spec.Template = sts.Spec.Template
-		if _, uErr := d.k8s.AppsV1().StatefulSets(d.ns).Update(ctx, existing, metav1.UpdateOptions{}); uErr != nil {
-			return nil, fmt.Errorf("notebook k8s: restart statefulset %s: %w", safeName, uErr)
+		if lastErr != nil {
+			return nil, fmt.Errorf("notebook k8s: restart statefulset %s: %w", safeName, lastErr)
 		}
 	}
 

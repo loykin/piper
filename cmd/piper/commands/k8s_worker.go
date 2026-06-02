@@ -38,11 +38,7 @@ func newK8sWorkerCmd() *cobra.Command {
 			storageSize, _ := cmd.Flags().GetString("storage-size")
 			defaultImage, _ := cmd.Flags().GetString("default-image")
 			agentImagePullPolicy, _ := cmd.Flags().GetString("agent-image-pull-policy")
-			s3Endpoint, _ := cmd.Flags().GetString("s3-endpoint")
-			s3AccessKey, _ := cmd.Flags().GetString("s3-access-key")
-			s3SecretKey, _ := cmd.Flags().GetString("s3-secret-key")
-			s3Bucket, _ := cmd.Flags().GetString("s3-bucket")
-			s3UseSSL, _ := cmd.Flags().GetBool("s3-use-ssl")
+			storageURL, _ := cmd.Flags().GetString("storage-url")
 			if id == "" {
 				id = uuid.NewString()
 			}
@@ -76,11 +72,7 @@ func newK8sWorkerCmd() *cobra.Command {
 				StorageSize:          storageSize,
 				DefaultImage:         defaultImage,
 				AgentImagePullPolicy: agentImagePullPolicy,
-				S3Endpoint:           s3Endpoint,
-				S3AccessKey:          s3AccessKey,
-				S3SecretKey:          s3SecretKey,
-				S3Bucket:             s3Bucket,
-				S3UseSSL:             s3UseSSL,
+				StorageURL:           storageURL,
 			}).Run(ctx)
 		},
 	}
@@ -101,11 +93,7 @@ func newK8sWorkerCmd() *cobra.Command {
 	cmd.Flags().String("default-image", "", "fallback container image for pipeline steps")
 	cmd.Flags().String("storage-class", "", "storage class for notebook PVCs")
 	cmd.Flags().String("storage-size", "", "default notebook PVC size (default 10Gi)")
-	cmd.Flags().String("s3-endpoint", "", "S3 endpoint for pipeline artifact transfer")
-	cmd.Flags().String("s3-access-key", "", "S3 access key for pipeline artifact transfer")
-	cmd.Flags().String("s3-secret-key", "", "S3 secret key for pipeline artifact transfer")
-	cmd.Flags().String("s3-bucket", "", "S3 bucket for pipeline artifact transfer")
-	cmd.Flags().Bool("s3-use-ssl", false, "use SSL for S3 artifact transfer")
+	cmd.Flags().String("storage-url", "", "artifact store URL (s3://, file://, http://) for pipeline artifact transfer")
 	_ = cmd.MarkFlagRequired("master")
 	_ = cmd.MarkFlagRequired("cluster")
 	return cmd

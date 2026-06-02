@@ -66,16 +66,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // GET /schedules
 func (h *Handler) listSchedules(c *gin.Context) {
-	ownerID := h.ownerID(c.Request)
-	if h.deps.Hooks != nil {
-		f, err := h.deps.Hooks.BeforeListSchedules(c.Request.Context(), c.Request)
-		if err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		if f.OwnerID != "" {
-			ownerID = f.OwnerID
-		}
+	ownerID, ok := h.resolveOwnerID(c)
+	if !ok {
+		return
 	}
 	schedules, err := h.deps.Schedules.List(c.Request.Context())
 	if err != nil {
@@ -350,6 +343,25 @@ func (h *Handler) ownerID(r *http.Request) string {
 		return ""
 	}
 	return h.deps.OwnerID(r)
+}
+
+// resolveOwnerID returns the effective ownerID for a list request, applying
+// the BeforeListSchedules hook override when present.
+// Returns ("", false) if the hook rejected the request (response already written).
+func (h *Handler) resolveOwnerID(c *gin.Context) (string, bool) {
+	ownerID := h.ownerID(c.Request)
+	if h.deps.Hooks == nil {
+		return ownerID, true
+	}
+	f, err := h.deps.Hooks.BeforeListSchedules(c.Request.Context(), c.Request)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return "", false
+	}
+	if f.OwnerID != "" {
+		ownerID = f.OwnerID
+	}
+	return ownerID, true
 }
 
 func (h *Handler) canAccess(r *http.Request, sc *Schedule) bool {

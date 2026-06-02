@@ -59,11 +59,9 @@ func TestNew_defaults(t *testing.T) {
 	}
 }
 
-func TestNew_s3_skipped_when_no_endpoint(t *testing.T) {
-	// No S3 client is created when S3Endpoint is absent — creates without error
-	r, err := runner.New(runner.Config{
-		S3Bucket: "my-bucket",
-	})
+func TestNew_no_store_when_url_empty(t *testing.T) {
+	// No store is created when StorageURL is absent — creates without error
+	r, err := runner.New(runner.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

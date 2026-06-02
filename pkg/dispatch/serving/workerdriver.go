@@ -25,6 +25,8 @@ func NewWorkerDriver(registry *serving.ServingWorkerRegistry, repo serving.Repos
 	return &WorkerDriver{registry: registry, repo: repo, masterURL: masterURL}
 }
 
+func (d *WorkerDriver) ArtifactTarget() artifact.Target { return artifact.TargetLocal }
+
 // Deploy picks an available worker and sends it a deploy request.
 func (d *WorkerDriver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
 	var w *serving.ServingWorkerInfo

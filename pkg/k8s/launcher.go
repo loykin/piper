@@ -53,12 +53,10 @@ type Config struct {
 	// Token: auth token for the piper server
 	Token string
 
-	// S3 artifact sharing configuration
-	S3Endpoint  string
-	S3AccessKey string
-	S3SecretKey string
-	S3Bucket    string
-	S3UseSSL    bool
+	// StorageURL selects the artifact store backend for step artifact transfer.
+	// Supported schemes: s3://, http://, https://, file://
+	// e.g. "s3://my-bucket?endpoint=http://minio:9000&s3ForcePathStyle=true&accessKey=…&secretKey=…"
+	StorageURL string
 
 	// DefaultImage: fallback container image when a step has no image configured
 	DefaultImage string
@@ -340,16 +338,8 @@ func (l *Launcher) buildAgentArgs(_ *proto.Task, taskB64 string) []string {
 	if l.cfg.Token != "" {
 		args = append(args, "--token="+l.cfg.Token)
 	}
-	if l.cfg.S3Endpoint != "" {
-		args = append(args,
-			"--s3-endpoint="+l.cfg.S3Endpoint,
-			"--s3-access-key="+l.cfg.S3AccessKey,
-			"--s3-secret-key="+l.cfg.S3SecretKey,
-			"--s3-bucket="+l.cfg.S3Bucket,
-		)
-		if l.cfg.S3UseSSL {
-			args = append(args, "--s3-use-ssl")
-		}
+	if l.cfg.StorageURL != "" {
+		args = append(args, "--storage-url="+l.cfg.StorageURL)
 	}
 	return args
 }

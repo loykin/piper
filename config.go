@@ -37,7 +37,12 @@ type Config struct {
 	// Git source
 	Git GitConfig `yaml:"git" mapstructure:"git"`
 
-	// S3 source
+	// Storage selects the artifact store backend.
+	// When empty, falls back to S3 (if S3.Bucket is set) or the built-in file server.
+	Storage StorageConfig `yaml:"storage" mapstructure:"storage"`
+
+	// S3 is deprecated. Use Storage.URL instead.
+	// Retained for backward compatibility with existing piper.yaml files.
 	S3 S3Config `yaml:"s3" mapstructure:"s3"`
 
 	// Server (not required in embedded mode)
@@ -67,6 +72,17 @@ type Config struct {
 
 type GitConfig struct {
 	User  string `yaml:"user"  mapstructure:"user"`
+	Token string `yaml:"token" mapstructure:"token"`
+}
+
+// StorageConfig holds artifact store configuration.
+type StorageConfig struct {
+	// URL selects the storage backend.
+	// Supported schemes: s3://, gs://, azblob://, file://, http://, https://
+	// When empty, falls back to S3Config (backward compat) or the built-in file server.
+	URL string `yaml:"url" mapstructure:"url"`
+
+	// Token is an optional Bearer token for HTTP-based stores.
 	Token string `yaml:"token" mapstructure:"token"`
 }
 

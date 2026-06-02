@@ -35,10 +35,7 @@ type Config struct {
 	GitToken string // HTTP basic auth token (Gitea, GitHub, etc.)
 	GitUser  string
 
-	// S3
-	S3Endpoint  string
-	S3AccessKey string
-	S3SecretKey string
-	S3Bucket    string
-	S3UseSSL    bool
+	// StorageURL selects the artifact/source storage backend (e.g. s3://bucket?...).
+	// Used by S3Fetcher.
+	StorageURL string
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -25,6 +25,7 @@ import (
 	"github.com/piper/piper/internal/tunnel"
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/backend"
+	"github.com/piper/piper/pkg/blobstore"
 	notebookdispatch "github.com/piper/piper/pkg/dispatch/notebook"
 	servingdispatch "github.com/piper/piper/pkg/dispatch/serving"
 	"github.com/piper/piper/pkg/event"
@@ -34,7 +35,6 @@ import (
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
-	"github.com/piper/piper/pkg/s3client"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/source"
 
@@ -69,7 +69,8 @@ type Piper struct {
 	agentRegistry          *iagent.Registry
 	workloadRouter         *iagent.Router
 	tunnelHub              *tunnel.Hub
-	s3Cli                  *s3sdk.Client     // nil when S3 not configured
+	store                  blobstore.Store   // nil when no artifact store configured
+	storageURL             string            // resolved storage URL (for K8s launcher, artifact resolver)
 	resolver               artifact.Resolver // central artifact resolver
 	backend                backend.ExecutionBackend
 	events                 *event.Hub
@@ -206,17 +207,23 @@ func New(cfg Config) (*Piper, error) {
 		stopCtx:                stopFn,
 		events:                 event.NewHub(),
 	}
-	if cfg.S3.Bucket != "" && cfg.S3.AccessKey != "" {
-		if s3c, err := newPiperS3Client(cfg.S3); err != nil {
-			slog.Warn("artifact S3 client unavailable", "err", err)
+	storageURL := resolveStorageURL(cfg)
+	if storageURL != "" {
+		token := cfg.Storage.Token
+		if token == "" {
+			token = cfg.Server.Token
+		}
+		if st, err := blobstore.Open(storageURL, token); err != nil {
+			slog.Warn("artifact store unavailable", "url", storageURL, "err", err)
 		} else {
-			p.s3Cli = s3c
+			p.store = st
+			p.storageURL = storageURL
 		}
 	}
 	p.resolver = &piperArtifactResolver{
-		runRepo:   repos.Run,
-		outputDir: cfg.OutputDir,
-		s3Bucket:  cfg.S3.Bucket,
+		runRepo:    repos.Run,
+		outputDir:  cfg.OutputDir,
+		storageURL: p.storageURL,
 	}
 	if cfg.K8s.Worker {
 		p.SetBackend(backend.NewAgentBackend(workloadRouter, tunnelHub))
@@ -367,7 +374,7 @@ func (p *Piper) cleanupRetention(ctx context.Context) {
 			continue
 		}
 		if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
-			if err := deleteArtifacts(ctx, p.s3Cli, p.cfg.S3.Bucket, p.cfg.OutputDir, r.ID); err != nil {
+			if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, r.ID); err != nil {
 				slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
 			}
 		}
@@ -560,13 +567,9 @@ func (p *Piper) ParseFile(path string) (*pipeline.Pipeline, error) {
 
 func (p *Piper) sourceConfig() source.Config {
 	return source.Config{
-		GitUser:     p.cfg.Git.User,
-		GitToken:    p.cfg.Git.Token,
-		S3Endpoint:  p.cfg.S3.Endpoint,
-		S3AccessKey: p.cfg.S3.AccessKey,
-		S3SecretKey: p.cfg.S3.SecretKey,
-		S3Bucket:    p.cfg.S3.Bucket,
-		S3UseSSL:    p.cfg.S3.UseSSL,
+		GitUser:    p.cfg.Git.User,
+		GitToken:   p.cfg.Git.Token,
+		StorageURL: p.storageURL,
 	}
 }
 
@@ -608,10 +611,7 @@ func (p *Piper) deployService(ctx context.Context, yamlBytes []byte, ownerID str
 		return nil, fmt.Errorf("ModelService metadata.name is required")
 	}
 
-	target := artifact.TargetLocal
-	if svc.Spec.Runtime.Mode == "k8s" {
-		target = artifact.TargetS3
-	}
+	target := p.serving.manager.ArtifactTarget()
 
 	resolved, artifactLabel, err := p.resolveServiceModel(ctx, svc, target)
 	if err != nil {
@@ -669,17 +669,21 @@ func (p *Piper) resolveModelURI(ctx context.Context, serviceName, uri string, ta
 		if target == artifact.TargetS3 {
 			return artifact.Resolved{S3URI: uri}, nil
 		}
-		if p.s3Cli == nil {
-			return artifact.Resolved{}, fmt.Errorf("local serving from s3:// URI requires S3 credentials (configure S3.AccessKey/SecretKey)")
+		if p.store == nil {
+			return artifact.Resolved{}, fmt.Errorf("local serving from s3:// URI requires a storage backend (configure storage.url or s3)")
 		}
-		dir := filepath.Join(p.cfg.Serving.ModelDir, serviceName)
-		if p.cfg.Serving.ModelDir == "" {
-			dir = filepath.Join(p.cfg.OutputDir, "models", serviceName)
-		}
+		dir := p.modelDir(serviceName)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return artifact.Resolved{}, err
 		}
-		if err := downloadS3URIToLocal(ctx, p.s3Cli, uri, dir); err != nil {
+		// Strip s3://bucket/ prefix to get the key prefix, then download.
+		without := strings.TrimPrefix(uri, "s3://")
+		slash := strings.IndexByte(without, '/')
+		if slash < 0 {
+			return artifact.Resolved{}, fmt.Errorf("invalid s3 URI %q: missing key", uri)
+		}
+		prefix := without[slash+1:]
+		if err := blobstore.DownloadDir(ctx, p.store, prefix, dir); err != nil {
 			return artifact.Resolved{}, fmt.Errorf("download s3 model: %w", err)
 		}
 		return artifact.Resolved{LocalPath: dir}, nil
@@ -754,9 +758,9 @@ func (p *Piper) GetService(ctx context.Context, name string) (*serving.Service, 
 
 // piperArtifactResolver implements artifact.Resolver for the Piper instance.
 type piperArtifactResolver struct {
-	runRepo   run.Repository
-	outputDir string
-	s3Bucket  string
+	runRepo    run.Repository
+	outputDir  string
+	storageURL string // resolved storage URL; empty means local-only
 }
 
 func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, artName, runRef string, target artifact.Target) (artifact.Resolved, error) {
@@ -772,23 +776,41 @@ func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, art
 		runID = latest.ID
 	}
 
+	artKey := fmt.Sprintf("%s/%s/%s", runID, step, artName)
+
 	switch target {
 	case artifact.TargetS3:
-		if r.s3Bucket == "" {
-			return artifact.Resolved{}, fmt.Errorf("k8s serving requires S3 artifact storage (configure S3.Bucket)")
+		uri, err := r.artifactURI(artKey)
+		if err != nil {
+			return artifact.Resolved{}, err
 		}
-		return artifact.Resolved{
-			RunID: runID,
-			S3URI: fmt.Sprintf("s3://%s/%s/%s/%s", r.s3Bucket, runID, step, artName),
-		}, nil
+		return artifact.Resolved{RunID: runID, S3URI: uri}, nil
 	default:
-		// LocalPath points to the step output directory, not an artifact subdirectory.
-		// Artifacts are written flat into the step output dir by the runner, so
-		// serve.py can find model.pkl at PIPER_MODEL_DIR/model.pkl.
+		// LocalPath points to the step output directory.
 		return artifact.Resolved{
 			RunID:     runID,
 			LocalPath: filepath.Join(r.outputDir, runID, step),
 		}, nil
+	}
+}
+
+// artifactURI constructs a URI for the artifact key based on the configured storage.
+func (r *piperArtifactResolver) artifactURI(artKey string) (string, error) {
+	if r.storageURL == "" {
+		return "", fmt.Errorf("artifact URI requires a storage backend (configure storage.url or s3)")
+	}
+	u, err := url.Parse(r.storageURL)
+	if err != nil {
+		return "", err
+	}
+	switch u.Scheme {
+	case "s3":
+		return "s3://" + u.Host + "/" + artKey, nil
+	case "http", "https":
+		base := strings.TrimRight(r.storageURL, "/")
+		return base + "/" + artKey, nil
+	default:
+		return "", fmt.Errorf("storage backend %q cannot provide artifact URIs for remote serving", u.Scheme)
 	}
 }
 
@@ -836,9 +858,48 @@ func buildK8sClientset(cfg K8sConfig) (*kubernetes.Clientset, error) {
 	return kubernetes.NewForConfig(restCfg)
 }
 
-// newPiperS3Client creates an S3 client from piper's S3Config.
-func newPiperS3Client(cfg S3Config) (*s3sdk.Client, error) {
-	return s3client.New(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey, cfg.UseSSL)
+// modelDir returns the local directory for a serving model.
+func (p *Piper) modelDir(serviceName string) string {
+	if p.cfg.Serving.ModelDir != "" {
+		return filepath.Join(p.cfg.Serving.ModelDir, serviceName)
+	}
+	return filepath.Join(p.cfg.OutputDir, "models", serviceName)
+}
+
+// ResolveStorageURL derives the effective storage URL from the config.
+// Priority: Storage.URL > S3Config (backward compat) > empty (no artifact store).
+func (cfg Config) ResolveStorageURL() string { return resolveStorageURL(cfg) }
+
+// resolveStorageURL is the internal implementation.
+// Priority: Storage.URL > S3Config (backward compat) > file://{output_dir}/store (built-in).
+func resolveStorageURL(cfg Config) string {
+	if cfg.Storage.URL != "" {
+		return cfg.Storage.URL
+	}
+	if cfg.S3.Bucket != "" {
+		scheme := "http"
+		if cfg.S3.UseSSL {
+			scheme = "https"
+		}
+		endpoint := cfg.S3.Endpoint
+		q := "s3ForcePathStyle=true"
+		if cfg.S3.AccessKey != "" {
+			q += "&accessKey=" + cfg.S3.AccessKey
+		}
+		if cfg.S3.SecretKey != "" {
+			q += "&secretKey=" + cfg.S3.SecretKey
+		}
+		if endpoint != "" {
+			q += "&endpoint=" + scheme + "://" + endpoint
+		}
+		return "s3://" + cfg.S3.Bucket + "?" + q
+	}
+	// Default: built-in file server under output directory.
+	outputDir := cfg.OutputDir
+	if outputDir == "" {
+		outputDir = "./piper-outputs"
+	}
+	return "file://" + filepath.Join(outputDir, "store")
 }
 
 // listenAddrToURL converts a listen address like ":8080" or "0.0.0.0:8080"

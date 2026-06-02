@@ -8,10 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/piper/piper/pkg/blobstore"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/s3client"
 )
 
 type S3Fetcher struct {
@@ -22,45 +20,37 @@ func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string)
 	if run.Path == "" {
 		return "", fmt.Errorf("s3 source: path is required")
 	}
-
-	client, err := newS3Client(f.cfg)
-	if err != nil {
-		return "", fmt.Errorf("s3 client init failed: %w", err)
+	if f.cfg.StorageURL == "" {
+		return "", fmt.Errorf("s3 source: storage URL not configured (set storage.url or source.s3.*)")
 	}
 
-	bucket := f.cfg.S3Bucket
-	key := run.Path
-	destFile := filepath.Join(destDir, filepath.Base(key))
+	st, err := blobstore.Open(f.cfg.StorageURL, "")
+	if err != nil {
+		return "", fmt.Errorf("s3 source: open store: %w", err)
+	}
 
-	slog.Info("s3 download", "bucket", bucket, "key", key, "dest", destFile)
+	key := run.Path
+	slog.Info("s3 source fetch", "key", key, "dest", destDir)
+
+	rc, err := st.Get(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("s3 source: get %s: %w", key, err)
+	}
+	defer func() { _ = rc.Close() }()
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return "", err
 	}
-
-	out, err := client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return "", fmt.Errorf("s3 download failed: %w", err)
-	}
-	defer func() { _ = out.Body.Close() }()
-
-	file, err := os.Create(destFile)
+	destFile := filepath.Join(destDir, filepath.Base(key))
+	out, err := os.Create(destFile)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = file.Close() }()
+	defer func() { _ = out.Close() }()
 
-	if _, err := io.Copy(file, out.Body); err != nil {
-		return "", fmt.Errorf("s3 write failed: %w", err)
+	if _, err := io.Copy(out, rc); err != nil {
+		return "", fmt.Errorf("s3 source: write %s: %w", key, err)
 	}
-
-	slog.Info("s3 fetch done", "file", destFile)
+	slog.Info("s3 source fetch done", "file", destFile)
 	return destFile, nil
-}
-
-func newS3Client(cfg Config) (*s3.Client, error) {
-	return s3client.New(cfg.S3Endpoint, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL)
 }

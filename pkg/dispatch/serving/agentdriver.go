@@ -33,6 +33,8 @@ func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository
 	return d
 }
 
+func (d *AgentDriver) ArtifactTarget() artifact.Target { return artifact.TargetS3 }
+
 func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
 	agentInfo, err := d.selectAgent(spec.Spec.Runtime.Worker)
 	if err != nil {

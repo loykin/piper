@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/pkg/blobstore"
 	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
@@ -201,12 +202,20 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		DriverMode:       p.notebookDriverMode,
 	}).RegisterRoutes(r.Group(""))
 
+	// Built-in file server: expose /store/* routes only when using a LocalStore.
+	// Workers and K8s pods reach the store via HTTP using the master URL.
+	p.registerStoreRoutes(r)
+
+	// Task completion routes must always be registered so that piper agent exec
+	// inside K8s Job pods can report results back regardless of backend mode.
+	worker.NewHandler(worker.HandlerDeps{Queue: p.queue}).RegisterCompletionRoutes(r.Group("/api"))
+
 	// Worker polling domain (mounted only when no active backend is configured)
 	if p.backend == nil {
 		worker.NewHandler(worker.HandlerDeps{
 			Registry: p.workerRegistry(),
 			Queue:    p.queue,
-		}).RegisterRoutes(r.Group("/api"))
+		}).RegisterPollRoutes(r.Group("/api"))
 	}
 
 	// Unified agent registry domain.
@@ -280,6 +289,64 @@ func (rw *responseRecorder) WriteHeader(code int) {
 func (rw *responseRecorder) Write(b []byte) (int, error) {
 	rw.written = true
 	return rw.ResponseWriter.Write(b)
+}
+
+// ── built-in file server ──────────────────────────────────────────────────────
+
+// registerStoreRoutes mounts /store/* routes when using the built-in LocalStore.
+// K8s pods and remote workers can upload/download artifacts over HTTP without MinIO.
+func (p *Piper) registerStoreRoutes(r *gin.Engine) {
+	ls, ok := p.store.(*blobstore.LocalStore)
+	if !ok {
+		return // external store (S3, HTTP) — no need for built-in server routes
+	}
+	rg := r.Group("/store")
+	rg.PUT("/*key", func(c *gin.Context) {
+		key := strings.TrimPrefix(c.Param("key"), "/")
+		if err := ls.Put(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	rg.GET("/*key", func(c *gin.Context) {
+		key := strings.TrimPrefix(c.Param("key"), "/")
+		if c.Query("list") == "1" {
+			// List keys under prefix query param
+			prefix := c.Query("prefix")
+			objs, err := ls.List(c.Request.Context(), prefix)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			keys := make([]string, len(objs))
+			for i, o := range objs {
+				keys[i] = o.Key
+			}
+			c.JSON(http.StatusOK, keys)
+			return
+		}
+		rc, err := ls.Get(c.Request.Context(), key)
+		if err != nil {
+			if err == blobstore.ErrNotFound {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		defer func() { _ = rc.Close() }()
+		c.Status(http.StatusOK)
+		_, _ = io.Copy(c.Writer, rc)
+	})
+	rg.DELETE("/*key", func(c *gin.Context) {
+		key := strings.TrimPrefix(c.Param("key"), "/")
+		if err := ls.Delete(c.Request.Context(), key); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -550,7 +617,7 @@ func (p *Piper) retryStep(ctx context.Context, runID, stepName string) (string, 
 
 // deleteRunWithArtifacts deletes the run's artifacts and then the run record.
 func (p *Piper) deleteRunWithArtifacts(ctx context.Context, runID string) error {
-	if err := deleteArtifacts(ctx, p.s3Cli, p.cfg.S3.Bucket, p.cfg.OutputDir, runID); err != nil {
+	if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, runID); err != nil {
 		slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
 	}
 	return p.repos.DeleteRun(ctx, runID)
@@ -661,8 +728,8 @@ type piperArtifacts struct {
 func (a *piperArtifacts) List(ctx context.Context, runID string) ([]any, error) {
 	var result []stepArtifacts
 	var err error
-	if a.p.s3Cli != nil && a.p.cfg.S3.Bucket != "" {
-		result, err = listArtifactsS3(ctx, a.p.s3Cli, a.p.cfg.S3.Bucket, runID)
+	if a.p.store != nil {
+		result, err = listArtifactsStore(ctx, a.p.store, runID)
 	} else {
 		result, err = listArtifactsLocal(a.p.cfg.OutputDir, runID)
 	}
@@ -681,8 +748,8 @@ func (a *piperArtifacts) ServeDownload(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	if a.p.s3Cli != nil && a.p.cfg.S3.Bucket != "" {
-		downloadArtifactS3Raw(w, r, a.p.s3Cli, a.p.cfg.S3.Bucket, runID, step, rest)
+	if a.p.store != nil {
+		downloadArtifactStore(w, r, a.p.store, runID, step, rest)
 		return
 	}
 	downloadArtifactLocal(w, r, a.p.cfg.OutputDir, runID, step, rest)

@@ -27,6 +27,8 @@ func NewK8sDriver(k8s kubernetes.Interface, repo serving.Repository) *K8sDriver 
 	return &K8sDriver{k8s: k8s, repo: repo}
 }
 
+func (d *K8sDriver) ArtifactTarget() artifact.Target { return artifact.TargetS3 }
+
 // Deploy creates a Kubernetes Deployment and serving.Service for the given serving.ModelService spec.
 func (d *K8sDriver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
 	if art.S3URI == "" {

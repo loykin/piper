@@ -32,6 +32,9 @@ func New(repo Repository, driver Driver) *Manager {
 	return &Manager{repo: repo, driver: driver}
 }
 
+// ArtifactTarget returns the artifact delivery mode expected by the underlying driver.
+func (m *Manager) ArtifactTarget() artifact.Target { return m.driver.ArtifactTarget() }
+
 // Deploy starts a ModelService. Artifact resolution must happen before calling Deploy.
 func (m *Manager) Deploy(ctx context.Context, svc ModelService, art artifact.Resolved, yamlStr string) error {
 	name := svc.Metadata.Name

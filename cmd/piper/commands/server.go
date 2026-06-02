@@ -68,13 +68,8 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			// the heartbeat loop handles re-registration automatically.
 			masterURL := localMasterURL(addr)
 			srcCfg := source.Config{
-				GitUser:     viper.GetString("source.git.user"),
-				GitToken:    viper.GetString("source.git.token"),
-				S3Endpoint:  viper.GetString("source.s3.endpoint"),
-				S3AccessKey: viper.GetString("source.s3.access_key"),
-				S3SecretKey: viper.GetString("source.s3.secret_key"),
-				S3Bucket:    viper.GetString("source.s3.bucket"),
-				S3UseSSL:    viper.GetBool("source.s3.use_ssl"),
+				GitUser:  viper.GetString("source.git.user"),
+				GitToken: viper.GetString("source.git.token"),
 			}
 			wCfg := workerConfigFromSource(worker.Config{
 				MasterURL:   masterURL,

@@ -22,13 +22,8 @@ func newWorkerCmd() *cobra.Command {
 			// by initConfig at this point) rather than from p.SourceConfig(), which
 			// was built before viper loaded the config file.
 			srcCfg := source.Config{
-				GitUser:     viper.GetString("source.git.user"),
-				GitToken:    viper.GetString("source.git.token"),
-				S3Endpoint:  viper.GetString("source.s3.endpoint"),
-				S3AccessKey: viper.GetString("source.s3.access_key"),
-				S3SecretKey: viper.GetString("source.s3.secret_key"),
-				S3Bucket:    viper.GetString("source.s3.bucket"),
-				S3UseSSL:    viper.GetBool("source.s3.use_ssl"),
+				GitUser:  viper.GetString("source.git.user"),
+				GitToken: viper.GetString("source.git.token"),
 			}
 			cfg := workerConfigFromSource(worker.Config{
 				MasterURL:           viper.GetString("worker.master"),
@@ -80,10 +75,8 @@ func newWorkerCmd() *cobra.Command {
 func workerConfigFromSource(cfg worker.Config, srcCfg source.Config) worker.Config {
 	cfg.GitUser = srcCfg.GitUser
 	cfg.GitToken = srcCfg.GitToken
-	cfg.S3Endpoint = srcCfg.S3Endpoint
-	cfg.S3AccessKey = srcCfg.S3AccessKey
-	cfg.S3SecretKey = srcCfg.S3SecretKey
-	cfg.S3Bucket = srcCfg.S3Bucket
-	cfg.S3UseSSL = srcCfg.S3UseSSL
+	if cfg.StorageURL == "" {
+		cfg.StorageURL = srcCfg.StorageURL
+	}
 	return cfg
 }

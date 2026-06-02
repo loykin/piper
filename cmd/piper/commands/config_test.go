@@ -47,12 +47,6 @@ server:
     key_file: ""
 k8s:
   worker: true
-  agent_image: piper/piper:latest
-  namespace: default
-  in_cluster: true
-  master_url: http://piper:8080
-  default_image: alpine:3.20
-  ttl_after_finished: 60
 retention:
   run_ttl: 168h
   artifact_ttl: 720h
@@ -65,8 +59,26 @@ serving:
 log:
   format: json
 notebook_worker:
+  mode: docker
   notebooks_root: /data/notebooks
   port_range: "8888-9900"
+  docker:
+    image: jupyter/scipy-notebook:latest
+    network: bridge
+    cpus: "2"
+    memory: 4g
+    shm_size: 1g
+    read_only_root: true
+    tmpfs:
+      - /tmp
+    user: "1000:100"
+    volumes:
+      - name: datasets
+        host_path: /data/datasets
+        container_path: /mnt/datasets
+        read_only: true
+    extra_args:
+      - --ServerApp.disable_check_xsrf=true
 notebook_k8s:
   worker: true
   namespace: ml-notebooks
@@ -103,8 +115,12 @@ notebook_k8s:
 func TestStrictParseConfigFile_NotebookWorker(t *testing.T) {
 	path := writeTempConfig(t, `
 notebook_worker:
+  mode: docker
   notebooks_root: /data/notebooks
   port_range: "8888-9900"
+  docker:
+    image: jupyter/scipy-notebook:latest
+    network: bridge
 `)
 	if err := StrictParseConfigFile(path); err != nil {
 		t.Fatalf("unexpected error for notebook_worker config: %v", err)
@@ -139,7 +155,7 @@ k8s:
   agent_imge: piper/piper:latest
 `)
 	if err := StrictParseConfigFile(path); err == nil {
-		t.Fatal("expected error for typo 'agent_imge', got nil")
+		t.Fatal("expected error for unsupported k8s key 'agent_imge', got nil")
 	}
 }
 
@@ -181,14 +197,7 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 			},
 		},
 		K8s: k8sSection{
-			Worker:               true,
-			AgentImage:           "piper/piper:v1",
-			AgentImagePullPolicy: "IfNotPresent",
-			Namespace:            "ml",
-			InCluster:            true,
-			MasterURL:            "http://piper:8080",
-			DefaultImage:         "python:3.12-slim",
-			TTLAfterFinished:     120,
+			Worker: true,
 		},
 		Retention: retentionSection{
 			RunTTL:      168 * time.Hour,
@@ -201,6 +210,28 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 		Serving: servingSection{
 			ModelDir: "/data/models",
 			Worker:   true,
+		},
+		NotebookWorker: notebookWorkerSection{
+			NotebooksRoot: "/data/notebooks",
+			PortRange:     "8888-9900",
+			Mode:          "docker",
+			Docker: notebookWorkerDockerSection{
+				Image:        "jupyter/scipy-notebook:latest",
+				Network:      "bridge",
+				CPUs:         "2",
+				Memory:       "4g",
+				ShmSize:      "1g",
+				ReadOnlyRoot: true,
+				Tmpfs:        []string{"/tmp"},
+				User:         "1000:100",
+				Volumes: []notebookWorkerDockerVolume{{
+					Name:          "datasets",
+					HostPath:      "/data/datasets",
+					ContainerPath: "/mnt/datasets",
+					ReadOnly:      true,
+				}},
+				ExtraArgs: []string{"--ServerApp.disable_check_xsrf=true"},
+			},
 		},
 		NotebookK8s: notebookK8sSection{
 			Worker:       true,
@@ -246,17 +277,8 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 	if cfg.Server.TLS.CertFile != "/certs/tls.crt" {
 		t.Errorf("TLS.CertFile = %q, want /certs/tls.crt", cfg.Server.TLS.CertFile)
 	}
-	if cfg.K8s.AgentImage != "piper/piper:v1" {
-		t.Errorf("K8s.AgentImage = %q, want piper/piper:v1", cfg.K8s.AgentImage)
-	}
 	if !cfg.K8s.Worker {
 		t.Error("K8s.Worker = false, want true")
-	}
-	if cfg.K8s.Namespace != "ml" {
-		t.Errorf("K8s.Namespace = %q, want ml", cfg.K8s.Namespace)
-	}
-	if cfg.K8s.TTLAfterFinished != 120 {
-		t.Errorf("K8s.TTLAfterFinished = %d, want 120", cfg.K8s.TTLAfterFinished)
 	}
 	if cfg.Retention.RunTTL != 168*time.Hour {
 		t.Errorf("Retention.RunTTL = %v, want 168h", cfg.Retention.RunTTL)
@@ -269,6 +291,18 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 	}
 	if !cfg.Serving.Worker {
 		t.Error("Serving.Worker = false, want true")
+	}
+	if cfg.NotebookWorker.Mode != "docker" {
+		t.Errorf("NotebookWorker.Mode = %q, want docker", cfg.NotebookWorker.Mode)
+	}
+	if cfg.NotebookWorker.Docker.Image != "jupyter/scipy-notebook:latest" {
+		t.Errorf("NotebookWorker.Docker.Image = %q, want jupyter/scipy-notebook:latest", cfg.NotebookWorker.Docker.Image)
+	}
+	if len(cfg.NotebookWorker.Docker.Volumes) != 1 || cfg.NotebookWorker.Docker.Volumes[0].Name != "datasets" {
+		t.Fatalf("NotebookWorker.Docker.Volumes = %#v, want datasets", cfg.NotebookWorker.Docker.Volumes)
+	}
+	if len(cfg.NotebookWorker.Docker.ExtraArgs) != 1 {
+		t.Fatalf("NotebookWorker.Docker.ExtraArgs = %#v", cfg.NotebookWorker.Docker.ExtraArgs)
 	}
 	if !cfg.NotebookK8s.Worker {
 		t.Error("NotebookK8s.Worker = false, want true")

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	piper "github.com/piper/piper"
-	"github.com/piper/piper/pkg/k8s"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -67,16 +66,7 @@ type tlsSection struct {
 }
 
 type k8sSection struct {
-	Worker               bool   `yaml:"worker"                 mapstructure:"worker"`
-	AgentImage           string `yaml:"agent_image"             mapstructure:"agent_image"`
-	AgentImagePullPolicy string `yaml:"agent_image_pull_policy" mapstructure:"agent_image_pull_policy"`
-	Namespace            string `yaml:"namespace"               mapstructure:"namespace"`
-	InCluster            bool   `yaml:"in_cluster"              mapstructure:"in_cluster"`
-	Kubeconfig           string `yaml:"kubeconfig"              mapstructure:"kubeconfig"`
-	MasterURL            string `yaml:"master_url"              mapstructure:"master_url"`
-	Token                string `yaml:"token"                   mapstructure:"token"`
-	DefaultImage         string `yaml:"default_image"           mapstructure:"default_image"`
-	TTLAfterFinished     int32  `yaml:"ttl_after_finished"      mapstructure:"ttl_after_finished"`
+	Worker bool `yaml:"worker" mapstructure:"worker"`
 }
 
 type retentionSection struct {
@@ -104,8 +94,30 @@ type dbSection struct {
 }
 
 type notebookWorkerSection struct {
-	NotebooksRoot string `yaml:"notebooks_root" mapstructure:"notebooks_root"`
-	PortRange     string `yaml:"port_range"     mapstructure:"port_range"`
+	NotebooksRoot string                      `yaml:"notebooks_root" mapstructure:"notebooks_root"`
+	PortRange     string                      `yaml:"port_range"     mapstructure:"port_range"`
+	Mode          string                      `yaml:"mode"           mapstructure:"mode"`
+	Docker        notebookWorkerDockerSection `yaml:"docker" mapstructure:"docker"`
+}
+
+type notebookWorkerDockerSection struct {
+	Image        string                       `yaml:"image"          mapstructure:"image"`
+	Network      string                       `yaml:"network"        mapstructure:"network"`
+	CPUs         string                       `yaml:"cpus"           mapstructure:"cpus"`
+	Memory       string                       `yaml:"memory"         mapstructure:"memory"`
+	ShmSize      string                       `yaml:"shm_size"       mapstructure:"shm_size"`
+	ReadOnlyRoot bool                         `yaml:"read_only_root" mapstructure:"read_only_root"`
+	Tmpfs        []string                     `yaml:"tmpfs"          mapstructure:"tmpfs"`
+	User         string                       `yaml:"user"           mapstructure:"user"`
+	Volumes      []notebookWorkerDockerVolume `yaml:"volumes"        mapstructure:"volumes"`
+	ExtraArgs    []string                     `yaml:"extra_args"     mapstructure:"extra_args"`
+}
+
+type notebookWorkerDockerVolume struct {
+	Name          string `yaml:"name"           mapstructure:"name"`
+	HostPath      string `yaml:"host_path"      mapstructure:"host_path"`
+	ContainerPath string `yaml:"container_path" mapstructure:"container_path"`
+	ReadOnly      bool   `yaml:"read_only"      mapstructure:"read_only"`
 }
 
 type notebookPodDefaultsSection struct {
@@ -201,22 +213,26 @@ func (c *configFile) toConfig() piper.Config {
 			Worker:   c.Serving.Worker,
 		},
 		K8s: piper.K8sConfig{
-			Worker:               c.K8s.Worker,
-			AgentImage:           c.K8s.AgentImage,
-			AgentImagePullPolicy: c.K8s.AgentImagePullPolicy,
-			Namespace:            c.K8s.Namespace,
-			InCluster:            c.K8s.InCluster,
-			Kubeconfig:           c.K8s.Kubeconfig,
-			MasterURL:            c.K8s.MasterURL,
-			Token:                c.K8s.Token,
-			DefaultImage:         c.K8s.DefaultImage,
-			TTLAfterFinished:     c.K8s.TTLAfterFinished,
+			Worker: c.K8s.Worker,
 		},
 		DBDriver: c.DB.Driver,
 		DBDSN:    c.DB.DSN,
 		NotebookWorker: piper.NotebookWorkerConfig{
 			NotebooksRoot: c.NotebookWorker.NotebooksRoot,
 			PortRange:     c.NotebookWorker.PortRange,
+			Mode:          c.NotebookWorker.Mode,
+			Docker: piper.NotebookWorkerDockerConfig{
+				Image:        c.NotebookWorker.Docker.Image,
+				Network:      c.NotebookWorker.Docker.Network,
+				CPUs:         c.NotebookWorker.Docker.CPUs,
+				Memory:       c.NotebookWorker.Docker.Memory,
+				ShmSize:      c.NotebookWorker.Docker.ShmSize,
+				ReadOnlyRoot: c.NotebookWorker.Docker.ReadOnlyRoot,
+				Tmpfs:        c.NotebookWorker.Docker.Tmpfs,
+				User:         c.NotebookWorker.Docker.User,
+				Volumes:      notebookWorkerDockerVolumes(c.NotebookWorker.Docker.Volumes),
+				ExtraArgs:    c.NotebookWorker.Docker.ExtraArgs,
+			},
 		},
 		NotebookK8s: piper.NotebookK8sConfig{
 			Worker:       c.NotebookK8s.Worker,
@@ -252,8 +268,7 @@ func buildConfig() (piper.Config, error) {
 	return cfg, nil
 }
 
-// NewPiper creates a Piper instance from the current viper state and wires up
-// the K8s launcher if k8s.agent_image is configured.
+// NewPiper creates a Piper instance from the current viper state.
 // Exported so that library users can pass it to Commands() as the factory.
 func NewPiper() (*piper.Piper, error) {
 	cfg, err := buildConfig()
@@ -263,30 +278,6 @@ func NewPiper() (*piper.Piper, error) {
 	p, err := piper.New(cfg)
 	if err != nil {
 		return nil, err
-	}
-	if cfg.K8s.AgentImage != "" && !cfg.K8s.Worker {
-		ttl := cfg.K8s.TTLAfterFinished
-		var ttlPtr *int32
-		if ttl > 0 {
-			ttlPtr = &ttl
-		}
-		launcher, err := k8s.New(k8s.Config{
-			AgentImage:           cfg.K8s.AgentImage,
-			AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
-			Namespace:            cfg.K8s.Namespace,
-			InCluster:            cfg.K8s.InCluster,
-			Kubeconfig:           cfg.K8s.Kubeconfig,
-			MasterURL:            cfg.K8s.MasterURL,
-			Token:                cfg.K8s.Token,
-			DefaultImage:         cfg.K8s.DefaultImage,
-			StorageURL:           cfg.ResolveStorageURL(),
-			TTLAfterFinished:     ttlPtr,
-		})
-		if err != nil {
-			_ = p.Close()
-			return nil, fmt.Errorf("k8s launcher: %w", err)
-		}
-		p.SetBackend(launcher)
 	}
 	return p, nil
 }
@@ -303,6 +294,22 @@ func notebookTolerations(items []tolerationItem) []pipeline.Toleration {
 			Value:             t.Value,
 			Effect:            t.Effect,
 			TolerationSeconds: t.TolerationSeconds,
+		}
+	}
+	return out
+}
+
+func notebookWorkerDockerVolumes(items []notebookWorkerDockerVolume) []piper.NotebookWorkerDockerVolume {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]piper.NotebookWorkerDockerVolume, len(items))
+	for i, item := range items {
+		out[i] = piper.NotebookWorkerDockerVolume{
+			Name:          item.Name,
+			HostPath:      item.HostPath,
+			ContainerPath: item.ContainerPath,
+			ReadOnly:      item.ReadOnly,
 		}
 	}
 	return out

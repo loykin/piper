@@ -93,7 +93,7 @@ type HandlerDeps struct {
 	PurgeVolume      func(ctx context.Context, volumeID string) error
 	UpdateStatus     func(ctx context.Context, name, status, endpoint, workDir, token string, pid int, env string) error
 	WorkerRegistry   *NotebookWorkerRegistry // nil disables worker registration routes
-	// DriverMode is "k8s" when using K8sDriver, "worker" for bare-metal WorkerDriver.
+	// DriverMode identifies the notebook dispatch family exposed to the UI.
 	DriverMode string
 }
 

@@ -32,17 +32,8 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			}
 			defer func() { _ = p.Close() }()
 
-			if p.Config().K8s.AgentImage != "" {
-				slog.Info("k8s mode enabled",
-					"agent_image", p.Config().K8s.AgentImage,
-					"namespace", p.Config().K8s.Namespace,
-				)
-			}
-
-			if kc, _ := cmd.Flags().GetString("serving-kubeconfig"); kc != "" {
-				if err := p.SetServingK8sClientset(kc); err != nil {
-					return err
-				}
+			if p.Config().K8s.Worker {
+				slog.Info("k8s pipeline worker dispatch enabled")
 			}
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -97,8 +88,10 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 				Addr:          ":7701",
 				Hostname:      hostname,
 				ID:            uuid.New().String(),
-				NotebooksRoot: viper.GetString("notebook_worker.notebooks_root"),
-				PortRange:     viper.GetString("notebook_worker.port_range"),
+				NotebooksRoot: p.Config().NotebookWorker.NotebooksRoot,
+				PortRange:     p.Config().NotebookWorker.PortRange,
+				Mode:          p.Config().NotebookWorker.Mode,
+				Docker:        notebookWorkerDockerConfig(p.Config().NotebookWorker.Docker),
 			})
 
 			eg, gctx := errgroup.WithContext(ctx)
@@ -123,7 +116,6 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 	cmd.Flags().Bool("tls", false, "enable TLS")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file")
 	cmd.Flags().String("tls-key", "", "TLS key file")
-	cmd.Flags().String("serving-kubeconfig", "", "kubeconfig path for ModelService k8s deployments")
 	cmd.Flags().Bool("local", false, "embed a local worker for dev/single-node mode")
 	cmd.Flags().Int("local-concurrency", 4, "concurrency for the embedded local worker")
 
@@ -134,6 +126,32 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 	mustBindPFlag("server.tls.key_file", cmd.Flags().Lookup("tls-key"))
 
 	return cmd
+}
+
+func notebookWorkerDockerConfig(cfg piper.NotebookWorkerDockerConfig) notebookworker.DockerConfig {
+	out := notebookworker.DockerConfig{
+		Image:        cfg.Image,
+		Network:      cfg.Network,
+		CPUs:         cfg.CPUs,
+		Memory:       cfg.Memory,
+		ShmSize:      cfg.ShmSize,
+		ReadOnlyRoot: cfg.ReadOnlyRoot,
+		Tmpfs:        cfg.Tmpfs,
+		User:         cfg.User,
+		ExtraArgs:    cfg.ExtraArgs,
+	}
+	if len(cfg.Volumes) > 0 {
+		out.Volumes = make([]notebookworker.DockerVolume, len(cfg.Volumes))
+		for i, vol := range cfg.Volumes {
+			out.Volumes[i] = notebookworker.DockerVolume{
+				Name:          vol.Name,
+				HostPath:      vol.HostPath,
+				ContainerPath: vol.ContainerPath,
+				ReadOnly:      vol.ReadOnly,
+			}
+		}
+	}
+	return out
 }
 
 // localMasterURL converts a listen address like ":8080" or "0.0.0.0:8080"

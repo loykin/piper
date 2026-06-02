@@ -412,12 +412,7 @@ func TestE2E_WorkerS3Artifacts(t *testing.T) {
 
 	_, srv := newE2EServer(t)
 	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
-		// Strip http:// prefix to get host:port for S3Endpoint
-		cfg.S3Endpoint = fakeSrv.URL[len("http://"):]
-		cfg.S3AccessKey = "test"
-		cfg.S3SecretKey = "test"
-		cfg.S3Bucket = e2eBucket
-		cfg.S3UseSSL = false
+		cfg.StorageURL = fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
 	})
 
 	yaml := `

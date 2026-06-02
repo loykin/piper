@@ -126,7 +126,7 @@ func (d *WorkerDriver) Start(ctx context.Context, spec notebook.NotebookServerSp
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Handle both 200 (sync, legacy) and 202 (async) responses.
+	// Handle both sync and async worker responses.
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("notebook worker start: worker %s returned status %d: %s", w.Addr, resp.StatusCode, bytes.TrimSpace(body))

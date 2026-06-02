@@ -1,16 +1,15 @@
 # K8s execution example
 #
-# When a K8s dispatcher is configured, each step runs in a separate Pod.
+# When k8s.worker is enabled and a k8s-worker is connected, each step runs in a separate Pod.
 # Each step can use a different container image.
 #
 # Server configuration (piper.yaml):
 #   k8s:
-#     agent_image: piper/agent:latest
-#     namespace: piper-jobs
-#     default_image: alpine:3.20
+#     worker: true
 #
 # Run:
-#   piper serve --config piper.yaml
+#   piper server --config piper.yaml
+#   piper k8s-worker --master=http://piper-server:8080 --cluster=dev --pipeline-worker-image=piper/piper:latest --default-image=alpine:3.20
 
 apiVersion: piper/v1
 kind: Pipeline

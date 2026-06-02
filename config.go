@@ -54,8 +54,7 @@ type Config struct {
 	// Schedule controls cron/once scheduling behavior.
 	Schedule ScheduleConfig `yaml:"schedule" mapstructure:"schedule"`
 
-	// K8s — when configured, steps run as K8s Jobs.
-	// Create a Launcher with pkg/k8s.New(cfg.K8s), then register it with p.SetBackend(launcher).
+	// K8s controls whether pipeline execution is delegated to a cluster-local K8s worker.
 	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
 
 	// Serving — model serving configuration.
@@ -119,40 +118,10 @@ type ScheduleConfig struct {
 	MisfireGracePeriod time.Duration `yaml:"misfire_grace_period" mapstructure:"misfire_grace_period"`
 }
 
-// K8sConfig holds the configuration required for K8s Job execution.
-// K8s mode is disabled when AgentImage is empty.
+// K8sConfig holds server-side K8s worker dispatch configuration.
 type K8sConfig struct {
 	// Worker delegates pipeline K8s Job lifecycle to a cluster-local K8s worker.
 	Worker bool `yaml:"worker" mapstructure:"worker"`
-
-	// AgentImage: image containing the piper CLI binary (used as initContainer)
-	AgentImage string `yaml:"agent_image" mapstructure:"agent_image"`
-
-	// AgentImagePullPolicy: image pull policy for the agent initContainer.
-	// Valid values: Always, IfNotPresent, Never. Defaults to Always when empty.
-	AgentImagePullPolicy string `yaml:"agent_image_pull_policy" mapstructure:"agent_image_pull_policy"`
-
-	// Namespace: K8s namespace in which to create Jobs (default: "default")
-	Namespace string `yaml:"namespace" mapstructure:"namespace"`
-
-	// InCluster: set to true when running inside a Pod
-	InCluster bool `yaml:"in_cluster" mapstructure:"in_cluster"`
-
-	// Kubeconfig: path to kubeconfig file for out-of-cluster execution
-	Kubeconfig string `yaml:"kubeconfig" mapstructure:"kubeconfig"`
-
-	// MasterURL: URL used by K8s Pods to reach the piper server
-	// e.g. "http://piper-server.default.svc.cluster.local:8080"
-	MasterURL string `yaml:"master_url" mapstructure:"master_url"`
-
-	// Token: auth token for the piper server
-	Token string `yaml:"token" mapstructure:"token"`
-
-	// DefaultImage: fallback container image when a step has no image configured
-	DefaultImage string `yaml:"default_image" mapstructure:"default_image"`
-
-	// TTLAfterFinished: seconds after which a finished Job is automatically deleted. 0 means no auto-deletion.
-	TTLAfterFinished int32 `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
 }
 
 // ServingConfig holds configuration for model serving (ModelService).
@@ -174,20 +143,44 @@ type NotebookWorkerConfig struct {
 	// PortRange is the inclusive range from which jupyter ports are auto-allocated.
 	// Format: "START-END", e.g. "8888-9900". Defaults to "8888-9900".
 	PortRange string `yaml:"port_range" mapstructure:"port_range"`
+
+	// Mode selects the bare-metal notebook runtime: process or docker.
+	Mode string `yaml:"mode" mapstructure:"mode"`
+
+	// Docker configures Docker-backed notebook isolation when Mode is docker.
+	Docker NotebookWorkerDockerConfig `yaml:"docker" mapstructure:"docker"`
 }
 
-// NotebookK8sConfig holds configuration for the K8s notebook driver.
-// K8s notebook mode is enabled when WorkerImage is non-empty and a K8s clientset is available.
+type NotebookWorkerDockerConfig struct {
+	Image        string                       `yaml:"image"          mapstructure:"image"`
+	Network      string                       `yaml:"network"        mapstructure:"network"`
+	CPUs         string                       `yaml:"cpus"           mapstructure:"cpus"`
+	Memory       string                       `yaml:"memory"         mapstructure:"memory"`
+	ShmSize      string                       `yaml:"shm_size"       mapstructure:"shm_size"`
+	ReadOnlyRoot bool                         `yaml:"read_only_root" mapstructure:"read_only_root"`
+	Tmpfs        []string                     `yaml:"tmpfs"          mapstructure:"tmpfs"`
+	User         string                       `yaml:"user"           mapstructure:"user"`
+	Volumes      []NotebookWorkerDockerVolume `yaml:"volumes"        mapstructure:"volumes"`
+	ExtraArgs    []string                     `yaml:"extra_args"     mapstructure:"extra_args"`
+}
+
+type NotebookWorkerDockerVolume struct {
+	Name          string `yaml:"name"           mapstructure:"name"`
+	HostPath      string `yaml:"host_path"      mapstructure:"host_path"`
+	ContainerPath string `yaml:"container_path" mapstructure:"container_path"`
+	ReadOnly      bool   `yaml:"read_only"      mapstructure:"read_only"`
+}
+
+// NotebookK8sConfig holds server-side K8s notebook worker dispatch configuration.
 type NotebookK8sConfig struct {
 	// Worker delegates notebook lifecycle to a cluster-local K8s worker instead of
 	// letting piper-server call the K8s API directly.
 	Worker bool `yaml:"worker" mapstructure:"worker"`
 
-	// Namespace is the K8s namespace for notebook StatefulSets and PVCs.
+	// Namespace is a placement hint passed to the K8s worker for notebook StatefulSets and PVCs.
 	Namespace string `yaml:"namespace" mapstructure:"namespace"`
 
-	// WorkerImage is the Jupyter container image (e.g. jupyter/scipy-notebook:latest).
-	// Setting this field enables the K8s notebook driver.
+	// WorkerImage is the default Jupyter container image (e.g. jupyter/scipy-notebook:latest).
 	WorkerImage string `yaml:"worker_image" mapstructure:"worker_image"`
 
 	// StorageClass is the PVC storage class. Empty string uses the cluster default.
@@ -250,16 +243,10 @@ func (c Config) Validate() error {
 		return fmt.Errorf("schedule.misfire_grace_period must not be negative")
 	}
 
-	if c.K8s.AgentImage != "" {
-		if c.K8s.MasterURL == "" {
-			return fmt.Errorf("k8s.agent_image requires k8s.master_url")
-		}
-		if c.K8s.InCluster && c.K8s.Kubeconfig != "" {
-			return fmt.Errorf("k8s.in_cluster and k8s.kubeconfig are mutually exclusive")
-		}
-		if c.K8s.Token == "" && c.Server.Token != "" {
-			return fmt.Errorf("k8s.token is required when server.token is set")
-		}
+	switch c.NotebookWorker.Mode {
+	case "", "process", "docker":
+	default:
+		return fmt.Errorf("notebook_worker.mode must be one of: process, docker")
 	}
 
 	return nil

@@ -18,7 +18,7 @@ import (
 )
 
 // TestK8sE2E_SingleStepJobReportsSuccess is a real Kubernetes smoke test for
-// the server -> launcher -> Job -> agent exec -> server report path.
+// the server -> k8s-worker -> Job -> agent exec -> server report path.
 //
 // Prerequisites:
 //
@@ -45,8 +45,9 @@ func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 	})
 
-	applyK8sE2EManifests(t, ns, image)
+	applyK8sE2EAgentManifests(t, ns, image, "jupyter/minimal-notebook:latest")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -86,8 +87,7 @@ spec:
 	}
 }
 
-// TestK8sE2E_ExamplePipelines runs the example YAML files against a real K8s cluster.
-// MinIO is deployed per-namespace to support artifact-passing examples.
+// TestK8sE2E_ExamplePipelines runs the example YAML files through k8s-worker against a real K8s cluster.
 func TestK8sE2E_ExamplePipelines(t *testing.T) {
 	requireKubectlCluster(t)
 
@@ -146,8 +146,9 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 				_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 			})
 
-			applyK8sE2EManifests(t, ns, image)
+			applyK8sE2EAgentManifests(t, ns, image, "jupyter/minimal-notebook:latest")
 			kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+			kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 			kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 			kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -286,177 +287,6 @@ func requireKubectlCluster(t *testing.T) {
 	}
 }
 
-func applyK8sE2EManifests(t *testing.T, ns, image string) {
-	t.Helper()
-	manifest := fmt.Sprintf(`
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: piper-server
-  namespace: %[1]s
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: piper-server
-  namespace: %[1]s
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "delete", "get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: piper-server
-  namespace: %[1]s
-subjects:
-  - kind: ServiceAccount
-    name: piper-server
-    namespace: %[1]s
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: piper-server
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: piper-config
-  namespace: %[1]s
-data:
-  piper.yaml: |
-    run:
-      output_dir: /tmp/piper-outputs
-      retries: 0
-    server:
-      addr: :8080
-    source:
-      s3:
-        endpoint: seaweedfs:9000
-        access_key: anyadmin
-        secret_key: anypassword
-        bucket: piper-artifacts
-        use_ssl: false
-    k8s:
-      agent_image: %[2]q
-      agent_image_pull_policy: IfNotPresent
-      namespace: %[1]s
-      in_cluster: true
-      master_url: http://piper-server.%[1]s.svc.cluster.local:8080
-      default_image: alpine:3.20
-      ttl_after_finished: 60
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: piper-server
-  namespace: %[1]s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: piper-server
-  template:
-    metadata:
-      labels:
-        app: piper-server
-    spec:
-      serviceAccountName: piper-server
-      containers:
-        - name: piper
-          image: %[2]q
-          imagePullPolicy: IfNotPresent
-          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080"]
-          ports:
-            - containerPort: 8080
-          volumeMounts:
-            - name: config
-              mountPath: /etc/piper
-      volumes:
-        - name: config
-          configMap:
-            name: piper-config
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: piper-server
-  namespace: %[1]s
-spec:
-  selector:
-    app: piper-server
-  ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: seaweedfs
-  namespace: %[1]s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: seaweedfs
-  template:
-    metadata:
-      labels:
-        app: seaweedfs
-    spec:
-      containers:
-        - name: seaweedfs
-          image: chrislusf/seaweedfs:latest
-          args: ["server", "-dir=/data", "-s3", "-s3.port=9000"]
-          ports:
-            - containerPort: 9000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: seaweedfs
-  namespace: %[1]s
-spec:
-  selector:
-    app: seaweedfs
-  ports:
-    - name: s3
-      port: 9000
-      targetPort: 9000
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: s3-setup
-  namespace: %[1]s
-spec:
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: awscli
-          image: amazon/aws-cli:latest
-          command:
-            - /bin/sh
-            - -c
-            - |
-              until aws s3api create-bucket --bucket piper-artifacts \
-                --endpoint-url http://seaweedfs:9000 2>/dev/null; do
-                sleep 2
-              done
-          env:
-            - name: AWS_ACCESS_KEY_ID
-              value: anyadmin
-            - name: AWS_SECRET_ACCESS_KEY
-              value: anypassword
-            - name: AWS_DEFAULT_REGION
-              value: us-east-1
-`, ns, image)
-	kubectlInput(t, manifest, "apply", "-f", "-")
-}
-
 func applyK8sE2EAgentManifests(t *testing.T, ns, piperImage, nbImage string) {
 	t.Helper()
 	manifest := fmt.Sprintf(`
@@ -526,13 +356,6 @@ data:
         use_ssl: false
     k8s:
       worker: true
-      agent_image: %[2]q
-      agent_image_pull_policy: IfNotPresent
-      namespace: %[1]s
-      in_cluster: true
-      master_url: http://piper-server.%[1]s.svc.cluster.local:8080
-      default_image: alpine:3.20
-      ttl_after_finished: 60
     serving:
       worker: true
     notebook_k8s:
@@ -895,8 +718,9 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 	})
 
-	applyK8sE2ENotebookManifests(t, ns, piperImage, nbImage)
+	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -990,8 +814,9 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 	})
 
-	applyK8sE2ENotebookManifests(t, ns, piperImage, nbImage)
+	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -1137,193 +962,4 @@ func k8sE2EPurgeVolume(t *testing.T, serverURL, volumeID string) {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("DELETE /notebook-volumes/%s status=%d: %s", volumeID, resp.StatusCode, b)
 	}
-}
-
-// applyK8sE2ENotebookManifests applies a full piper-server + notebook_k8s manifest
-// that includes extended RBAC (StatefulSet, PVC, Service, Pod) and notebook_k8s config.
-func applyK8sE2ENotebookManifests(t *testing.T, ns, piperImage, nbImage string) {
-	t.Helper()
-	manifest := fmt.Sprintf(`
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: piper-server
-  namespace: %[1]s
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: piper-server
-  namespace: %[1]s
-rules:
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["create", "delete", "get", "list", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["statefulsets"]
-    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["create", "delete", "get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["create", "delete", "get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: piper-server
-  namespace: %[1]s
-subjects:
-  - kind: ServiceAccount
-    name: piper-server
-    namespace: %[1]s
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: piper-server
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: piper-config
-  namespace: %[1]s
-data:
-  piper.yaml: |
-    run:
-      output_dir: /tmp/piper-outputs
-      retries: 0
-    server:
-      addr: :8080
-    source:
-      s3:
-        endpoint: seaweedfs:9000
-        access_key: anyadmin
-        secret_key: anypassword
-        bucket: piper-artifacts
-        use_ssl: false
-    k8s:
-      agent_image: %[2]q
-      agent_image_pull_policy: IfNotPresent
-      namespace: %[1]s
-      in_cluster: true
-      master_url: http://piper-server.%[1]s.svc.cluster.local:8080
-      default_image: alpine:3.20
-      ttl_after_finished: 60
-    notebook_k8s:
-      namespace: %[1]s
-      worker_image: %[3]q
-      storage_size: 1Gi
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: piper-server
-  namespace: %[1]s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: piper-server
-  template:
-    metadata:
-      labels:
-        app: piper-server
-    spec:
-      serviceAccountName: piper-server
-      containers:
-        - name: piper
-          image: %[2]q
-          imagePullPolicy: IfNotPresent
-          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080"]
-          ports:
-            - containerPort: 8080
-          volumeMounts:
-            - name: config
-              mountPath: /etc/piper
-      volumes:
-        - name: config
-          configMap:
-            name: piper-config
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: piper-server
-  namespace: %[1]s
-spec:
-  selector:
-    app: piper-server
-  ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: seaweedfs
-  namespace: %[1]s
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: seaweedfs
-  template:
-    metadata:
-      labels:
-        app: seaweedfs
-    spec:
-      containers:
-        - name: seaweedfs
-          image: chrislusf/seaweedfs:latest
-          args: ["server", "-dir=/data", "-s3", "-s3.port=9000"]
-          ports:
-            - containerPort: 9000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: seaweedfs
-  namespace: %[1]s
-spec:
-  selector:
-    app: seaweedfs
-  ports:
-    - name: s3
-      port: 9000
-      targetPort: 9000
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: s3-setup
-  namespace: %[1]s
-spec:
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: awscli
-          image: amazon/aws-cli:latest
-          command:
-            - /bin/sh
-            - -c
-            - |
-              until aws s3api create-bucket --bucket piper-artifacts \
-                --endpoint-url http://seaweedfs:9000 2>/dev/null; do
-                sleep 2
-              done
-          env:
-            - name: AWS_ACCESS_KEY_ID
-              value: anyadmin
-            - name: AWS_SECRET_ACCESS_KEY
-              value: anypassword
-            - name: AWS_DEFAULT_REGION
-              value: us-east-1
-`, ns, piperImage, nbImage)
-	kubectlInput(t, manifest, "apply", "-f", "-")
 }

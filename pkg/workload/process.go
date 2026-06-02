@@ -13,9 +13,12 @@ import (
 
 // ProcessSpec describes a subprocess to launch.
 type ProcessSpec struct {
-	Name       string
-	Command    []string
-	Env        map[string]string
+	Name    string
+	Command []string
+	Env     map[string]string
+	// Dir is the working directory for the subprocess.
+	// Empty means inherit the parent process's working directory.
+	Dir        string
 	Port       int
 	HealthPath string
 	// GPUs selects which GPU devices are visible to the process.
@@ -55,6 +58,9 @@ func StartProcess(spec ProcessSpec) (pid int, endpoint string, cmd *exec.Cmd, er
 	cmd.Env = extra
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if spec.Dir != "" {
+		cmd.Dir = spec.Dir
+	}
 
 	if err = cmd.Start(); err != nil {
 		return 0, "", nil, fmt.Errorf("start process %q: %w", spec.Name, err)

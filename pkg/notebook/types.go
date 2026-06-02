@@ -40,6 +40,9 @@ type NotebookServerSpec struct {
 		// Worker pins launch to a specific worker node by hostname.
 		Worker string `yaml:"worker"`
 
+		// Volumes selects additional worker-configured volume names for Docker mode.
+		Volumes []string `yaml:"volumes,omitempty"`
+
 		// K8s pod overrides — take precedence over NotebookK8sConfig.PodDefaults.
 		Resources    pipeline.Resources    `yaml:"resources,omitempty"`
 		NodeSelector map[string]string     `yaml:"node_selector,omitempty"`

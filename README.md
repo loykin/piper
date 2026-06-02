@@ -6,7 +6,7 @@ services.
 It is for teams that need more than cron, shell scripts, or CI jobs, but do not
 want to operate a full ML platform such as Kubeflow. Piper runs as a standalone
 server or embedded Go library, and can dispatch work to local processes,
-bare-metal GPU workers, direct Kubernetes Jobs, or cluster-local K8s workers.
+bare-metal GPU workers, or cluster-local K8s workers.
 
 The K8s worker mode is designed for on-prem, private-network, and air-gapped
 environments: the worker runs inside the cluster and opens an outbound WebSocket
@@ -188,9 +188,9 @@ To pin an entire pipeline run to one bare-metal worker, set `spec.placement.work
 The worker can be addressed by worker ID or hostname. `runner.label` is still supported
 for compatibility, but `spec.placement` is the preferred run-level placement model.
 
-### 3. Kubernetes Jobs (direct)
+### 3. Kubernetes Jobs (worker)
 
-Each step runs in its own Pod. An `initContainer` copies the `piper` binary into the step container at runtime — no changes to user images required. The piper server connects directly to the Kubernetes API server.
+Each step runs in its own Pod. An `initContainer` copies the `piper` binary into the step container at runtime — no changes to user images required. A cluster-local `piper k8s-worker` owns Kubernetes API access and connects outbound to the piper server.
 
 ```
 initContainer (piper image)  →  cp /piper /piper-tools/piper
@@ -200,14 +200,12 @@ step container (user image)  →  /piper-tools/piper agent exec --task=<encoded-
 ```yaml
 # .piper.yaml
 k8s:
-  agent_image: piper/piper:latest
-  namespace: piper-jobs
-  default_image: alpine:3.20
-  ttl_after_finished: 300
+  worker: true
 ```
 
 ```bash
 piper server --config .piper.yaml
+piper k8s-worker --master=http://piper-server:8080 --cluster=prod-a --pipeline-worker-image=piper/piper:latest --default-image=alpine:3.20
 ```
 
 > **vs Argo Workflows**: Argo is a Kubernetes operator that manages workflows as CRDs.
@@ -661,10 +659,21 @@ serving:
 
 # Bare-metal notebook worker defaults
 notebook_worker:
+  mode: process                 # process | docker
   notebooks_root: ./notebooks  # base directory for notebook work dirs
   port_range: 8888-9900        # port range for JupyterLab allocation
+  docker:
+    image: jupyter/scipy-notebook:latest
+    network: bridge
+    cpus: "2"
+    memory: 4g
+    shm_size: 1g
+    read_only_root: false
+    tmpfs: []
+    volumes: []
+    extra_args: []
 
-# Kubernetes notebook mode (direct API access)
+# Kubernetes notebook mode (worker dispatch)
 notebook_k8s:
   worker: false                 # set true to route notebooks through the worker router
   worker_image: jupyter/scipy-notebook:latest
@@ -680,16 +689,9 @@ notebook_k8s:
     tolerations: []
     annotations: {}
 
-# Kubernetes pipeline mode (direct API access)
+# Kubernetes pipeline mode (worker dispatch)
 k8s:
-  worker: false                      # set true to route pipeline steps through k8s-worker
-  agent_image: piper/piper:latest
-  agent_image_pull_policy: Always   # Always | IfNotPresent | Never (default: Always)
-  namespace: piper-jobs
-  in_cluster: true
-  master_url: http://piper-server:8080
-  default_image: alpine:3.20
-  ttl_after_finished: 300
+  worker: false                 # set true to route pipeline steps through k8s-worker
 ```
 
 ## CLI
@@ -697,18 +699,14 @@ k8s:
 ```
 piper server                                     start server (API + UI)
 piper server --local                             start server with embedded worker/serving/notebook workers
-piper server --serving-kubeconfig=~/.kube/config start server with k8s ModelService support
 piper run <file.yaml>                            run a pipeline locally
 piper parse <file.yaml>                          validate YAML without running
 piper worker --master=<url>                      start a pipeline worker (bare-metal)
 piper serving-worker --master=<url>              start a serving worker (bare-metal ModelService)
 piper notebook-worker --master=<url>             start a notebook worker (bare-metal JupyterLab)
-piper k8s-worker --master=<url> --cluster=<name>  start a cluster-local K8s worker (pipelines + notebooks + serving)
+piper k8s-worker --master=<url> --cluster=<name> start a cluster-local K8s worker (pipelines + notebooks + serving)
 piper agent exec --master=<url> ...              execute a step inside a K8s Pod (called automatically)
 ```
-
-> **Note**: `--serving-kubeconfig` is required when running `piper server` outside a cluster and deploying
-> ModelServices in `mode: k8s`. It takes precedence over the `KUBECONFIG` environment variable.
 
 ## Docker
 
@@ -753,8 +751,13 @@ make docker
 # Tests
 make test                # unit tests
 make test-e2e            # in-process e2e (no external infra)
+make test-docker-notebook-e2e
 make test-k8s-e2e        # real K8s e2e, including k8s-worker mode
 make test-integration    # requires a running Kubernetes cluster
+
+# Optional Docker notebook e2e. Image must already exist locally.
+docker pull jupyter/minimal-notebook:latest
+make test-docker-notebook-e2e
 ```
 
 ## Project Layout

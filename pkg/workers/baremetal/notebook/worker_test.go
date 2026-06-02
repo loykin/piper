@@ -101,6 +101,7 @@ spec:
 	body, _ := json.Marshal(map[string]any{
 		"yaml":       yamlPayload,
 		"master_url": master.URL,
+		"volume_id":  "vol-test",
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/start", bytes.NewReader(body))
@@ -143,6 +144,7 @@ spec:
 	body, _ := json.Marshal(map[string]any{
 		"yaml":       yamlPayload,
 		"master_url": master.URL,
+		"volume_id":  "vol-test",
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/start", bytes.NewReader(body))

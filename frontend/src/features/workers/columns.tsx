@@ -107,15 +107,6 @@ export const nodeColumns: DataGridColumnDef<NodeInfo>[] = [
     cell: ({ row }) => <span className="font-medium">{row.original.hostname}</span>,
   },
   {
-    accessorKey: 'addr',
-    header: 'Address',
-    size: 200,
-    meta: { minWidth: 150 },
-    cell: ({ row }) => (
-      <span className="font-mono text-xs text-muted-foreground">{row.original.addr}</span>
-    ),
-  },
-  {
     id: 'gpus',
     header: 'GPUs',
     meta: { minWidth: 160, flex: 1 },

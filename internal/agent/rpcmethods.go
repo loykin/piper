@@ -7,9 +7,12 @@ const (
 	MethodNotebookDeprovision     = "notebook.deprovision_volume"
 	MethodNotebookSyncStatus      = "notebook.sync_status"
 
-	MethodServingDeploy  = "serving.deploy"
-	MethodServingStop    = "serving.stop"
-	MethodServingRestart = "serving.restart"
+	MethodNotebookStatusUpdate = "notebook.status_update"
+
+	MethodServingDeploy       = "serving.deploy"
+	MethodServingStop         = "serving.stop"
+	MethodServingRestart      = "serving.restart"
+	MethodServingStatusUpdate = "serving.status_update"
 
 	MethodPipelineDispatch  = "pipeline.dispatch"
 	MethodPipelineCancelRun = "pipeline.cancel_run"

@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package piper.agent.v1;
+
+option go_package = "github.com/piper/piper/internal/agentpb";
+
+// AgentService is the single internal RPC surface between the piper master and
+// all worker agents (bare-metal and k8s alike).
+//
+// The worker dials Connect() and keeps the stream open for its lifetime.
+// - First WorkerMessage must be a Registration (identifies the worker).
+// - Master sends MasterMessage to dispatch work (notebook.start, etc.).
+// - Worker replies with RPCResponse per command.
+// - Worker may send StatusPush at any time for async status updates.
+service AgentService {
+  rpc Connect(stream WorkerMessage) returns (stream MasterMessage);
+}
+
+// ── Worker → Master ───────────────────────────────────────────────────────────
+
+message WorkerMessage {
+  oneof payload {
+    Registration register    = 1;
+    RPCResponse  response    = 2;
+    StatusPush   push        = 3;
+    ProxyData    proxy_data  = 4; // raw bytes: target → master (notebook HTTP/WS)
+    ProxyClose   proxy_close = 5; // target connection closed or errored
+  }
+}
+
+// Registration is the first message sent by a worker after connecting.
+message Registration {
+  string              id           = 1;
+  string              kind         = 2; // "baremetal" | "k8s"
+  string              hostname     = 3;
+  repeated string     gpus         = 4;
+  repeated string     capabilities = 5; // "notebook" | "serving" | "pipeline"
+  string              cluster_name = 6;
+  map<string, string> labels       = 7;
+}
+
+// RPCResponse carries the result (or error) for a MasterMessage command.
+message RPCResponse {
+  string request_id = 1;
+  bytes  payload    = 2; // JSON-encoded result struct; empty on void methods
+  string error      = 3; // non-empty on failure
+}
+
+// StatusPush is an async notification from worker to master.
+// Replaces the old HTTP PATCH /api/notebooks/:name/status callback.
+message StatusPush {
+  string method  = 1; // e.g. "notebook.status_update"
+  bytes  payload = 2; // JSON-encoded domain-specific struct
+}
+
+// ── Master → Worker ───────────────────────────────────────────────────────────
+
+message MasterMessage {
+  oneof payload {
+    RPCCommand  rpc_cmd     = 1; // existing RPC dispatch
+    ProxyOpen   proxy_open  = 2; // open TCP channel to target (notebook pod)
+    ProxyData   proxy_data  = 3; // raw bytes: browser → target
+    ProxyClose  proxy_close = 4; // close channel
+  }
+}
+
+// RPCCommand dispatches a single RPC call to the worker.
+message RPCCommand {
+  string request_id = 1; // correlated with RPCResponse.request_id
+  string method     = 2; // e.g. "notebook.start", "serving.deploy"
+  bytes  payload    = 3; // JSON-encoded request struct
+}
+
+// ── Proxy channel multiplexing ────────────────────────────────────────────────
+//
+// Carries raw HTTP/WebSocket traffic between the browser (via master) and the
+// Jupyter notebook pod inside a k8s cluster. Multiple proxy sessions share the
+// single Connect stream, distinguished by channel_id.
+//
+// Lifecycle:
+//   1. Master sends ProxyOpen{channel_id, target="pod:8888"}
+//   2. Worker dials target, ACKs with ProxyData{channel_id, data=""} or ProxyClose on error
+//   3. Browser↔target bytes flow as ProxyData frames in both directions
+//   4. Either side sends ProxyClose to end the session
+
+// ProxyOpen requests the worker to open a TCP connection to target.
+message ProxyOpen {
+  string channel_id = 1; // unique per proxy session (UUID)
+  string target     = 2; // "host:port", e.g. "piper-nb-mynotebook.default.svc:8888"
+}
+
+// ProxyData carries raw bytes for an open proxy channel.
+message ProxyData {
+  string channel_id = 1;
+  bytes  data       = 2;
+}
+
+// ProxyClose signals that a proxy channel should be torn down.
+message ProxyClose {
+  string channel_id = 1;
+  string error      = 2; // non-empty if closed due to error
+}

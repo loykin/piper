@@ -6,14 +6,14 @@ import (
 	"fmt"
 
 	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/tunnel"
+	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/pkg/k8s"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"k8s.io/client-go/kubernetes"
 )
 
-type Dispatcher = *tunnel.Dispatcher
+type Dispatcher = *grpcagent.Dispatcher
 
 type Config struct {
 	MasterURL            string
@@ -47,10 +47,10 @@ type pipelineCancelRunRequest struct {
 }
 
 func (a *Worker) register(dispatcher Dispatcher) {
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodPipelineDispatch, func(ctx context.Context, task proto.Task) (any, error) {
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodPipelineDispatch, func(ctx context.Context, task proto.Task) (any, error) {
 		return nil, a.dispatchPipeline(ctx, &task)
 	})
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodPipelineCancelRun, func(ctx context.Context, req pipelineCancelRunRequest) (any, error) {
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodPipelineCancelRun, func(ctx context.Context, req pipelineCancelRunRequest) (any, error) {
 		return nil, a.cancelPipelineRun(ctx, req)
 	})
 }

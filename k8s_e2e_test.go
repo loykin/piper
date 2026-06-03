@@ -265,7 +265,7 @@ spec:
 	}
 
 	const nbName = "worker-notebook"
-	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  image: %s\n  storage_size: 1Gi\n", nbName, nbImage)
+	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbName, nbImage)
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 8*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
@@ -739,7 +739,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 
 	const nbName = "e2e-notebook"
-	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  image: %s\n  storage_size: 1Gi\n", nbName, nbImage)
+	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbName, nbImage)
 
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	t.Logf("notebook %s created, waiting for running...", nbName)
@@ -834,7 +834,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 
-	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  image: %s\n  storage_size: 1Gi\n", nbImage)
+	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbImage)
 	k8sE2EPostNotebook(t, serverURL, nb1YAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-1", "running", 8*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
@@ -858,7 +858,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	t.Logf("first notebook deleted, volume %s released", volID)
 
 	// Second notebook reuses the same PVC.
-	nb2YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-2\nspec:\n  image: %s\n", nbImage)
+	nb2YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-2\nspec:\n  k8s:\n    image: %s\n", nbImage)
 	k8sE2EPostNotebook(t, serverURL, nb2YAML, volID)
 	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-2", "running", 5*time.Minute) {
 		dumpK8sE2EDebug(t, ns)

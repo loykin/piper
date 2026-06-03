@@ -14,14 +14,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/tunnel"
+	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/workers/k8s/internal/meta"
 	"github.com/piper/piper/pkg/workload"
 	"k8s.io/client-go/kubernetes"
 )
 
-type Dispatcher = *tunnel.Dispatcher
+type Dispatcher = *grpcagent.Dispatcher
 
 type Config struct {
 	AgentID      string
@@ -50,15 +50,15 @@ func Register(dispatcher Dispatcher, cfg Config) {
 }
 
 func (a *Worker) register(dispatcher Dispatcher) {
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookProvisionVolume, a.provisionNotebookVolume)
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookStart, a.startNotebook)
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookStop, func(ctx context.Context, req notebook.WorkerStopRequest) (any, error) {
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodNotebookProvisionVolume, a.provisionNotebookVolume)
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodNotebookStart, a.startNotebook)
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodNotebookStop, func(ctx context.Context, req notebook.WorkerStopRequest) (any, error) {
 		return nil, a.stopNotebook(ctx, req)
 	})
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookDeprovision, func(ctx context.Context, req notebook.WorkerDeprovisionVolumeRequest) (any, error) {
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodNotebookDeprovision, func(ctx context.Context, req notebook.WorkerDeprovisionVolumeRequest) (any, error) {
 		return nil, a.deprovisionNotebookVolume(ctx, req)
 	})
-	_ = tunnel.RegisterJSON(dispatcher, iagent.MethodNotebookSyncStatus, a.syncNotebookStatus)
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodNotebookSyncStatus, a.syncNotebookStatus)
 }
 
 func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.WorkerProvisionVolumeRequest) (*notebook.WorkerProvisionVolumeResponse, error) {
@@ -216,10 +216,12 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 		return nil, err
 	}
 
+	// target = headless service DNS + port inside the cluster, reachable by the agent.
+	svcTarget := fmt.Sprintf("%s.%s.svc.cluster.local:8888", name, ns)
 	return &notebook.WorkerStartResponse{
 		Token:    token,
 		WorkDir:  workDir,
-		Endpoint: fmt.Sprintf("tunnel://%s/nb/%s", a.cfg.AgentID, spec.Metadata.Name),
+		Endpoint: fmt.Sprintf("tunnel://%s?target=%s", a.cfg.AgentID, svcTarget),
 	}, nil
 }
 

@@ -1,95 +1,24 @@
 package notebookworker
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/pkg/notebook"
 )
 
-func init() {
-	gin.SetMode(gin.TestMode)
-}
-
-// newTestRouter builds the gin router for a Worker without starting a real HTTP server.
-func newTestRouter(w *Worker) http.Handler {
-	r := gin.New()
-	r.Use(gin.Recovery())
-	r.GET("/", w.healthHandler)
-	r.POST("/start", w.startHandler)
-	r.DELETE("/notebook/:name", w.stopHandler)
-	return r
-}
-
-func TestNotebookWorker_HealthHandler(t *testing.T) {
-	w := New(Config{ID: "nb-test-id", Addr: ":7701"})
-	router := newTestRouter(w)
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET / status = %d, want %d", rec.Code, http.StatusOK)
-	}
-
-	var body map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body["status"] != "ok" {
-		t.Errorf("status = %v, want ok", body["status"])
-	}
-	if body["id"] != "nb-test-id" {
-		t.Errorf("id = %v, want nb-test-id", body["id"])
-	}
-}
-
-func TestNotebookWorker_StopHandlerNotFound(t *testing.T) {
-	w := New(Config{ID: "nb-test-id", Addr: ":7701"})
-	router := newTestRouter(w)
-
-	req := httptest.NewRequest(http.MethodDelete, "/notebook/nonexistent", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("DELETE /notebook/nonexistent status = %d, want %d", rec.Code, http.StatusNotFound)
-	}
-}
-
-func TestNotebookWorker_StartInvalidJSON(t *testing.T) {
-	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer master.Close()
-
-	wk := New(Config{ID: "nb-test-id", Addr: ":7701", MasterURL: master.URL})
-	router := newTestRouter(wk)
-
-	req := httptest.NewRequest(http.MethodPost, "/start", bytes.NewBufferString("not-json"))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("POST /start with invalid JSON status = %d, want %d", rec.Code, http.StatusBadRequest)
+func TestNotebookWorker_StartInvalidYAML(t *testing.T) {
+	w := New(Config{ID: "nb-test-id"})
+	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
+		YAML: ":::not yaml:::",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid YAML")
 	}
 }
 
 func TestNotebookWorker_StartMissingName(t *testing.T) {
-	// Valid JSON and valid YAML but metadata.name is empty → 400.
-	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer master.Close()
-
-	wk := New(Config{ID: "nb-test-id", Addr: ":7701", MasterURL: master.URL})
-	router := newTestRouter(wk)
-
+	w := New(Config{ID: "nb-test-id"})
 	yamlPayload := `apiVersion: piper/v1
 kind: NotebookServer
 metadata:
@@ -98,63 +27,94 @@ spec:
   runtime:
     port: 8888
 `
-	body, _ := json.Marshal(map[string]any{
-		"yaml":       yamlPayload,
-		"master_url": master.URL,
-		"volume_id":  "vol-test",
+	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
+		YAML: yamlPayload,
 	})
-
-	req := httptest.NewRequest(http.MethodPost, "/start", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("POST /start with empty name status = %d, want %d", rec.Code, http.StatusBadRequest)
+	if err == nil {
+		t.Fatal("expected error for empty name")
 	}
 }
 
-func TestNotebookWorker_StartCommandNotFound(t *testing.T) {
-	// Valid YAML with a name set but jupyter not in PATH → StartProcess fails → 500.
-	// We use a PATH that doesn't contain jupyter to guarantee failure.
-	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer master.Close()
-
-	wk := New(Config{ID: "nb-test-id", Addr: ":7701", MasterURL: master.URL})
-	router := newTestRouter(wk)
-
-	// The notebookworker always invokes "jupyter lab", so on machines without
-	// jupyter this should return 500. On machines that DO have jupyter the
-	// process would actually start (and be killed soon after), so we skip
-	// this sub-test if the binary is available.
-	import_check := "which jupyter 2>/dev/null"
-	_ = import_check // just documentation; we handle via t.Skip below
-
+func TestNotebookWorker_StartMissingVolumeID(t *testing.T) {
+	w := New(Config{ID: "nb-test-id"})
 	yamlPayload := `apiVersion: piper/v1
 kind: NotebookServer
 metadata:
   name: test-nb
 spec:
   runtime:
-    port: 18888
-    work_dir: /tmp
+    port: 8888
 `
-	body, _ := json.Marshal(map[string]any{
-		"yaml":       yamlPayload,
-		"master_url": master.URL,
-		"volume_id":  "vol-test",
+	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
+		YAML:     yamlPayload,
+		VolumeID: "",
+		WorkDir:  "",
 	})
+	if err == nil {
+		t.Fatal("expected error for missing volume_id and work_dir")
+	}
+}
 
-	req := httptest.NewRequest(http.MethodPost, "/start", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+func TestNotebookWorker_StopNonExistent(t *testing.T) {
+	w := New(Config{ID: "nb-test-id"})
+	// stopNotebook is idempotent for non-existent notebooks.
+	if err := w.stopNotebook(context.Background(), "nonexistent"); err != nil {
+		t.Fatalf("stopNotebook nonexistent: %v", err)
+	}
+}
 
-	// Either 200 (jupyter found and started) or 500 (jupyter not found).
-	// We only assert that it's not 400, which would indicate a JSON/YAML parse error.
-	if rec.Code == http.StatusBadRequest {
-		t.Errorf("POST /start status = %d; expected 200 or 500, not 400", rec.Code)
+func TestNotebookWorker_ProvisionVolumeEmptyID(t *testing.T) {
+	w := New(Config{ID: "nb-test-id"})
+	_, err := w.provisionVolume(context.Background(), notebook.WorkerProvisionVolumeRequest{VolumeID: ""})
+	if err == nil {
+		t.Fatal("expected error for empty volume_id")
+	}
+}
+
+func TestNotebookWorker_SyncStatus(t *testing.T) {
+	w := New(Config{ID: "nb-test-id"})
+	w.notebooks["running-nb"] = &localNotebook{name: "running-nb", port: 8888}
+
+	resp, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
+		Names: []string{"running-nb", "stopped-nb"},
+	})
+	if err != nil {
+		t.Fatalf("syncStatus: %v", err)
+	}
+	if resp.Statuses["running-nb"] != notebook.StatusRunning {
+		t.Errorf("running-nb status = %q, want %q", resp.Statuses["running-nb"], notebook.StatusRunning)
+	}
+	if resp.Statuses["stopped-nb"] != notebook.StatusStopped {
+		t.Errorf("stopped-nb status = %q, want %q", resp.Statuses["stopped-nb"], notebook.StatusStopped)
+	}
+}
+
+func TestParsePortRange(t *testing.T) {
+	cases := []struct {
+		input   string
+		wantErr bool
+		start   int
+		end     int
+	}{
+		{"8888-9900", false, 8888, 9900},
+		{"1000-1000", false, 1000, 1000},
+		{"bad", true, 0, 0},
+		{"9000-8000", true, 0, 0},
+	}
+	for _, tc := range cases {
+		start, end, err := parsePortRange(tc.input)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parsePortRange(%q): expected error", tc.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parsePortRange(%q): %v", tc.input, err)
+			continue
+		}
+		if start != tc.start || end != tc.end {
+			t.Errorf("parsePortRange(%q) = (%d,%d), want (%d,%d)", tc.input, start, end, tc.start, tc.end)
+		}
 	}
 }

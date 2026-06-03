@@ -68,7 +68,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		return nil, err
 	}
 
-	command := append(extraArgs, notebook.JupyterStartArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
+	command := append(extraArgs, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
 	command = append([]string{bin}, command...)
 
 	pid, endpoint, cmd, err := workload.StartProcess(workload.ProcessSpec{
@@ -171,4 +171,26 @@ func prepareProcessEnv(specEnv, workDir string) (bin string, extraArgs []string,
 
 func logRuntimeStart(mode, name, workDir string, port int) {
 	slog.Info("notebook runtime starting", "mode", mode, "name", name, "work_dir", workDir, "port", port)
+}
+
+func ensureVenv(venvPath string) error {
+	jupyterLab := filepath.Join(venvPath, "bin", "jupyter-lab")
+	if info, err := os.Stat(jupyterLab); err == nil && !info.IsDir() {
+		return nil
+	}
+	python := filepath.Join(venvPath, "bin", "python")
+	if _, err := os.Stat(python); err != nil {
+		slog.Info("creating venv", "path", venvPath)
+		out, err := exec.Command("python3", "-m", "venv", venvPath).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("create venv %q: %w: %s", venvPath, err, strings.TrimSpace(string(out)))
+		}
+	}
+	slog.Info("installing jupyterlab", "venv", venvPath)
+	pip := filepath.Join(venvPath, "bin", "pip")
+	out, err := exec.Command(pip, "install", "--quiet", "jupyterlab").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("install jupyterlab in %q: %w: %s", venvPath, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

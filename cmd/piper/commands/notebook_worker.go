@@ -8,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
@@ -19,11 +18,7 @@ func newNotebookWorkerCmd() *cobra.Command {
 		Use:   "notebook-worker",
 		Short: "Start a notebook worker agent on this node",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			masterURL, _ := cmd.Flags().GetString("master")
-			addr, _ := cmd.Flags().GetString("addr")
-			advertiseAddr, _ := cmd.Flags().GetString("advertise-addr")
-			tlsCert, _ := cmd.Flags().GetString("tls-cert")
-			tlsKey, _ := cmd.Flags().GetString("tls-key")
+			agentAddr, _ := cmd.Flags().GetString("agent-addr")
 			notebooksRoot, _ := cmd.Flags().GetString("notebooks-root")
 			portRange, _ := cmd.Flags().GetString("port-range")
 			mode, _ := cmd.Flags().GetString("mode")
@@ -49,14 +44,13 @@ func newNotebookWorkerCmd() *cobra.Command {
 					}
 				}
 			}
-
-			if id == "" {
-				id = uuid.NewString()
-			}
 			if hostname == "" {
 				if h, err := os.Hostname(); err == nil {
 					hostname = h
 				}
+			}
+			if id == "" {
+				id = stableWorkerID("notebook", hostname, effectiveNotebookMode(mode))
 			}
 			dockerVolumes, err := parseNotebookDockerVolumes(dockerVolumeSpecs)
 			if err != nil {
@@ -67,11 +61,7 @@ func newNotebookWorkerCmd() *cobra.Command {
 			defer cancel()
 
 			w := notebookworker.New(notebookworker.Config{
-				MasterURL:     masterURL,
-				Addr:          addr,
-				AdvertiseAddr: advertiseAddr,
-				TLSCert:       tlsCert,
-				TLSKey:        tlsKey,
+				AgentAddr:     agentAddr,
 				NotebooksRoot: notebooksRoot,
 				PortRange:     portRange,
 				Mode:          mode,
@@ -95,11 +85,7 @@ func newNotebookWorkerCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("master", "", "master server URL (required)")
-	cmd.Flags().String("addr", ":7701", "listen address for this worker")
-	cmd.Flags().String("advertise-addr", "", "URL advertised to master (default: derived from --addr)")
-	cmd.Flags().String("tls-cert", "", "TLS certificate file (enables HTTPS)")
-	cmd.Flags().String("tls-key", "", "TLS private key file (enables HTTPS)")
+	cmd.Flags().String("agent-addr", "", "piper master gRPC agent address, e.g. master:9090 (required)")
 	cmd.Flags().String("notebooks-root", "", "base directory for notebook work dirs (default: ./notebooks)")
 	cmd.Flags().String("port-range", "", "port range for jupyter allocation, e.g. 8888-9900 (default: 8888-9900)")
 	cmd.Flags().String("mode", "", "notebook runtime mode: process or docker (default: process)")
@@ -115,8 +101,8 @@ func newNotebookWorkerCmd() *cobra.Command {
 	cmd.Flags().StringArray("docker-extra-arg", nil, "extra Jupyter start argument for Docker mode; repeatable")
 	cmd.Flags().String("gpus", "", "comma-separated GPU device indices (e.g. 0,1)")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
-	cmd.Flags().String("id", "", "worker ID (default: random UUID)")
-	_ = cmd.MarkFlagRequired("master")
+	cmd.Flags().String("id", "", "worker ID (default: stable notebook-<hostname>-<mode>)")
+	_ = cmd.MarkFlagRequired("agent-addr")
 
 	return cmd
 }
@@ -154,4 +140,11 @@ func parseNotebookDockerVolumes(items []string) ([]notebookworker.DockerVolume, 
 		})
 	}
 	return out, nil
+}
+
+func effectiveNotebookMode(mode string) string {
+	if strings.TrimSpace(mode) == "" {
+		return notebookworker.RuntimeProcess
+	}
+	return mode
 }

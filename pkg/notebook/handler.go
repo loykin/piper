@@ -6,82 +6,22 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/internal/agent"
 	"gopkg.in/yaml.v3"
 )
 
-// jupyterLogin performs a server-side login to JupyterLab and returns the
-// session cookies. It fetches the XSRF token first, then POSTs the known token.
-// basePrefix is the ServerApp.base_url path prefix, e.g. "/notebooks/foo/proxy".
-func jupyterLogin(endpoint *url.URL, token, basePrefix string) []*http.Cookie {
-	client := &http.Client{
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	loginURL := endpoint.Scheme + "://" + endpoint.Host + basePrefix + "/login"
-
-	// GET /login to obtain the _xsrf token required by the POST.
-	getResp, err := client.Get(loginURL)
-	if err != nil {
-		return nil
-	}
-	body, _ := io.ReadAll(getResp.Body)
-	_ = getResp.Body.Close()
-
-	xsrf := extractXSRFValue(string(body))
-	if xsrf == "" {
-		for _, c := range getResp.Cookies() {
-			if c.Name == "_xsrf" {
-				xsrf = c.Value
-				break
-			}
-		}
-	}
-
-	// POST /login with the token (submitted as "password") and _xsrf.
-	form := url.Values{"password": {token}, "_xsrf": {xsrf}}
-	req, err := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for _, c := range getResp.Cookies() {
-		req.AddCookie(c)
-	}
-
-	postResp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	_ = postResp.Body.Close()
-
-	if postResp.StatusCode == http.StatusFound {
-		return postResp.Cookies()
-	}
-	return nil
-}
-
-// extractXSRFValue parses the _xsrf hidden input value from JupyterLab's login HTML.
-func extractXSRFValue(html string) string {
-	const marker = `name="_xsrf" value="`
-	idx := strings.Index(html, marker)
-	if idx < 0 {
-		return ""
-	}
-	rest := html[idx+len(marker):]
-	end := strings.Index(rest, `"`)
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
-}
-
 // HandlerDeps holds all dependencies for the notebook HTTP handler.
+// ProxyDialer dials a target host:port through a connected gRPC agent.
+// agentID is the worker's registration ID; target is "host:port" reachable inside
+// the agent's network (e.g. a Jupyter pod's ClusterIP address).
+type ProxyDialer interface {
+	DialProxy(ctx context.Context, agentID, target string) (net.Conn, error)
+}
+
 type HandlerDeps struct {
 	Notebooks        Repository
 	Volumes          VolumeRepository
@@ -91,10 +31,8 @@ type HandlerDeps struct {
 	Restart          func(ctx context.Context, name string) error
 	Delete           func(ctx context.Context, name string) error
 	PurgeVolume      func(ctx context.Context, volumeID string) error
-	UpdateStatus     func(ctx context.Context, name, status, endpoint, workDir, token string, pid int, env string) error
-	WorkerRegistry   *NotebookWorkerRegistry // nil disables worker registration routes
-	// DriverMode identifies the notebook dispatch family exposed to the UI.
-	DriverMode string
+	AgentRegistry    *agent.Registry
+	ProxyDialer      ProxyDialer
 }
 
 // Handler is the Gin HTTP handler for the /notebooks domain.
@@ -117,34 +55,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/notebooks/:name", h.deleteNotebook)
 	rg.Any("/notebooks/:name/proxy/*path", h.proxyNotebook)
 
-	// Volume routes.
 	if h.deps.Volumes != nil {
 		rg.GET("/notebook-volumes", h.listVolumes)
 		rg.DELETE("/notebook-volumes/:id", h.purgeVolume)
 	}
-
-	// Worker callback: status update from notebook worker agent.
-	if h.deps.UpdateStatus != nil {
-		rg.PATCH("/api/notebooks/:name/status", h.updateNotebookStatus)
-	}
-
-	// Worker registration routes.
-	if h.deps.WorkerRegistry != nil {
-		rg.POST("/api/notebook-workers", h.registerWorker)
-		rg.POST("/api/notebook-workers/:id/heartbeat", h.heartbeatWorker)
-		rg.GET("/api/notebook-workers", h.listWorkers)
-	}
-
-	rg.GET("/api/notebook-mode", h.getMode)
-}
-
-// GET /api/notebook-mode — returns the active notebook driver mode.
-func (h *Handler) getMode(c *gin.Context) {
-	mode := h.deps.DriverMode
-	if mode == "" {
-		mode = "worker"
-	}
-	c.JSON(http.StatusOK, gin.H{"mode": mode})
 }
 
 // GET /notebooks
@@ -309,104 +223,39 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 	if subPath == "" || !strings.HasPrefix(subPath, "/") {
 		subPath = "/" + subPath
 	}
-	// JupyterLab is started with --ServerApp.base_url=/notebooks/<name>/proxy/
-	// so the upstream expects the full path including that prefix.
 	upstreamPath := fmt.Sprintf("/notebooks/%s/proxy%s", name, subPath)
 
-	// WebSocket upgrade: tunnel raw TCP between client and upstream.
-	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
-		h.proxyWebSocket(c, target, upstreamPath)
+	agentID := target.Host
+	dialTarget := target.Query().Get("target")
+	if agentID == "" || dialTarget == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid notebook endpoint"})
+		return
+	}
+	if h.deps.ProxyDialer == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "proxy not configured"})
 		return
 	}
 
-	r2 := c.Request.Clone(c.Request.Context())
-	r2.URL.Path = upstreamPath
-	r2.URL.RawPath = ""
-	r2.URL.RawQuery = c.Request.URL.RawQuery
-	r2.Host = target.Host
-	// JupyterLab blocks cross-origin requests; rewrite Origin to match upstream.
-	if r2.Header.Get("Origin") != "" {
-		r2.Header.Set("Origin", target.Scheme+"://"+target.Host)
-	}
-
-	basePrefix := fmt.Sprintf("/notebooks/%s/proxy", name)
-	loginPrefix := basePrefix + "/login"
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.ModifyResponse = func(resp *http.Response) error {
-		loc := resp.Header.Get("Location")
-		if loc == "" || strings.HasPrefix(loc, "http") {
-			return nil
-		}
-		if !strings.HasPrefix(loc, "/") {
-			loc = "/" + loc
-		}
-
-		// JupyterLab (with base_url) redirects to {basePrefix}/login.
-		// Intercept it and perform server-side transparent auth so the browser
-		// goes straight to the destination without ever seeing the login page.
-		if strings.HasPrefix(loc, "/login") || strings.HasPrefix(loc, loginPrefix) {
-			if nb.Token == "" {
-				// No token stored — notebook was created without token support.
-				// Return 503 to break the loop; user should recreate the notebook.
-				resp.StatusCode = http.StatusServiceUnavailable
-				resp.Header.Del("Location")
-				return nil
-			}
-			parsedLoc, _ := url.Parse(loc)
-			next := parsedLoc.Query().Get("next")
-			if next == "" {
-				next = basePrefix + "/lab"
-			}
-			cookies := jupyterLogin(target, nb.Token, basePrefix)
-			for _, c := range cookies {
-				c.Path = "/"
-				resp.Header.Add("Set-Cookie", c.String())
-			}
-			resp.Header.Set("Location", next)
-			return nil
-		}
-
-		// Pass through redirects that are already under base_url (non-login).
-		if strings.HasPrefix(loc, basePrefix) {
-			return nil
-		}
-
-		// Other bare redirects (e.g. /static/…): prefix with base_url.
-		parsed, err := url.Parse(loc)
-		if err != nil {
-			resp.Header.Set("Location", basePrefix+loc)
-			return nil
-		}
-		parsed.Path = basePrefix + parsed.Path
-		resp.Header.Set("Location", parsed.String())
-		return nil
-	}
-	proxy.ServeHTTP(c.Writer, r2)
-}
-
-// proxyWebSocket tunnels a WebSocket connection to the upstream Jupyter server.
-func (h *Handler) proxyWebSocket(c *gin.Context, target *url.URL, subPath string) {
-	upstreamAddr := target.Host
-	upstream, err := net.Dial("tcp", upstreamAddr)
+	upstream, err := h.deps.ProxyDialer.DialProxy(c.Request.Context(), agentID, dialTarget)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "cannot connect to notebook"})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "cannot connect to notebook: " + err.Error()})
 		return
 	}
 	defer func() { _ = upstream.Close() }()
 
-	// Rewrite the request line to point at the upstream path.
 	r2 := c.Request.Clone(context.Background())
-	r2.URL.Path = subPath
-	r2.URL.RawQuery = c.Request.URL.RawQuery
-	r2.Host = target.Host
-	r2.Header.Set("Origin", target.Scheme+"://"+target.Host)
+	r2.URL.Path = upstreamPath
+	r2.URL.RawPath = ""
+	r2.URL.RawQuery = notebookProxyRawQuery(c.Request.URL.RawQuery, nb.Token)
+	r2.Host = dialTarget
+	r2.Header.Set("Origin", "http://"+dialTarget)
 	if err := r2.Write(upstream); err != nil {
 		return
 	}
 
 	hijacker, ok := c.Writer.(http.Hijacker)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "websocket not supported"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "connection hijack not supported"})
 		return
 	}
 	conn, buf, err := hijacker.Hijack()
@@ -415,7 +264,6 @@ func (h *Handler) proxyWebSocket(c *gin.Context, target *url.URL, subPath string
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Flush any buffered data from the client side.
 	if buf.Reader.Buffered() > 0 {
 		buffered := make([]byte, buf.Reader.Buffered())
 		_, _ = buf.Read(buffered)
@@ -428,52 +276,16 @@ func (h *Handler) proxyWebSocket(c *gin.Context, target *url.URL, subPath string
 	<-done
 }
 
-// PATCH /api/notebooks/:name/status — called by notebook worker agents.
-// Accepts status, endpoint, work_dir, token, pid, and env from worker callbacks.
-func (h *Handler) updateNotebookStatus(c *gin.Context) {
-	name := c.Param("name")
-	var body struct {
-		Status   string `json:"status"`
-		Endpoint string `json:"endpoint"`
-		WorkDir  string `json:"work_dir"`
-		Token    string `json:"token"`
-		PID      int    `json:"pid"`
-		Env      string `json:"env"`
+func notebookProxyRawQuery(rawQuery, token string) string {
+	if token == "" {
+		return rawQuery
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return rawQuery
 	}
-	if err := h.deps.UpdateStatus(c.Request.Context(), name, body.Status, body.Endpoint, body.WorkDir, body.Token, body.PID, body.Env); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if values.Get("token") == "" {
+		values.Set("token", token)
 	}
-	c.Status(http.StatusNoContent)
-}
-
-// POST /api/notebook-workers
-func (h *Handler) registerWorker(c *gin.Context) {
-	var info NotebookWorkerInfo
-	if err := c.ShouldBindJSON(&info); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if info.ID == "" || info.Addr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id and addr are required"})
-		return
-	}
-	h.deps.WorkerRegistry.Register(&info)
-	c.JSON(http.StatusOK, gin.H{"id": info.ID})
-}
-
-// POST /api/notebook-workers/:id/heartbeat
-func (h *Handler) heartbeatWorker(c *gin.Context) {
-	id := c.Param("id")
-	h.deps.WorkerRegistry.Heartbeat(id)
-	c.Status(http.StatusNoContent)
-}
-
-// GET /api/notebook-workers
-func (h *Handler) listWorkers(c *gin.Context) {
-	c.JSON(http.StatusOK, h.deps.WorkerRegistry.List())
+	return values.Encode()
 }

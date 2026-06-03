@@ -62,8 +62,9 @@ spec: {}
 	if err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
 	}
-	if resp.Endpoint != "tunnel://agent-1/nb/My Notebook" {
-		t.Fatalf("endpoint = %q", resp.Endpoint)
+	wantEndpoint := "tunnel://agent-1?target=piper-nb-my-notebook.notebooks.svc.cluster.local:8888"
+	if resp.Endpoint != wantEndpoint {
+		t.Fatalf("endpoint = %q, want %q", resp.Endpoint, wantEndpoint)
 	}
 	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-my-notebook", metav1.GetOptions{})
 	if err != nil {

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/google/uuid"
-
 	piper "github.com/piper/piper"
 	"github.com/piper/piper/pkg/source"
 	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
@@ -77,18 +75,23 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 
 			hostname, _ := os.Hostname()
 
+			localAgentAddr := p.Config().Server.AgentAddr
+			if localAgentAddr == "" {
+				localAgentAddr = ":9090"
+			}
+			localAgentConnAddr := localAgentConnURL(localAgentAddr)
+
 			sw := servingworker.New(servingworker.Config{
-				MasterURL: masterURL,
-				Addr:      ":7700",
+				AgentAddr: localAgentConnAddr,
 				Hostname:  hostname,
-				ID:        uuid.New().String(),
+				ID:        stableWorkerID("serving", hostname, "local"),
 			})
 
+			notebookMode := effectiveNotebookMode(p.Config().NotebookWorker.Mode)
 			nw := notebookworker.New(notebookworker.Config{
-				MasterURL:     masterURL,
-				Addr:          ":7701",
+				AgentAddr:     localAgentConnAddr,
 				Hostname:      hostname,
-				ID:            uuid.New().String(),
+				ID:            stableWorkerID("notebook", hostname, notebookMode, "local"),
 				NotebooksRoot: p.Config().NotebookWorker.NotebooksRoot,
 				PortRange:     p.Config().NotebookWorker.PortRange,
 				Mode:          p.Config().NotebookWorker.Mode,
@@ -97,7 +100,7 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 
 			eg, gctx := errgroup.WithContext(ctx)
 			eg.Go(func() error {
-				return p.Serve(gctx, piper.ServeOption{Addr: addr})
+				return p.Serve(gctx, piper.ServeOption{Addr: addr, AgentAddr: localAgentAddr})
 			})
 			eg.Go(func() error {
 				return w.Run(gctx)
@@ -156,14 +159,25 @@ func notebookWorkerDockerConfig(cfg piper.NotebookWorkerDockerConfig) notebookwo
 }
 
 // localMasterURL converts a listen address like ":8080" or "0.0.0.0:8080"
-// to "http://localhost:8080" for the embedded worker to connect to.
+// to "http://localhost:8080" for the embedded pipeline worker to connect to.
 func localMasterURL(addr string) string {
 	if strings.HasPrefix(addr, ":") {
 		return "http://localhost" + addr
 	}
-	// e.g. "0.0.0.0:8080" → "http://localhost:8080"
 	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
 		return "http://localhost" + addr[idx:]
 	}
 	return "http://" + addr
+}
+
+// localAgentConnURL converts a gRPC listen address like ":9090" or "0.0.0.0:9090"
+// to "localhost:9090" for the embedded serving/notebook workers to dial.
+func localAgentConnURL(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "localhost" + addr
+	}
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		return "localhost" + addr[idx:]
+	}
+	return addr
 }

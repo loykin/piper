@@ -2,8 +2,6 @@ package notebookdispatch
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -88,6 +86,43 @@ func TestAgentDriverStartUsesVolumeAgent(t *testing.T) {
 	}
 }
 
+func TestAgentDriverStartFallsBackFromStaleVolumeAgent(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{ID: "agent-2", Kind: iagent.KindBareMetal, Capabilities: []string{iagent.CapabilityNotebook}})
+	rpc := &recordingAgentRPC{}
+	driver := NewAgentDriver(iagent.NewRouter(reg), rpc)
+	spec := notebook.NotebookServerSpec{}
+	spec.Metadata.Name = "demo"
+	vol := &notebook.NotebookVolume{ID: "vol-1", WorkerID: "old-agent", WorkDir: "/work/vol-1"}
+
+	nb, err := driver.Start(context.Background(), spec, vol, "metadata:\n  name: demo\n")
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if nb.WorkerID != "agent-2" {
+		t.Fatalf("worker id = %q, want agent-2", nb.WorkerID)
+	}
+	if vol.WorkerID != "agent-2" {
+		t.Fatalf("volume worker id = %q, want agent-2", vol.WorkerID)
+	}
+	if rpc.calls[0].AgentID != "agent-2" {
+		t.Fatalf("rpc agent = %q, want agent-2", rpc.calls[0].AgentID)
+	}
+}
+
+func TestAgentDriverStartDoesNotFallbackForExplicitPlacement(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{ID: "agent-2", Kind: iagent.KindBareMetal, Capabilities: []string{iagent.CapabilityNotebook}})
+	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{})
+	spec := notebook.NotebookServerSpec{}
+	spec.Metadata.Name = "demo"
+	spec.Spec.Placement = &notebook.NotebookPlacement{Worker: "old-agent"}
+
+	if _, err := driver.Start(context.Background(), spec, &notebook.NotebookVolume{ID: "vol-1", WorkDir: "/work/vol-1"}, "metadata:\n  name: demo\n"); err == nil {
+		t.Fatal("expected explicit stale placement to fail")
+	}
+}
+
 func TestAgentDriverStopAndDeprovision(t *testing.T) {
 	driver, rpc := newAgentNotebookDriver()
 
@@ -102,6 +137,23 @@ func TestAgentDriverStopAndDeprovision(t *testing.T) {
 	}
 	if rpc.calls[1].Method != iagent.MethodNotebookDeprovision {
 		t.Fatalf("second method = %q", rpc.calls[1].Method)
+	}
+}
+
+func TestAgentDriverSyncStatusMarksDisconnectedAgentStopped(t *testing.T) {
+	repo := newFakeRepo()
+	if err := repo.Create(context.Background(), &notebook.NotebookServer{Name: "demo", WorkerID: "old-agent", Status: notebook.StatusRunning}); err != nil {
+		t.Fatalf("create repo record: %v", err)
+	}
+	reg := iagent.NewRegistry()
+	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{}, repo)
+
+	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "old-agent", Status: notebook.StatusRunning}}); err != nil {
+		t.Fatalf("SyncStatus returned error: %v", err)
+	}
+	nb, _ := repo.Get(context.Background(), "demo")
+	if nb.Status != notebook.StatusStopped {
+		t.Fatalf("status = %q, want stopped", nb.Status)
 	}
 }
 
@@ -127,50 +179,15 @@ func TestAgentDriverSyncStatus(t *testing.T) {
 	}
 }
 
-func TestAgentDriverBareMetalUsesDirectWorkerHTTP(t *testing.T) {
-	var sawVolume bool
-	var sawStart bool
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/volume":
-			sawVolume = true
-			_, _ = w.Write([]byte(`{"work_dir":"/tmp/vol-1"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/start":
-			sawStart = true
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"token":"token","work_dir":"/tmp/vol-1"}`))
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer worker.Close()
-
+func TestAgentDriverStartNoAgent(t *testing.T) {
+	// When no notebook agent is available, Start should return an error.
 	reg := iagent.NewRegistry()
-	reg.Register(iagent.Info{
-		ID:           "worker-1",
-		Kind:         iagent.KindBareMetal,
-		Addr:         worker.URL,
-		Capabilities: []string{iagent.CapabilityNotebook},
-	})
 	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{})
-	vol := &notebook.NotebookVolume{ID: "vol-1"}
-
-	if err := driver.ProvisionVolume(context.Background(), vol, ""); err != nil {
-		t.Fatalf("ProvisionVolume returned error: %v", err)
-	}
 	spec := notebook.NotebookServerSpec{}
 	spec.Metadata.Name = "demo"
-	nb, err := driver.Start(context.Background(), spec, vol, "metadata:\n  name: demo\n")
-	if err != nil {
-		t.Fatalf("Start returned error: %v", err)
-	}
-	if !sawVolume || !sawStart {
-		t.Fatalf("worker requests volume=%v start=%v", sawVolume, sawStart)
-	}
-	if nb.WorkerID != "worker-1" {
-		t.Fatalf("worker id = %q", nb.WorkerID)
-	}
-	if vol.WorkerID != "worker-1" {
-		t.Fatalf("volume worker id = %q", vol.WorkerID)
+	vol := &notebook.NotebookVolume{ID: "vol-1", WorkerID: "nonexistent"}
+
+	if _, err := driver.Start(context.Background(), spec, vol, "metadata:\n  name: demo\n"); err == nil {
+		t.Fatal("expected error when no notebook agent is registered")
 	}
 }

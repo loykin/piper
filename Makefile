@@ -1,8 +1,12 @@
-.PHONY: build ui docker test test-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean
+.PHONY: build ui docker test test-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
 NOTEBOOK_IMAGE ?= jupyter/minimal-notebook:latest
+
+# Regenerate protobuf / gRPC Go code from proto/agent.proto
+proto:
+	PATH="$(shell go env GOPATH)/bin:$$PATH" buf generate
 
 # Full build (UI → Go)
 build: ui

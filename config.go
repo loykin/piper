@@ -94,9 +94,10 @@ type S3Config struct {
 }
 
 type ServerConfig struct {
-	Addr  string    `yaml:"addr"    mapstructure:"addr"`
-	Token string    `yaml:"token"   mapstructure:"token"`
-	TLS   TLSConfig `yaml:"tls"     mapstructure:"tls"`
+	Addr      string    `yaml:"addr"       mapstructure:"addr"`
+	AgentAddr string    `yaml:"agent_addr" mapstructure:"agent_addr"` // gRPC agent server, e.g. ":9090"
+	Token     string    `yaml:"token"      mapstructure:"token"`
+	TLS       TLSConfig `yaml:"tls"        mapstructure:"tls"`
 }
 
 type TLSConfig struct {

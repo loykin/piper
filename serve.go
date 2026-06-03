@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -40,6 +41,10 @@ type ServeOption struct {
 
 	// Addr overrides Config.Server.Addr when non-empty.
 	Addr string
+
+	// AgentAddr overrides Config.Server.AgentAddr for the gRPC agent server.
+	// Useful in --local mode where the gRPC address must be determined at runtime.
+	AgentAddr string
 }
 
 // Serve runs the piper HTTP server.
@@ -98,11 +103,37 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		return nil
 	}
 
+	agentAddr := p.cfg.Server.AgentAddr
+	if opt.AgentAddr != "" {
+		agentAddr = opt.AgentAddr
+	}
+	if agentAddr != "" {
+		go p.serveGRPCAgents(ctx, agentAddr)
+	}
+
 	slog.Info("piper server starting (HTTP)", "addr", srv.Addr)
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+// serveGRPCAgents runs the gRPC agent server on addr until ctx is cancelled.
+func (p *Piper) serveGRPCAgents(ctx context.Context, addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		slog.Error("grpc agent server: listen failed", "addr", addr, "err", err)
+		return
+	}
+	grpcSrv := p.grpcAgentServer.GRPCServer()
+	go func() {
+		<-ctx.Done()
+		grpcSrv.GracefulStop()
+	}()
+	slog.Info("grpc agent server starting", "addr", addr)
+	if err := grpcSrv.Serve(lis); err != nil {
+		slog.Error("grpc agent server stopped", "err", err)
+	}
 }
 
 // newRouter builds the Gin router wired with all domain handlers.
@@ -176,15 +207,14 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Serving domain
 	serving.NewHandler(serving.HandlerDeps{
-		Services:       p.repos.Serving,
-		Deploy:         p.DeployServiceAs,
-		Stop:           p.StopService,
-		Restart:        p.RestartService,
-		UpdateStatus:   p.serving.manager.UpdateStatus,
-		Proxy:          p.serving.proxy,
-		OwnerID:        p.ownerIDFromRequest,
-		Hooks:          &piperServingHooks{p: p},
-		WorkerRegistry: p.serving.workerRegistry,
+		Services:     p.repos.Serving,
+		Deploy:       p.DeployServiceAs,
+		Stop:         p.StopService,
+		Restart:      p.RestartService,
+		UpdateStatus: p.serving.manager.UpdateStatus,
+		Proxy:        p.serving.proxy,
+		OwnerID:      p.ownerIDFromRequest,
+		Hooks:        &piperServingHooks{p: p},
 	}).RegisterRoutes(r.Group(""))
 
 	// Notebook domain
@@ -197,9 +227,8 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		Restart:          p.notebookManager.Restart,
 		Delete:           p.notebookManager.Delete,
 		PurgeVolume:      p.notebookManager.PurgeVolume,
-		UpdateStatus:     p.notebookManager.UpdateStatus,
-		WorkerRegistry:   p.notebookWorkerRegistry,
-		DriverMode:       p.notebookDriverMode,
+		AgentRegistry:    p.agentRegistry,
+		ProxyDialer:      p.grpcAgentServer,
 	}).RegisterRoutes(r.Group(""))
 
 	// Built-in file server: expose /store/* routes only when using a LocalStore.
@@ -220,13 +249,6 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Unified agent registry domain.
 	iagent.NewHandler(p.agentRegistry).RegisterRoutes(r.Group("/api"))
-	r.GET("/api/agents/:id/tunnel", func(c *gin.Context) {
-		agentID := c.Param("id")
-		onPing := func() { p.agentRegistry.Touch(agentID) }
-		if err := p.tunnelHub.Accept(c.Writer, c.Request, agentID, onPing); err != nil {
-			slog.Warn("agent tunnel closed", "agent_id", agentID, "err", err)
-		}
-	})
 
 	// JupyterLab requests /custom/custom.css as an absolute path (no base_url prefix).
 	// The file is empty by convention — it is a user customization hook.

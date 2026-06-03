@@ -102,6 +102,13 @@ func (r *Registry) List() []Info {
 	return out
 }
 
+func (r *Registry) Remove(id string) {
+	r.mu.Lock()
+	delete(r.agents, id)
+	r.mu.Unlock()
+	slog.Info("event", "type", "agent.removed", "agent_id", id)
+}
+
 func (r *Registry) Cleanup() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -372,4 +373,168 @@ func TestExampleNotebookServerYAMLs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ─── Baremetal notebook lifecycle e2e ────────────────────────────────────────
+
+// TestExampleNotebookBaremetal tests the full notebook lifecycle (create →
+// running → stop → stopped) through the AgentDriver baremetal path using an
+// in-process piper server and a fake httptest notebook worker.
+func TestExampleNotebookBaremetal(t *testing.T) {
+	port := freePort(t)
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	tmpDir := t.TempDir()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	p, err := piper.New(piper.Config{
+		DB:     db,
+		Server: piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
+	waitReady(t, serverURL+"/runs", 10*time.Second)
+
+	workDir := filepath.Join(tmpDir, "nb-workdir")
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	const nbName = "e2e-nb-baremetal"
+
+	// Fake baremetal notebook worker: handles /volume, /start, DELETE /notebook/:name.
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/volume":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"work_dir": workDir})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/start":
+			w.WriteHeader(http.StatusAccepted)
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				cb, _ := json.Marshal(map[string]any{
+					"status":   "running",
+					"endpoint": "",
+					"work_dir": workDir,
+					"token":    "test-token",
+					"pid":      0,
+					"env":      "",
+				})
+				req, _ := http.NewRequest(http.MethodPatch, serverURL+"/api/notebooks/"+nbName+"/status", bytes.NewReader(cb))
+				req.Header.Set("Content-Type", "application/json")
+				_, _ = http.DefaultClient.Do(req)
+			}()
+
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/notebook/"):
+			name := strings.TrimPrefix(r.URL.Path, "/notebook/")
+			w.WriteHeader(http.StatusOK)
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				cb, _ := json.Marshal(map[string]any{
+					"status":   "stopped",
+					"endpoint": "",
+					"work_dir": workDir,
+					"token":    "",
+					"pid":      0,
+					"env":      "",
+				})
+				req, _ := http.NewRequest(http.MethodPatch, serverURL+"/api/notebooks/"+name+"/status", bytes.NewReader(cb))
+				req.Header.Set("Content-Type", "application/json")
+				_, _ = http.DefaultClient.Do(req)
+			}()
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer fake.Close()
+
+	// Register the fake worker with the piper server.
+	regBody, _ := json.Marshal(map[string]any{
+		"id":       "fake-bm-1",
+		"addr":     fake.URL,
+		"hostname": "fake-host",
+		"gpus":     []string{},
+	})
+	regResp, err := http.Post(serverURL+"/api/notebook-workers", "application/json", bytes.NewReader(regBody))
+	if err != nil {
+		t.Fatalf("register worker: %v", err)
+	}
+	regResp.Body.Close()
+	if regResp.StatusCode != http.StatusOK {
+		t.Fatalf("register worker: status %d", regResp.StatusCode)
+	}
+	t.Logf("fake worker registered at %s", fake.URL)
+
+	// Create notebook with baremetal spec.
+	const nbYAML = "metadata:\n  name: " + nbName + "\nspec:\n  process: {}\n"
+	nbBody, _ := json.Marshal(map[string]string{"yaml": nbYAML})
+	createResp, err := http.Post(serverURL+"/notebooks", "application/json", bytes.NewReader(nbBody))
+	if err != nil {
+		t.Fatalf("create notebook: %v", err)
+	}
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated && createResp.StatusCode != http.StatusOK {
+		t.Fatalf("create notebook: status %d", createResp.StatusCode)
+	}
+	t.Logf("notebook %s created, waiting for running...", nbName)
+
+	// Poll until running.
+	if !pollNotebookStatus(t, serverURL, nbName, "running", 30*time.Second) {
+		t.Fatalf("notebook %s did not reach running", nbName)
+	}
+	t.Logf("notebook %s is running", nbName)
+
+	// Stop the notebook.
+	stopResp, err := http.Post(serverURL+"/notebooks/"+nbName+"/stop", "application/json", nil)
+	if err != nil {
+		t.Fatalf("stop notebook: %v", err)
+	}
+	stopResp.Body.Close()
+	if stopResp.StatusCode >= 300 {
+		t.Fatalf("stop notebook: status %d", stopResp.StatusCode)
+	}
+	t.Logf("notebook %s stop requested, waiting for stopped...", nbName)
+
+	// Poll until stopped.
+	if !pollNotebookStatus(t, serverURL, nbName, "stopped", 30*time.Second) {
+		t.Fatalf("notebook %s did not reach stopped", nbName)
+	}
+	t.Logf("notebook %s stopped successfully", nbName)
+}
+
+// pollNotebookStatus polls GET /notebooks/:name until the notebook reaches the
+// desired status or the timeout elapses. Returns true if the target is reached.
+func pollNotebookStatus(t *testing.T, baseURL, name, wantStatus string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		r, err := http.Get(fmt.Sprintf("%s/notebooks/%s", baseURL, name))
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		var nb struct {
+			Status string `json:"status"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&nb)
+		r.Body.Close()
+		if nb.Status == wantStatus {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
 }

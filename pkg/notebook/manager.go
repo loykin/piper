@@ -173,8 +173,10 @@ func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec,
 			return
 		}
 		if nb, err := m.repo.Get(bgCtx, name); err == nil && nb != nil {
+			volCopy.Status = VolumeStatusBound
 			if fresh.WorkerID != "" {
 				nb.WorkerID = fresh.WorkerID
+				volCopy.WorkerID = fresh.WorkerID
 			}
 			if fresh.Token != "" {
 				nb.Token = fresh.Token
@@ -189,6 +191,7 @@ func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec,
 				nb.Image = fresh.Image
 			}
 			_ = m.repo.Update(bgCtx, nb)
+			_ = m.vols.Update(bgCtx, &volCopy)
 		}
 	}()
 
@@ -252,16 +255,19 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 
 	bgCtx := context.WithoutCancel(ctx)
 	volCopy := *vol
+	restartYAML := nb.YAML
 	go func() {
-		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, "")
+		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, restartYAML)
 		if err != nil {
 			slog.Error("notebook: restart failed", "name", name, "err", err)
 			_ = m.repo.SetStatus(bgCtx, name, StatusFailed)
 			return
 		}
 		if nb, err := m.repo.Get(bgCtx, name); err == nil && nb != nil {
+			volCopy.Status = VolumeStatusBound
 			if fresh.WorkerID != "" {
 				nb.WorkerID = fresh.WorkerID
+				volCopy.WorkerID = fresh.WorkerID
 			}
 			if fresh.Token != "" {
 				nb.Token = fresh.Token
@@ -276,6 +282,7 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 				nb.PID = fresh.PID
 			}
 			_ = m.repo.Update(bgCtx, nb)
+			_ = m.vols.Update(bgCtx, &volCopy)
 		}
 	}()
 	return nil

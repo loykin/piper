@@ -18,8 +18,8 @@ import (
 	"github.com/google/uuid"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/queue"
-	"github.com/piper/piper/internal/tunnel"
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/blobstore"
@@ -39,11 +39,10 @@ import (
 	iworker "github.com/piper/piper/internal/worker"
 )
 
-// servingBundle groups the serving manager, proxy, and worker registry together.
+// servingBundle groups the serving manager and proxy together.
 type servingBundle struct {
-	manager        *serving.Manager
-	proxy          *serving.Proxy
-	workerRegistry *serving.ServingWorkerRegistry
+	manager *serving.Manager
+	proxy   *serving.Proxy
 }
 
 // Piper is the library entry point.
@@ -52,25 +51,23 @@ type servingBundle struct {
 //	p := piper.New(piper.DefaultConfig())
 //	result, err := p.RunFile(ctx, "train.yaml")
 type Piper struct {
-	cfg                    Config
-	ctx                    context.Context // cancelled on Close; passed to background goroutines and hooks
-	repos                  *storemod.Repos
-	logs                   logstore.LogStore
-	metrics                logstore.MetricStore
-	queue                  *queue.Queue
-	registry               *iworker.Registry
-	serving                servingBundle
-	notebookManager        *notebook.Manager
-	notebookWorkerRegistry *notebook.NotebookWorkerRegistry
-	notebookDriverMode     string // "k8s" or "worker"
-	agentRegistry          *iagent.Registry
-	workloadRouter         *iagent.Router
-	tunnelHub              *tunnel.Hub
-	store                  blobstore.Store   // nil when no artifact store configured
-	storageURL             string            // resolved storage URL (for K8s launcher, artifact resolver)
-	resolver               artifact.Resolver // central artifact resolver
-	backend                backend.ExecutionBackend
-	events                 *event.Hub
+	cfg             Config
+	ctx             context.Context // cancelled on Close; passed to background goroutines and hooks
+	repos           *storemod.Repos
+	logs            logstore.LogStore
+	metrics         logstore.MetricStore
+	queue           *queue.Queue
+	registry        *iworker.Registry
+	serving         servingBundle
+	notebookManager *notebook.Manager
+	agentRegistry   *iagent.Registry
+	workloadRouter  *iagent.Router
+	grpcAgentServer *grpcagent.Server
+	store           blobstore.Store   // nil when no artifact store configured
+	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
+	resolver        artifact.Resolver // central artifact resolver
+	backend         backend.ExecutionBackend
+	events          *event.Hub
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 }
@@ -120,31 +117,26 @@ func New(cfg Config) (*Piper, error) {
 
 	agentReg := iagent.NewRegistry()
 	workloadRouter := iagent.NewRouter(agentReg)
-	tunnelHub := tunnel.NewHub()
 
-	// Build serving dispatch driver: worker RPC or bare-metal HTTP.
-	servingWorkerReg := serving.NewServingWorkerRegistry()
-	servingWorkerReg.SetAgentRegistry(agentReg)
-	var servingDriver serving.Driver
-	if cfg.Serving.Worker {
-		servingDriver = servingdispatch.NewAgentDriver(workloadRouter, tunnelHub, repos.Serving, listenAddrToURL(cfg.Server.Addr))
-	} else {
-		servingDriver = servingdispatch.NewWorkerDriver(servingWorkerReg, repos.Serving, listenAddrToURL(cfg.Server.Addr))
-	}
+	grpcSrv := grpcagent.NewServer(
+		func(reg grpcagent.Registration) {
+			agentReg.Register(iagent.Info{
+				ID:           reg.ID,
+				Kind:         reg.Kind,
+				Hostname:     reg.Hostname,
+				GPUs:         reg.GPUs,
+				Capabilities: reg.Capabilities,
+				ClusterName:  reg.ClusterName,
+				Labels:       reg.Labels,
+			})
+		},
+		agentReg.Remove,
+	)
+
+	servingDriver := servingdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Serving)
 	servingMgr := serving.New(repos.Serving, servingDriver)
 
-	// Build notebook dispatch driver: worker RPC or bare-metal HTTP.
-	notebookWorkerReg := notebook.NewNotebookWorkerRegistry()
-	notebookWorkerReg.SetAgentRegistry(agentReg)
-	var nbDriver notebook.Driver
-	nbK8s := cfg.NotebookK8s
-	notebookDriverMode := "worker"
-	if nbK8s.Worker {
-		nbDriver = notebookdispatch.NewAgentDriver(workloadRouter, tunnelHub, repos.Notebook)
-		notebookDriverMode = "k8s"
-	} else {
-		nbDriver = notebookdispatch.NewWorkerDriver(notebookWorkerReg, listenAddrToURL(cfg.Server.Addr))
-	}
+	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook))
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
@@ -158,18 +150,15 @@ func New(cfg Config) (*Piper, error) {
 		metrics: repos.Metric,
 		queue:   q,
 		serving: servingBundle{
-			manager:        servingMgr,
-			proxy:          serving.NewProxy(repos.Serving),
-			workerRegistry: servingWorkerReg,
+			manager: servingMgr,
+			proxy:   serving.NewProxy(repos.Serving),
 		},
-		notebookManager:        nbMgr,
-		notebookWorkerRegistry: notebookWorkerReg,
-		notebookDriverMode:     notebookDriverMode,
-		agentRegistry:          agentReg,
-		workloadRouter:         workloadRouter,
-		tunnelHub:              tunnelHub,
-		stopCtx:                stopFn,
-		events:                 event.NewHub(),
+		notebookManager: nbMgr,
+		agentRegistry:   agentReg,
+		workloadRouter:  workloadRouter,
+		grpcAgentServer: grpcSrv,
+		stopCtx:         stopFn,
+		events:          event.NewHub(),
 	}
 	storageURL := resolveStorageURL(cfg)
 	if storageURL != "" {
@@ -190,7 +179,7 @@ func New(cfg Config) (*Piper, error) {
 		storageURL: p.storageURL,
 	}
 	if cfg.K8s.Worker {
-		p.SetBackend(backend.NewAgentBackend(workloadRouter, tunnelHub))
+		p.SetBackend(backend.NewAgentBackend(workloadRouter, p.grpcAgentServer))
 	}
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
@@ -836,16 +825,4 @@ func resolveStorageURL(cfg Config) string {
 		outputDir = "./piper-outputs"
 	}
 	return "file://" + filepath.Join(outputDir, "store")
-}
-
-// listenAddrToURL converts a listen address like ":8080" or "0.0.0.0:8080"
-// to a full URL like "http://localhost:8080" for use as a master callback URL.
-func listenAddrToURL(addr string) string {
-	if strings.HasPrefix(addr, ":") {
-		return "http://localhost" + addr
-	}
-	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		return "http://localhost" + addr[idx:]
-	}
-	return "http://" + addr
 }

@@ -29,9 +29,11 @@ export interface NotebookVolume {
 
 export interface NotebookWorkerInfo {
   id: string
-  addr: string
-  gpus: string[]
+  kind: 'k8s' | 'baremetal'
   hostname: string
+  cluster_name?: string
+  gpus: string[]
+  labels?: Record<string, string>
   last_seen: string
 }
 
@@ -112,14 +114,6 @@ export async function purgeNotebookVolume(id: string): Promise<void> {
 export async function listNotebookWorkers(): Promise<NotebookWorkerInfo[]> {
   const res = await fetch(`${BASE}/api/notebook-workers`)
   if (!res.ok) throw new Error(`listNotebookWorkers: ${res.status}`)
-  return res.json()
-}
-
-export type NotebookDriverMode = 'k8s' | 'worker'
-
-export async function getNotebookMode(): Promise<NotebookDriverMode> {
-  const res = await fetch(`${BASE}/api/notebook-mode`)
-  if (!res.ok) return 'worker'
-  const data: { mode: string } = await res.json()
-  return data.mode === 'k8s' ? 'k8s' : 'worker'
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as NotebookWorkerInfo[]) : []
 }

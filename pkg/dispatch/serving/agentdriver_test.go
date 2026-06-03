@@ -2,8 +2,7 @@ package servingdispatch
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
+	"encoding/json"
 	"testing"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -23,13 +22,9 @@ type servingAgentRPCCall struct {
 
 func (r *recordingServingAgentRPC) SendRPC(_ context.Context, agentID, method string, payload any, result any) error {
 	r.calls = append(r.calls, servingAgentRPCCall{AgentID: agentID, Method: method, Payload: payload})
-	if method == iagent.MethodServingDeploy {
-		res := result.(*struct {
-			Endpoint  string `json:"endpoint"`
-			Namespace string `json:"namespace"`
-		})
-		res.Endpoint = "http://demo.default.svc.cluster.local:8000"
-		res.Namespace = "default"
+	if method == iagent.MethodServingDeploy && result != nil {
+		data, _ := json.Marshal(map[string]string{"endpoint": "http://demo.default.svc.cluster.local:8000"})
+		_ = json.Unmarshal(data, result)
 	}
 	return nil
 }
@@ -68,13 +63,15 @@ func TestServingAgentDriverDeploy(t *testing.T) {
 	}
 }
 
-func TestServingAgentDriverRequiresS3Artifact(t *testing.T) {
-	driver, _ := newServingAgentDriver(newStubServingRepo())
+func TestServingAgentDriverDeployNoAgent(t *testing.T) {
+	reg := iagent.NewRegistry() // empty registry → no serving agent available
+	rpc := &recordingServingAgentRPC{}
+	driver := NewAgentDriver(iagent.NewRouter(reg), rpc, newStubServingRepo())
 	spec := serving.ModelService{}
 	spec.Metadata.Name = "demo"
 
-	if _, err := driver.Deploy(context.Background(), spec, artifact.Resolved{LocalPath: "/tmp/model"}, ""); err == nil {
-		t.Fatal("expected S3 artifact error")
+	if _, err := driver.Deploy(context.Background(), spec, artifact.Resolved{S3URI: "s3://models/demo"}, ""); err == nil {
+		t.Fatal("expected error when no serving agent is registered")
 	}
 }
 
@@ -96,43 +93,5 @@ func TestServingAgentDriverStopAndRestart(t *testing.T) {
 	}
 	if rpc.calls[1].Method != iagent.MethodServingRestart {
 		t.Fatalf("second method = %q", rpc.calls[1].Method)
-	}
-}
-
-func TestServingAgentDriverBareMetalUsesDirectWorkerHTTP(t *testing.T) {
-	var sawDeploy bool
-	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/deploy" {
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-		sawDeploy = true
-		_, _ = w.Write([]byte(`{"endpoint":"http://localhost:9000"}`))
-	}))
-	defer worker.Close()
-
-	reg := iagent.NewRegistry()
-	reg.Register(iagent.Info{
-		ID:           "worker-1",
-		Kind:         iagent.KindBareMetal,
-		Addr:         worker.URL,
-		Capabilities: []string{iagent.CapabilityServing},
-	})
-	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingServingAgentRPC{}, newStubServingRepo(), "http://master")
-	spec := serving.ModelService{}
-	spec.Metadata.Name = "demo"
-	spec.Spec.Model.FromURI = "file:///tmp/model"
-
-	svc, err := driver.Deploy(context.Background(), spec, artifact.Resolved{LocalPath: "/tmp/model"}, "metadata:\n  name: demo\n")
-	if err != nil {
-		t.Fatalf("Deploy returned error: %v", err)
-	}
-	if !sawDeploy {
-		t.Fatal("worker deploy endpoint was not called")
-	}
-	if svc.WorkerID != "worker-1" {
-		t.Fatalf("worker id = %q", svc.WorkerID)
-	}
-	if svc.Endpoint != "http://localhost:9000" {
-		t.Fatalf("endpoint = %q", svc.Endpoint)
 	}
 }

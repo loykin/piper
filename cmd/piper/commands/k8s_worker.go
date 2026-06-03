@@ -8,7 +8,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -40,7 +39,7 @@ func newK8sWorkerCmd() *cobra.Command {
 			agentImagePullPolicy, _ := cmd.Flags().GetString("agent-image-pull-policy")
 			storageURL, _ := cmd.Flags().GetString("storage-url")
 			if id == "" {
-				id = uuid.NewString()
+				id = stableWorkerID("k8s", cluster)
 			}
 			var namespaces []string
 			for _, ns := range strings.Split(namespacesStr, ",") {
@@ -81,7 +80,7 @@ func newK8sWorkerCmd() *cobra.Command {
 
 	cmd.Flags().String("master", "", "master server URL (required)")
 	cmd.Flags().String("token", "", "bearer token for master API")
-	cmd.Flags().String("id", "", "worker ID (default: random UUID)")
+	cmd.Flags().String("id", "", "worker ID (default: stable k8s-<cluster>)")
 	cmd.Flags().String("cluster", "", "cluster name reported to master (required)")
 	cmd.Flags().String("namespaces", "", "comma-separated namespaces this worker may manage")
 	cmd.Flags().String("kubeconfig", "", "kubeconfig path for out-of-cluster execution")

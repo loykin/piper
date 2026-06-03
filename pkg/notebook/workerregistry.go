@@ -15,6 +15,7 @@ const workerTTL = 60 * time.Second
 type NotebookWorkerInfo struct {
 	ID       string    `json:"id"`
 	Addr     string    `json:"addr"` // e.g. http://10.0.0.5:7701
+	Mode     string    `json:"mode,omitempty"`
 	GPUs     []string  `json:"gpus"`
 	Hostname string    `json:"hostname"`
 	LastSeen time.Time `json:"last_seen"`
@@ -53,6 +54,7 @@ func (r *NotebookWorkerRegistry) Register(info *NotebookWorkerInfo) {
 		agents.Register(agent.FromNotebookWorker(agent.NotebookWorker{
 			ID:       info.ID,
 			Addr:     info.Addr,
+			Mode:     info.Mode,
 			GPUs:     info.GPUs,
 			Hostname: info.Hostname,
 		}))

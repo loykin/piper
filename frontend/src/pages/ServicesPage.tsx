@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
+import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { listRuns, listArtifacts, type Run, type StepArtifacts } from '@/features/runs/api'
 import type { Service } from '@/features/serving/api'
 
@@ -505,9 +506,12 @@ function DeployPanel({
               <label className={labelCls}>
                 Command <span className="text-gray-600">(one argument per line)</span>
               </label>
-              <textarea className={`${inputCls} resize-none font-mono`} rows={4}
-                value={form.command} onChange={e => setField('command', e.target.value)}
-                placeholder={'python\nserve.py'} spellCheck={false} />
+              <YamlMirror
+                className="bg-background"
+                rows={4}
+                value={form.command}
+                onChange={e => setField('command', e.target.value)}
+              />
               <p className="mt-1 text-xs text-gray-600">
                 <code className="text-indigo-400">$PIPER_MODEL_DIR</code> points to the artifact directory at runtime
               </p>
@@ -527,12 +531,11 @@ function DeployPanel({
           </div>
         </div>
       ) : (
-        <textarea
-          className="w-full resize-none rounded-lg border border-gray-700 bg-gray-900 p-3 font-mono text-sm text-gray-100 focus:border-indigo-500 focus:outline-none"
+        <YamlMirror
+          className="bg-gray-900 text-gray-100"
           rows={20}
           value={yaml}
           onChange={e => setYaml(e.target.value)}
-          spellCheck={false}
         />
       )}
 

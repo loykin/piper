@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataPage } from '@loykin/designkit'
+import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { createSchedule } from '@/features/schedules/api'
 
 type ScheduleType = 'immediate' | 'once' | 'cron'
@@ -150,12 +151,11 @@ export default function WorkflowCreatePage() {
 
             <div>
               <label className="mb-2 block text-sm font-medium">Pipeline YAML</label>
-              <textarea
-                className={`${inputCls} resize-none font-mono`}
+              <YamlMirror
+                className="bg-background"
                 rows={14}
                 value={yaml}
                 onChange={(e) => setYaml(e.target.value)}
-                spellCheck={false}
               />
             </div>
 

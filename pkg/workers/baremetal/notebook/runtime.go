@@ -39,6 +39,7 @@ type RuntimeStartRequest struct {
 type StartedNotebook struct {
 	Endpoint    string
 	PID         int
+	Token       string
 	EnvPath     string
 	ContainerID string
 }
@@ -82,7 +83,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		if condaName == "" {
 			return nil, fmt.Errorf("conda env name is empty in %q", envPath)
 		}
-		baseCommand := append([]string{"jupyter", "lab"}, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
+		baseCommand := append([]string{"jupyter", "lab"}, notebook.JupyterLabArgs(req.BaseURL, "", req.WorkDir, req.Port)...)
 		script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, req.WorkDir)
 		if err != nil {
 			return nil, err
@@ -90,6 +91,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		command = []string{bin, "run", "--no-capture-output", "-n", condaName, "sh", "-lc", script}
 	} else {
 		baseCommand := append([]string{bin}, extraArgs...)
+		baseCommand = append(baseCommand, notebook.JupyterLabArgs(req.BaseURL, "", req.WorkDir, req.Port)...)
 		script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, req.WorkDir)
 		if err != nil {
 			return nil, err
@@ -123,7 +125,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		return nil, err
 	}
 
-	return &StartedNotebook{Endpoint: endpoint, PID: pid, EnvPath: envPath}, nil
+	return &StartedNotebook{Endpoint: endpoint, PID: pid, Token: req.Token, EnvPath: envPath}, nil
 }
 
 func (r *processRuntime) Stop(_ context.Context, name string) error {

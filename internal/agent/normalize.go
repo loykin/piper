@@ -14,6 +14,7 @@ type PipelineWorker struct {
 type NotebookWorker struct {
 	ID       string
 	Addr     string
+	Mode     string
 	GPUs     []string
 	Hostname string
 }
@@ -43,6 +44,7 @@ func FromNotebookWorker(info NotebookWorker) Info {
 	return Info{
 		ID:           info.ID,
 		Kind:         KindBareMetal,
+		Mode:         info.Mode,
 		Addr:         info.Addr,
 		Hostname:     info.Hostname,
 		GPUs:         info.GPUs,

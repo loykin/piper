@@ -17,6 +17,7 @@ func NewHandler(registry *Registry) *Handler {
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/agents", h.registerAgent)
 	rg.GET("/agents", h.listAgents)
+	rg.GET("/notebook-workers", h.listNotebookWorkers)
 	rg.POST("/agents/:id/heartbeat", h.heartbeatAgent)
 }
 
@@ -36,6 +37,18 @@ func (h *Handler) registerAgent(c *gin.Context) {
 
 func (h *Handler) listAgents(c *gin.Context) {
 	c.JSON(http.StatusOK, h.registry.List())
+}
+
+func (h *Handler) listNotebookWorkers(c *gin.Context) {
+	agents := h.registry.List()
+	out := make([]Info, 0, len(agents))
+	for _, a := range agents {
+		if !hasCapability(&a, CapabilityNotebook) {
+			continue
+		}
+		out = append(out, a)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) heartbeatAgent(c *gin.Context) {

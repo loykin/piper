@@ -8,6 +8,7 @@ import {
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { YamlMirror } from '@/components/ui/yaml-mirror'
 import {
   listServing, deployServing, stopServing, restartServing,
   listServingWorkers,
@@ -439,23 +440,21 @@ function DeployPanel({ onClose, onDeployed }: { onClose: () => void; onDeployed:
               )}
 
               <DataBodyTemplate.Field label="Command" description="One argument per line. $PIPER_MODEL_DIR points to the artifact directory.">
-                <textarea
-                  className="w-full resize-none rounded border border-border bg-background px-3 py-2 font-mono text-sm focus:outline-none"
-                  rows={4}
-                  value={form.command}
-                  onChange={e => setField('command', e.target.value)}
-                  spellCheck={false}
-                />
+              <YamlMirror
+                className="bg-background"
+                rows={4}
+                value={form.command}
+                onChange={e => setField('command', e.target.value)}
+              />
               </DataBodyTemplate.Field>
             </DataBodyTemplate.Group>
           </div>
         ) : (
-          <textarea
-            className="w-full resize-none rounded border border-border bg-background p-3 font-mono text-sm focus:outline-none"
+          <YamlMirror
+            className="bg-background"
             rows={20}
             value={yaml}
             onChange={e => setYaml(e.target.value)}
-            spellCheck={false}
           />
         )}
 

@@ -9,7 +9,6 @@ import (
 func TestProcessNotebookCommandUsesCanonicalArgs(t *testing.T) {
 	req := RuntimeStartRequest{
 		BaseURL: "/notebooks/demo/proxy/",
-		Token:   "tok",
 		WorkDir: "/work/demo",
 		Port:    18888,
 	}
@@ -20,7 +19,8 @@ func TestProcessNotebookCommandUsesCanonicalArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLaunchScript error: %v", err)
 	}
-	if want := "exec /venv/bin/jupyter-lab --ServerApp.base_url=/notebooks/demo/proxy/ --ServerApp.token=tok --ServerApp.root_dir=/work/demo '--ServerApp.allow_origin=*' --no-browser --port=18888"; script == "" || !containsLine(script, want) {
+	// Token is empty → --ServerApp.token= disables auth; master proxy is the security boundary.
+	if want := "exec /venv/bin/jupyter-lab --ServerApp.base_url=/notebooks/demo/proxy/ --ServerApp.token= --IdentityProvider.token= --ServerApp.root_dir=/work/demo --ServerApp.trust_xheaders=True '--ServerApp.allow_origin=*' --no-browser --ServerApp.port_retries=0 --ServerApp.port=18888"; script == "" || !containsLine(script, want) {
 		t.Fatalf("script = %q, want line %q", script, want)
 	}
 }

@@ -92,6 +92,7 @@ func (q *pushQueue) close() {
 type Registration struct {
 	ID           string
 	Kind         string
+	Mode         string
 	Hostname     string
 	GPUs         []string
 	Capabilities []string
@@ -140,6 +141,7 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 	info := Registration{
 		ID:           reg.Id,
 		Kind:         reg.Kind,
+		Mode:         reg.Mode,
 		Hostname:     reg.Hostname,
 		GPUs:         reg.Gpus,
 		Capabilities: reg.Capabilities,

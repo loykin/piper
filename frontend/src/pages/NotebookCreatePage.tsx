@@ -6,6 +6,7 @@ import {
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { YamlMirror } from '@/components/ui/yaml-mirror'
 import {
   createNotebook, listNotebookVolumes, listNotebookWorkers,
   type NotebookVolume, type NotebookWorkerInfo,
@@ -20,14 +21,26 @@ interface K8sFormState {
   memory: string
   gpu: string
   storageSize: string
+  prepareBackend: 'k8s'
+  prepare: string
 }
 
-const DEFAULT_K8S: K8sFormState = { name: '', image: '', cpu: '', memory: '', gpu: '', storageSize: '' }
+const DEFAULT_K8S: K8sFormState = {
+  name: '',
+  image: '',
+  cpu: '',
+  memory: '',
+  gpu: '',
+  storageSize: '',
+  prepareBackend: 'k8s',
+  prepare: '',
+}
 
 function buildK8sYAML(f: K8sFormState, workerID?: string): string {
   const lines: string[] = [`metadata:`, `  name: ${f.name || 'my-notebook'}`, `spec:`, `  k8s:`]
   if (f.image)       lines.push(`    image: "${f.image}"`)
   if (f.storageSize) lines.push(`    storage_size: "${f.storageSize}"`)
+  appendPrepareSteps(lines, f.prepare, f.prepareBackend)
 
   const hasCpu = !!f.cpu, hasMem = !!f.memory, hasGpu = !!f.gpu
   if (hasCpu || hasMem || hasGpu) {
@@ -48,19 +61,62 @@ interface WorkerFormState {
   name: string
   env: string
   gpus: string
+  prepareBackend: 'process' | 'docker'
+  prepare: string
 }
 
-const DEFAULT_WORKER: WorkerFormState = { name: '', env: '', gpus: '' }
+const DEFAULT_WORKER: WorkerFormState = {
+  name: '',
+  env: '',
+  gpus: '',
+  prepareBackend: 'process',
+  prepare: '',
+}
 
 function buildWorkerYAML(f: WorkerFormState, workerID?: string): string {
+  return buildWorkerYAMLWithBackend(f, workerID, f.prepareBackend)
+}
+
+function buildWorkerYAMLWithBackend(
+  f: WorkerFormState,
+  workerID: string | undefined,
+  backend: 'process' | 'docker' | 'k8s',
+): string {
   const lines: string[] = [`metadata:`, `  name: ${f.name || 'my-notebook'}`, `spec:`]
   if (f.env || f.gpus) {
     lines.push(`  process:`)
     if (f.env)  lines.push(`    env: "${f.env}"`)
     if (f.gpus) lines.push(`    gpus: "${f.gpus}"`)
   }
+  appendPrepareSteps(lines, f.prepare, backend)
   if (workerID) lines.push(`  placement:`, `    worker: ${workerID}`)
   return lines.join('\n') + '\n'
+}
+
+function appendPrepareSteps(lines: string[], text: string, backend: 'process' | 'docker' | 'k8s') {
+  const commands = text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+  if (commands.length === 0) return
+  lines.push(`  prepare:`, `    steps:`)
+  for (const cmd of commands) {
+    lines.push(
+      `      - type: command`,
+      `        backend: ${backend}`,
+      `        command: ["sh", "-lc", "${escapeYamlDoubleQuoted(cmd)}"]`,
+    )
+  }
+}
+
+function escapeYamlDoubleQuoted(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+}
+
+function normalizePrepareBackend(mode?: string): 'process' | 'docker' {
+  return mode === 'docker' ? 'docker' : 'process'
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -107,8 +163,16 @@ export default function NotebookCreatePage() {
 
   const workerLabel = (w: NotebookWorkerInfo) => {
     const base = w.kind === 'k8s' ? (w.cluster_name || w.hostname || w.id) : (w.hostname || w.id)
-    return w.gpus?.length ? `${base}  (GPU: ${w.gpus.join(', ')})` : base
+    const mode = w.kind === 'baremetal' && w.mode ? ` · ${w.mode}` : ''
+    const gpu = w.gpus?.length ? `  (GPU: ${w.gpus.join(', ')})` : ''
+    return `${base}${mode}${gpu}`
   }
+
+  const workerPrepareBackend = useMemo<'process' | 'docker' | 'k8s'>(() => {
+    if (selectedWorker?.kind === 'k8s') return 'k8s'
+    if (selectedWorker?.kind === 'baremetal') return normalizePrepareBackend(selectedWorker.mode)
+    return workerForm.prepareBackend
+  }, [selectedWorker, workerForm.prepareBackend])
 
   function setK8sField<K extends keyof K8sFormState>(key: K, value: K8sFormState[K]) {
     setK8sForm(prev => {
@@ -121,7 +185,11 @@ export default function NotebookCreatePage() {
   function setWorkerField<K extends keyof WorkerFormState>(key: K, value: WorkerFormState[K]) {
     setWorkerForm(prev => {
       const next = { ...prev, [key]: value }
-      setWorkerYaml(buildWorkerYAML(next, selectedWorker?.hostname))
+      const backend =
+        selectedWorker?.kind === 'baremetal'
+          ? normalizePrepareBackend(selectedWorker.mode)
+          : next.prepareBackend
+      setWorkerYaml(buildWorkerYAMLWithBackend(next, selectedWorker?.hostname, backend))
       return next
     })
   }
@@ -130,7 +198,13 @@ export default function NotebookCreatePage() {
     setSelectedWorkerID(id ?? '')
     const w = workers.find(x => x.id === id) ?? null
     setK8sYaml(buildK8sYAML(k8sForm, w?.hostname))
-    setWorkerYaml(buildWorkerYAML(workerForm, w?.hostname))
+    if (w?.kind === 'baremetal' && w.mode) {
+      const backend = normalizePrepareBackend(w.mode)
+      setWorkerForm(prev => ({ ...prev, prepareBackend: backend }))
+      setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, w?.hostname, backend))
+    } else {
+      setWorkerYaml(buildWorkerYAML(workerForm, w?.hostname))
+    }
   }
 
   async function handleSubmit() {
@@ -141,7 +215,7 @@ export default function NotebookCreatePage() {
     const payload = tab === 'form'
       ? (isK8s
         ? buildK8sYAML(k8sForm, selectedWorker?.hostname)
-        : buildWorkerYAML(workerForm, selectedWorker?.hostname))
+        : buildWorkerYAMLWithBackend(workerForm, selectedWorker?.hostname, workerPrepareBackend))
       : (isK8s ? k8sYaml : workerYaml)
     if (!payload.trim()) { setError('YAML is required.'); return }
     try {
@@ -243,6 +317,14 @@ export default function NotebookCreatePage() {
               <DataBodyTemplate.Field label="Storage Size" description="PVC size. Leave blank for the cluster default (10Gi).">
                 <Input value={k8sForm.storageSize} onChange={e => setK8sField('storageSize', e.target.value)} placeholder="10Gi" />
               </DataBodyTemplate.Field>
+              <DataBodyTemplate.Field label="Prepare Commands" description="One command per line. Runs before notebook start.">
+                <textarea
+                  className="min-h-28 w-full resize-y rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none"
+                  value={k8sForm.prepare}
+                  onChange={e => setK8sField('prepare', e.target.value)}
+                  placeholder={`pip install -r requirements.txt\npython /work/preflight.py`}
+                />
+              </DataBodyTemplate.Field>
             </DataBodyTemplate.Group>
             <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Resources" description="Optional CPU, memory, and GPU requests/limits.">
               <div className="grid grid-cols-3 gap-3">
@@ -272,6 +354,27 @@ export default function NotebookCreatePage() {
             <DataBodyTemplate.Field label="GPUs" description="Device IDs: 0 · 0,1 · all · leave blank for no GPU">
               <Input value={workerForm.gpus} onChange={e => setWorkerField('gpus', e.target.value)} placeholder="0" />
             </DataBodyTemplate.Field>
+            <DataBodyTemplate.Field label="Prepare Backend" description="Follows the selected bare-metal worker mode; manual selection is used only when auto-assigning.">
+              <Select
+                value={workerPrepareBackend}
+                disabled={selectedWorker?.kind === 'baremetal'}
+                onValueChange={v => setWorkerField('prepareBackend', (v ?? 'process') as WorkerFormState['prepareBackend'])}
+              >
+                <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="process">process</SelectItem>
+                  <SelectItem value="docker">docker</SelectItem>
+                </SelectContent>
+              </Select>
+            </DataBodyTemplate.Field>
+            <DataBodyTemplate.Field label="Prepare Commands" description="One command per line. Runs before notebook start.">
+              <textarea
+                className="min-h-28 w-full resize-y rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none"
+                value={workerForm.prepare}
+                onChange={e => setWorkerField('prepare', e.target.value)}
+                placeholder={`uv pip install jupyterlab ipykernel\npython -m ipykernel install --sys-prefix`}
+              />
+            </DataBodyTemplate.Field>
           </DataBodyTemplate.Group>
         )}
       </DataBodyTemplate.Tab>
@@ -279,12 +382,10 @@ export default function NotebookCreatePage() {
       {/* ── YAML tab ── */}
       <DataBodyTemplate.Tab id="yaml" label="YAML">
         <DataBodyTemplate.Group layout="stacked">
-          <textarea
-            className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm focus:border-primary focus:outline-none"
+          <YamlMirror
             rows={24}
             value={runtime === 'k8s' ? k8sYaml : workerYaml}
             onChange={e => runtime === 'k8s' ? setK8sYaml(e.target.value) : setWorkerYaml(e.target.value)}
-            spellCheck={false}
           />
         </DataBodyTemplate.Group>
       </DataBodyTemplate.Tab>

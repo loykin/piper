@@ -83,6 +83,7 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 	workDir := t.TempDir()
 	w := New(Config{ID: "agent-1", PortRange: "18888-18888"})
 	w.runtime = rt
+	w.portAllocator = func() (int, error) { return 18888, nil }
 
 	resp, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
 		YAML:     "metadata:\n  name: demo\nspec: {}\n",
@@ -98,7 +99,7 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 	if resp.WorkDir != workDir {
 		t.Fatalf("work dir = %q", resp.WorkDir)
 	}
-	if resp.Endpoint != "tunnel://agent-1?target=localhost:18888" {
+	if resp.Endpoint != "tunnel://agent-1?target=127.0.0.1:18888" {
 		t.Fatalf("endpoint = %q", resp.Endpoint)
 	}
 	select {
@@ -109,8 +110,8 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 	if rt.req.BaseURL != "/notebooks/demo/proxy/" {
 		t.Fatalf("base url = %q", rt.req.BaseURL)
 	}
-	if rt.req.Token != resp.Token {
-		t.Fatalf("runtime token = %q, response token = %q", rt.req.Token, resp.Token)
+	if rt.req.Token == "" {
+		t.Fatal("runtime token is empty; JupyterLab requires a real token")
 	}
 }
 

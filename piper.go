@@ -125,6 +125,7 @@ func New(cfg Config) (*Piper, error) {
 			agentReg.Register(iagent.Info{
 				ID:           reg.ID,
 				Kind:         reg.Kind,
+				Mode:         reg.Mode,
 				Hostname:     reg.Hostname,
 				GPUs:         reg.GPUs,
 				Capabilities: reg.Capabilities,

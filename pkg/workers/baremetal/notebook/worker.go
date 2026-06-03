@@ -36,11 +36,13 @@ type Config struct {
 
 // Worker is the notebook worker agent.
 type Worker struct {
-	cfg       Config
-	runtime   Runtime
-	client    *grpcagent.Client
-	mu        sync.Mutex
-	notebooks map[string]*localNotebook
+	cfg           Config
+	runtime       Runtime
+	client        *grpcagent.Client
+	portAllocator func() (int, error)
+	mu            sync.Mutex
+	notebooks     map[string]*localNotebook
+	reservedPorts map[int]struct{}
 }
 
 type localNotebook struct {
@@ -59,17 +61,21 @@ func New(cfg Config) *Worker {
 		AgentAddr:    cfg.AgentAddr,
 		AgentID:      cfg.ID,
 		Kind:         iagent.KindBareMetal,
+		Mode:         cfg.Mode,
 		Hostname:     cfg.Hostname,
 		GPUs:         cfg.GPUs,
 		Capabilities: []string{iagent.CapabilityNotebook},
 	})
 
 	w := &Worker{
-		cfg:       cfg,
-		runtime:   runtime,
-		client:    client,
-		notebooks: make(map[string]*localNotebook),
+		cfg:           cfg,
+		runtime:       runtime,
+		client:        client,
+		portAllocator: nil,
+		notebooks:     make(map[string]*localNotebook),
+		reservedPorts: make(map[int]struct{}),
 	}
+	w.portAllocator = w.allocatePort
 
 	d := client.Dispatcher()
 	_ = grpcagent.RegisterJSON(d, iagent.MethodNotebookProvisionVolume, w.provisionVolume)
@@ -137,7 +143,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		return nil, fmt.Errorf("metadata.name is required")
 	}
 
-	port, err := w.allocatePort()
+	port, err := w.pickPort()
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +159,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 
 	token := uuid.New().String()
 	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", name)
-	target := fmt.Sprintf("localhost:%d", port)
+	target := fmt.Sprintf("127.0.0.1:%d", port)
 
 	go func() {
 		if err := os.MkdirAll(workDir, 0755); err != nil {
@@ -178,8 +184,12 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			OnExit: func(status string) {
 				slog.Info("notebook runtime exited", "name", name, "status", status)
 				w.mu.Lock()
+				nb := w.notebooks[name]
 				delete(w.notebooks, name)
 				w.mu.Unlock()
+				if nb != nil {
+					w.releasePort(nb.port)
+				}
 				w.pushStatus(name, status, "", "", "", 0, "")
 			},
 		})
@@ -195,8 +205,11 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		w.mu.Unlock()
 
 		endpoint := fmt.Sprintf("tunnel://%s?target=%s", w.cfg.ID, target)
-		_ = started // PID and EnvPath available but not needed for proxy endpoint
-		w.pushStatus(name, notebook.StatusRunning, endpoint, workDir, token, started.PID, started.EnvPath)
+		statusToken := started.Token
+		if statusToken == "" {
+			statusToken = token
+		}
+		w.pushStatus(name, notebook.StatusRunning, endpoint, workDir, statusToken, started.PID, started.EnvPath)
 	}()
 
 	return &notebook.WorkerStartResponse{
@@ -217,6 +230,7 @@ func (w *Worker) stopNotebook(_ context.Context, name string) error {
 	if !ok {
 		return nil
 	}
+	w.releasePort(nb.port)
 	return w.runtime.Stop(context.Background(), nb.name)
 }
 
@@ -300,6 +314,9 @@ func (w *Worker) allocatePort() (int, error) {
 	for _, nb := range w.notebooks {
 		used[nb.port] = true
 	}
+	for port := range w.reservedPorts {
+		used[port] = true
+	}
 	w.mu.Unlock()
 
 	for port := start; port <= end; port++ {
@@ -309,13 +326,34 @@ func (w *Worker) allocatePort() (int, error) {
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err == nil {
 			_ = ln.Close()
+			w.mu.Lock()
+			if _, already := w.reservedPorts[port]; already {
+				w.mu.Unlock()
+				continue
+			}
+			w.reservedPorts[port] = struct{}{}
+			w.mu.Unlock()
 			return port, nil
 		}
 	}
 	return 0, fmt.Errorf("no available port in range %s", portRange)
 }
 
-func (w *Worker) releasePort(_ int) {}
+func (w *Worker) releasePort(port int) {
+	if port <= 0 {
+		return
+	}
+	w.mu.Lock()
+	delete(w.reservedPorts, port)
+	w.mu.Unlock()
+}
+
+func (w *Worker) pickPort() (int, error) {
+	if w.portAllocator != nil {
+		return w.portAllocator()
+	}
+	return w.allocatePort()
+}
 
 func parsePortRange(s string) (int, int, error) {
 	parts := strings.SplitN(s, "-", 2)

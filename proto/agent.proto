@@ -37,6 +37,7 @@ message Registration {
   repeated string     capabilities = 5; // "notebook" | "serving" | "pipeline"
   string              cluster_name = 6;
   map<string, string> labels       = 7;
+  string              mode         = 8; // "process" | "docker" for notebook bare-metal workers
 }
 
 // RPCResponse carries the result (or error) for a MasterMessage command.

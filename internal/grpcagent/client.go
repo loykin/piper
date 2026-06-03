@@ -24,6 +24,7 @@ type ClientConfig struct {
 	AgentID string
 	// Registration metadata sent to master on connect.
 	Kind         string
+	Mode         string
 	Hostname     string
 	GPUs         []string
 	Capabilities []string
@@ -142,6 +143,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 			Register: &agentpb.Registration{
 				Id:           c.cfg.AgentID,
 				Kind:         c.cfg.Kind,
+				Mode:         c.cfg.Mode,
 				Hostname:     c.cfg.Hostname,
 				Gpus:         c.cfg.GPUs,
 				Capabilities: c.cfg.Capabilities,

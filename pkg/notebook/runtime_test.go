@@ -17,6 +17,17 @@ func TestJupyterArgsConformance(t *testing.T) {
 	if containerArgs[0] != "start-notebook.py" {
 		t.Fatalf("container entrypoint = %q", containerArgs[0])
 	}
+	joined := append([]string{containerArgs[0]}, processArgs...)
+	foundTrust := false
+	for _, arg := range joined {
+		if arg == "--ServerApp.trust_xheaders=True" {
+			foundTrust = true
+			break
+		}
+	}
+	if !foundTrust {
+		t.Fatal("missing --ServerApp.trust_xheaders=True")
+	}
 	for i, want := range processArgs {
 		if got := containerArgs[i+1]; got != want {
 			t.Fatalf("arg[%d] mismatch: container %q process %q", i, got, want)

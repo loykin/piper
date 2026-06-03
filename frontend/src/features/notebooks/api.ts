@@ -30,6 +30,7 @@ export interface NotebookVolume {
 export interface NotebookWorkerInfo {
   id: string
   kind: 'k8s' | 'baremetal'
+  mode?: 'process' | 'docker'
   hostname: string
   cluster_name?: string
   gpus: string[]
@@ -90,9 +91,10 @@ export async function deleteNotebook(name: string): Promise<void> {
   }
 }
 
-/** Returns the proxy URL for opening a notebook in the browser. */
+/** Returns the master proxy URL for opening a notebook in the browser.
+ *  No token is included — JupyterLab runs without auth and the master is the security boundary. */
 export function notebookProxyURL(name: string): string {
-  return `/notebooks/${name}/proxy/lab`
+  return `/notebooks/${name}/proxy/lab/`
 }
 
 export async function listNotebookVolumes(): Promise<NotebookVolume[]> {

@@ -18,6 +18,7 @@ const (
 type Info struct {
 	ID           string            `json:"id"`
 	Kind         string            `json:"kind"`
+	Mode         string            `json:"mode,omitempty"`
 	Addr         string            `json:"addr,omitempty"`
 	Hostname     string            `json:"hostname,omitempty"`
 	GPUs         []string          `json:"gpus,omitempty"`

@@ -13,6 +13,7 @@ export interface NotebookServer {
   token: string
   worker_id?: string
   volume_id: string
+  yaml: string
   created_at: string
   updated_at: string
 }

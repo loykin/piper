@@ -81,6 +81,10 @@ type StorageConfig struct {
 	// When empty, falls back to S3Config (backward compat) or the built-in file server.
 	URL string `yaml:"url" mapstructure:"url"`
 
+	// Disabled turns off the artifact store entirely.
+	// When true, Piper runs without blobstore-backed artifact storage.
+	Disabled bool `yaml:"disabled" mapstructure:"disabled"`
+
 	// Token is an optional Bearer token for HTTP-based stores.
 	Token string `yaml:"token" mapstructure:"token"`
 }
@@ -219,7 +223,7 @@ func (c Config) Validate() error {
 		}
 	}
 
-	if c.S3.Bucket != "" {
+	if !c.Storage.Disabled && c.Storage.URL == "" && c.S3.Bucket != "" {
 		if c.S3.Endpoint == "" {
 			return fmt.Errorf("source.s3.bucket requires source.s3.endpoint")
 		}

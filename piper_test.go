@@ -1,9 +1,12 @@
 package piper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/pkg/blobstore"
 	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
@@ -121,6 +125,209 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 	}
 	if len(metrics) != 1 || metrics[0].Key != "loss" || metrics[0].Value != 0.312 {
 		t.Fatalf("metrics = %#v, want loss=0.312", metrics)
+	}
+}
+
+func TestHandlerExposesArtifactStoreSettings(t *testing.T) {
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Storage:   StorageConfig{Disabled: true},
+	})
+	router := p.Handler(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		ArtifactStore struct {
+			Status string `json:"status"`
+		} `json:"artifact_store"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ArtifactStore.Status != "disabled" {
+		t.Fatalf("artifact_store.status = %q, want disabled", out.ArtifactStore.Status)
+	}
+}
+
+func TestConfigValidateAllowsStorageURLWithoutLegacyS3(t *testing.T) {
+	cfg := Config{
+		OutputDir: t.TempDir(),
+		Storage: StorageConfig{
+			URL: "file:///tmp/piper-store",
+		},
+		S3: S3Config{
+			Bucket: "legacy-bucket",
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+}
+
+func TestStorageSettingsRoundTrip(t *testing.T) {
+	outputDir := t.TempDir()
+	p := newTestPiper(t, Config{OutputDir: outputDir})
+	router := p.Handler(nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/storage/settings", strings.NewReader(`{"disabled":true,"url":"s3://bucket?endpoint=http://localhost:9000","token":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		RestartRequired bool `json:"restart_required"`
+		Config          struct {
+			Disabled bool   `json:"disabled"`
+			URL      string `json:"url"`
+			Token    string `json:"token"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.RestartRequired {
+		t.Fatal("restart_required = false, want true")
+	}
+	if !out.Config.Disabled || out.Config.URL == "" || out.Config.Token != "secret" {
+		t.Fatalf("config = %#v, want disabled/url/token saved", out.Config)
+	}
+	raw, err := os.ReadFile(filepath.Join(outputDir, "storage.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "disabled: true") || !strings.Contains(string(raw), "bucket") {
+		t.Fatalf("storage.yaml = %s", string(raw))
+	}
+}
+
+func TestStorageSettingsOverrideLoadsOnStartup(t *testing.T) {
+	outputDir := t.TempDir()
+	path := filepath.Join(outputDir, "storage.yaml")
+	if err := os.WriteFile(path, []byte("storage:\n  disabled: true\n  url: s3://bucket?endpoint=http://localhost:9000\n  token: secret\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p := newTestPiper(t, Config{OutputDir: outputDir})
+	if p.store != nil {
+		t.Fatal("storage should be disabled by persisted override")
+	}
+	router := p.Handler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/storage/settings", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Config struct {
+			Disabled bool `json:"disabled"`
+		} `json:"config"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Config.Disabled {
+		t.Fatal("persisted storage override was not loaded")
+	}
+}
+
+func TestStorageObjectManagement(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ls, ok := p.store.(*blobstore.LocalStore)
+	if !ok {
+		t.Fatal("expected local store for test")
+	}
+	if err := ls.Put(context.Background(), "runs/run-1/train/model.txt", strings.NewReader("hello"), int64(len("hello"))); err != nil {
+		t.Fatal(err)
+	}
+	router := p.Handler(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/storage/objects?prefix=runs/run-1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var objs []struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&objs); err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 1 || objs[0].Key != "runs/run-1/train/model.txt" {
+		t.Fatalf("objects = %#v", objs)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/storage/object?key=runs/run-1/train/model.txt", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.String(); got != "hello" {
+		t.Fatalf("download body = %q, want hello", got)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/storage/object?key=runs/run-1/train/model.txt", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestStorageObjectUpload(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	router := p.Handler(nil)
+
+	// Build a real multipart form so the handler exercises FormFile parsing.
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", "report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("hello upload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteField("key", "runs/run-1/train/report.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/storage/object", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "report.txt") {
+		t.Fatalf("upload response = %s", rec.Body.String())
+	}
+	ls, ok := p.store.(*blobstore.LocalStore)
+	if !ok {
+		t.Fatal("expected local store")
+	}
+	rc, err := ls.Get(context.Background(), "runs/run-1/train/report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello upload" {
+		t.Fatalf("stored object = %q, want hello upload", string(got))
 	}
 }
 

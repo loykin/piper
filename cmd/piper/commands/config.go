@@ -31,8 +31,9 @@ type configFile struct {
 }
 
 type storageSection struct {
-	URL   string `yaml:"url"   mapstructure:"url"`
-	Token string `yaml:"token" mapstructure:"token"`
+	URL      string `yaml:"url"      mapstructure:"url"`
+	Disabled bool   `yaml:"disabled" mapstructure:"disabled"`
+	Token    string `yaml:"token"    mapstructure:"token"`
 }
 
 type runSection struct {
@@ -179,6 +180,11 @@ func (c *configFile) toConfig() piper.Config {
 			Bucket:    c.Source.S3.Bucket,
 			UseSSL:    c.Source.S3.UseSSL,
 		},
+		Storage: piper.StorageConfig{
+			URL:      c.Storage.URL,
+			Disabled: c.Storage.Disabled,
+			Token:    c.Storage.Token,
+		},
 		Server: piper.ServerConfig{
 			Addr:  c.Server.Addr,
 			Token: c.Server.Token,
@@ -264,6 +270,9 @@ func NewPiper() (*piper.Piper, error) {
 // resolveStorageURLFromViper derives the storage URL for workers/embedded workers.
 // Priority: storage.url > source.s3.* (backward compat with pre-blobstore configs).
 func resolveStorageURLFromViper() string {
+	if viper.GetBool("storage.disabled") {
+		return ""
+	}
 	if u := viper.GetString("storage.url"); u != "" {
 		return u
 	}

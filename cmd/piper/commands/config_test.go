@@ -38,6 +38,9 @@ source:
   git:
     token: ghp_abc
     user: bot
+storage:
+  disabled: true
+  url: s3://artifact-bucket?endpoint=http://minio:9000&s3ForcePathStyle=true&accessKey=admin&secretKey=password
 server:
   addr: :8080
   token: secret
@@ -191,6 +194,11 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 				User:  "bot",
 			},
 		},
+		Storage: storageSection{
+			URL:      "s3://artifact-bucket?endpoint=http://minio:9000&s3ForcePathStyle=true&accessKey=admin&secretKey=password",
+			Disabled: true,
+			Token:    "store-token",
+		},
 		Server: serverSection{
 			Addr:  ":9090",
 			Token: "srv-token",
@@ -268,6 +276,12 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 	}
 	if !cfg.S3.UseSSL {
 		t.Error("S3.UseSSL = false, want true")
+	}
+	if !cfg.Storage.Disabled {
+		t.Error("Storage.Disabled = false, want true")
+	}
+	if cfg.Storage.URL == "" {
+		t.Error("Storage.URL = empty, want configured URL")
 	}
 	if cfg.Git.Token != "tok" {
 		t.Errorf("Git.Token = %q, want tok", cfg.Git.Token)

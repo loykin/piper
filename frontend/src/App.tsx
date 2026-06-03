@@ -15,7 +15,7 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database } from 'lucide-react'
 import RunDetailPage from '@/pages/RunDetailPage'
 import WorkflowsPage from '@/pages/WorkflowsPage'
 import WorkflowCreatePage from '@/pages/WorkflowCreatePage'
@@ -27,7 +27,10 @@ import ServingHistoryPage from '@/pages/ServingHistoryPage'
 import WorkersPage from '@/pages/WorkersPage'
 import NotebooksPage from '@/pages/NotebooksPage'
 import NotebookCreatePage from '@/pages/NotebookCreatePage'
+import NotebookDetailPage from '@/pages/NotebookDetailPage'
+import NotebookPromotePage from '@/pages/NotebookPromotePage'
 import NotebookVolumesPage from '@/pages/NotebookVolumesPage'
+import StoragePage from '@/pages/StoragePage'
 
 const navGroups = [
   {
@@ -55,6 +58,7 @@ const navGroups = [
     label: 'Infrastructure',
     items: [
       { id: 'workers', label: 'Workers', icon: Cpu, to: '/workers' },
+      { id: 'storage', label: 'Storage', icon: Database, to: '/storage' },
     ],
   },
 ]
@@ -132,7 +136,10 @@ export default function App() {
                 <Route path="/workers" element={<WorkersPage />} />
                 <Route path="/notebooks" element={<NotebooksPage />} />
                 <Route path="/notebooks/create" element={<NotebookCreatePage />} />
+                <Route path="/notebooks/:name" element={<NotebookDetailPage />} />
+                <Route path="/notebooks/:name/promote" element={<NotebookPromotePage />} />
                 <Route path="/notebook-volumes" element={<NotebookVolumesPage />} />
+                <Route path="/storage" element={<StoragePage />} />
                 {/* Legacy redirects */}
                 <Route path="/services" element={<Navigate to="/serving" replace />} />
                 <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />

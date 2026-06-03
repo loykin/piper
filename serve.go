@@ -170,6 +170,103 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		c.Next()
 	})
 
+	r.GET("/api/settings", func(c *gin.Context) {
+		c.JSON(http.StatusOK, p.Settings())
+	})
+	r.GET("/api/storage/settings", func(c *gin.Context) {
+		view, err := p.StorageSettings()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	})
+	r.PUT("/api/storage/settings", func(c *gin.Context) {
+		var cfg StorageConfig
+		if err := c.ShouldBindJSON(&cfg); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		view, err := p.UpdateStorageSettings(cfg)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, view)
+	})
+	r.POST("/api/storage/object", func(c *gin.Context) {
+		file, header, err := c.Request.FormFile("file")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing file"})
+			return
+		}
+		defer func() { _ = file.Close() }()
+		key := strings.TrimSpace(c.PostForm("key"))
+		if key == "" {
+			key = header.Filename
+		}
+		if err := p.UploadStorageObject(c.Request.Context(), key, file, header.Size); err != nil {
+			status := http.StatusInternalServerError
+			if p.store == nil {
+				status = http.StatusServiceUnavailable
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"key": key})
+	})
+	r.GET("/api/storage/objects", func(c *gin.Context) {
+		prefix := c.Query("prefix")
+		objs, err := p.ListStorageObjects(c.Request.Context(), prefix)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if p.store == nil {
+				status = http.StatusServiceUnavailable
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, objs)
+	})
+	r.GET("/api/storage/object", func(c *gin.Context) {
+		key := strings.TrimSpace(c.Query("key"))
+		if key == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
+			return
+		}
+		rc, filename, err := p.OpenStorageObject(c.Request.Context(), key)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if err == blobstore.ErrNotFound {
+				status = http.StatusNotFound
+			} else if p.store == nil {
+				status = http.StatusServiceUnavailable
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		defer func() { _ = rc.Close() }()
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Status(http.StatusOK)
+		_, _ = io.Copy(c.Writer, rc)
+	})
+	r.DELETE("/api/storage/object", func(c *gin.Context) {
+		key := strings.TrimSpace(c.Query("key"))
+		if key == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
+			return
+		}
+		if err := p.DeleteStorageObject(c.Request.Context(), key); err != nil {
+			status := http.StatusInternalServerError
+			if p.store == nil {
+				status = http.StatusServiceUnavailable
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
 	// Run domain
 	run.NewHandler(run.HandlerDeps{
 		Runs:    p.repos.Run,

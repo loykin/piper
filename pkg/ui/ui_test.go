@@ -7,16 +7,18 @@ import (
 )
 
 func TestHandlerFallsBackForSPARoutes(t *testing.T) {
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/notebooks", nil)
+	for _, path := range []string{"/notebooks", "/notebooks/demo", "/notebooks/demo/promote", "/storage"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
 
-	Handler().ServeHTTP(rec, req)
+		Handler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.String())
-	}
-	if rec.Header().Get("Content-Type") == "application/json" {
-		t.Fatal("SPA route returned API response")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("path %q status = %d, want 200; body=%q", path, rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("Content-Type") == "application/json" {
+			t.Fatalf("path %q returned API response", path)
+		}
 	}
 }
 

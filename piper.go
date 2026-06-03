@@ -66,6 +66,7 @@ type Piper struct {
 	grpcAgentServer *grpcagent.Server
 	store           blobstore.Store   // nil when no artifact store configured
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
+	storageErr      error             // last artifact store open error, if any
 	resolver        artifact.Resolver // central artifact resolver
 	backend         backend.ExecutionBackend
 	events          *event.Hub
@@ -96,6 +97,11 @@ func New(cfg Config) (*Piper, error) {
 	}
 	if cfg.Schedule.MisfireGracePeriod == 0 {
 		cfg.Schedule.MisfireGracePeriod = def.Schedule.MisfireGracePeriod
+	}
+	if persistedStorage, ok, err := loadStorageSettings(filepath.Join(cfg.OutputDir, "storage.yaml"), cfg.Storage); err != nil {
+		return nil, fmt.Errorf("load storage settings: %w", err)
+	} else if ok {
+		cfg.Storage = persistedStorage
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -172,6 +178,7 @@ func New(cfg Config) (*Piper, error) {
 		}
 		if st, err := blobstore.Open(storageURL, token); err != nil {
 			slog.Warn("artifact store unavailable", "url", storageURL, "err", err)
+			p.storageErr = err
 		} else {
 			p.store = st
 			p.storageURL = storageURL
@@ -804,12 +811,15 @@ func (p *Piper) modelDir(serviceName string) string {
 }
 
 // ResolveStorageURL derives the effective storage URL from the config.
-// Priority: Storage.URL > S3Config (backward compat) > empty (no artifact store).
+// Priority: Storage.Disabled -> empty; Storage.URL > S3Config (backward compat) > file://{output_dir}/store.
 func (cfg Config) ResolveStorageURL() string { return resolveStorageURL(cfg) }
 
 // resolveStorageURL is the internal implementation.
-// Priority: Storage.URL > S3Config (backward compat) > file://{output_dir}/store (built-in).
+// Priority: Storage.Disabled -> empty; Storage.URL > S3Config (backward compat) > file://{output_dir}/store (built-in).
 func resolveStorageURL(cfg Config) string {
+	if cfg.Storage.Disabled {
+		return ""
+	}
 	if cfg.Storage.URL != "" {
 		return cfg.Storage.URL
 	}

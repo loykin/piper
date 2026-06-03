@@ -1,4 +1,5 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
+import { Link } from 'react-router-dom'
 import { ExternalLink, HardDriveDownload, Play, Square, Trash2 } from 'lucide-react'
 import { IconButton } from '@/components/ui/icon-button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -19,7 +20,15 @@ export function getNotebookColumns(
       accessorKey: 'name',
       header: 'Name',
       meta: { minWidth: 160 },
-      cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+      cell: ({ row }) => (
+        <Link
+          to={`/notebooks/${row.original.name}`}
+          className="font-medium text-primary hover:underline"
+          onClick={e => e.stopPropagation()}
+        >
+          {row.original.name}
+        </Link>
+      ),
     },
     {
       accessorKey: 'status',

@@ -110,7 +110,7 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 		return nil, err
 	}
 	for _, id := range existing {
-		if _, err := r.client.ContainerRemove(ctx, id, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
+		if err := r.removeContainer(ctx, id); err != nil {
 			return nil, fmt.Errorf("remove existing notebook container %s: %w", id, err)
 		}
 	}
@@ -142,7 +142,7 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 				status = "failed"
 			}
 		}
-		_, _ = r.client.ContainerRemove(context.Background(), created.ID, dockerclient.ContainerRemoveOptions{Force: true})
+		_ = r.removeContainer(context.Background(), created.ID)
 		r.mu.Lock()
 		delete(r.containers, req.Name)
 		r.mu.Unlock()
@@ -177,9 +177,6 @@ func (r *dockerRuntime) Stop(ctx context.Context, name string) error {
 	if _, err := r.client.ContainerStop(ctx, id, dockerclient.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		return fmt.Errorf("stop notebook container: %w", err)
 	}
-	if _, err := r.client.ContainerRemove(ctx, id, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
-		return fmt.Errorf("remove notebook container: %w", err)
-	}
 	return nil
 }
 
@@ -203,7 +200,7 @@ func (r *dockerRuntime) KillAll(ctx context.Context) error {
 		}
 		seen[id] = true
 		_, _ = r.client.ContainerStop(ctx, id, dockerclient.ContainerStopOptions{Timeout: &timeout})
-		if _, err := r.client.ContainerRemove(ctx, id, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
+		if err := r.removeContainer(ctx, id); err != nil {
 			slog.Warn("remove notebook container failed", "container_id", id, "err", err)
 		}
 	}
@@ -315,6 +312,18 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 			Mounts:         mounts,
 		},
 	}, nil
+}
+
+func (r *dockerRuntime) removeContainer(ctx context.Context, id string) error {
+	_, err := r.client.ContainerRemove(ctx, id, dockerclient.ContainerRemoveOptions{Force: true})
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "is already in progress") || strings.Contains(msg, "No such container") {
+		return nil
+	}
+	return err
 }
 
 func (r *dockerRuntime) findManagedContainer(ctx context.Context, name string) ([]string, error) {

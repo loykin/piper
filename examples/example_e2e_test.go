@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +28,7 @@ import (
 	piper "github.com/piper/piper"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
+	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
 	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 	"gopkg.in/yaml.v3"
 )
@@ -79,6 +79,28 @@ func waitReady(t *testing.T, url string, timeout time.Duration) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("server at %s did not become ready within %s", url, timeout)
+}
+
+func waitAgentRegistered(t *testing.T, serverURL, id string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(serverURL + "/api/agents")
+		if err == nil {
+			var agents []struct {
+				ID string `json:"id"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			resp.Body.Close()
+			for _, agent := range agents {
+				if agent.ID == id {
+					return
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("agent %q did not register within %s", id, timeout)
 }
 
 // submitPipeline posts a pipeline YAML to baseURL/runs and returns the run ID.
@@ -282,10 +304,12 @@ func TestExampleArtifacts(t *testing.T) {
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	tmpDir := t.TempDir()
 
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "example-notebook.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 
 	storeDir := filepath.Join(tmpDir, "store")
@@ -379,104 +403,49 @@ func TestExampleNotebookServerYAMLs(t *testing.T) {
 
 // TestExampleNotebookBaremetal tests the full notebook lifecycle (create →
 // running → stop → stopped) through the AgentDriver baremetal path using an
-// in-process piper server and a fake httptest notebook worker.
+// in-process piper server and a real notebook worker agent.
 func TestExampleNotebookBaremetal(t *testing.T) {
 	port := freePort(t)
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	tmpDir := t.TempDir()
 
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "example-notebook.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
 	p, err := piper.New(piper.Config{
-		DB:     db,
-		Server: piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
+		DB: db,
+		Server: piper.ServerConfig{
+			Addr:      fmt.Sprintf(":%d", port),
+			AgentAddr: fmt.Sprintf("127.0.0.1:%d", freePort(t)),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = p.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	t.Cleanup(func() {
+		cancel()
+		time.Sleep(500 * time.Millisecond)
+		_ = p.Close()
+	})
 
 	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
 	waitReady(t, serverURL+"/runs", 10*time.Second)
 
-	workDir := filepath.Join(tmpDir, "nb-workdir")
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
 	const nbName = "e2e-nb-baremetal"
 
-	// Fake baremetal notebook worker: handles /volume, /start, DELETE /notebook/:name.
-	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/volume":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"work_dir": workDir})
-
-		case r.Method == http.MethodPost && r.URL.Path == "/start":
-			w.WriteHeader(http.StatusAccepted)
-			go func() {
-				time.Sleep(150 * time.Millisecond)
-				cb, _ := json.Marshal(map[string]any{
-					"status":   "running",
-					"endpoint": "",
-					"work_dir": workDir,
-					"token":    "test-token",
-					"pid":      0,
-					"env":      "",
-				})
-				req, _ := http.NewRequest(http.MethodPatch, serverURL+"/api/notebooks/"+nbName+"/status", bytes.NewReader(cb))
-				req.Header.Set("Content-Type", "application/json")
-				_, _ = http.DefaultClient.Do(req)
-			}()
-
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/notebook/"):
-			name := strings.TrimPrefix(r.URL.Path, "/notebook/")
-			w.WriteHeader(http.StatusOK)
-			go func() {
-				time.Sleep(150 * time.Millisecond)
-				cb, _ := json.Marshal(map[string]any{
-					"status":   "stopped",
-					"endpoint": "",
-					"work_dir": workDir,
-					"token":    "",
-					"pid":      0,
-					"env":      "",
-				})
-				req, _ := http.NewRequest(http.MethodPatch, serverURL+"/api/notebooks/"+name+"/status", bytes.NewReader(cb))
-				req.Header.Set("Content-Type", "application/json")
-				_, _ = http.DefaultClient.Do(req)
-			}()
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer fake.Close()
-
-	// Register the fake worker with the piper server.
-	regBody, _ := json.Marshal(map[string]any{
-		"id":       "fake-bm-1",
-		"addr":     fake.URL,
-		"hostname": "fake-host",
-		"gpus":     []string{},
+	nw := notebookworker.New(notebookworker.Config{
+		AgentAddr:     p.Config().Server.AgentAddr,
+		NotebooksRoot: tmpDir,
+		Hostname:      "fake-host",
+		ID:            "fake-bm-1",
 	})
-	regResp, err := http.Post(serverURL+"/api/notebook-workers", "application/json", bytes.NewReader(regBody))
-	if err != nil {
-		t.Fatalf("register worker: %v", err)
-	}
-	regResp.Body.Close()
-	if regResp.StatusCode != http.StatusOK {
-		t.Fatalf("register worker: status %d", regResp.StatusCode)
-	}
-	t.Logf("fake worker registered at %s", fake.URL)
+	go func() { _ = nw.Run(ctx) }()
+	waitAgentRegistered(t, serverURL, "fake-bm-1", 10*time.Second)
 
 	// Create notebook with baremetal spec.
 	const nbYAML = "metadata:\n  name: " + nbName + "\nspec:\n  process: {}\n"

@@ -1,7 +1,9 @@
 package grpcagent
 
 import (
+	"context"
 	"io"
+	"sync"
 	"testing"
 	"time"
 )
@@ -34,4 +36,57 @@ func TestWorkerConnDeliverProxyDataDoesNotBlockBeforePipeRead(t *testing.T) {
 
 	proxyChannelClose(pc.incoming)
 	_ = pw.Close()
+}
+
+func TestWorkerConnPushLoopProcessesMessagesInOrder(t *testing.T) {
+	conn := newWorkerConn("agent-1", nil)
+	releaseFirst := make(chan struct{})
+	seenSecond := make(chan struct{})
+	var mu sync.Mutex
+	got := make([]string, 0, 2)
+
+	go conn.runPushLoop(func(ctx context.Context, method string, payload []byte) {
+		mu.Lock()
+		got = append(got, method)
+		mu.Unlock()
+		if method == "one" {
+			<-releaseFirst
+		}
+		if method == "two" {
+			select {
+			case <-seenSecond:
+			default:
+				close(seenSecond)
+			}
+		}
+	})
+
+	if !conn.pushQueue.enqueue(pushMessage{method: "one"}) {
+		t.Fatal("enqueue one failed")
+	}
+	if !conn.pushQueue.enqueue(pushMessage{method: "two"}) {
+		t.Fatal("enqueue two failed")
+	}
+
+	select {
+	case <-seenSecond:
+		t.Fatal("second push was processed before the first completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	select {
+	case <-seenSecond:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("second push was not processed")
+	}
+
+	conn.pushQueue.close()
+	<-conn.pushDone
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || got[0] != "one" || got[1] != "two" {
+		t.Fatalf("push order = %v, want [one two]", got)
+	}
 }

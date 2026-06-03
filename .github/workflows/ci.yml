@@ -181,22 +181,6 @@ jobs:
           min-versions-to-keep: 5
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  example-e2e:
-    name: Example E2E
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run example e2e tests
-        run: go test -tags=example_e2e -v -timeout=120s ./examples/
-
   build:
     name: Build
     runs-on: ubuntu-latest

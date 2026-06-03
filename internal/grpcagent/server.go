@@ -35,6 +35,59 @@ type Server struct {
 	pushHandler PushHandler
 }
 
+type pushMessage struct {
+	method  string
+	payload []byte
+}
+
+type pushQueue struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	items  []pushMessage
+	closed bool
+}
+
+func newPushQueue() *pushQueue {
+	q := &pushQueue{}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *pushQueue) enqueue(msg pushMessage) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return false
+	}
+	q.items = append(q.items, msg)
+	q.cond.Signal()
+	return true
+}
+
+func (q *pushQueue) next() (pushMessage, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.items) == 0 && !q.closed {
+		q.cond.Wait()
+	}
+	if len(q.items) == 0 {
+		return pushMessage{}, false
+	}
+	msg := q.items[0]
+	q.items[0] = pushMessage{}
+	q.items = q.items[1:]
+	return msg, true
+}
+
+func (q *pushQueue) close() {
+	q.mu.Lock()
+	if !q.closed {
+		q.closed = true
+		q.cond.Broadcast()
+	}
+	q.mu.Unlock()
+}
+
 // Registration carries the metadata a worker sends on first connect.
 type Registration struct {
 	ID           string
@@ -103,6 +156,7 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 		go s.onReg(info)
 	}
 	slog.Info("grpc agent connected", "id", reg.Id, "kind", reg.Kind, "hostname", reg.Hostname)
+	go conn.runPushLoop(s.pushHandler)
 
 	// Read loop: handle RPC responses, status pushes, and proxy frames from the worker.
 	for {
@@ -117,9 +171,8 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 		case *agentpb.WorkerMessage_Response:
 			conn.deliver(p.Response)
 		case *agentpb.WorkerMessage_Push:
-			if s.pushHandler != nil {
-				go s.pushHandler(stream.Context(), p.Push.Method, p.Push.Payload)
-			}
+			payload := append([]byte(nil), p.Push.Payload...)
+			conn.pushQueue.enqueue(pushMessage{method: p.Push.Method, payload: payload})
 		case *agentpb.WorkerMessage_ProxyData:
 			conn.deliverProxyData(p.ProxyData.ChannelId, p.ProxyData.Data)
 		case *agentpb.WorkerMessage_ProxyClose:
@@ -250,6 +303,8 @@ type workerConn struct {
 	writeMu       sync.Mutex
 	pending       sync.Map // requestID → chan *agentpb.RPCResponse
 	proxyChannels sync.Map // channelID → *proxyChannel
+	pushQueue     *pushQueue
+	pushDone      chan struct{}
 	closed        chan struct{}
 	once          sync.Once
 }
@@ -264,9 +319,24 @@ type proxyChannel struct {
 
 func newWorkerConn(agentID string, stream agentpb.AgentService_ConnectServer) *workerConn {
 	return &workerConn{
-		agentID: agentID,
-		stream:  stream,
-		closed:  make(chan struct{}),
+		agentID:   agentID,
+		stream:    stream,
+		pushQueue: newPushQueue(),
+		pushDone:  make(chan struct{}),
+		closed:    make(chan struct{}),
+	}
+}
+
+func (c *workerConn) runPushLoop(handler PushHandler) {
+	defer close(c.pushDone)
+	for {
+		msg, ok := c.pushQueue.next()
+		if !ok {
+			return
+		}
+		if handler != nil {
+			handler(context.Background(), msg.method, msg.payload)
+		}
 	}
 }
 
@@ -345,6 +415,8 @@ func (c *workerConn) deliverProxyClose(channelID, errMsg string) {
 func (c *workerConn) close() {
 	c.once.Do(func() {
 		close(c.closed)
+		c.pushQueue.close()
+		<-c.pushDone
 		c.proxyChannels.Range(func(_, pcAny any) bool {
 			pc := pcAny.(*proxyChannel)
 			_ = pc.pw.CloseWithError(io.ErrUnexpectedEOF)

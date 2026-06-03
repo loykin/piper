@@ -48,8 +48,9 @@ type processRuntime struct {
 }
 
 type processNotebook struct {
-	pid int
-	cmd *exec.Cmd
+	pid     int
+	cmd     *exec.Cmd
+	stopped bool
 }
 
 func newProcessRuntime() *processRuntime {
@@ -87,8 +88,15 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 
 	workload.WatchProcess(cmd, func(status string) {
 		r.mu.Lock()
-		delete(r.notebooks, req.Name)
+		nb, ok := r.notebooks[req.Name]
+		if ok {
+			delete(r.notebooks, req.Name)
+		}
+		stopped := ok && nb.stopped
 		r.mu.Unlock()
+		if stopped {
+			status = "stopped"
+		}
 		if req.OnExit != nil {
 			req.OnExit(status)
 		}
@@ -107,11 +115,11 @@ func (r *processRuntime) Stop(_ context.Context, name string) error {
 	r.mu.Lock()
 	nb, ok := r.notebooks[name]
 	if ok {
-		delete(r.notebooks, name)
+		nb.stopped = true
 	}
 	r.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("notebook not found")
+		return nil
 	}
 	workload.KillPID(nb.pid)
 	return nil

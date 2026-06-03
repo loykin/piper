@@ -2,7 +2,9 @@ package piper
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -138,6 +140,60 @@ func New(cfg Config) (*Piper, error) {
 
 	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook))
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
+	grpcSrv.SetPushHandler(func(ctx context.Context, method string, payload []byte) {
+		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		switch method {
+		case iagent.MethodNotebookStatusUpdate:
+			var body struct {
+				Name     string `json:"name"`
+				Status   string `json:"status"`
+				Endpoint string `json:"endpoint"`
+				WorkDir  string `json:"work_dir"`
+				Token    string `json:"token"`
+				PID      int    `json:"pid"`
+				Env      string `json:"env"`
+			}
+			if err := json.Unmarshal(payload, &body); err != nil {
+				slog.Warn("notebook status push unmarshal failed", "err", err)
+				return
+			}
+			if body.Name == "" {
+				slog.Warn("notebook status push missing name")
+				return
+			}
+			if err := nbMgr.UpdateStatus(pushCtx, body.Name, body.Status, body.Endpoint, body.WorkDir, body.Token, body.PID, body.Env); err != nil {
+				slog.Warn("notebook status push failed", "name", body.Name, "status", body.Status, "err", err)
+			}
+		case iagent.MethodServingStatusUpdate:
+			var body struct {
+				Name     string `json:"name"`
+				Status   string `json:"status"`
+				Endpoint string `json:"endpoint"`
+			}
+			if err := json.Unmarshal(payload, &body); err != nil {
+				slog.Warn("serving status push unmarshal failed", "err", err)
+				return
+			}
+			if body.Name == "" {
+				slog.Warn("serving status push missing name")
+				return
+			}
+			for attempt := 0; attempt < 20; attempt++ {
+				if err := servingMgr.UpdateStatus(pushCtx, body.Name, body.Status, body.Endpoint); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						time.Sleep(50 * time.Millisecond)
+						continue
+					}
+					slog.Warn("serving status push failed", "name", body.Name, "status", body.Status, "err", err)
+				}
+				return
+			}
+			slog.Warn("serving status push delayed too long", "name", body.Name, "status", body.Status)
+		default:
+			slog.Warn("unknown worker push method", "method", method)
+		}
+	})
 
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)

@@ -53,12 +53,32 @@ func newE2EServer(t *testing.T) (*Piper, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	agentAddr := startE2EAgentServer(t, p)
+	p.cfg.Server.AgentAddr = agentAddr
 	srv := httptest.NewServer(p.Handler(nil))
 	t.Cleanup(func() {
 		srv.Close()
 		_ = p.Close()
 	})
 	return p, srv
+}
+
+func startE2EAgentServer(t *testing.T, p *Piper) string {
+	t.Helper()
+	port := freeE2EPort(t)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcSrv := p.grpcAgentServer.GRPCServer()
+	go func() {
+		if err := grpcSrv.Serve(lis); err != nil {
+			t.Logf("grpc agent server stopped: %v", err)
+		}
+	}()
+	t.Cleanup(grpcSrv.GracefulStop)
+	return addr
 }
 
 // startE2EWorker starts a worker goroutine connected to masterURL.
@@ -83,20 +103,43 @@ func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config
 	go func() { _ = w.Run(ctx) }()
 }
 
-func startE2EServingWorker(t *testing.T, masterURL, id string) {
+func startE2EServingWorker(t *testing.T, httpURL, agentAddr, id string) {
 	t.Helper()
-	port := freeE2EPort(t)
 	w := servingworker.New(servingworker.Config{
-		MasterURL:     masterURL,
-		Addr:          fmt.Sprintf("127.0.0.1:%d", port),
-		AdvertiseAddr: fmt.Sprintf("http://127.0.0.1:%d", port),
-		Hostname:      id,
-		ID:            id,
+		AgentAddr: agentAddr,
+		Hostname:  id,
+		ID:        id,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go func() { _ = w.Run(ctx) }()
-	waitE2EAgent(t, masterURL, id, 5*time.Second)
+	errCh := make(chan error, 1)
+	go func() { errCh <- w.Run(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("serving worker failed to start: %v", err)
+			}
+			t.Fatalf("serving worker exited before registering")
+		default:
+		}
+		resp, err := http.Get(httpURL + "/api/agents")
+		if err == nil {
+			var agents []struct {
+				ID string `json:"id"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			resp.Body.Close()
+			for _, agent := range agents {
+				if agent.ID == id {
+					return
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("agent %q did not register within %s", id, 5*time.Second)
 }
 
 func freeE2EPort(t *testing.T) int {
@@ -266,6 +309,8 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	agentAddr := startE2EAgentServer(t, p)
+	p.cfg.Server.AgentAddr = agentAddr
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort))
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +324,7 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	})
 
 	startE2EWorker(t, srv.URL)
-	startE2EServingWorker(t, srv.URL, "serving-agent")
+	startE2EServingWorker(t, srv.URL, p.cfg.Server.AgentAddr, "serving-agent")
 	pipelineAgentID := findE2EAgentByCapability(t, srv.URL, "pipeline")
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
@@ -522,6 +567,38 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *httptest.Serv
 	if err != nil {
 		t.Fatal(err)
 	}
+	agentAddr := startE2EAgentServer(t, p)
+	p.cfg.Server.AgentAddr = agentAddr
+	srv := httptest.NewServer(p.Handler(nil))
+	t.Cleanup(func() {
+		srv.Close()
+		_ = p.Close()
+	})
+	return p, srv
+}
+
+func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (*Piper, *httptest.Server) {
+	t.Helper()
+
+	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name() + "-storage")
+	dsn := fmt.Sprintf("file:e2e_%s?mode=memory&cache=shared", safeName)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+
+	p, err := New(Config{
+		OutputDir: outputDir,
+		DB:        db,
+		Storage:   StorageConfig{URL: storageURL},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentAddr := startE2EAgentServer(t, p)
+	p.cfg.Server.AgentAddr = agentAddr
 	srv := httptest.NewServer(p.Handler(nil))
 	t.Cleanup(func() {
 		srv.Close()
@@ -591,16 +668,6 @@ func getE2EService(t *testing.T, serverURL, serviceName string) struct {
 	return svc
 }
 
-// extractPort returns the numeric port string from a URL like "http://127.0.0.1:PORT".
-func extractPort(rawURL string) string {
-	// rawURL has the form "http://host:port"
-	idx := strings.LastIndex(rawURL, ":")
-	if idx < 0 {
-		return ""
-	}
-	return rawURL[idx+1:]
-}
-
 // TestE2E_OnSuccessDeployTriggersRedeploy verifies that the on_success.deploy hook
 // updates the service record's run_id after a successful pipeline run.
 //
@@ -623,39 +690,26 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 	// Shared output directory for server and worker.
 	outputDir := t.TempDir()
 
-	piperInst, srv := newE2EServerWithDir(t, outputDir)
+	faker := gofakes3.New(s3mem.New())
+	fakeSrv := httptest.NewServer(faker.Server())
+	t.Cleanup(fakeSrv.Close)
+	s3Client := newE2ES3Client(t, fakeSrv.URL)
+	if _, err := s3Client.CreateBucket(context.Background(), &s3sdk.CreateBucketInput{Bucket: aws.String(e2eBucket)}); err != nil {
+		t.Fatal(err)
+	}
+	storageURL := fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
+
+	piperInst, srv := newE2EServerWithDirAndStorage(t, outputDir, storageURL)
 	t.Cleanup(func() {
 		_ = piperInst.StopService(context.Background(), serviceName)
 	})
 
-	// Fake serving worker: accepts deploy/stop requests so the WorkerDriver can succeed.
-	fakeWorkerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(fakeWorkerSrv.Close)
+	startE2EServingWorker(t, srv.URL, piperInst.cfg.Server.AgentAddr, "fake-serving-worker")
 
-	// Register the fake worker with the piper server.
-	workerPayload, _ := json.Marshal(map[string]any{
-		"id":   "fake-serving-worker",
-		"addr": fakeWorkerSrv.URL,
-	})
-	resp, err := http.Post(srv.URL+"/api/serving-workers", "application/json", bytes.NewReader(workerPayload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("register fake serving worker status = %d", resp.StatusCode)
-	}
-
-	svcPort := extractPort(fakeWorkerSrv.URL)
-	if svcPort == "" {
-		t.Fatal("could not extract port from fake worker URL:", fakeWorkerSrv.URL)
-	}
-
-	// Worker shares the same outputDir as the server.
+	// Worker shares the same storage backend as the server.
 	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
 		cfg.OutputDir = outputDir
+		cfg.StorageURL = storageURL
 	})
 
 	// Pipeline YAML with on_success.deploy wired to our service.
@@ -693,8 +747,8 @@ spec:
       run: "latest"
   runtime:
     command: ["sleep", "60"]
-    port: %s
-`, serviceName, pipelineName, stepName, artifactName, svcPort)
+    port: 18080
+`, serviceName, pipelineName, stepName, artifactName)
 
 	// ----- First run: creates the initial successful run record -----
 	firstRunID := postRun(t, srv.URL, pipelineYAML)

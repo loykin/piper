@@ -64,9 +64,7 @@ func Open(path string) (*Repos, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	configureSQLiteDB(db)
 	return newRepos(db, "sqlite", true)
 }
 
@@ -82,10 +80,22 @@ func OpenPostgres(dsn string) (*Repos, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
+	configurePostgresDB(db)
+	return newRepos(db, "postgres", true)
+}
+
+func configureSQLiteDB(db *sqlx.DB) {
+	// SQLite is sensitive to concurrent writers. Keep the pool conservative so
+	// the database/sql pool does not create avoidable lock contention.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+}
+
+func configurePostgresDB(db *sqlx.DB) {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
-	return newRepos(db, "postgres", true)
 }
 
 func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {

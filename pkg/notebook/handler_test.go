@@ -1,78 +1,50 @@
 package notebook
 
 import (
-	"crypto/tls"
 	"net/http"
-	"net/http/httptest"
 	"testing"
+
+	"github.com/piper/piper/internal/tunnelproxy"
 )
 
-func TestInjectNotebookTokenInjectsWhenNoCookie(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/lab/?foo=bar", nil)
-	got := injectNotebookToken(req, "tok-123")
-	if got != "foo=bar&token=tok-123" {
-		t.Fatalf("query = %q", got)
-	}
-}
-
-func TestInjectNotebookTokenSkipsWhenCookiePresent(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/lab/", nil)
-	req.AddCookie(&http.Cookie{Name: "username-127-0-0-1-8888", Value: "x"})
-	got := injectNotebookToken(req, "tok-123")
-	if got != "" {
-		t.Fatalf("query = %q, want empty", got)
-	}
-}
-
-func TestInjectNotebookTokenNoOpWhenTokenEmpty(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/lab/?foo=bar", nil)
-	got := injectNotebookToken(req, "")
-	if got != "foo=bar" {
-		t.Fatalf("query = %q", got)
-	}
-}
-
-func TestIsWebSocketUpgrade(t *testing.T) {
-	req, err := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/api/kernels/x/channels", nil)
+func TestNotebookProxyPolicyRewriteRequest(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/lab/?foo=bar", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Connection", "keep-alive, Upgrade")
-
-	if !isWebSocketUpgrade(req) {
-		t.Fatal("expected websocket upgrade")
-	}
-}
-
-func TestIsWebSocketUpgradeRejectsNormalHTTP(t *testing.T) {
-	req, err := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/lab", nil)
+	req.Header.Set("Origin", "http://localhost:8080")
+	policy, err := tunnelproxy.BuildPolicy("notebook", tunnelproxy.PolicyContext{
+		Request:     req,
+		Name:        "jj",
+		Token:       "tok-123",
+		Host:        "localhost:8080",
+		Scheme:      "http",
+		ProxyPrefix: "/notebooks/jj/proxy",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if isWebSocketUpgrade(req) {
-		t.Fatal("normal HTTP request was treated as websocket")
+	if err := policy.RewriteRequest(req); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestNormalizeNotebookProxySubPath(t *testing.T) {
-	cases := map[string]string{
-		"":             "/",
-		"lab":          "/lab",
-		"/lab":         "/lab",
-		"/api/kernels": "/api/kernels",
+	if got, want := req.Header.Get("X-Forwarded-Host"), "localhost:8080"; got != want {
+		t.Fatalf("X-Forwarded-Host = %q, want %q", got, want)
 	}
-	for in, want := range cases {
-		if got := normalizeNotebookProxySubPath(in); got != want {
-			t.Fatalf("normalizeNotebookProxySubPath(%q) = %q, want %q", in, got, want)
-		}
+	if got, want := req.Header.Get("X-Forwarded-Proto"), "http"; got != want {
+		t.Fatalf("X-Forwarded-Proto = %q, want %q", got, want)
+	}
+	if got := req.Header.Get("Origin"); got != "" {
+		t.Fatalf("Origin = %q, want empty", got)
+	}
+	if got, want := req.URL.RawQuery, "foo=bar&token=tok-123"; got != want {
+		t.Fatalf("query = %q, want %q", got, want)
 	}
 }
 
 func TestRewriteNotebookRedirectLocation(t *testing.T) {
 	resp := &http.Response{Header: http.Header{}}
 	resp.Header.Set("Location", "http://127.0.0.1:8888/lab?token=upstream")
-	if err := rewriteNotebookRedirectLocation(resp, "jj"); err != nil {
+	if err := tunnelproxy.RewriteLocationPrefix(resp, "/notebooks/jj/proxy", "token"); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := resp.Header.Get("Location"), "/notebooks/jj/proxy/lab"; got != want {
@@ -81,7 +53,7 @@ func TestRewriteNotebookRedirectLocation(t *testing.T) {
 
 	resp = &http.Response{Header: http.Header{}}
 	resp.Header.Set("Location", "/lab")
-	if err := rewriteNotebookRedirectLocation(resp, "jj"); err != nil {
+	if err := tunnelproxy.RewriteLocationPrefix(resp, "/notebooks/jj/proxy", "token"); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := resp.Header.Get("Location"), "/notebooks/jj/proxy/lab"; got != want {
@@ -92,22 +64,10 @@ func TestRewriteNotebookRedirectLocation(t *testing.T) {
 func TestRewriteNotebookRedirectLocationPreservesProxyPath(t *testing.T) {
 	resp := &http.Response{Header: http.Header{}}
 	resp.Header.Set("Location", "http://127.0.0.1:8888/notebooks/jj/proxy/lab/?token=upstream")
-	if err := rewriteNotebookRedirectLocation(resp, "jj"); err != nil {
+	if err := tunnelproxy.RewriteLocationPrefix(resp, "/notebooks/jj/proxy", "token"); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := resp.Header.Get("Location"), "/notebooks/jj/proxy/lab/"; got != want {
 		t.Fatalf("Location = %q, want %q", got, want)
-	}
-}
-
-func TestSchemeFromRequest(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
-	if got, want := schemeFromRequest(req), "http"; got != want {
-		t.Fatalf("schemeFromRequest(http) = %q, want %q", got, want)
-	}
-	req = httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
-	req.TLS = &tls.ConnectionState{}
-	if got, want := schemeFromRequest(req), "https"; got != want {
-		t.Fatalf("schemeFromRequest(https) = %q, want %q", got, want)
 	}
 }

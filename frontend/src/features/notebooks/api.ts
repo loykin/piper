@@ -92,7 +92,7 @@ export async function deleteNotebook(name: string): Promise<void> {
 }
 
 /** Returns the master proxy URL for opening a notebook in the browser.
- *  No token is included — JupyterLab runs without auth and the master is the security boundary. */
+ *  The master proxy handles notebook auth/token forwarding. */
 export function notebookProxyURL(name: string): string {
   return `/notebooks/${name}/proxy/lab/`
 }

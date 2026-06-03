@@ -1,17 +1,14 @@
 package notebook
 
 import (
-	"bufio"
 	"context"
-	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/tunnelproxy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -220,8 +217,7 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		return
 	}
 
-	subPath := normalizeNotebookProxySubPath(c.Param("path"))
-	upstreamPath := fmt.Sprintf("/notebooks/%s/proxy%s", name, subPath)
+	upstreamPath := tunnelproxy.JoinPathPrefix("/notebooks/"+name+"/proxy", c.Param("path"))
 
 	agentID := target.Host
 	dialTarget := target.Query().Get("target")
@@ -239,180 +235,29 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "cannot connect to notebook: " + err.Error()})
 		return
 	}
-	defer func() { _ = upstream.Close() }()
 
 	r2 := c.Request.Clone(context.Background())
 	r2.URL.Path = upstreamPath
 	r2.URL.RawPath = ""
 
-	// Inject token into query only when the browser has no JupyterLab session cookie.
-	// On first visit (no cookie): ?token=<uuid> lets JupyterLab authenticate, set a
-	// username-* cookie, and redirect back without the token — one redirect, no loop.
-	// On subsequent visits (cookie present): no injection — cookie auth works directly.
-	// This applies to both HTTP and WebSocket; for WS the token in query acts as
-	// fallback when the connection is attempted before the HTTP session sets a cookie.
-	r2.URL.RawQuery = injectNotebookToken(r2, nb.Token)
-
-	upgrade := isWebSocketUpgrade(r2)
-	if !upgrade {
-		// Must close after each response. Without this the browser reuses the
-		// hijacked TCP connection for its next request (HTTP keep-alive), and that
-		// next request gets piped straight to JupyterLab instead of Piper's router.
-		r2.Close = true
-	}
-
-	// Host stays as the browser's address (e.g. localhost:8080) so JupyterLab embeds
-	// the correct public URL in its HTML page config (wsUrl, baseUrl). If we set
-	// Host=dialTarget (127.0.0.1:PORT) JupyterLab would embed that address and the
-	// browser's JS would connect WebSocket directly to JupyterLab, bypassing the proxy.
-	r2.Header.Set("X-Forwarded-Host", c.Request.Host)
-	r2.Header.Set("X-Forwarded-Proto", schemeFromRequest(c.Request))
-	r2.Header.Del("Origin")
-
-	if err := r2.Write(upstream); err != nil {
-		return
-	}
-
-	if upgrade {
-		// WebSocket: hijack the browser connection and pipe bytes in both directions.
-		// This is the only case where hijacking is correct — WebSocket is a raw byte
-		// stream after the 101 handshake, so we can't use Gin's response writer.
-		hijacker, ok := c.Writer.(http.Hijacker)
-		if !ok {
-			return
-		}
-		conn, buf, err := hijacker.Hijack()
-		if err != nil {
-			return
-		}
-		defer func() { _ = conn.Close() }()
-		if buf.Reader.Buffered() > 0 {
-			buffered := make([]byte, buf.Reader.Buffered())
-			_, _ = buf.Read(buffered)
-			_, _ = upstream.Write(buffered)
-		}
-		done := make(chan struct{}, 2)
-		go func() { _, _ = io.Copy(upstream, conn); done <- struct{}{} }()
-		go func() { _, _ = io.Copy(conn, upstream); done <- struct{}{} }()
-		<-done
-		return
-	}
-
-	// Regular HTTP: read the response and write it via Gin's normal response pipeline.
-	// Do NOT hijack — hijacking hands over the raw TCP connection, so subsequent
-	// keep-alive requests from the browser would be piped to JupyterLab instead of
-	// going through Gin's router.
-	resp, err := http.ReadResponse(bufio.NewReader(upstream), r2)
+	policy, err := tunnelproxy.BuildPolicy("notebook", tunnelproxy.PolicyContext{
+		Request:     c.Request,
+		Name:        name,
+		Token:       nb.Token,
+		Host:        c.Request.Host,
+		Scheme:      tunnelproxy.RequestScheme(c.Request),
+		ProxyPrefix: "/notebooks/" + name + "/proxy",
+	})
 	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	session := tunnelproxy.NewBuilder(upstream).WithPolicy(policy).Build()
+	defer func() { _ = session.Close() }()
+
+	if err := session.ServeHTTP(c.Writer, r2); err != nil {
 		c.Status(http.StatusBadGateway)
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	_ = rewriteNotebookRedirectLocation(resp, name)
-
-	// Forward headers (skip hop-by-hop).
-	for k, vv := range resp.Header {
-		if k == "Transfer-Encoding" || k == "Connection" {
-			continue
-		}
-		for _, v := range vv {
-			c.Writer.Header().Add(k, v)
-		}
-	}
-	c.Writer.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(c.Writer, resp.Body)
-}
-
-// injectNotebookToken adds the JupyterLab token to the upstream query so that the
-// master can authenticate on behalf of the browser without exposing the token in URLs.
-// The token is only injected when the browser has no existing Jupyter auth cookie,
-// avoiding a redirect loop (JupyterLab redirects after token validation to strip it
-// from the URL, which would repeat on every request if we always injected).
-func injectNotebookToken(req *http.Request, token string) string {
-	rawQuery := req.URL.RawQuery
-	if token == "" {
-		return rawQuery
-	}
-	for _, c := range req.Cookies() {
-		if strings.HasPrefix(c.Name, "username-") {
-			return rawQuery
-		}
-	}
-	values, _ := url.ParseQuery(rawQuery)
-	if values == nil {
-		values = url.Values{}
-	}
-	values.Set("token", token)
-	return values.Encode()
-}
-
-func isWebSocketUpgrade(r *http.Request) bool {
-	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		return false
-	}
-	for _, part := range strings.Split(r.Header.Get("Connection"), ",") {
-		if strings.EqualFold(strings.TrimSpace(part), "upgrade") {
-			return true
-		}
-	}
-	return false
-}
-
-func schemeFromRequest(r *http.Request) string {
-	if r != nil && r.TLS != nil {
-		return "https"
-	}
-	return "http"
-}
-
-func rewriteNotebookRedirectLocation(resp *http.Response, name string) error {
-	loc := resp.Header.Get("Location")
-	if loc == "" {
-		return nil
-	}
-	u, err := url.Parse(loc)
-	if err != nil {
-		return nil
-	}
-	path := u.Path
-	if path == "" {
-		path = "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	if strings.HasPrefix(path, "/notebooks/"+name+"/proxy/") {
-		redirect := path
-		if q := stripTokenQuery(u.RawQuery); q != "" {
-			redirect += "?" + q
-		}
-		resp.Header.Set("Location", redirect)
-		return nil
-	}
-	redirect := "/notebooks/" + name + "/proxy" + path
-	if q := stripTokenQuery(u.RawQuery); q != "" {
-		redirect += "?" + q
-	}
-	resp.Header.Set("Location", redirect)
-	return nil
-}
-
-func stripTokenQuery(rawQuery string) string {
-	if rawQuery == "" {
-		return ""
-	}
-	values, err := url.ParseQuery(rawQuery)
-	if err != nil {
-		return ""
-	}
-	values.Del("token")
-	return values.Encode()
-}
-
-func normalizeNotebookProxySubPath(path string) string {
-	if path == "" || !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return path
 }

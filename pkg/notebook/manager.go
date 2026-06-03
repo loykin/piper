@@ -38,6 +38,9 @@ func (m *Manager) Create(ctx context.Context, spec NotebookServerSpec, yamlStr s
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
 	}
+	if err := spec.Spec.Prepare.Validate(); err != nil {
+		return nil, fmt.Errorf("notebook: invalid prepare spec: %w", err)
+	}
 	if existing, _ := m.repo.Get(ctx, name); existing != nil {
 		return nil, fmt.Errorf("notebook %q already exists (status: %s)", name, existing.Status)
 	}
@@ -133,6 +136,9 @@ func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec,
 	name := spec.Metadata.Name
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
+	}
+	if err := spec.Spec.Prepare.Validate(); err != nil {
+		return nil, fmt.Errorf("notebook: invalid prepare spec: %w", err)
 	}
 	vol, err := m.vols.Get(ctx, volumeID)
 	if err != nil || vol == nil {
@@ -247,6 +253,9 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 	spec.Metadata.Name = nb.Name
 	if nb.YAML != "" {
 		_ = parseYAML(nb.YAML, &spec)
+	}
+	if err := spec.Spec.Prepare.Validate(); err != nil {
+		return fmt.Errorf("notebook: invalid prepare spec: %w", err)
 	}
 
 	if err := m.repo.SetStatus(ctx, name, StatusStarting); err != nil {

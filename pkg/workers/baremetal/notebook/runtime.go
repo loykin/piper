@@ -67,12 +67,35 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		gpus = req.Spec.Spec.Process.GPUs
 	}
 
-	bin, extraArgs, envPath, err := prepareProcessEnv(env, req.WorkDir)
+	prepSteps, err := prepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendProcess)
+	if err != nil {
+		return nil, err
+	}
+	bin, extraArgs, envPath, err := prepareProcessEnv(env, req.WorkDir, len(prepSteps) == 0)
 	if err != nil {
 		return nil, err
 	}
 
-	command := processNotebookCommand(bin, extraArgs, req)
+	var command []string
+	if strings.HasPrefix(envPath, "conda:") {
+		condaName := strings.TrimPrefix(envPath, "conda:")
+		if condaName == "" {
+			return nil, fmt.Errorf("conda env name is empty in %q", envPath)
+		}
+		baseCommand := append([]string{"jupyter", "lab"}, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
+		script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, req.WorkDir)
+		if err != nil {
+			return nil, err
+		}
+		command = []string{bin, "run", "--no-capture-output", "-n", condaName, "sh", "-lc", script}
+	} else {
+		baseCommand := append([]string{bin}, extraArgs...)
+		script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, req.WorkDir)
+		if err != nil {
+			return nil, err
+		}
+		command = []string{"sh", "-lc", script}
+	}
 
 	r.mu.Lock()
 	r.notebooks[req.Name] = &processNotebook{port: req.Port}
@@ -101,12 +124,6 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 	}
 
 	return &StartedNotebook{Endpoint: endpoint, PID: pid, EnvPath: envPath}, nil
-}
-
-func processNotebookCommand(bin string, extraArgs []string, req RuntimeStartRequest) []string {
-	command := append([]string{}, extraArgs...)
-	command = append(command, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
-	return append([]string{bin}, command...)
 }
 
 func (r *processRuntime) Stop(_ context.Context, name string) error {
@@ -141,7 +158,7 @@ func (r *processRuntime) Status(name string) string {
 //   - empty        -> auto-create venv at {workDir}/.venv, install jupyterlab/ipykernel if needed
 //   - conda:name   -> use existing conda env
 //   - /path/to/venv -> use existing venv, installing missing jupyterlab/ipykernel if needed
-func prepareProcessEnv(specEnv, workDir string) (bin string, extraArgs []string, envPath string, err error) {
+func prepareProcessEnv(specEnv, workDir string, bootstrap bool) (bin string, extraArgs []string, envPath string, err error) {
 	if strings.HasPrefix(specEnv, "conda:") {
 		condaName := strings.TrimPrefix(specEnv, "conda:")
 		if condaName == "" {
@@ -159,7 +176,7 @@ func prepareProcessEnv(specEnv, workDir string) (bin string, extraArgs []string,
 		venvPath = filepath.Join(workDir, ".venv")
 	}
 
-	if err := ensureVenv(venvPath); err != nil {
+	if err := ensureVenv(venvPath, bootstrap); err != nil {
 		return "", nil, "", err
 	}
 
@@ -183,7 +200,7 @@ func logRuntimeStart(mode, name, workDir string, port int) {
 	slog.Info("notebook runtime starting", "mode", mode, "name", name, "work_dir", workDir, "port", port)
 }
 
-func ensureVenv(venvPath string) error {
+func ensureVenv(venvPath string, bootstrap bool) error {
 	python := filepath.Join(venvPath, "bin", "python")
 	if _, err := os.Stat(python); err != nil {
 		slog.Info("creating venv", "path", venvPath)
@@ -191,6 +208,9 @@ func ensureVenv(venvPath string) error {
 		if err != nil {
 			return fmt.Errorf("create venv %q: %w: %s", venvPath, err, strings.TrimSpace(string(out)))
 		}
+	}
+	if !bootstrap {
+		return nil
 	}
 	if hasVenvCommand(venvPath, "jupyter-lab") && hasPythonModule(python, "ipykernel") {
 		return nil
@@ -216,4 +236,11 @@ func hasVenvCommand(venvPath, name string) bool {
 
 func hasPythonModule(python, module string) bool {
 	return exec.Command(python, "-c", "import "+module).Run() == nil
+}
+
+func prepareStepsForBackend(spec *notebook.NotebookPrepareSpec, backend string) ([]notebook.NotebookPrepareStep, error) {
+	if spec == nil {
+		return nil, nil
+	}
+	return spec.StepsForBackend(backend)
 }

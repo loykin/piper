@@ -157,8 +157,22 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	}
 	c := &podTemplate.Spec.Containers[nbIdx]
 	c.Image = image
-	// piper required args appended last so they win on duplicate flags.
-	c.Args = append(c.Args, notebook.JupyterStartArgs(baseURL, token, notebook.ContainerWorkDir, 8888)...)
+	prepSteps, err := spec.Spec.Prepare.StepsForBackend(notebook.PrepareBackendK8s)
+	if err != nil {
+		return nil, err
+	}
+	baseCommand := notebook.JupyterStartArgs(baseURL, token, notebook.ContainerWorkDir, 8888)
+	if len(prepSteps) > 0 {
+		script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, notebook.ContainerWorkDir)
+		if err != nil {
+			return nil, err
+		}
+		c.Command = []string{"/bin/sh"}
+		c.Args = []string{"-lc", script}
+	} else {
+		// piper required args appended last so they win on duplicate flags.
+		c.Args = append(c.Args, baseCommand...)
+	}
 	c.Ports = []corev1.ContainerPort{{Name: "notebook", ContainerPort: 8888}}
 
 	// Ensure the piper-data volume mount is present (fixed name avoids user collisions).

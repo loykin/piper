@@ -276,12 +276,26 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 		dockerManagedLabel:  "true",
 		dockerNotebookLabel: req.Name,
 	}
+	prepSteps, err := prepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendDocker)
+	if err != nil {
+		return dockerclient.ContainerCreateOptions{}, err
+	}
 	cmd := notebook.JupyterStartArgs(req.BaseURL, req.Token, notebook.ContainerWorkDir, 8888)
 	cmd = append(cmd, r.cfg.ExtraArgs...)
+	entrypoint := []string(nil)
+	if len(prepSteps) > 0 {
+		script, err := notebook.BuildLaunchScript(nil, prepSteps, cmd, notebook.ContainerWorkDir)
+		if err != nil {
+			return dockerclient.ContainerCreateOptions{}, err
+		}
+		entrypoint = []string{"/bin/sh"}
+		cmd = []string{"-lc", script}
+	}
 	port := network_.MustParsePort(dockerNotebookPort)
 	return dockerclient.ContainerCreateOptions{
 		Name: containerName,
 		Config: &container.Config{
+			Entrypoint:   entrypoint,
 			Image:        image,
 			Cmd:          cmd,
 			User:         user,

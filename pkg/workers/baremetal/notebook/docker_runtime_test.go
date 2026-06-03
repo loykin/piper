@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -118,6 +119,42 @@ func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {
 		BaseURL: "/notebooks/analysis/proxy/",
 	}); err == nil {
 		t.Fatal("expected unallowed volume error")
+	}
+}
+
+func TestDockerRuntimePrepWrapsLaunchCommand(t *testing.T) {
+	rt, err := newDockerRuntimeWithClient(DockerConfig{Image: "jupyter/scipy-notebook:latest"}, &fakeDockerClient{})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+	var spec notebook.NotebookServerSpec
+	spec.Metadata.Name = "analysis"
+	spec.Spec.Docker = &notebook.NotebookDockerSpec{}
+	spec.Spec.Prepare = &notebook.NotebookPrepareSpec{
+		Steps: []notebook.NotebookPrepareStep{
+			{Type: notebook.PrepareStepCommand, Backend: notebook.PrepareBackendDocker, Command: []string{"bash", "-lc", "echo docker prep"}},
+		},
+	}
+
+	opts, err := rt.containerCreateOptions(RuntimeStartRequest{
+		Name:    "analysis",
+		Spec:    spec,
+		WorkDir: t.TempDir(),
+		Port:    18888,
+		Token:   "tok",
+		BaseURL: "/notebooks/analysis/proxy/",
+	})
+	if err != nil {
+		t.Fatalf("container options: %v", err)
+	}
+	if len(opts.Config.Entrypoint) != 1 || opts.Config.Entrypoint[0] != "/bin/sh" {
+		t.Fatalf("entrypoint = %#v", opts.Config.Entrypoint)
+	}
+	if len(opts.Config.Cmd) != 2 || opts.Config.Cmd[0] != "-lc" {
+		t.Fatalf("cmd = %#v", opts.Config.Cmd)
+	}
+	if !strings.Contains(opts.Config.Cmd[1], "echo docker prep") {
+		t.Fatalf("wrapped script = %q", opts.Config.Cmd[1])
 	}
 }
 

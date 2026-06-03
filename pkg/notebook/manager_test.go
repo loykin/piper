@@ -351,6 +351,26 @@ func TestManager_Create_EmptyName(t *testing.T) {
 	}
 }
 
+func TestManager_Create_InvalidPrepareSpec(t *testing.T) {
+	repo := newFakeRepo()
+	vols := newFakeVols()
+	drv := newFakeDriver()
+	m := New(repo, vols, drv)
+
+	spec := NotebookServerSpec{}
+	spec.Metadata.Name = "nb-prepare-invalid"
+	spec.Spec.Prepare = &NotebookPrepareSpec{
+		Steps: []NotebookPrepareStep{
+			{Type: "unknown"},
+		},
+	}
+
+	_, err := m.Create(context.Background(), spec, "")
+	if err == nil {
+		t.Fatal("Create() with invalid prepare spec expected error")
+	}
+}
+
 func TestManager_Create_ProvisionFails(t *testing.T) {
 	repo := newFakeRepo()
 	vols := newFakeVols()

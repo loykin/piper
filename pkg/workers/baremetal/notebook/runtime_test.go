@@ -14,14 +14,26 @@ func TestProcessNotebookCommandUsesCanonicalArgs(t *testing.T) {
 		Port:    18888,
 	}
 
-	got := processNotebookCommand("/venv/bin/jupyter-lab", []string{"lab"}, req)
-	want := append([]string{"/venv/bin/jupyter-lab", "lab"}, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
-	if len(got) != len(want) {
-		t.Fatalf("command len = %d, want %d: %#v", len(got), len(want), got)
+	script, err := notebook.BuildLaunchScript(nil, nil,
+		append([]string{"/venv/bin/jupyter-lab"}, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...),
+		req.WorkDir)
+	if err != nil {
+		t.Fatalf("BuildLaunchScript error: %v", err)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("command[%d] = %q, want %q", i, got[i], want[i])
+	if want := "exec /venv/bin/jupyter-lab --ServerApp.base_url=/notebooks/demo/proxy/ --ServerApp.token=tok --ServerApp.root_dir=/work/demo '--ServerApp.allow_origin=*' --no-browser --port=18888"; script == "" || !containsLine(script, want) {
+		t.Fatalf("script = %q, want line %q", script, want)
+	}
+}
+
+func containsLine(script, want string) bool {
+	start := 0
+	for i := 0; i <= len(script); i++ {
+		if i == len(script) || script[i] == '\n' {
+			if script[start:i] == want {
+				return true
+			}
+			start = i + 1
 		}
 	}
+	return false
 }

@@ -63,10 +63,29 @@ type NotebookServerSpec struct {
 	} `yaml:"metadata"`
 	Spec struct {
 		Placement *NotebookPlacement   `yaml:"placement,omitempty"`
+		Prepare   *NotebookPrepareSpec `yaml:"prepare,omitempty"`
 		K8s       *NotebookK8sSpec     `yaml:"k8s,omitempty"`
 		Docker    *NotebookDockerSpec  `yaml:"docker,omitempty"`
 		Process   *NotebookProcessSpec `yaml:"process,omitempty"`
 	} `yaml:"spec"`
+}
+
+// NotebookPrepareSpec describes pre-start work that can run before notebook launch.
+// The steps are declarative and backend-gated. Steps targeted at a different
+// backend are ignored by that backend.
+type NotebookPrepareSpec struct {
+	Presets []string              `yaml:"presets,omitempty"`
+	Steps   []NotebookPrepareStep `yaml:"steps,omitempty"`
+}
+
+// NotebookPrepareStep represents one explicit pre-start action.
+// Type currently supports "command".
+// Backend may be empty (applies to all backends) or one of:
+// process, docker, k8s.
+type NotebookPrepareStep struct {
+	Type    string   `yaml:"type,omitempty"`
+	Backend string   `yaml:"backend,omitempty"`
+	Command []string `yaml:"command,omitempty"`
 }
 
 // NotebookPlacement selects which worker handles this notebook.

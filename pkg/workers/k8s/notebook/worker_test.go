@@ -2,6 +2,7 @@ package notebookworker
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -98,6 +99,48 @@ spec: {}
 	}
 	if svc.Spec.ClusterIP != "None" {
 		t.Fatalf("service clusterIP = %q", svc.Spec.ClusterIP)
+	}
+}
+
+func TestNotebookStartPrepWrapsContainerCommand(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	a := New(Config{
+		AgentID:     "agent-1",
+		ClusterName: "gpu-a",
+		Client:      client,
+		Namespace:   "notebooks",
+		Image:       "jupyter/minimal-notebook:latest",
+	})
+
+	_, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
+		YAML: `
+metadata:
+  name: prep notebook
+spec:
+  prepare:
+    steps:
+      - type: command
+        backend: k8s
+        command: ["sh", "-lc", "echo k8s prep"]
+`,
+		VolumeID: "vol-prep",
+	})
+	if err != nil {
+		t.Fatalf("startNotebook returned error: %v", err)
+	}
+	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-prep-notebook", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get statefulset: %v", err)
+	}
+	got := sts.Spec.Template.Spec.Containers[0]
+	if len(got.Command) != 1 || got.Command[0] != "/bin/sh" {
+		t.Fatalf("command = %#v", got.Command)
+	}
+	if len(got.Args) != 2 || got.Args[0] != "-lc" {
+		t.Fatalf("args = %#v", got.Args)
+	}
+	if !strings.Contains(got.Args[1], "echo k8s prep") {
+		t.Fatalf("prep script = %q", got.Args[1])
 	}
 }
 

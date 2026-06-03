@@ -3,7 +3,6 @@ package runner_test
 import (
 	"context"
 	"fmt"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/blobstore"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/runner"
@@ -25,12 +25,11 @@ func mustReader(s string) *strings.Reader { return strings.NewReader(s) }
 const testBucket = "piper-test"
 
 // fakeS3 starts an in-process S3 server and returns a blobstore.S3Store.
-func fakeS3(t *testing.T) (*httptest.Server, *blobstore.S3Store) {
+func fakeS3(t *testing.T) (*testutil.Server, *blobstore.S3Store) {
 	t.Helper()
 
 	faker := gofakes3.New(s3mem.New())
-	srv := httptest.NewServer(faker.Server())
-	t.Cleanup(srv.Close)
+	srv := testutil.NewIPv4Server(t, faker.Server())
 
 	// Create the bucket — gofakes3 requires explicit bucket creation.
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
@@ -55,7 +54,7 @@ func fakeS3(t *testing.T) (*httptest.Server, *blobstore.S3Store) {
 	return srv, store
 }
 
-func fakeS3StorageURL(srv *httptest.Server) string {
+func fakeS3StorageURL(srv *testutil.Server) string {
 	return fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test",
 		testBucket, srv.URL)
 }

@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
@@ -174,8 +174,7 @@ func TestNew_negativeConcurrencyReturnsError(t *testing.T) {
 
 func TestWorker_registers_on_start(t *testing.T) {
 	fm := &fakeMaster{}
-	srv := httptest.NewServer(fm.handler())
-	defer srv.Close()
+	srv := testutil.NewIPv4Server(t, fm.handler())
 
 	w, err := worker.New(worker.Config{
 		MasterURL:    srv.URL,
@@ -202,8 +201,7 @@ func TestWorker_registers_on_start(t *testing.T) {
 
 func TestWorker_sends_heartbeat(t *testing.T) {
 	fm := &fakeMaster{}
-	srv := httptest.NewServer(fm.handler())
-	defer srv.Close()
+	srv := testutil.NewIPv4Server(t, fm.handler())
 
 	w, err := worker.New(worker.Config{
 		MasterURL:    srv.URL,
@@ -233,8 +231,7 @@ func TestWorker_run_reports_done(t *testing.T) {
 	fm := &fakeMaster{
 		tasks: [][]byte{makeTaskBytes(t, "t1", []string{"echo", "hello"})},
 	}
-	srv := httptest.NewServer(fm.handler())
-	defer srv.Close()
+	srv := testutil.NewIPv4Server(t, fm.handler())
 
 	w, err := worker.New(worker.Config{
 		MasterURL:    srv.URL,
@@ -267,8 +264,7 @@ func TestWorker_run_reports_failed(t *testing.T) {
 	fm := &fakeMaster{
 		tasks: [][]byte{makeTaskBytes(t, "t2", []string{"__nonexistent_cmd__"})},
 	}
-	srv := httptest.NewServer(fm.handler())
-	defer srv.Close()
+	srv := testutil.NewIPv4Server(t, fm.handler())
 
 	w, err := worker.New(worker.Config{
 		MasterURL:    srv.URL,
@@ -296,8 +292,7 @@ func TestWorker_cancelEventCancelsInFlightTask(t *testing.T) {
 		tasks:        [][]byte{makeTaskBytes(t, "cancel", []string{"sleep", "10"})},
 		cancelEvents: make(chan string, 1),
 	}
-	srv := httptest.NewServer(fm.handler())
-	defer srv.Close()
+	srv := testutil.NewIPv4Server(t, fm.handler())
 
 	w, err := worker.New(worker.Config{
 		MasterURL:    srv.URL,
@@ -340,8 +335,7 @@ func TestWorker_run_multiple_tasks(t *testing.T) {
 			makeTaskBytes(t, "m3", []string{"echo", "3"}),
 		},
 	}
-	srv := httptest.NewServer(fm.handler())
-	defer srv.Close()
+	srv := testutil.NewIPv4Server(t, fm.handler())
 
 	w, err := worker.New(worker.Config{
 		MasterURL:    srv.URL,
@@ -368,8 +362,7 @@ func TestWorker_run_multiple_tasks(t *testing.T) {
 
 func TestWorker_shutdown_on_context_cancel(t *testing.T) {
 	fm := &fakeMaster{} // no tasks
-	srv := httptest.NewServer(fm.handler())
-	defer srv.Close()
+	srv := testutil.NewIPv4Server(t, fm.handler())
 
 	w, err := worker.New(worker.Config{
 		MasterURL:    srv.URL,

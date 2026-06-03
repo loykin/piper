@@ -3,12 +3,12 @@ package source
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 )
 
@@ -195,11 +195,10 @@ func TestLocalFetcher_nestedPath(t *testing.T) {
 
 func TestHTTPFetcher_success(t *testing.T) {
 	content := []byte("print('hello')")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write(content)
 	}))
-	defer srv.Close()
 
 	f := &HTTPFetcher{}
 	destDir := t.TempDir()
@@ -226,10 +225,9 @@ func TestHTTPFetcher_success(t *testing.T) {
 
 func TestHTTPFetcher_usePathWhenURLEmpty(t *testing.T) {
 	content := []byte("# notebook")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(content)
 	}))
-	defer srv.Close()
 
 	f := &HTTPFetcher{}
 	// Should work when a URL is placed in the Path field instead of URL
@@ -244,10 +242,9 @@ func TestHTTPFetcher_usePathWhenURLEmpty(t *testing.T) {
 }
 
 func TestHTTPFetcher_notFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
-	defer srv.Close()
 
 	f := &HTTPFetcher{}
 	run := pipeline.Run{Source: "http", URL: srv.URL + "/missing.py"}

@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
@@ -38,12 +38,11 @@ func makeTaskWithRunID(t *testing.T, step pipeline.Step, runID string) *proto.Ta
 }
 
 // fakeMasterServer returns a test HTTP server that accepts done/failed/logs requests.
-func fakeMasterServer(t *testing.T) *httptest.Server {
+func fakeMasterServer(t *testing.T) *testutil.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	t.Cleanup(srv.Close)
 	return srv
 }
 
@@ -74,14 +73,13 @@ func TestNew_no_store_when_url_empty(t *testing.T) {
 
 func TestRun_success_echo(t *testing.T) {
 	var doneTaskID string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/done") {
 			doneTaskID = strings.Split(r.URL.Path, "/")[3] // /api/tasks/{id}/done
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Discard.Write(nil)
 	}))
-	defer srv.Close()
 
 	r, err := runner.New(runner.Config{
 		MasterURL: srv.URL,
@@ -106,10 +104,9 @@ func TestRun_success_echo(t *testing.T) {
 }
 
 func TestRun_output_dir_created(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
 	outDir := t.TempDir()
 	r, err := runner.New(runner.Config{
@@ -137,13 +134,12 @@ func TestRun_output_dir_created(t *testing.T) {
 
 func TestRun_failed_bad_command(t *testing.T) {
 	var failedTaskID string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/failed") {
 			failedTaskID = strings.Split(r.URL.Path, "/")[3]
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
 	r, err := runner.New(runner.Config{
 		MasterURL: srv.URL,
@@ -167,13 +163,12 @@ func TestRun_failed_bad_command(t *testing.T) {
 
 func TestRun_failed_no_command(t *testing.T) {
 	var failedCalled bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/failed") {
 			failedCalled = true
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
 	r, err := runner.New(runner.Config{
 		MasterURL: srv.URL,
@@ -194,13 +189,12 @@ func TestRun_failed_no_command(t *testing.T) {
 
 func TestRun_failed_invalid_step_json(t *testing.T) {
 	var failedCalled bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/failed") {
 			failedCalled = true
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
 	r, err := runner.New(runner.Config{
 		MasterURL: srv.URL,
@@ -227,13 +221,12 @@ func TestRun_failed_invalid_step_json(t *testing.T) {
 
 func TestRun_logs_sent_to_master(t *testing.T) {
 	var logBody []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/logs") {
 			logBody, _ = io.ReadAll(r.Body)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
 	r, err := runner.New(runner.Config{
 		MasterURL: srv.URL,
@@ -256,13 +249,12 @@ func TestRun_logs_sent_to_master(t *testing.T) {
 
 func TestRun_logs_final_line_without_newline(t *testing.T) {
 	var logBody []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/logs") {
 			logBody, _ = io.ReadAll(r.Body)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
 	r, err := runner.New(runner.Config{
 		MasterURL: srv.URL,

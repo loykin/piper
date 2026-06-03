@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -28,15 +27,9 @@ type Config struct {
 
 // Worker is the serving worker agent.
 type Worker struct {
-	cfg      Config
-	client   *grpcagent.Client
-	mu       sync.Mutex
-	services map[string]*localService
-}
-
-type localService struct {
-	name string
-	pid  int
+	cfg        Config
+	client     *grpcagent.Client
+	supervisor *workload.ProcessSupervisor
 }
 
 // New creates a new Worker.
@@ -51,9 +44,9 @@ func New(cfg Config) *Worker {
 	})
 
 	w := &Worker{
-		cfg:      cfg,
-		client:   client,
-		services: make(map[string]*localService),
+		cfg:        cfg,
+		client:     client,
+		supervisor: workload.NewProcessSupervisor(),
 	}
 
 	d := client.Dispatcher()
@@ -70,7 +63,9 @@ func New(cfg Config) *Worker {
 
 // Run connects to the master via gRPC and serves until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
-	return w.client.Run(ctx)
+	err := w.client.Run(ctx)
+	w.shutdown()
+	return err
 }
 
 type servingStopRequest struct {
@@ -120,22 +115,13 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		GPUs:       rt.GPUs,
 	}
 
-	pid, endpoint, cmd, err := workload.StartProcess(spec)
+	_, endpoint, err := w.supervisor.Start(spec, func(status string) {
+		slog.Info("serving process exited", "name", name, "status", status)
+		w.pushStatus(name, status, "")
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	w.mu.Lock()
-	w.services[name] = &localService{name: name, pid: pid}
-	w.mu.Unlock()
-
-	workload.WatchProcess(cmd, func(status string) {
-		slog.Info("serving process exited", "name", name, "status", status)
-		w.mu.Lock()
-		delete(w.services, name)
-		w.mu.Unlock()
-		w.pushStatus(name, status, "")
-	})
 
 	healthPath := rt.HealthPath
 	if healthPath == "" {
@@ -152,31 +138,15 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 }
 
 func (w *Worker) stop(_ context.Context, name string) error {
-	w.mu.Lock()
-	ls, ok := w.services[name]
-	if ok {
-		delete(w.services, name)
-	}
-	w.mu.Unlock()
-
-	if ok {
-		workload.KillPID(ls.pid)
-	}
-	return nil
+	return w.supervisor.Stop(name)
 }
 
 func (w *Worker) restart(_ context.Context, name string) error {
-	w.mu.Lock()
-	ls, ok := w.services[name]
-	if ok {
-		delete(w.services, name)
-	}
-	w.mu.Unlock()
+	return w.supervisor.Stop(name)
+}
 
-	if ok {
-		workload.KillPID(ls.pid)
-	}
-	return nil
+func (w *Worker) shutdown() {
+	_ = w.supervisor.KillAll()
 }
 
 func (w *Worker) pushStatus(name, status, endpoint string) {

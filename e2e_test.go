@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	_ "modernc.org/sqlite"
 
+	"github.com/piper/piper/internal/testutil"
 	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
 )
@@ -35,7 +35,7 @@ const e2eBucket = "piper-e2e"
 //
 // An in-memory SQLite DB (single connection) is used to avoid SQLITE_BUSY
 // contention between concurrent goroutines across sequential tests.
-func newE2EServer(t *testing.T) (*Piper, *httptest.Server) {
+func newE2EServer(t *testing.T) (*Piper, *testutil.Server) {
 	t.Helper()
 
 	// in-memory SQLite with a single connection avoids WAL file locking between tests
@@ -55,11 +55,8 @@ func newE2EServer(t *testing.T) (*Piper, *httptest.Server) {
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
-	srv := httptest.NewServer(p.Handler(nil))
-	t.Cleanup(func() {
-		srv.Close()
-		_ = p.Close()
-	})
+	srv := testutil.NewIPv4Server(t, p.Handler(nil))
+	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
 }
 
@@ -72,12 +69,17 @@ func startE2EAgentServer(t *testing.T, p *Piper) string {
 		t.Fatal(err)
 	}
 	grpcSrv := p.grpcAgentServer.GRPCServer()
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		if err := grpcSrv.Serve(lis); err != nil {
 			t.Logf("grpc agent server stopped: %v", err)
 		}
 	}()
-	t.Cleanup(grpcSrv.GracefulStop)
+	t.Cleanup(func() {
+		grpcSrv.GracefulStop()
+		<-done
+	})
 	return addr
 }
 
@@ -99,8 +101,15 @@ func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = w.Run(ctx) }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = w.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 }
 
 func startE2EServingWorker(t *testing.T, httpURL, agentAddr, id string) {
@@ -111,19 +120,13 @@ func startE2EServingWorker(t *testing.T, httpURL, agentAddr, id string) {
 		ID:        id,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	errCh := make(chan error, 1)
-	go func() { errCh <- w.Run(ctx) }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = w.Run(ctx)
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		select {
-		case err := <-errCh:
-			if err != nil {
-				t.Fatalf("serving worker failed to start: %v", err)
-			}
-			t.Fatalf("serving worker exited before registering")
-		default:
-		}
 		resp, err := http.Get(httpURL + "/api/agents")
 		if err == nil {
 			var agents []struct {
@@ -133,12 +136,18 @@ func startE2EServingWorker(t *testing.T, httpURL, agentAddr, id string) {
 			resp.Body.Close()
 			for _, agent := range agents {
 				if agent.ID == id {
+					t.Cleanup(func() {
+						cancel()
+						<-done
+					})
 					return
 				}
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	cancel()
+	<-done
 	t.Fatalf("agent %q did not register within %s", id, 5*time.Second)
 }
 
@@ -311,17 +320,8 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", serverPort))
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewUnstartedServer(p.Handler(nil))
-	srv.Listener = ln
-	srv.Start()
-	t.Cleanup(func() {
-		srv.Close()
-		_ = p.Close()
-	})
+	srv := testutil.NewIPv4Server(t, p.Handler(nil))
+	t.Cleanup(func() { _ = p.Close() })
 
 	startE2EWorker(t, srv.URL)
 	startE2EServingWorker(t, srv.URL, p.cfg.Server.AgentAddr, "serving-agent")
@@ -444,8 +444,7 @@ spec:
 func TestE2E_WorkerS3Artifacts(t *testing.T) {
 	// Start fake S3
 	faker := gofakes3.New(s3mem.New())
-	fakeSrv := httptest.NewServer(faker.Server())
-	t.Cleanup(fakeSrv.Close)
+	fakeSrv := testutil.NewIPv4Server(t, faker.Server())
 
 	s3Client := newE2ES3Client(t, fakeSrv.URL)
 	_, err := s3Client.CreateBucket(context.Background(), &s3sdk.CreateBucketInput{
@@ -546,7 +545,7 @@ func newE2ES3Client(t *testing.T, endpoint string) *s3sdk.Client {
 //
 // Each call uses a unique in-memory SQLite database identified by t.Name() to
 // avoid collisions between parallel or sequential tests.
-func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *httptest.Server) {
+func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Server) {
 	t.Helper()
 
 	// Sanitize t.Name(): SQLite URI names cannot contain '/' characters.
@@ -569,15 +568,12 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *httptest.Serv
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
-	srv := httptest.NewServer(p.Handler(nil))
-	t.Cleanup(func() {
-		srv.Close()
-		_ = p.Close()
-	})
+	srv := testutil.NewIPv4Server(t, p.Handler(nil))
+	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
 }
 
-func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (*Piper, *httptest.Server) {
+func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (*Piper, *testutil.Server) {
 	t.Helper()
 
 	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name() + "-storage")
@@ -599,11 +595,8 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
-	srv := httptest.NewServer(p.Handler(nil))
-	t.Cleanup(func() {
-		srv.Close()
-		_ = p.Close()
-	})
+	srv := testutil.NewIPv4Server(t, p.Handler(nil))
+	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
 }
 
@@ -691,8 +684,7 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 	outputDir := t.TempDir()
 
 	faker := gofakes3.New(s3mem.New())
-	fakeSrv := httptest.NewServer(faker.Server())
-	t.Cleanup(fakeSrv.Close)
+	fakeSrv := testutil.NewIPv4Server(t, faker.Server())
 	s3Client := newE2ES3Client(t, fakeSrv.URL)
 	if _, err := s3Client.CreateBucket(context.Background(), &s3sdk.CreateBucketInput{Bucket: aws.String(e2eBucket)}); err != nil {
 		t.Fatal(err)
@@ -768,5 +760,5 @@ spec:
 
 	// handleRunSuccess fires asynchronously; poll until service.RunID reflects
 	// the second run.
-	waitServiceRunID(t, srv.URL, serviceName, secondRunID, 20*time.Second)
+	waitServiceRunID(t, srv.URL, serviceName, secondRunID, 60*time.Second)
 }

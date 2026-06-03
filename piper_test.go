@@ -24,12 +24,19 @@ type noopBackend struct{}
 
 func (noopBackend) Dispatch(context.Context, *proto.Task) error { return nil }
 
-func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
-	outputDir := t.TempDir()
-	p, err := New(Config{OutputDir: outputDir})
+func newTestPiper(t *testing.T, cfg Config) *Piper {
+	t.Helper()
+	p, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = p.Close() })
+	return p
+}
+
+func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
+	outputDir := t.TempDir()
+	p := newTestPiper(t, Config{OutputDir: outputDir})
 
 	pl := &pipeline.Pipeline{
 		Metadata: pipeline.Metadata{Name: "local-path-test"},
@@ -61,10 +68,7 @@ func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 }
 
 func TestHandlerRejectsOversizedRequestBody(t *testing.T) {
-	p, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 
 	body := strings.NewReader(strings.Repeat("x", int(maxRequestBodyBytes)+1))
 	req := httptest.NewRequest(http.MethodPost, "/runs", body)
@@ -79,10 +83,7 @@ func TestHandlerRejectsOversizedRequestBody(t *testing.T) {
 }
 
 func TestHandlerServesUIDeepLinks(t *testing.T) {
-	p, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/notebooks", nil)
 	rec := httptest.NewRecorder()
@@ -97,10 +98,7 @@ func TestHandlerServesUIDeepLinks(t *testing.T) {
 }
 
 func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
-	p, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	router := p.Handler(nil)
 	body := `[{"ts":"2026-05-29T10:00:00Z","stream":"stdout","line":"PIPER_METRIC loss=0.312"}]`
 	req := httptest.NewRequest(http.MethodPost, "/runs/run-metric/steps/train/logs", strings.NewReader(body))
@@ -127,10 +125,7 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 }
 
 func TestWorkerRoutesOnlyMountedInPollingMode(t *testing.T) {
-	polling, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	polling := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	pollingRouter := polling.newRouter(nil).(*gin.Engine)
 	if !hasRoute(pollingRouter, http.MethodGet, "/api/workers") {
 		t.Fatal("polling mode should mount worker routes")
@@ -139,10 +134,7 @@ func TestWorkerRoutesOnlyMountedInPollingMode(t *testing.T) {
 		t.Fatal("polling mode should lazily create worker registry")
 	}
 
-	active, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	active := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	active.SetBackend(noopBackend{})
 	activeRouter := active.newRouter(nil).(*gin.Engine)
 	if hasRoute(activeRouter, http.MethodGet, "/api/workers") {
@@ -157,10 +149,7 @@ func TestWorkerRoutesOnlyMountedInPollingMode(t *testing.T) {
 }
 
 func TestStartRunPersistsExperiment(t *testing.T) {
-	p, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	pl := &pipeline.Pipeline{
 		Metadata: pipeline.Metadata{Name: "train"},
 		Spec: pipeline.Spec{Steps: []pipeline.Step{{
@@ -198,10 +187,7 @@ func TestStartRunPersistsExperiment(t *testing.T) {
 }
 
 func TestBackfillScheduleCreatesRunsForCronRange(t *testing.T) {
-	p, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	from := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
 	to := from.Add(2 * time.Minute)
 	yaml := "metadata:\n  name: train\nspec:\n  steps:\n    - name: step\n      run:\n        command: [\"true\"]\n"
@@ -255,7 +241,7 @@ func hasRoute(router *gin.Engine, method, path string) bool {
 func TestAuth_ContextInjectedToDownstreamHooks(t *testing.T) {
 	type ctxKey struct{}
 
-	p, err := New(Config{
+	p := newTestPiper(t, Config{
 		OutputDir: t.TempDir(),
 		Hooks: Hooks{
 			Auth: func(r *http.Request) (context.Context, error) {
@@ -269,9 +255,6 @@ func TestAuth_ContextInjectedToDownstreamHooks(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	router := p.newRouter(nil)
 
 	body := `{"yaml":"metadata:\n  name: test\nspec:\n  steps: []\n"}`
@@ -284,7 +267,7 @@ func TestAuth_ContextInjectedToDownstreamHooks(t *testing.T) {
 // TestAuth_RejectsOnError verifies that an Auth hook returning an error
 // produces 401 and blocks the request.
 func TestAuth_RejectsOnError(t *testing.T) {
-	p, err := New(Config{
+	p := newTestPiper(t, Config{
 		OutputDir: t.TempDir(),
 		Hooks: Hooks{
 			Auth: func(r *http.Request) (context.Context, error) {
@@ -292,9 +275,6 @@ func TestAuth_RejectsOnError(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	router := p.newRouter(nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
@@ -309,7 +289,7 @@ func TestAuth_RejectsOnError(t *testing.T) {
 // TestExtractOwnerID_OverridesHeader verifies that Hooks.ExtractOwnerID
 // replaces the default X-Piper-Owner-ID header extraction.
 func TestExtractOwnerID_OverridesHeader(t *testing.T) {
-	p, err := New(Config{
+	p := newTestPiper(t, Config{
 		OutputDir: t.TempDir(),
 		Hooks: Hooks{
 			ExtractOwnerID: func(r *http.Request) string {
@@ -317,9 +297,6 @@ func TestExtractOwnerID_OverridesHeader(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	// ownerIDFromRequest should use the hook, not the header.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -333,10 +310,7 @@ func TestExtractOwnerID_OverridesHeader(t *testing.T) {
 // TestExtractOwnerID_DefaultFallback verifies that without the hook,
 // the X-Piper-Owner-ID header is used.
 func TestExtractOwnerID_DefaultFallback(t *testing.T) {
-	p, err := New(Config{OutputDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("X-Piper-Owner-ID", "header-user")

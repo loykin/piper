@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 )
 
@@ -169,10 +169,9 @@ func TestCommandExecutor_nilWriters(t *testing.T) {
 func TestCommandExecutor_httpSource_scriptPath(t *testing.T) {
 	// Fetch a script from an HTTP server and verify that PIPER_SCRIPT_PATH is injected
 	script := []byte("#!/bin/sh\necho 'from http'")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(script)
 	}))
-	defer srv.Close()
 
 	var buf bytes.Buffer
 	step := &pipeline.Step{
@@ -198,10 +197,9 @@ func TestCommandExecutor_httpSource_scriptPath(t *testing.T) {
 func TestCommandExecutor_httpSource_workDirIsFetchDir(t *testing.T) {
 	// After source fetch, verify the WorkDir is changed to fetchDir and the file is visible
 	script := []byte("hello content")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(script)
 	}))
-	defer srv.Close()
 
 	var buf bytes.Buffer
 	step := &pipeline.Step{

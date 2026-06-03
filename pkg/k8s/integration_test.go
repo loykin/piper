@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -17,6 +16,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 )
@@ -143,16 +143,8 @@ func TestIntegration_DispatchJob(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	fakeSrv := httptest.NewUnstartedServer(mux)
-	fakeSrv.Listener = ln
-	fakeSrv.Start()
-	defer fakeSrv.Close()
-
-	port := fakeSrv.Listener.Addr().(*net.TCPAddr).Port
+	fakeSrv := testutil.NewIPv4Server(t, mux)
+	port := fakeSrv.ListenerAddr().(*net.TCPAddr).Port
 	testHost := os.Getenv("PIPER_TEST_HOST")
 	if testHost == "" {
 		testHost = "host.docker.internal" // Docker Desktop default

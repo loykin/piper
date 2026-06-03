@@ -21,7 +21,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +34,7 @@ import (
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+	"github.com/piper/piper/internal/testutil"
 )
 
 // requireBinary returns the absolute path of the piper binary and skips the
@@ -75,8 +75,7 @@ func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
 	const bucket = "piper-binary-e2e"
 
 	// gofakes3 listens on a real TCP port so the worker subprocess can reach it.
-	s3Srv := httptest.NewServer(gofakes3.New(s3mem.New()).Server())
-	t.Cleanup(s3Srv.Close)
+	s3Srv := testutil.NewIPv4Server(t, gofakes3.New(s3mem.New()).Server())
 
 	s3Endpoint := strings.TrimPrefix(s3Srv.URL, "http://")
 	s3Client := newBinaryE2ES3Client(t, s3Srv.URL)

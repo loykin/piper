@@ -43,18 +43,20 @@ type StartedNotebook struct {
 }
 
 type processRuntime struct {
-	mu        sync.Mutex
-	notebooks map[string]*processNotebook
+	mu         sync.Mutex
+	notebooks  map[string]*processNotebook
+	supervisor *workload.ProcessSupervisor
 }
 
 type processNotebook struct {
-	pid     int
-	cmd     *exec.Cmd
-	stopped bool
+	port int
 }
 
 func newProcessRuntime() *processRuntime {
-	return &processRuntime{notebooks: make(map[string]*processNotebook)}
+	return &processRuntime{
+		notebooks:  make(map[string]*processNotebook),
+		supervisor: workload.NewProcessSupervisor(),
+	}
 }
 
 func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
@@ -71,36 +73,31 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 
 	command := processNotebookCommand(bin, extraArgs, req)
 
-	pid, endpoint, cmd, err := workload.StartProcess(workload.ProcessSpec{
+	r.mu.Lock()
+	r.notebooks[req.Name] = &processNotebook{port: req.Port}
+	r.mu.Unlock()
+
+	pid, endpoint, err := r.supervisor.Start(workload.ProcessSpec{
 		Name:    req.Name,
 		Command: command,
 		Dir:     req.WorkDir,
 		Port:    req.Port,
 		GPUs:    gpus,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	r.mu.Lock()
-	r.notebooks[req.Name] = &processNotebook{pid: pid, cmd: cmd}
-	r.mu.Unlock()
-
-	workload.WatchProcess(cmd, func(status string) {
+	}, func(status string) {
+		slog.Info("notebook runtime exited", "name", req.Name, "status", status)
 		r.mu.Lock()
-		nb, ok := r.notebooks[req.Name]
-		if ok {
-			delete(r.notebooks, req.Name)
-		}
-		stopped := ok && nb.stopped
+		delete(r.notebooks, req.Name)
 		r.mu.Unlock()
-		if stopped {
-			status = "stopped"
-		}
 		if req.OnExit != nil {
 			req.OnExit(status)
 		}
 	})
+	if err != nil {
+		r.mu.Lock()
+		delete(r.notebooks, req.Name)
+		r.mu.Unlock()
+		return nil, err
+	}
 
 	return &StartedNotebook{Endpoint: endpoint, PID: pid, EnvPath: envPath}, nil
 }
@@ -113,30 +110,22 @@ func processNotebookCommand(bin string, extraArgs []string, req RuntimeStartRequ
 
 func (r *processRuntime) Stop(_ context.Context, name string) error {
 	r.mu.Lock()
-	nb, ok := r.notebooks[name]
+	_, ok := r.notebooks[name]
 	if ok {
-		nb.stopped = true
+		delete(r.notebooks, name)
 	}
 	r.mu.Unlock()
 	if !ok {
 		return nil
 	}
-	workload.KillPID(nb.pid)
-	return nil
+	return r.supervisor.Stop(name)
 }
 
 func (r *processRuntime) KillAll(_ context.Context) error {
 	r.mu.Lock()
-	pids := make([]int, 0, len(r.notebooks))
-	for _, nb := range r.notebooks {
-		pids = append(pids, nb.pid)
-	}
 	r.notebooks = make(map[string]*processNotebook)
 	r.mu.Unlock()
-	for _, pid := range pids {
-		workload.KillPID(pid)
-	}
-	return nil
+	return r.supervisor.KillAll()
 }
 
 // prepareProcessEnv resolves or auto-creates the Python environment for a notebook.

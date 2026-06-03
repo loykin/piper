@@ -381,7 +381,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
 			// Use a detached context so the callback isn't cancelled when the
 			// HTTP request context that triggered Complete() ends.
-			go q.OnRunSuccess(context.Background(), runID, pl)
+			q.OnRunSuccess(context.Background(), runID, pl)
 		}
 	}
 

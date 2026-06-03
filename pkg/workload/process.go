@@ -70,19 +70,6 @@ func StartProcess(spec ProcessSpec) (pid int, endpoint string, cmd *exec.Cmd, er
 	return cmd.Process.Pid, endpoint, cmd, nil
 }
 
-// WatchProcess calls cmd.Wait() in a goroutine and invokes onExit with
-// "stopped" (clean exit) or "failed" (error exit) when the process ends.
-func WatchProcess(cmd *exec.Cmd, onExit func(status string)) {
-	go func() {
-		err := cmd.Wait()
-		status := "stopped"
-		if err != nil {
-			status = "failed"
-		}
-		onExit(status)
-	}()
-}
-
 // KillPID sends SIGKILL to the given process ID on a best-effort basis.
 func KillPID(pid int) {
 	if pid <= 0 {

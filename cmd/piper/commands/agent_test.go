@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
@@ -17,7 +17,7 @@ import (
 func TestAgentExecReportsToDummyMaster(t *testing.T) {
 	var doneTaskID string
 	var sawLog bool
-	master := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	master := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/done"):
 			parts := strings.Split(r.URL.Path, "/")
@@ -33,7 +33,6 @@ func TestAgentExecReportsToDummyMaster(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer master.Close()
 
 	step := pipeline.Step{
 		Name: "agent-step",

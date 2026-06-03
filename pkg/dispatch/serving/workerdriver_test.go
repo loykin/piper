@@ -3,10 +3,10 @@ package servingdispatch
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/serving"
 )
@@ -89,14 +89,13 @@ func TestWorkerDriver_DeployNoWorker(t *testing.T) {
 }
 
 func TestWorkerDriver_DeployWorkerReturns200(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/deploy" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, newStubServingRepo(), fakeWorker.URL)
@@ -127,10 +126,9 @@ func TestWorkerDriver_DeployWorkerReturns200(t *testing.T) {
 }
 
 func TestWorkerDriver_DeployWorkerReturns500(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, newStubServingRepo(), fakeWorker.URL)
@@ -163,14 +161,13 @@ func TestWorkerDriver_StopNoWorker(t *testing.T) {
 }
 
 func TestWorkerDriver_StopWorkerReturns200(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, newStubServingRepo(), fakeWorker.URL)
@@ -193,14 +190,13 @@ func TestWorkerDriver_RestartNoWorker(t *testing.T) {
 }
 
 func TestWorkerDriver_RestartWorkerReturns200(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, newStubServingRepo(), fakeWorker.URL)

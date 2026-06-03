@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -72,6 +73,7 @@ type Piper struct {
 	events          *event.Hub
 
 	stopCtx context.CancelFunc // cancels ctx on Close
+	wg      sync.WaitGroup
 }
 
 func New(cfg Config) (*Piper, error) {
@@ -242,8 +244,15 @@ func New(cfg Config) (*Piper, error) {
 	p.serving.manager.SetEventPublisher(p.events)
 	p.notebookManager.SetEventPublisher(p.events)
 	p.recoverInterruptedRuns(context.Background())
-	go p.runCleanup(p.ctx)
-	go p.runScheduler(p.ctx)
+	p.wg.Add(2)
+	go func() {
+		defer p.wg.Done()
+		p.runCleanup(p.ctx)
+	}()
+	go func() {
+		defer p.wg.Done()
+		p.runScheduler(p.ctx)
+	}()
 	return p, nil
 }
 
@@ -393,6 +402,7 @@ func (p *Piper) cleanupRetention(ctx context.Context) {
 // Close stops background goroutines and closes the store.
 func (p *Piper) Close() error {
 	p.stopCtx() // cancel runCleanup, runScheduler, and any pending dispatches
+	p.wg.Wait()
 	return p.repos.Close()
 }
 

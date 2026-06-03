@@ -3,10 +3,10 @@ package notebookdispatch
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -35,14 +35,13 @@ func TestNBWorkerDriver_StartNoWorker(t *testing.T) {
 }
 
 func TestNBWorkerDriver_StartWorkerReturns200(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/start" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newNBRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, fakeWorker.URL)
@@ -70,7 +69,7 @@ func TestNBWorkerDriver_StartWorkerReturns202(t *testing.T) {
 	const wantToken = "test-token-abc"
 	const wantWorkDir = "/notebooks/vol-202"
 
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/start" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
@@ -79,7 +78,6 @@ func TestNBWorkerDriver_StartWorkerReturns202(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newNBRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, fakeWorker.URL)
@@ -110,10 +108,9 @@ func TestNBWorkerDriver_StartWorkerReturns202(t *testing.T) {
 }
 
 func TestNBWorkerDriver_StartWorkerReturns500(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newNBRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, fakeWorker.URL)
@@ -140,14 +137,13 @@ func TestNBWorkerDriver_StopNoWorker(t *testing.T) {
 }
 
 func TestNBWorkerDriver_StopWorkerReturns204(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newNBRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, fakeWorker.URL)
@@ -159,10 +155,9 @@ func TestNBWorkerDriver_StopWorkerReturns204(t *testing.T) {
 }
 
 func TestNBWorkerDriver_StopWorkerReturns404(t *testing.T) {
-	fakeWorker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeWorker := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer fakeWorker.Close()
 
 	registry := newNBRegistryWithWorker(fakeWorker.URL)
 	driver := NewWorkerDriver(registry, fakeWorker.URL)

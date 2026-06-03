@@ -128,6 +128,27 @@ func TestDockerContainerNameSanitization(t *testing.T) {
 	}
 }
 
+func TestNewDockerClientUsesDockerDesktopSocketWhenPresent(t *testing.T) {
+	if os.Getenv("DOCKER_HOST") != "" {
+		t.Skip("DOCKER_HOST is set")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(home, ".docker", "run", "docker.sock")
+	if info, err := os.Stat(socket); err != nil || info.IsDir() {
+		t.Skip("Docker Desktop socket not present")
+	}
+	cli, err := newDockerClient()
+	if err != nil {
+		t.Fatalf("newDockerClient: %v", err)
+	}
+	if got, want := cli.DaemonHost(), "unix://"+socket; got != want {
+		t.Fatalf("daemon host = %q, want %q", got, want)
+	}
+}
+
 func TestDockerGPUResources(t *testing.T) {
 	allDS := &notebook.NotebookDockerSpec{
 		Deploy: &notebook.DockerDeploySpec{

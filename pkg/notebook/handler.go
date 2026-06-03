@@ -249,6 +249,11 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 	r2.URL.RawQuery = notebookProxyRawQuery(c.Request.URL.RawQuery, nb.Token)
 	r2.Host = dialTarget
 	r2.Header.Set("Origin", "http://"+dialTarget)
+	upgrade := isWebSocketUpgrade(r2)
+	if !upgrade {
+		r2.Close = true
+		r2.Header.Set("Connection", "close")
+	}
 	if err := r2.Write(upstream); err != nil {
 		return
 	}
@@ -270,6 +275,11 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		_, _ = upstream.Write(buffered)
 	}
 
+	if !upgrade {
+		_, _ = io.Copy(conn, upstream)
+		return
+	}
+
 	done := make(chan struct{}, 2)
 	go func() { _, _ = io.Copy(upstream, conn); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(conn, upstream); done <- struct{}{} }()
@@ -288,4 +298,16 @@ func notebookProxyRawQuery(rawQuery, token string) string {
 		values.Set("token", token)
 	}
 	return values.Encode()
+}
+
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, part := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(part), "upgrade") {
+			return true
+		}
+	}
+	return false
 }

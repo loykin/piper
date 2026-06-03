@@ -750,6 +750,7 @@ make docker
 
 # Tests
 make test                # unit tests
+make test-notebook-conformance
 make test-e2e            # in-process e2e (no external infra)
 make test-docker-notebook-e2e
 make test-k8s-e2e        # real K8s e2e, including k8s-worker mode

@@ -1,6 +1,9 @@
 package notebook
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 func TestNotebookProxyRawQueryInjectsToken(t *testing.T) {
 	got := notebookProxyRawQuery("foo=bar", "tok-123")
@@ -20,5 +23,28 @@ func TestNotebookProxyRawQueryNoTokenNoChange(t *testing.T) {
 	got := notebookProxyRawQuery("foo=bar", "")
 	if got != "foo=bar" {
 		t.Fatalf("query = %q", got)
+	}
+}
+
+func TestIsWebSocketUpgrade(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/api/kernels/x/channels", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "keep-alive, Upgrade")
+
+	if !isWebSocketUpgrade(req) {
+		t.Fatal("expected websocket upgrade")
+	}
+}
+
+func TestIsWebSocketUpgradeRejectsNormalHTTP(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "/notebooks/demo/proxy/lab", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isWebSocketUpgrade(req) {
+		t.Fatal("normal HTTP request was treated as websocket")
 	}
 }

@@ -78,6 +78,24 @@ func TestHandlerRejectsOversizedRequestBody(t *testing.T) {
 	}
 }
 
+func TestHandlerServesUIDeepLinks(t *testing.T) {
+	p, err := New(Config{OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/notebooks", nil)
+	rec := httptest.NewRecorder()
+	p.Handler(nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "not found") {
+		t.Fatalf("unexpected not found body: %s", rec.Body.String())
+	}
+}
+
 func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 	p, err := New(Config{OutputDir: t.TempDir()})
 	if err != nil {

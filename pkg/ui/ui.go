@@ -5,7 +5,6 @@
 //	mux.Handle("/", ui.Handler())
 //
 // For SPA routing, unknown paths fall back to index.html.
-// API paths (/runs, /api, /health) are passed through.
 package ui
 
 import (
@@ -19,7 +18,7 @@ import (
 var dist embed.FS
 
 // Handler returns an http.Handler that serves the React SPA.
-// All requests to non-API paths fall back to index.html.
+// All unknown paths fall back to index.html.
 // Returns 503 if dist is empty (before running make ui).
 func Handler() http.Handler {
 	sub, err := fs.Sub(dist, "dist")
@@ -35,12 +34,6 @@ func Handler() http.Handler {
 	fileServer := http.FileServer(http.FS(sub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Pass through API paths (defensive; should not reach this handler)
-		if isAPIPath(r.URL.Path) {
-			http.NotFound(w, r)
-			return
-		}
-
 		// Serve the file if it exists, otherwise fall back to SPA index.html
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" {
@@ -55,13 +48,4 @@ func Handler() http.Handler {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
-}
-
-func isAPIPath(path string) bool {
-	for _, prefix := range []string{"/runs", "/api/", "/health"} {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
 }

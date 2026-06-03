@@ -3,9 +3,26 @@ package notebookworker
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/piper/piper/pkg/notebook"
 )
+
+type conformanceRuntime struct {
+	req     RuntimeStartRequest
+	started chan struct{}
+}
+
+func (r *conformanceRuntime) Start(_ context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
+	r.req = req
+	if r.started != nil {
+		close(r.started)
+	}
+	return &StartedNotebook{Endpoint: "http://localhost:18888", PID: 123}, nil
+}
+
+func (r *conformanceRuntime) Stop(context.Context, string) error { return nil }
+func (r *conformanceRuntime) KillAll(context.Context) error      { return nil }
 
 func TestNotebookWorker_StartInvalidYAML(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
@@ -52,6 +69,42 @@ spec:
 	})
 	if err == nil {
 		t.Fatal("expected error for missing volume_id and work_dir")
+	}
+}
+
+func TestNotebookWorkerStartResponseConformance(t *testing.T) {
+	rt := &conformanceRuntime{started: make(chan struct{})}
+	workDir := t.TempDir()
+	w := New(Config{ID: "agent-1", PortRange: "18888-18888"})
+	w.runtime = rt
+
+	resp, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
+		YAML:     "metadata:\n  name: demo\nspec: {}\n",
+		VolumeID: "vol-demo",
+		WorkDir:  workDir,
+	})
+	if err != nil {
+		t.Fatalf("startNotebook returned error: %v", err)
+	}
+	if resp.Token == "" {
+		t.Fatal("token is empty")
+	}
+	if resp.WorkDir != workDir {
+		t.Fatalf("work dir = %q", resp.WorkDir)
+	}
+	if resp.Endpoint != "tunnel://agent-1?target=localhost:18888" {
+		t.Fatalf("endpoint = %q", resp.Endpoint)
+	}
+	select {
+	case <-rt.started:
+	case <-time.After(time.Second):
+		t.Fatal("runtime was not started")
+	}
+	if rt.req.BaseURL != "/notebooks/demo/proxy/" {
+		t.Fatalf("base url = %q", rt.req.BaseURL)
+	}
+	if rt.req.Token != resp.Token {
+		t.Fatalf("runtime token = %q, response token = %q", rt.req.Token, resp.Token)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 type Handler = func(ctx context.Context, payload json.RawMessage) (any, error)
 
 // Dispatcher routes incoming RPCCommand frames to registered handlers.
-// It mirrors tunnel.Dispatcher in the old WebSocket implementation.
 type Dispatcher struct {
 	handlers map[string]Handler
 }
@@ -37,7 +36,6 @@ func (d *Dispatcher) Register(method string, handler Handler) error {
 }
 
 // RegisterJSON is a typed helper that unmarshals the payload to T before calling handler.
-// Mirrors tunnel.RegisterJSON for easy migration.
 func RegisterJSON[T, R any](d *Dispatcher, method string, handler func(context.Context, T) (R, error)) error {
 	return d.Register(method, func(ctx context.Context, payload json.RawMessage) (any, error) {
 		var req T

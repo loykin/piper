@@ -31,7 +31,7 @@ type Config struct {
 	Docker        DockerConfig
 	GPUs          []string
 	Hostname      string
-	ID            string // UUID; caller must generate
+	ID            string // stable worker identity assigned by the caller
 }
 
 // Worker is the notebook worker agent.

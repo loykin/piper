@@ -68,7 +68,7 @@ func newDockerRuntime(cfg DockerConfig) (*dockerRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	cli, err := dockerclient.New(dockerclient.FromEnv)
+	cli, err := newDockerClient()
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +77,19 @@ func newDockerRuntime(cfg DockerConfig) (*dockerRuntime, error) {
 		client:     cli,
 		containers: make(map[string]string),
 	}, nil
+}
+
+func newDockerClient() (*dockerclient.Client, error) {
+	if os.Getenv("DOCKER_HOST") != "" {
+		return dockerclient.New(dockerclient.FromEnv)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		desktopSock := filepath.Join(home, ".docker", "run", "docker.sock")
+		if info, statErr := os.Stat(desktopSock); statErr == nil && !info.IsDir() {
+			return dockerclient.New(dockerclient.FromEnv, dockerclient.WithHost("unix://"+desktopSock))
+		}
+	}
+	return dockerclient.New(dockerclient.FromEnv)
 }
 
 func newDockerRuntimeWithClient(cfg DockerConfig, cli dockerAPI) (*dockerRuntime, error) {

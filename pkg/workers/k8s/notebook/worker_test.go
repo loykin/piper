@@ -66,6 +66,12 @@ spec: {}
 	if resp.Endpoint != wantEndpoint {
 		t.Fatalf("endpoint = %q, want %q", resp.Endpoint, wantEndpoint)
 	}
+	if resp.Token == "" {
+		t.Fatal("token is empty")
+	}
+	if resp.WorkDir != notebook.ContainerWorkDir {
+		t.Fatalf("work dir = %q", resp.WorkDir)
+	}
 	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-my-notebook", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get statefulset: %v", err)

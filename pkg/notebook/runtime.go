@@ -4,8 +4,8 @@ import "fmt"
 
 const ContainerWorkDir = "/home/jovyan/work"
 
-// JupyterStartArgs returns args for Docker Stacks containers (jupyter/scipy-notebook etc.)
-// which boot via start-notebook.py as the container entrypoint.
+// JupyterStartArgs returns the canonical notebook server flags for container
+// runtimes that use start-notebook.py as the entrypoint command.
 func JupyterStartArgs(baseURL, token, rootDir string, port int) []string {
 	return []string{
 		"start-notebook.py",
@@ -18,8 +18,8 @@ func JupyterStartArgs(baseURL, token, rootDir string, port int) []string {
 	}
 }
 
-// JupyterLabArgs returns args for direct `jupyter lab` / `jupyter-lab` invocation
-// in process mode (no Docker Stacks entrypoint).
+// JupyterLabArgs returns the same canonical notebook server flags without the
+// container entrypoint command, for direct host-process invocation.
 func JupyterLabArgs(baseURL, token, rootDir string, port int) []string {
 	return []string{
 		"--ServerApp.base_url=" + baseURL,

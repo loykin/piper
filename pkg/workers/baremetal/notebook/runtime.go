@@ -68,8 +68,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		return nil, err
 	}
 
-	command := append(extraArgs, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
-	command = append([]string{bin}, command...)
+	command := processNotebookCommand(bin, extraArgs, req)
 
 	pid, endpoint, cmd, err := workload.StartProcess(workload.ProcessSpec{
 		Name:    req.Name,
@@ -96,6 +95,12 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 	})
 
 	return &StartedNotebook{Endpoint: endpoint, PID: pid, EnvPath: envPath}, nil
+}
+
+func processNotebookCommand(bin string, extraArgs []string, req RuntimeStartRequest) []string {
+	command := append([]string{}, extraArgs...)
+	command = append(command, notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)...)
+	return append([]string{bin}, command...)
 }
 
 func (r *processRuntime) Stop(_ context.Context, name string) error {
@@ -128,9 +133,9 @@ func (r *processRuntime) KillAll(_ context.Context) error {
 
 // prepareProcessEnv resolves or auto-creates the Python environment for a notebook.
 //
-//   - empty        -> auto-create venv at {workDir}/.venv, install jupyterlab if needed
+//   - empty        -> auto-create venv at {workDir}/.venv, install jupyterlab/ipykernel if needed
 //   - conda:name   -> use existing conda env
-//   - /path/to/venv -> use existing venv (must have jupyterlab installed)
+//   - /path/to/venv -> use existing venv, installing missing jupyterlab/ipykernel if needed
 func prepareProcessEnv(specEnv, workDir string) (bin string, extraArgs []string, envPath string, err error) {
 	if strings.HasPrefix(specEnv, "conda:") {
 		condaName := strings.TrimPrefix(specEnv, "conda:")
@@ -174,10 +179,6 @@ func logRuntimeStart(mode, name, workDir string, port int) {
 }
 
 func ensureVenv(venvPath string) error {
-	jupyterLab := filepath.Join(venvPath, "bin", "jupyter-lab")
-	if info, err := os.Stat(jupyterLab); err == nil && !info.IsDir() {
-		return nil
-	}
 	python := filepath.Join(venvPath, "bin", "python")
 	if _, err := os.Stat(python); err != nil {
 		slog.Info("creating venv", "path", venvPath)
@@ -186,11 +187,28 @@ func ensureVenv(venvPath string) error {
 			return fmt.Errorf("create venv %q: %w: %s", venvPath, err, strings.TrimSpace(string(out)))
 		}
 	}
-	slog.Info("installing jupyterlab", "venv", venvPath)
+	if hasVenvCommand(venvPath, "jupyter-lab") && hasPythonModule(python, "ipykernel") {
+		return nil
+	}
+	slog.Info("installing notebook process dependencies", "venv", venvPath)
 	pip := filepath.Join(venvPath, "bin", "pip")
-	out, err := exec.Command(pip, "install", "--quiet", "jupyterlab").CombinedOutput()
+	out, err := exec.Command(pip, "install", "--quiet", "jupyterlab", "ipykernel").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("install jupyterlab in %q: %w: %s", venvPath, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("install notebook dependencies in %q: %w: %s", venvPath, err, strings.TrimSpace(string(out)))
+	}
+	out, err = exec.Command(python, "-m", "ipykernel", "install", "--sys-prefix", "--name", "python3", "--display-name", "Python 3").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("install ipykernel spec in %q: %w: %s", venvPath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func hasVenvCommand(venvPath, name string) bool {
+	path := filepath.Join(venvPath, "bin", name)
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func hasPythonModule(python, module string) bool {
+	return exec.Command(python, "-c", "import "+module).Run() == nil
 }

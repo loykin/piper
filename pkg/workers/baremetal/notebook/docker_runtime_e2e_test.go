@@ -24,7 +24,7 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	cli, err := dockerclient.New(dockerclient.FromEnv)
+	cli, err := newDockerClient()
 	if err != nil {
 		t.Fatalf("docker client: %v", err)
 	}

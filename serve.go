@@ -318,6 +318,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	notebook.NewHandler(notebook.HandlerDeps{
 		Notebooks:        p.repos.Notebook,
 		Volumes:          p.repos.NotebookVolume,
+		Promotions:       p,
 		Create:           p.notebookManager.Create,
 		CreateWithVolume: p.notebookManager.CreateWithVolume,
 		Stop:             p.notebookManager.Stop,

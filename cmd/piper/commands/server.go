@@ -44,12 +44,13 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			if addr == "" {
 				addr = ":8080"
 			}
+			agentAddr, _ := cmd.Flags().GetString("agent-addr")
 
 			local, _ := cmd.Flags().GetBool("local")
 			localConcurrency, _ := cmd.Flags().GetInt("local-concurrency")
 
 			if !local {
-				return p.Serve(ctx, piper.ServeOption{Addr: addr})
+				return p.Serve(ctx, piper.ServeOption{Addr: addr, AgentAddr: agentAddr})
 			}
 
 			// Embedded local worker: same pipeline worker, just pointed at localhost.
@@ -117,6 +118,7 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 
 	cmd.Flags().String("addr", "", "listen address (default :8080)")
 	cmd.Flags().String("token", "", "bearer token required for API and UI requests")
+	cmd.Flags().String("agent-addr", "", "gRPC agent listen address (default from config)")
 	cmd.Flags().Bool("tls", false, "enable TLS")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file")
 	cmd.Flags().String("tls-key", "", "TLS key file")

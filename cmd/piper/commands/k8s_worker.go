@@ -22,6 +22,7 @@ func newK8sWorkerCmd() *cobra.Command {
 		Short: "Start a cluster-local K8s worker",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			masterURL, _ := cmd.Flags().GetString("master")
+			agentAddr, _ := cmd.Flags().GetString("agent-addr")
 			token, _ := cmd.Flags().GetString("token")
 			id, _ := cmd.Flags().GetString("id")
 			cluster, _ := cmd.Flags().GetString("cluster")
@@ -57,6 +58,7 @@ func newK8sWorkerCmd() *cobra.Command {
 
 			cfg, _ := buildConfig()
 			return k8sworker.New(k8sworker.Config{
+				AgentAddr:            agentAddr,
 				MasterURL:            masterURL,
 				Token:                token,
 				ID:                   id,
@@ -79,6 +81,7 @@ func newK8sWorkerCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String("master", "", "master server URL (required)")
+	cmd.Flags().String("agent-addr", "", "piper master gRPC agent address, e.g. piper-server:9090 (required)")
 	cmd.Flags().String("token", "", "bearer token for master API")
 	cmd.Flags().String("id", "", "worker ID (default: stable k8s-<cluster>)")
 	cmd.Flags().String("cluster", "", "cluster name reported to master (required)")
@@ -96,6 +99,7 @@ func newK8sWorkerCmd() *cobra.Command {
 	cmd.Flags().String("storage-size", "", "default notebook PVC size (default 10Gi)")
 	cmd.Flags().String("storage-url", "", "artifact store URL (s3://, file://, http://) for pipeline artifact transfer")
 	_ = cmd.MarkFlagRequired("master")
+	_ = cmd.MarkFlagRequired("agent-addr")
 	_ = cmd.MarkFlagRequired("cluster")
 	return cmd
 }

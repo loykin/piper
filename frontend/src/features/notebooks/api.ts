@@ -39,6 +39,51 @@ export interface NotebookWorkerInfo {
   last_seen: string
 }
 
+export type NotebookPromotionTarget = 'draft' | 'download' | 'repo' | 'object_store'
+
+export interface NotebookPromotionValidation {
+  status: 'ok' | 'warning' | 'error'
+  messages: string[]
+}
+
+export interface NotebookPromotionSource {
+  type: 'notebook'
+  notebook_name: string
+  notebook_path?: string
+  git_sha?: string
+  run_id?: string
+  notebook_yaml?: string
+}
+
+export interface NotebookPromotionRuntime {
+  worker_id?: string
+  backend?: string
+  mode?: string
+  image?: string
+  env?: string
+  work_dir?: string
+  endpoint?: string
+}
+
+export interface NotebookPromotionPreview {
+  name: string
+  target: NotebookPromotionTarget
+  source: NotebookPromotionSource
+  runtime: NotebookPromotionRuntime
+  validation: NotebookPromotionValidation
+  draft: string
+}
+
+export interface NotebookPromotionExportResult extends NotebookPromotionPreview {
+  bundle_path?: string
+  object_key?: string
+  exported_at: string
+}
+
+export interface NotebookPromotionExportRecord extends NotebookPromotionExportResult {
+  manifest_path?: string
+}
+
 export async function listNotebooks(): Promise<NotebookServer[]> {
   const res = await fetch(`${BASE}/notebooks`)
   if (!res.ok) throw new Error(`listNotebooks: ${res.status}`)
@@ -119,4 +164,51 @@ export async function listNotebookWorkers(): Promise<NotebookWorkerInfo[]> {
   if (!res.ok) throw new Error(`listNotebookWorkers: ${res.status}`)
   const data: unknown = await res.json()
   return Array.isArray(data) ? (data as NotebookWorkerInfo[]) : []
+}
+
+function promotionTargetQuery(target: NotebookPromotionTarget): string {
+  return `?target=${encodeURIComponent(target)}`
+}
+
+export async function getNotebookPromotion(name: string, target: NotebookPromotionTarget = 'draft'): Promise<NotebookPromotionPreview> {
+  const res = await fetch(`${BASE}/api/notebooks/${name}/promotion${promotionTargetQuery(target)}`)
+  if (!res.ok) throw new Error(`getNotebookPromotion: ${res.status}`)
+  return res.json()
+}
+
+export async function validateNotebookPromotion(name: string, target: NotebookPromotionTarget = 'draft'): Promise<NotebookPromotionValidation> {
+  const res = await fetch(`${BASE}/api/notebooks/${name}/promotion/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+export async function exportNotebookPromotion(name: string, target: NotebookPromotionTarget = 'draft'): Promise<NotebookPromotionExportResult> {
+  const res = await fetch(`${BASE}/api/notebooks/${name}/promotion/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+export async function listNotebookPromotionExports(name: string): Promise<NotebookPromotionExportRecord[]> {
+  const res = await fetch(`${BASE}/api/notebooks/${name}/promotion/exports`)
+  if (!res.ok) throw new Error(`listNotebookPromotionExports: ${res.status}`)
+  const data: unknown = await res.json()
+  return Array.isArray(data) ? (data as NotebookPromotionExportRecord[]) : []
+}
+
+export async function downloadNotebookPromotionExport(name: string, file: string): Promise<void> {
+  window.location.assign(`${BASE}/api/notebooks/${name}/promotion/exports/${encodeURIComponent(file)}`)
 }

@@ -384,9 +384,10 @@ spec:
         - name: piper
           image: %[2]q
           imagePullPolicy: IfNotPresent
-          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080"]
+          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080", "--agent-addr", ":9090"]
           ports:
             - containerPort: 8080
+            - containerPort: 9090
           volumeMounts:
             - name: config
               mountPath: /etc/piper
@@ -418,6 +419,7 @@ spec:
           args:
             - k8s-worker
             - --master=http://piper-server.%[1]s.svc.cluster.local:8080
+            - --agent-addr=piper-server.%[1]s.svc.cluster.local:9090
             - --cluster=agent-e2e
             - --namespaces=%[1]s
             - --notebook-namespace=%[1]s
@@ -444,6 +446,9 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
+    - name: grpc-agent
+      port: 9090
+      targetPort: 9090
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -737,6 +742,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
 	const nbName = "e2e-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbName, nbImage)
@@ -833,6 +839,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
 	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbImage)
 	k8sE2EPostNotebook(t, serverURL, nb1YAML, "")

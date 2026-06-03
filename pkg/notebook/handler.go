@@ -2,9 +2,11 @@ package notebook
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/internal/agent"
@@ -23,6 +25,7 @@ type ProxyDialer interface {
 type HandlerDeps struct {
 	Notebooks        Repository
 	Volumes          VolumeRepository
+	Promotions       PromotionService
 	Create           func(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error)
 	CreateWithVolume func(ctx context.Context, spec NotebookServerSpec, volumeID, yamlStr string) (*NotebookServer, error)
 	Stop             func(ctx context.Context, name string) error
@@ -52,6 +55,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/notebooks/:name/start", h.startNotebook)
 	rg.DELETE("/notebooks/:name", h.deleteNotebook)
 	rg.Any("/notebooks/:name/proxy/*path", h.proxyNotebook)
+	rg.GET("/api/notebooks/:name/promotion", h.getPromotion)
+	rg.POST("/api/notebooks/:name/promotion/validate", h.validatePromotion)
+	rg.POST("/api/notebooks/:name/promotion/export", h.exportPromotion)
+	rg.GET("/api/notebooks/:name/promotion/exports", h.listPromotionExports)
+	rg.GET("/api/notebooks/:name/promotion/exports/:file", h.downloadPromotionExport)
 
 	if h.deps.Volumes != nil {
 		rg.GET("/notebook-volumes", h.listVolumes)
@@ -195,6 +203,102 @@ func (h *Handler) purgeVolume(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) promotionTarget(c *gin.Context) PromotionTarget {
+	if raw := strings.TrimSpace(c.Query("target")); raw != "" {
+		return PromotionTarget(raw)
+	}
+	var req PromotionRequest
+	if err := c.ShouldBindJSON(&req); err == nil {
+		if raw := strings.TrimSpace(string(req.Target)); raw != "" {
+			return PromotionTarget(raw)
+		}
+	}
+	return PromotionTargetDraft
+}
+
+func (h *Handler) promotionService() PromotionService {
+	return h.deps.Promotions
+}
+
+// GET /api/notebooks/:name/promotion
+func (h *Handler) getPromotion(c *gin.Context) {
+	if h.promotionService() == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
+		return
+	}
+	target := h.promotionTarget(c)
+	preview, err := h.promotionService().Preview(c.Request.Context(), c.Param("name"), target)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, preview)
+}
+
+// POST /api/notebooks/:name/promotion/validate
+func (h *Handler) validatePromotion(c *gin.Context) {
+	if h.promotionService() == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
+		return
+	}
+	target := h.promotionTarget(c)
+	validation, err := h.promotionService().Validate(c.Request.Context(), c.Param("name"), target)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, validation)
+}
+
+// POST /api/notebooks/:name/promotion/export
+func (h *Handler) exportPromotion(c *gin.Context) {
+	if h.promotionService() == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
+		return
+	}
+	target := h.promotionTarget(c)
+	result, err := h.promotionService().Export(c.Request.Context(), c.Param("name"), target)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// GET /api/notebooks/:name/promotion/exports
+func (h *Handler) listPromotionExports(c *gin.Context) {
+	if h.promotionService() == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
+		return
+	}
+	records, err := h.promotionService().ListExports(c.Request.Context(), c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, records)
+}
+
+// GET /api/notebooks/:name/promotion/exports/:file
+func (h *Handler) downloadPromotionExport(c *gin.Context) {
+	if h.promotionService() == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
+		return
+	}
+	dl, err := h.promotionService().DownloadExport(c.Request.Context(), c.Param("name"), c.Param("file"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer func() { _ = dl.Reader.Close() }()
+	c.Header("Content-Type", dl.ContentType)
+	c.Header("Content-Disposition", `attachment; filename="`+dl.Name+`"`)
+	if _, err := io.Copy(c.Writer, dl.Reader); err != nil {
+		c.Status(http.StatusBadGateway)
+		return
+	}
 }
 
 // ANY /notebooks/:name/proxy/*path — reverse-proxies to the notebook endpoint.

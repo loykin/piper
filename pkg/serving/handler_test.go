@@ -46,6 +46,15 @@ func (r *stubServingRepo) SetStatus(_ context.Context, name, status string) erro
 	}
 	return nil
 }
+func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, name, status, endpoint string) error {
+	if s, ok := r.services[name]; ok {
+		s.Status = status
+		if endpoint != "" {
+			s.Endpoint = endpoint
+		}
+	}
+	return nil
+}
 func (r *stubServingRepo) List(_ context.Context) ([]*Service, error) {
 	out := make([]*Service, 0, len(r.services))
 	for _, s := range r.services {

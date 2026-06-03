@@ -23,6 +23,7 @@ type Runtime interface {
 	Start(ctx context.Context, req RuntimeStartRequest) (*StartedNotebook, error)
 	Stop(ctx context.Context, name string) error
 	KillAll(ctx context.Context) error
+	Status(name string) string
 }
 
 type RuntimeStartRequest struct {
@@ -126,6 +127,13 @@ func (r *processRuntime) KillAll(_ context.Context) error {
 	r.notebooks = make(map[string]*processNotebook)
 	r.mu.Unlock()
 	return r.supervisor.KillAll()
+}
+
+func (r *processRuntime) Status(name string) string {
+	if status, ok := r.supervisor.Status(name); ok {
+		return status
+	}
+	return notebook.StatusStopped
 }
 
 // prepareProcessEnv resolves or auto-creates the Python environment for a notebook.

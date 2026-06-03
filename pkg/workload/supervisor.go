@@ -73,6 +73,20 @@ func (s *ProcessSupervisor) KillAll() error {
 	return nil
 }
 
+// Status reports whether a process is currently tracked.
+func (s *ProcessSupervisor) Status(name string) (status string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.processes[name]
+	if !ok {
+		return "", false
+	}
+	if rec.stopped {
+		return "stopped", true
+	}
+	return "running", true
+}
+
 func (s *ProcessSupervisor) markStopped(name string) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

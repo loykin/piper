@@ -103,6 +103,7 @@ func (r *failingRuntime) Start(context.Context, RuntimeStartRequest) (*StartedNo
 }
 func (r *failingRuntime) Stop(context.Context, string) error { return r.err }
 func (r *failingRuntime) KillAll(context.Context) error      { return r.err }
+func (r *failingRuntime) Status(string) string               { return notebook.StatusStopped }
 
 // Run connects to the master via gRPC and serves until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
@@ -243,15 +244,9 @@ func (w *Worker) deprovisionVolume(_ context.Context, req notebook.WorkerDeprovi
 
 func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequest) (notebook.WorkerSyncStatusResponse, error) {
 	statuses := make(map[string]string, len(req.Names))
-	w.mu.Lock()
 	for _, name := range req.Names {
-		if _, ok := w.notebooks[name]; ok {
-			statuses[name] = notebook.StatusRunning
-		} else {
-			statuses[name] = notebook.StatusStopped
-		}
+		statuses[name] = w.runtime.Status(name)
 	}
-	w.mu.Unlock()
 	return notebook.WorkerSyncStatusResponse{Statuses: statuses}, nil
 }
 

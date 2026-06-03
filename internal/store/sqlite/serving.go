@@ -62,6 +62,17 @@ func (r *servingRepo) SetStatus(ctx context.Context, name, status string) error 
 	return err
 }
 
+func (r *servingRepo) SetStatusEndpoint(ctx context.Context, name, status, endpoint string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE services
+		 SET status=?,
+		     endpoint=CASE WHEN ? <> '' THEN ? ELSE endpoint END,
+		     updated_at=?
+		 WHERE name=?`,
+		status, endpoint, endpoint, time.Now(), name)
+	return err
+}
+
 func (r *servingRepo) List(ctx context.Context) ([]*serving.Service, error) {
 	var out []*serving.Service
 	err := r.db.SelectContext(ctx, &out,

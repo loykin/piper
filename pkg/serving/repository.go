@@ -9,6 +9,7 @@ type Repository interface {
 	Update(ctx context.Context, svc *Service) error
 	Upsert(ctx context.Context, svc *Service) error
 	SetStatus(ctx context.Context, name, status string) error
+	SetStatusEndpoint(ctx context.Context, name, status, endpoint string) error
 	List(ctx context.Context) ([]*Service, error)
 	Delete(ctx context.Context, name string) error
 	ListHistory(ctx context.Context) ([]*ServiceHistory, error)

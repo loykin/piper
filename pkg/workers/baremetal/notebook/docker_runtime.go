@@ -142,6 +142,7 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 				status = "failed"
 			}
 		}
+		_, _ = r.client.ContainerRemove(context.Background(), created.ID, dockerclient.ContainerRemoveOptions{Force: true})
 		r.mu.Lock()
 		delete(r.containers, req.Name)
 		r.mu.Unlock()
@@ -207,6 +208,14 @@ func (r *dockerRuntime) KillAll(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (r *dockerRuntime) Status(name string) string {
+	ids, err := r.findManagedContainer(context.Background(), name)
+	if err != nil || len(ids) == 0 {
+		return notebook.StatusStopped
+	}
+	return notebook.StatusRunning
 }
 
 func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerclient.ContainerCreateOptions, error) {

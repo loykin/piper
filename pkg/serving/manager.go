@@ -149,18 +149,7 @@ func (m *Manager) SetYAML(ctx context.Context, name, yaml string) error {
 // UpdateStatus updates the status (and optionally endpoint) of a service by name.
 // Used by worker callback endpoints.
 func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint string) error {
-	svc, err := m.repo.Get(ctx, name)
-	if err != nil {
-		return fmt.Errorf("get service: %w", err)
-	}
-	if svc == nil {
-		return fmt.Errorf("service %q not found", name)
-	}
-	svc.Status = status
-	if endpoint != "" {
-		svc.Endpoint = endpoint
-	}
-	if err := m.repo.Update(ctx, svc); err != nil {
+	if err := m.repo.SetStatusEndpoint(ctx, name, status, endpoint); err != nil {
 		return err
 	}
 	m.emit("service.status", map[string]any{"name": name, "status": status})

@@ -23,6 +23,12 @@ func (r *conformanceRuntime) Start(_ context.Context, req RuntimeStartRequest) (
 
 func (r *conformanceRuntime) Stop(context.Context, string) error { return nil }
 func (r *conformanceRuntime) KillAll(context.Context) error      { return nil }
+func (r *conformanceRuntime) Status(name string) string {
+	if name == "running-nb" {
+		return notebook.StatusRunning
+	}
+	return notebook.StatusStopped
+}
 
 func TestNotebookWorker_StartInvalidYAML(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
@@ -126,7 +132,7 @@ func TestNotebookWorker_ProvisionVolumeEmptyID(t *testing.T) {
 
 func TestNotebookWorker_SyncStatus(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
-	w.notebooks["running-nb"] = &localNotebook{name: "running-nb", port: 8888}
+	w.runtime = &conformanceRuntime{}
 
 	resp, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
 		Names: []string{"running-nb", "stopped-nb"},

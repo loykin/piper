@@ -429,10 +429,7 @@ spec:
             - --pipeline-worker-image=%[2]s
             - --agent-image-pull-policy=IfNotPresent
             - --default-image=alpine:3.20
-            - --s3-endpoint=seaweedfs:9000
-            - --s3-access-key=anyadmin
-            - --s3-secret-key=anypassword
-            - --s3-bucket=piper-artifacts
+            - --storage-url=s3://piper-artifacts?endpoint=http://seaweedfs:9000&s3ForcePathStyle=true&accessKey=anyadmin&secretKey=anypassword
 ---
 apiVersion: v1
 kind: Service

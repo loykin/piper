@@ -82,43 +82,9 @@ jobs:
       - name: Run examples e2e (library, bare-metal, YAML parsing)
         run: go test -tags=example_e2e -v -timeout=120s ./examples/
 
-  build-image:
-    name: Build Image
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.push.outputs.image }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Build linux binary
-        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/piper ./cmd/piper
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        id: push
-        run: |
-          IMAGE=ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-
   k8s-e2e:
     name: K8s E2E
     runs-on: ubuntu-latest
-    needs: build-image
     steps:
       - uses: actions/checkout@v4
 
@@ -137,17 +103,15 @@ jobs:
       - name: Create kind cluster
         run: kind create cluster --wait=60s
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build linux binary
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/piper ./cmd/piper
+
+      - name: Build piper image locally
+        run: docker build -t piper/piper:e2e .
 
       - name: Load images into kind
         run: |
-          docker pull "${{ needs.build-image.outputs.image }}"
-          kind load docker-image "${{ needs.build-image.outputs.image }}"
+          kind load docker-image piper/piper:e2e
           docker pull alpine:3.20
           kind load docker-image alpine:3.20
           docker pull chrislusf/seaweedfs:latest
@@ -161,25 +125,9 @@ jobs:
 
       - name: Run K8s E2E tests
         run: |
-          PIPER_K8S_E2E_IMAGE=${{ needs.build-image.outputs.image }} \
+          PIPER_K8S_E2E_IMAGE=piper/piper:e2e \
           PIPER_K8S_E2E_NOTEBOOK_IMAGE=jupyter/minimal-notebook:latest \
             go test -tags=k8s_e2e -v -timeout=60m -run 'TestK8sE2E' .
-
-  cleanup-images:
-    name: Cleanup Images
-    runs-on: ubuntu-latest
-    needs: k8s-e2e
-    if: github.event_name == 'push'
-    permissions:
-      packages: write
-    steps:
-      - name: Keep latest 5 GHCR images
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ github.event.repository.name }}
-          package-type: container
-          min-versions-to-keep: 5
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     name: Build

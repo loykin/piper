@@ -678,6 +678,8 @@ func dumpK8sE2EDebug(t *testing.T, ns string) {
 		{"-n", ns, "get", "pods,jobs", "-o", "wide"},
 		{"-n", ns, "describe", "pods"},
 		{"-n", ns, "logs", "-l", "app=piper-server", "--tail=200"},
+		{"-n", ns, "logs", "-l", "app=piper-k8s-worker", "--tail=200"},
+		{"-n", ns, "logs", "deployment/piper-k8s-worker", "--all-containers=true", "--tail=200"},
 		{"-n", ns, "logs", "-l", "app.kubernetes.io/managed-by=piper", "--all-containers=true", "--tail=200"},
 	} {
 		out, err := kubectlContext(context.Background(), nil, args...)

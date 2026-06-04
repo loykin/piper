@@ -15,12 +15,13 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, Play } from 'lucide-react'
 import RunDetailPage from '@/pages/RunDetailPage'
 import WorkflowsPage from '@/pages/WorkflowsPage'
 import WorkflowCreatePage from '@/pages/WorkflowCreatePage'
 import HistoryPage from '@/pages/HistoryPage'
 import ScheduleDetailPage from '@/pages/ScheduleDetailPage'
+import PipelineEditorPage from '@/pages/PipelineEditorPage'
 import ServingPage from '@/pages/ServingPage'
 import ServingDetailPage from '@/pages/ServingDetailPage'
 import ServingHistoryPage from '@/pages/ServingHistoryPage'
@@ -28,7 +29,6 @@ import WorkersPage from '@/pages/WorkersPage'
 import NotebooksPage from '@/pages/NotebooksPage'
 import NotebookCreatePage from '@/pages/NotebookCreatePage'
 import NotebookDetailPage from '@/pages/NotebookDetailPage'
-import NotebookPromotePage from '@/pages/NotebookPromotePage'
 import NotebookVolumesPage from '@/pages/NotebookVolumesPage'
 import StoragePage from '@/pages/StoragePage'
 
@@ -36,6 +36,7 @@ const navGroups = [
   {
     label: 'Pipelines',
     items: [
+      { id: 'editor', label: 'Editor', icon: Play, to: '/pipelines/editor' },
       { id: 'schedules', label: 'Schedules', icon: CalendarClock, to: '/schedules' },
       { id: 'history',   label: 'History',   icon: History,       to: '/history' },
     ],
@@ -128,6 +129,7 @@ export default function App() {
                 <Route path="/schedules" element={<WorkflowsPage />} />
                 <Route path="/schedules/create" element={<WorkflowCreatePage />} />
                 <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
+                <Route path="/pipelines/editor" element={<PipelineEditorPage />} />
                 <Route path="/history" element={<HistoryPage />} />
                 <Route path="/serving" element={<ServingPage />} />
                 <Route path="/serving/history" element={<ServingHistoryPage />} />
@@ -137,13 +139,13 @@ export default function App() {
                 <Route path="/notebooks" element={<NotebooksPage />} />
                 <Route path="/notebooks/create" element={<NotebookCreatePage />} />
                 <Route path="/notebooks/:name" element={<NotebookDetailPage />} />
-                <Route path="/notebooks/:name/promote" element={<NotebookPromotePage />} />
+                <Route path="/notebooks/:name/promote" element={<Navigate to="/pipelines/editor" replace />} />
                 <Route path="/notebook-volumes" element={<NotebookVolumesPage />} />
                 <Route path="/storage" element={<StoragePage />} />
                 {/* Legacy redirects */}
                 <Route path="/services" element={<Navigate to="/serving" replace />} />
-                <Route path="/pipelines" element={<Navigate to="/schedules" replace />} />
-                <Route path="/pipelines/create" element={<Navigate to="/schedules/create" replace />} />
+                <Route path="/pipelines" element={<Navigate to="/pipelines/editor" replace />} />
+                <Route path="/pipelines/create" element={<Navigate to="/pipelines/editor" replace />} />
                 <Route path="/run-history" element={<Navigate to="/history" replace />} />
               </Routes>
             </div>

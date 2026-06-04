@@ -16,4 +16,6 @@ const (
 
 	MethodPipelineDispatch  = "pipeline.dispatch"
 	MethodPipelineCancelRun = "pipeline.cancel_run"
+
+	MethodFSListFiles = "fs.list_files"
 )

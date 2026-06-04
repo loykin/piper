@@ -2,14 +2,16 @@ package notebook
 
 import (
 	"context"
-	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/internal/agent"
+	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/tunnelproxy"
 	"gopkg.in/yaml.v3"
 )
@@ -22,18 +24,23 @@ type ProxyDialer interface {
 	DialProxy(ctx context.Context, agentID, target string) (net.Conn, error)
 }
 
+// RPCSender sends a typed RPC to a specific worker agent and decodes the response.
+type RPCSender interface {
+	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
+}
+
 type HandlerDeps struct {
 	Notebooks        Repository
 	Volumes          VolumeRepository
-	Promotions       PromotionService
 	Create           func(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error)
 	CreateWithVolume func(ctx context.Context, spec NotebookServerSpec, volumeID, yamlStr string) (*NotebookServer, error)
 	Stop             func(ctx context.Context, name string) error
 	Restart          func(ctx context.Context, name string) error
 	Delete           func(ctx context.Context, name string) error
 	PurgeVolume      func(ctx context.Context, volumeID string) error
-	AgentRegistry    *agent.Registry
+	AgentRegistry    *iagent.Registry
 	ProxyDialer      ProxyDialer
+	RPCSender        RPCSender
 }
 
 // Handler is the Gin HTTP handler for the /notebooks domain.
@@ -55,14 +62,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/notebooks/:name/start", h.startNotebook)
 	rg.DELETE("/notebooks/:name", h.deleteNotebook)
 	rg.Any("/notebooks/:name/proxy/*path", h.proxyNotebook)
-	rg.GET("/api/notebooks/:name/promotion", h.getPromotion)
-	rg.POST("/api/notebooks/:name/promotion/validate", h.validatePromotion)
-	rg.POST("/api/notebooks/:name/promotion/export", h.exportPromotion)
-	rg.GET("/api/notebooks/:name/promotion/exports", h.listPromotionExports)
-	rg.GET("/api/notebooks/:name/promotion/exports/:file", h.downloadPromotionExport)
 
 	if h.deps.Volumes != nil {
 		rg.GET("/notebook-volumes", h.listVolumes)
+		rg.GET("/notebook-volumes/:id/files", h.listVolumeFiles)
 		rg.DELETE("/notebook-volumes/:id", h.purgeVolume)
 	}
 }
@@ -191,6 +194,94 @@ func (h *Handler) listVolumes(c *gin.Context) {
 	c.JSON(http.StatusOK, vols)
 }
 
+// GET /notebook-volumes/:id/files — list files inside the volume's work_dir.
+// Query param ext: comma-separated extensions to filter (e.g. ".py,.ipynb").
+// When the volume has a worker_id and an RPCSender is configured, the request is
+// forwarded to the owning worker agent via gRPC (fs.list_files). Otherwise it
+// falls back to a local filesystem walk (works for single-node bare-metal setups).
+func (h *Handler) listVolumeFiles(c *gin.Context) {
+	id := c.Param("id")
+	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
+	if err != nil || vol == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
+	if vol.WorkDir == "" {
+		c.JSON(http.StatusOK, []string{})
+		return
+	}
+
+	extFilter := c.Query("ext")
+	var extList []string
+	if extFilter != "" {
+		for _, e := range strings.Split(extFilter, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				extList = append(extList, e)
+			}
+		}
+	}
+
+	// Route through gRPC when the volume is owned by a specific remote worker.
+	if vol.WorkerID != "" && h.deps.RPCSender != nil {
+		req := FSListFilesRequest{
+			WorkDir:  vol.WorkDir,
+			VolumeID: vol.ID,
+			Ext:      extList,
+			MaxFiles: 500,
+		}
+		var resp FSListFilesResponse
+		if err := h.deps.RPCSender.SendRPC(c.Request.Context(), vol.WorkerID, iagent.MethodFSListFiles, req, &resp); err != nil {
+			c.JSON(http.StatusOK, []string{})
+			return
+		}
+		if resp.Files == nil {
+			resp.Files = []string{}
+		}
+		c.JSON(http.StatusOK, resp.Files)
+		return
+	}
+
+	// Local filesystem walk — works for single-node bare-metal where master and
+	// worker share the same filesystem.
+	allowedExts := make(map[string]bool, len(extList))
+	for _, e := range extList {
+		allowedExts[e] = true
+	}
+
+	const maxFiles = 500
+	root := vol.WorkDir
+	var files []string
+
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsPermission(err) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(allowedExts) > 0 && !allowedExts[filepath.Ext(d.Name())] {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		files = append(files, rel)
+		if len(files) >= maxFiles {
+			return fs.SkipAll
+		}
+		return nil
+	})
+
+	if files == nil {
+		files = []string{}
+	}
+	c.JSON(http.StatusOK, files)
+}
+
 // DELETE /notebook-volumes/:id — permanently delete a released volume.
 func (h *Handler) purgeVolume(c *gin.Context) {
 	id := c.Param("id")
@@ -203,102 +294,6 @@ func (h *Handler) purgeVolume(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-func (h *Handler) promotionTarget(c *gin.Context) PromotionTarget {
-	if raw := strings.TrimSpace(c.Query("target")); raw != "" {
-		return PromotionTarget(raw)
-	}
-	var req PromotionRequest
-	if err := c.ShouldBindJSON(&req); err == nil {
-		if raw := strings.TrimSpace(string(req.Target)); raw != "" {
-			return PromotionTarget(raw)
-		}
-	}
-	return PromotionTargetDraft
-}
-
-func (h *Handler) promotionService() PromotionService {
-	return h.deps.Promotions
-}
-
-// GET /api/notebooks/:name/promotion
-func (h *Handler) getPromotion(c *gin.Context) {
-	if h.promotionService() == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
-		return
-	}
-	target := h.promotionTarget(c)
-	preview, err := h.promotionService().Preview(c.Request.Context(), c.Param("name"), target)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, preview)
-}
-
-// POST /api/notebooks/:name/promotion/validate
-func (h *Handler) validatePromotion(c *gin.Context) {
-	if h.promotionService() == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
-		return
-	}
-	target := h.promotionTarget(c)
-	validation, err := h.promotionService().Validate(c.Request.Context(), c.Param("name"), target)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, validation)
-}
-
-// POST /api/notebooks/:name/promotion/export
-func (h *Handler) exportPromotion(c *gin.Context) {
-	if h.promotionService() == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
-		return
-	}
-	target := h.promotionTarget(c)
-	result, err := h.promotionService().Export(c.Request.Context(), c.Param("name"), target)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, result)
-}
-
-// GET /api/notebooks/:name/promotion/exports
-func (h *Handler) listPromotionExports(c *gin.Context) {
-	if h.promotionService() == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
-		return
-	}
-	records, err := h.promotionService().ListExports(c.Request.Context(), c.Param("name"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, records)
-}
-
-// GET /api/notebooks/:name/promotion/exports/:file
-func (h *Handler) downloadPromotionExport(c *gin.Context) {
-	if h.promotionService() == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "promotion not configured"})
-		return
-	}
-	dl, err := h.promotionService().DownloadExport(c.Request.Context(), c.Param("name"), c.Param("file"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	defer func() { _ = dl.Reader.Close() }()
-	c.Header("Content-Type", dl.ContentType)
-	c.Header("Content-Disposition", `attachment; filename="`+dl.Name+`"`)
-	if _, err := io.Copy(c.Writer, dl.Reader); err != nil {
-		c.Status(http.StatusBadGateway)
-		return
-	}
 }
 
 // ANY /notebooks/:name/proxy/*path — reverse-proxies to the notebook endpoint.

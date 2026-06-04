@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataPage } from '@loykin/designkit'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
@@ -50,6 +50,16 @@ export default function WorkflowCreatePage() {
     const d = new Date(runAt)
     return Number.isNaN(d.getTime()) ? '' : d.toISOString()
   }, [runAt])
+
+  useEffect(() => {
+    const draft = sessionStorage.getItem('piper.pipeline.editor.draft')
+    if (!draft) return
+    setYaml(draft)
+    const nameMatch = draft.match(/^\s*name:\s*(.+)$/m)
+    if (nameMatch?.[1]) {
+      setName(nameMatch[1].trim())
+    }
+  }, [])
 
   async function handleSubmit() {
     setError('')

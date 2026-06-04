@@ -7,7 +7,7 @@ import (
 )
 
 func TestHandlerFallsBackForSPARoutes(t *testing.T) {
-	for _, path := range []string{"/notebooks", "/notebooks/demo", "/notebooks/demo/promote", "/storage"} {
+	for _, path := range []string{"/notebooks", "/notebooks/demo", "/pipelines/editor", "/storage"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 

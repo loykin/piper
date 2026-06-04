@@ -99,6 +99,34 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ReactFlow controls — match app theme */
+.react-flow__controls {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: transparent;
+  border-bottom: 1px solid var(--color-border);
+  fill: var(--color-muted-foreground);
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow__controls-button:hover {
+  background: var(--color-accent);
+  fill: var(--color-foreground);
+}
+.react-flow__controls-button svg {
+  max-width: 12px;
+  max-height: 12px;
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

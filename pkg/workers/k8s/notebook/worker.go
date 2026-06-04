@@ -59,6 +59,13 @@ func (a *Worker) register(dispatcher Dispatcher) {
 		return nil, a.deprovisionNotebookVolume(ctx, req)
 	})
 	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodNotebookSyncStatus, a.syncNotebookStatus)
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodFSListFiles, a.listFiles)
+}
+
+// listFiles returns an empty list for K8s volumes.
+// TODO: exec into the running notebook pod to list files when available.
+func (a *Worker) listFiles(_ context.Context, _ notebook.FSListFilesRequest) (*notebook.FSListFilesResponse, error) {
+	return &notebook.FSListFilesResponse{Files: []string{}}, nil
 }
 
 func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.WorkerProvisionVolumeRequest) (*notebook.WorkerProvisionVolumeResponse, error) {

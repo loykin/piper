@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ExternalLink, RefreshCw, Square, Trash2 } from 'lucide-react'
 import { DataPage } from '@loykin/designkit'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import {
@@ -13,7 +12,6 @@ import {
   deleteNotebook,
   type NotebookServer,
 } from '@/features/notebooks/api'
-import { buildNotebookPromotionDraft } from '@/features/notebooks/promotion'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 
 export default function NotebookDetailPage() {
@@ -35,8 +33,6 @@ export default function NotebookDetailPage() {
     const t = setInterval(() => void load(), 5000)
     return () => clearInterval(t)
   }, [name])
-
-  const draft = useMemo(() => (notebook ? buildNotebookPromotionDraft(notebook) : ''), [notebook])
 
   async function withBusy(fn: () => Promise<void>) {
     setBusy(true)
@@ -89,13 +85,10 @@ export default function NotebookDetailPage() {
         <DataPage.TitleBlock
           breadcrumb={<Link to="/notebooks" className="hover:text-foreground transition-colors">← Notebooks</Link>}
           title={notebook.name}
-          description="Notebook server detail and promotion snapshot"
+          description="Notebook server detail and workspace status"
         />
         <DataPage.Actions>
           <StatusBadge status={notebook.status} />
-          <Button variant="outline" size="sm" onClick={() => navigate(`/notebooks/${notebook.name}/promote`)}>
-            Promote to Pipeline
-          </Button>
           {notebook.status === 'running' && (
             <a
               href={notebookProxyURL(notebook.name)}
@@ -137,11 +130,6 @@ export default function NotebookDetailPage() {
         <DataPage.Group surface="bordered" className="mb-4">
           <DataPage.GroupHeader title="Notebook YAML" className="px-4 pt-3" />
           <YamlMirror value={notebook.yaml || ''} readOnly className="min-h-[16rem]" />
-        </DataPage.Group>
-
-        <DataPage.Group surface="bordered">
-          <DataPage.GroupHeader title="Promotion Snapshot" className="px-4 pt-3" />
-          <pre className="overflow-x-auto px-4 pb-4 text-xs leading-6 text-muted-foreground">{draft}</pre>
         </DataPage.Group>
       </DataPage.Content>
     </DataPage>

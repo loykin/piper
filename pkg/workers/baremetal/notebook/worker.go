@@ -6,6 +6,7 @@ package notebookworker
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
@@ -87,6 +88,7 @@ func New(cfg Config) *Worker {
 		return nil, w.deprovisionVolume(ctx, req)
 	})
 	_ = grpcagent.RegisterJSON(d, iagent.MethodNotebookSyncStatus, w.syncStatus)
+	_ = grpcagent.RegisterJSON(d, iagent.MethodFSListFiles, w.listFiles)
 
 	return w
 }
@@ -254,6 +256,52 @@ func (w *Worker) deprovisionVolume(_ context.Context, req notebook.WorkerDeprovi
 	}
 	slog.Info("notebook volume deleted", "volume_id", req.VolumeID, "dir", absDir)
 	return nil
+}
+
+func (w *Worker) listFiles(_ context.Context, req notebook.FSListFilesRequest) (*notebook.FSListFilesResponse, error) {
+	root := req.WorkDir
+	if root == "" {
+		return &notebook.FSListFilesResponse{Files: []string{}}, nil
+	}
+
+	allowed := make(map[string]bool, len(req.Ext))
+	for _, e := range req.Ext {
+		allowed[e] = true
+	}
+	maxFiles := req.MaxFiles
+	if maxFiles <= 0 || maxFiles > 1000 {
+		maxFiles = 500
+	}
+
+	var files []string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsPermission(err) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(allowed) > 0 && !allowed[filepath.Ext(d.Name())] {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		files = append(files, rel)
+		if len(files) >= maxFiles {
+			return fs.SkipAll
+		}
+		return nil
+	})
+
+	if files == nil {
+		files = []string{}
+	}
+	return &notebook.FSListFilesResponse{Files: files}, nil
 }
 
 func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequest) (notebook.WorkerSyncStatusResponse, error) {

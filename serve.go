@@ -318,7 +318,6 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	notebook.NewHandler(notebook.HandlerDeps{
 		Notebooks:        p.repos.Notebook,
 		Volumes:          p.repos.NotebookVolume,
-		Promotions:       p,
 		Create:           p.notebookManager.Create,
 		CreateWithVolume: p.notebookManager.CreateWithVolume,
 		Stop:             p.notebookManager.Stop,
@@ -327,6 +326,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		PurgeVolume:      p.notebookManager.PurgeVolume,
 		AgentRegistry:    p.agentRegistry,
 		ProxyDialer:      p.grpcAgentServer,
+		RPCSender:        p.grpcAgentServer,
 	}).RegisterRoutes(r.Group(""))
 
 	// Built-in file server: expose /store/* routes only when using a LocalStore.

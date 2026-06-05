@@ -20,7 +20,7 @@ import {
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { CirclePlus, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { PipelineStepDraft } from '@/features/pipelines/editor'
 import type { DragEvent, MouseEvent } from 'react'
 
@@ -277,10 +277,7 @@ function PipelineCanvasInner({
       className="relative overflow-hidden rounded-xl border border-border bg-background"
       style={{ height: '72vh', minHeight: '480px' }}
     >
-      <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-full border border-border bg-background/95 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
-        <CirclePlus size={14} />
-        Drag from a port to connect · click an edge to select, then X or Delete to remove · double-click to edit
-      </div>
+
       <ReactFlow
         nodes={nodes}
         edges={edges}

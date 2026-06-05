@@ -198,44 +198,44 @@ const DEFAULT_FORM: FormState = {
 }
 
 function buildYAML(f: FormState): string {
-  const cmdLines = f.command.split('\n').filter(Boolean).map(c => `      - ${c}`).join('\n')
+  const cmdLines = f.command.split('\n').filter(Boolean).map(c => `      - ${JSON.stringify(c)}`).join('\n')
   const isK8s = f.runtimeMode === 'k8s'
 
   // Build optional k8s section
   let k8sSection = ''
   if (isK8s) {
     const resources: string[] = []
-    if (f.k8sCPU)    resources.push(`      cpu: "${f.k8sCPU}"`)
-    if (f.k8sMemory) resources.push(`      memory: "${f.k8sMemory}"`)
-    if (f.k8sGPU)    resources.push(`      gpu: "${f.k8sGPU}"`)
+    if (f.k8sCPU)    resources.push(`      cpu: ${JSON.stringify(f.k8sCPU)}`)
+    if (f.k8sMemory) resources.push(`      memory: ${JSON.stringify(f.k8sMemory)}`)
+    if (f.k8sGPU)    resources.push(`      gpu: ${JSON.stringify(f.k8sGPU)}`)
     k8sSection = `  k8s:
-    namespace: ${f.k8sNamespace || 'default'}
+    namespace: ${JSON.stringify(f.k8sNamespace || 'default')}
     replicas: ${f.k8sReplicas || '1'}
-    image_pull_policy: ${f.k8sImagePullPolicy || 'Always'}${
+    image_pull_policy: ${JSON.stringify(f.k8sImagePullPolicy || 'Always')}${
       resources.length ? `\n    resources:\n${resources.join('\n')}` : ''
     }
 `
   }
 
-  const imageField = isK8s && f.image ? `    image: ${f.image}\n` : ''
+  const imageField = isK8s && f.image ? `    image: ${JSON.stringify(f.image)}\n` : ''
 
   return `apiVersion: piper/v1
 kind: ModelService
 metadata:
-  name: ${f.name || 'my-model'}
+  name: ${JSON.stringify(f.name || 'my-model')}
 spec:
   model:
     from_artifact:
-      pipeline: ${f.pipeline || 'my-pipeline'}
-      step: ${f.step || 'train'}
-      artifact: ${f.artifact || 'model'}
-      run: ${f.run || 'latest'}
+      pipeline: ${JSON.stringify(f.pipeline || 'my-pipeline')}
+      step: ${JSON.stringify(f.step || 'train')}
+      artifact: ${JSON.stringify(f.artifact || 'model')}
+      run: ${JSON.stringify(f.run || 'latest')}
   runtime:
-    mode: ${f.runtimeMode}
+    mode: ${JSON.stringify(f.runtimeMode)}
 ${imageField}    command:
-${cmdLines || '      - python\n      - serve.py'}
+${cmdLines || '      - "python"\n      - "serve.py"'}
     port: ${f.port || '8000'}
-    health_path: ${f.healthPath || '/'}
+    health_path: ${JSON.stringify(f.healthPath || '/')}
 ${k8sSection}`
 }
 

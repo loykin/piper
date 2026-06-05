@@ -37,7 +37,7 @@ const DEFAULT_K8S: K8sFormState = {
 }
 
 function buildK8sYAML(f: K8sFormState, workerID?: string): string {
-  const lines: string[] = [`metadata:`, `  name: ${f.name || 'my-notebook'}`, `spec:`, `  k8s:`]
+  const lines: string[] = [`metadata:`, `  name: ${JSON.stringify(f.name || 'my-notebook')}`, `spec:`, `  k8s:`]
   if (f.image)       lines.push(`    image: "${f.image}"`)
   if (f.storageSize) lines.push(`    storage_size: "${f.storageSize}"`)
   appendPrepareSteps(lines, f.prepare, f.prepareBackend)
@@ -53,7 +53,7 @@ function buildK8sYAML(f: K8sFormState, workerID?: string): string {
     if (requests.length) { lines.push(`              requests:`); lines.push(...requests) }
     if (limits.length)   { lines.push(`              limits:`);   lines.push(...limits) }
   }
-  if (workerID) lines.push(`  placement:`, `    worker: ${workerID}`)
+  if (workerID) lines.push(`  placement:`, `    worker: ${JSON.stringify(workerID)}`)
   return lines.join('\n') + '\n'
 }
 
@@ -82,14 +82,14 @@ function buildWorkerYAMLWithBackend(
   workerID: string | undefined,
   backend: 'process' | 'docker' | 'k8s',
 ): string {
-  const lines: string[] = [`metadata:`, `  name: ${f.name || 'my-notebook'}`, `spec:`]
+  const lines: string[] = [`metadata:`, `  name: ${JSON.stringify(f.name || 'my-notebook')}`, `spec:`]
   if (f.env || f.gpus) {
     lines.push(`  process:`)
-    if (f.env)  lines.push(`    env: "${f.env}"`)
-    if (f.gpus) lines.push(`    gpus: "${f.gpus}"`)
+    if (f.env)  lines.push(`    env: ${JSON.stringify(f.env)}`)
+    if (f.gpus) lines.push(`    gpus: ${JSON.stringify(f.gpus)}`)
   }
   appendPrepareSteps(lines, f.prepare, backend)
-  if (workerID) lines.push(`  placement:`, `    worker: ${workerID}`)
+  if (workerID) lines.push(`  placement:`, `    worker: ${JSON.stringify(workerID)}`)
   return lines.join('\n') + '\n'
 }
 

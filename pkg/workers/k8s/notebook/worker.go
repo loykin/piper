@@ -12,6 +12,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
@@ -214,13 +215,16 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 		if !k8serrors.IsAlreadyExists(err) {
 			return nil, err
 		}
-		existing, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return nil, err
-		}
-		existing.Spec.Replicas = sts.Spec.Replicas
-		existing.Spec.Template = sts.Spec.Template
-		if _, err := a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			existing, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			existing.Spec.Replicas = sts.Spec.Replicas
+			existing.Spec.Template = sts.Spec.Template
+			_, err = a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{})
+			return err
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -252,17 +256,19 @@ func (a *Worker) stopNotebook(ctx context.Context, req notebook.WorkerStopReques
 	}
 	ns := a.notebookNamespace()
 	name := notebookWorkloadName(req.Name)
-	sts, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			if k8serrors.IsNotFound(err) {
+				return nil
+			}
+			return err
 		}
+		zero := int32(0)
+		current.Spec.Replicas = &zero
+		_, err = a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, current, metav1.UpdateOptions{})
 		return err
-	}
-	zero := int32(0)
-	sts.Spec.Replicas = &zero
-	_, err = a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, sts, metav1.UpdateOptions{})
-	return err
+	})
 }
 
 func (a *Worker) deprovisionNotebookVolume(ctx context.Context, req notebook.WorkerDeprovisionVolumeRequest) error {

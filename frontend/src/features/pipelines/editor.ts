@@ -226,9 +226,9 @@ function formatArtifactBlock(key: 'inputs' | 'outputs', items: PipelineArtifactD
   if (items.length === 0) return []
   const lines = [`      ${key}:`]
   for (const item of items) {
-    lines.push(`        - name: ${item.name.trim() || 'item'}`)
-    if (item.path.trim()) lines.push(`          path: ${item.path.trim()}`)
-    if (item.from.trim()) lines.push(`          from: ${item.from.trim()}`)
+    lines.push(`        - name: ${JSON.stringify(item.name.trim() || 'item')}`)
+    if (item.path.trim()) lines.push(`          path: ${JSON.stringify(item.path.trim())}`)
+    if (item.from.trim()) lines.push(`          from: ${JSON.stringify(item.from.trim())}`)
   }
   return lines
 }
@@ -251,7 +251,7 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
     'apiVersion: piper/v1',
     'kind: Pipeline',
     'metadata:',
-    `  name: ${name}`,
+    `  name: ${JSON.stringify(name)}`,
     'spec:',
     '  steps:',
   ]
@@ -267,9 +267,9 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
     if (step.memory.trim()) resources.memory = step.memory.trim()
     if (step.gpu.trim()) resources.gpu = step.gpu.trim()
 
-    lines.push(`    - name: ${stepName}`)
+    lines.push(`    - name: ${JSON.stringify(stepName)}`)
     if (dependsOn.length > 0) {
-      lines.push(`      depends_on: [${dependsOn.join(', ')}]`)
+      lines.push(`      depends_on: [${dependsOn.map(d => JSON.stringify(d)).join(', ')}]`)
     }
     lines.push('      run:')
     lines.push(`        type: ${step.type}`)

@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +24,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/piper/piper/internal/testutil"
-	notebookpkg "github.com/piper/piper/pkg/notebook"
 	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
 )

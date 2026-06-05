@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  ArrowDown, ArrowUp, ClipboardList,
+  ArrowDown, ArrowUp,
   Code2, FileCode2, FolderOpen, HardDrive, Plus, BookOpen, Trash2, Upload, X,
 } from 'lucide-react'
 import {
@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { IconButton } from '@/components/ui/icon-button'
 import PipelineCanvas from '@/shared/components/PipelineCanvas'
-import { listRuns, type Run } from '@/features/runs/api'
+
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
 import { submitPipeline } from '@/features/pipelines/api'
 import {
@@ -253,12 +253,28 @@ export default function PipelineEditorPage() {
   const navigate = useNavigate()
   const initialDraft = useMemo(() => defaultPipelineDraft(), [])
 
-  const [setupDone, setSetupDone] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // URL is the source of truth for setup choices
+  const setupDone = useMemo(() => {
+    const s = searchParams.get('source')
+    if (!s) return false
+    return s === 'notebook-volume' ? !!searchParams.get('volume') : !!searchParams.get('root')
+  }, [searchParams])
+
+  const editorSourceKind = (searchParams.get('source') as SourceKind) ?? 'notebook-volume'
+  const editorVolumeId  = searchParams.get('volume') ?? ''
+  const editorRoot      = searchParams.get('root')   ?? ''
+  const editorName      = searchParams.get('name')   ?? initialDraft.name
+
+  // Setup form — local state before user commits to URL
+  const [formName,       setFormName]       = useState(editorName)
+  const [formSourceKind, setFormSourceKind] = useState<SourceKind>(editorSourceKind)
+  const [formVolumeId,   setFormVolumeId]   = useState(editorVolumeId)
+  const [formRoot,       setFormRoot]       = useState(editorRoot)
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('design')
-  const [pipelineName, setPipelineName] = useState(initialDraft.name)
-  const [sourceKind, setSourceKind] = useState<SourceKind>('notebook-volume')
-  const [sourceRoot, setSourceRoot] = useState('')
-  const [sourceVolumeId, setSourceVolumeId] = useState('')
+  const [pipelineName, setPipelineName] = useState(editorName)
   const [volumes, setVolumes] = useState<NotebookVolume[]>([])
   const [volumeFiles, setVolumeFiles] = useState<string[]>([])
   const [tasks, setTasks] = useState<PipelineStepDraft[]>(initialDraft.steps)
@@ -276,12 +292,10 @@ export default function PipelineEditorPage() {
   const [submitting, setSubmitting] = useState(false)
   const [submitModalOpen, setSubmitModalOpen] = useState(false)
   const [submitVolumeId, setSubmitVolumeId] = useState('')
-  const [runs, setRuns] = useState<Run[]>([])
   const [resetKey, setResetKey] = useState(0)
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
   const dragDropHandledRef = useRef(false)
 
-  useEffect(() => { listRuns().then(setRuns).catch(() => {}) }, [])
   useEffect(() => { listNotebookVolumes().then(setVolumes).catch(() => setVolumes([])) }, [])
 
   useEffect(() => {
@@ -295,15 +309,9 @@ export default function PipelineEditorPage() {
   }, [fileBrowserOpen, artifactBrowseKey])
 
   useEffect(() => {
-    if (sourceKind !== 'notebook-volume' || !sourceVolumeId) { setVolumeFiles([]); return }
-    listVolumeFiles(sourceVolumeId).then(setVolumeFiles).catch(() => setVolumeFiles([]))
-  }, [sourceKind, sourceVolumeId])
-
-  useEffect(() => {
-    if (sourceKind !== 'notebook-volume') return
-    const selected = volumes.find(v => v.id === sourceVolumeId)
-    if (selected?.work_dir && sourceRoot !== selected.work_dir) setSourceRoot(selected.work_dir)
-  }, [sourceKind, sourceVolumeId, sourceRoot, volumes])
+    if (editorSourceKind !== 'notebook-volume' || !editorVolumeId) { setVolumeFiles([]); return }
+    listVolumeFiles(editorVolumeId).then(setVolumeFiles).catch(() => setVolumeFiles([]))
+  }, [editorSourceKind, editorVolumeId])
 
   useEffect(() => {
     setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks }))
@@ -328,13 +336,8 @@ export default function PipelineEditorPage() {
 
   const editingIndex = useMemo(() => tasks.findIndex(t => t.id === editingId), [tasks, editingId])
   const editingTask = editingIndex >= 0 ? tasks[editingIndex] : null
-  const selectedVolume = useMemo(() => volumes.find(v => v.id === sourceVolumeId) ?? null, [sourceVolumeId, volumes])
-  const recentRuns = useMemo(() => {
-    const name = pipelineName.trim()
-    return name ? runs.filter(r => r.pipeline_name === name).slice(0, 10) : runs.slice(0, 10)
-  }, [pipelineName, runs])
-
-  const canBrowse = sourceKind === 'notebook-volume'
+  const selectedVolume = useMemo(() => volumes.find(v => v.id === editorVolumeId) ?? null, [editorVolumeId, volumes])
+  const canBrowse = editorSourceKind === 'notebook-volume'
 
   function updateTask(index: number, patch: Partial<PipelineStepDraft>) {
     setTasks(current => {
@@ -431,7 +434,7 @@ export default function PipelineEditorPage() {
     const messages = validatePipelineDraft({ name: pipelineName, steps: tasks })
     if (messages.length > 0) { setError(messages[0]); return }
     setSubmitModalOpen(true)
-    setSubmitVolumeId(sourceKind === 'notebook-volume' ? sourceVolumeId : '')
+    setSubmitVolumeId(editorSourceKind === 'notebook-volume' ? editorVolumeId : '')
   }
 
   async function confirmSubmit() {
@@ -512,7 +515,16 @@ export default function PipelineEditorPage() {
     ))
   }
 
-  const canProceed = sourceKind === 'notebook-volume' ? sourceVolumeId !== '' : sourceRoot.trim() !== ''
+  const canProceed = formSourceKind === 'notebook-volume' ? formVolumeId !== '' : formRoot.trim() !== ''
+
+  function handleStartEditing() {
+    const name = formName.trim() || 'my-pipeline'
+    const params: Record<string, string> = { source: formSourceKind, name }
+    if (formSourceKind === 'notebook-volume') params.volume = formVolumeId
+    else params.root = formRoot
+    setPipelineName(name)
+    setSearchParams(params, { replace: true })
+  }
 
   if (!setupDone) {
     return (
@@ -527,11 +539,11 @@ export default function PipelineEditorPage() {
           <div className="mx-auto max-w-md space-y-5 py-16">
             <div>
               <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Pipeline Name</label>
-              <Input value={pipelineName} onChange={e => setPipelineName(e.target.value)} />
+              <Input value={formName} onChange={e => setFormName(e.target.value)} />
             </div>
             <div>
               <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Type</label>
-              <Select value={sourceKind} onValueChange={v => setSourceKind(v as SourceKind)}>
+              <Select value={formSourceKind} onValueChange={v => setFormSourceKind(v as SourceKind)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="notebook-volume">Notebook Volume</SelectItem>
@@ -541,10 +553,10 @@ export default function PipelineEditorPage() {
                 </SelectContent>
               </Select>
             </div>
-            {sourceKind === 'notebook-volume' ? (
+            {formSourceKind === 'notebook-volume' ? (
               <div>
                 <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Notebook Volume</label>
-                <Select value={sourceVolumeId} onValueChange={v => setSourceVolumeId(v ?? '')}>
+                <Select value={formVolumeId} onValueChange={v => setFormVolumeId(v ?? '')}>
                   <SelectTrigger><SelectValue placeholder="— select a volume —" /></SelectTrigger>
                   <SelectContent>
                     {volumes.length === 0 ? (
@@ -558,10 +570,10 @@ export default function PipelineEditorPage() {
             ) : (
               <div>
                 <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Root</label>
-                <Input value={sourceRoot} onChange={e => setSourceRoot(e.target.value)} placeholder="/workspaces/project" />
+                <Input value={formRoot} onChange={e => setFormRoot(e.target.value)} placeholder="/workspaces/project" />
               </div>
             )}
-            <Button className="w-full" disabled={!canProceed} onClick={() => setSetupDone(true)}>
+            <Button className="w-full" disabled={!canProceed} onClick={handleStartEditing}>
               Start Editing →
             </Button>
           </div>
@@ -579,9 +591,6 @@ export default function PipelineEditorPage() {
         />
         <DataPage.Actions>
           <Button variant="outline" size="sm" onClick={validateNow}>Validate</Button>
-          <Button variant="ghost" size="sm" onClick={() => navigate('/pipelines')}>
-            <ClipboardList size={14} className="mr-1.5" /> Templates
-          </Button>
           <Button size="sm" onClick={handleSubmit} disabled={submitting}>
             <Upload size={14} className="mr-1.5" /> Submit
           </Button>
@@ -593,13 +602,13 @@ export default function PipelineEditorPage() {
           <HardDrive size={14} className="shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <span className="text-xs text-muted-foreground">Source Workspace · </span>
-            {sourceKind === 'notebook-volume' && selectedVolume ? (
+            {editorSourceKind === 'notebook-volume' && selectedVolume ? (
               <>
                 <span className="text-sm font-medium">{selectedVolume.label}</span>
                 <span className="ml-2 font-mono text-xs text-muted-foreground">{selectedVolume.work_dir}</span>
               </>
             ) : (
-              <span className="font-mono text-xs">{sourceRoot || sourceKind}</span>
+              <span className="font-mono text-xs">{editorRoot || editorSourceKind}</span>
             )}
           </div>
         </div>
@@ -633,19 +642,11 @@ export default function PipelineEditorPage() {
                           onClick={() => addTask(type)}
                           className="flex w-full items-center justify-between rounded-xl border border-dashed border-border bg-background px-3 py-3 text-left transition hover:border-primary hover:bg-accent"
                         >
-                          <div>
-                            <div className="text-sm font-medium">{TASK_LABELS[type]}</div>
-                            <div className="text-xs text-muted-foreground">Drag onto the canvas or click to add.</div>
-                          </div>
+                          <div className="text-sm font-medium">{TASK_LABELS[type]}</div>
                           {TASK_ICONS[type]}
                         </button>
                       ))}
                     </div>
-                  </div>
-                  <div className="rounded-xl border border-border bg-card px-3 py-3 text-xs text-muted-foreground">
-                    <div className="font-medium text-foreground">Canvas-first editing</div>
-                    <p className="mt-1">Drag a task into the canvas or click a palette tile. Double-click a node to edit its source file, parameters, and artifacts.</p>
-                    <div className="mt-2 text-[11px] uppercase tracking-wider">{tasks.length} tasks on canvas</div>
                   </div>
                 </div>
               </DataPage.Group>
@@ -654,10 +655,7 @@ export default function PipelineEditorPage() {
               <DataPage.Group surface="bordered" className="min-h-0">
                 <div className="border-b border-border px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="text-sm font-semibold">Task Canvas</h2>
-                      <p className="text-xs text-muted-foreground">Drag tasks, connect them, and double-click any node to edit it.</p>
-                    </div>
+                    <h2 className="text-sm font-semibold">Task Canvas</h2>
                     <Button variant="outline" size="sm" onClick={resetLayout}>Reset layout</Button>
                   </div>
                 </div>
@@ -829,14 +827,6 @@ export default function PipelineEditorPage() {
                       </div>
                     </div>
 
-                    <div>
-                      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Depends On</label>
-                      <Input
-                        value={editingTask.dependsOn.join(', ')}
-                        onChange={e => updateTask(editingIndex, { dependsOn: e.target.value.split(/[\n,]/).map(s => s.trim()).filter(Boolean) })}
-                        placeholder="task-1, task-2"
-                      />
-                    </div>
                   </div>
                 </DataPage.Group>
               )}
@@ -869,31 +859,6 @@ export default function PipelineEditorPage() {
           </TabsContent>
         </Tabs>
 
-        <DataPage.Group surface="bordered" className="mt-4">
-          <DataPage.GroupHeader title="Recent Runs" className="px-4 pt-3" />
-          <div className="overflow-hidden px-4 pb-4">
-            {recentRuns.length === 0 ? (
-              <p className="py-4 text-sm text-muted-foreground">No runs yet for this pipeline.</p>
-            ) : (
-              <div className="space-y-2">
-                {recentRuns.map(run => (
-                  <button
-                    key={run.id}
-                    type="button"
-                    className="flex w-full items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-accent"
-                    onClick={() => navigate(`/runs/${run.id}`)}
-                  >
-                    <div>
-                      <div className="font-mono text-xs text-foreground">{run.id}</div>
-                      <div className="text-xs text-muted-foreground">{run.status}</div>
-                    </div>
-                    <div className="text-xs text-muted-foreground">{new Date(run.started_at).toLocaleString()}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </DataPage.Group>
       </DataPage.Content>
 
       {/* Submit modal */}

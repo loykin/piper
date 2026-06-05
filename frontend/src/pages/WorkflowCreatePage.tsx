@@ -24,7 +24,7 @@ spec:
 function applyPipelineName(yaml: string, name: string): string {
   const safe = name.trim() || 'my-pipeline'
   if (/^\s*name:/m.test(yaml)) {
-    return yaml.replace(/^(\s*name:)\s*.*$/m, `$1 ${safe}`)
+    return yaml.replace(/^(\s*name:)\s*.*$/m, (_, prefix) => `${prefix} ${JSON.stringify(safe)}`)
   }
   return yaml
 }

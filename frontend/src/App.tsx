@@ -15,13 +15,14 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, Play } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch } from 'lucide-react'
 import RunDetailPage from '@/pages/RunDetailPage'
 import WorkflowsPage from '@/pages/WorkflowsPage'
 import WorkflowCreatePage from '@/pages/WorkflowCreatePage'
 import HistoryPage from '@/pages/HistoryPage'
 import ScheduleDetailPage from '@/pages/ScheduleDetailPage'
 import PipelineEditorPage from '@/pages/PipelineEditorPage'
+import PipelinesListPage from '@/pages/PipelinesListPage'
 import ServingPage from '@/pages/ServingPage'
 import ServingDetailPage from '@/pages/ServingDetailPage'
 import ServingHistoryPage from '@/pages/ServingHistoryPage'
@@ -36,9 +37,9 @@ const navGroups = [
   {
     label: 'Pipelines',
     items: [
-      { id: 'editor', label: 'Editor', icon: Play, to: '/pipelines/editor' },
-      { id: 'schedules', label: 'Schedules', icon: CalendarClock, to: '/schedules' },
-      { id: 'history',   label: 'History',   icon: History,       to: '/history' },
+      { id: 'pipelines', label: 'Templates',  icon: GitBranch,     to: '/pipelines' },
+      { id: 'schedules', label: 'Schedules',  icon: CalendarClock, to: '/schedules' },
+      { id: 'history',   label: 'History',    icon: History,       to: '/history' },
     ],
   },
   {
@@ -90,7 +91,8 @@ function AppSidebar() {
               <SidebarMenu>
                 {group.items.map((item) => {
                   const isActive = location.pathname === item.to ||
-                    (item.to !== '/history' && location.pathname.startsWith(item.to))
+                    (item.to !== '/history' && item.to !== '/pipelines' && location.pathname.startsWith(item.to)) ||
+                    (item.to === '/pipelines' && location.pathname === '/pipelines')
                   return (
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton isActive={isActive} onClick={() => navigate(item.to)}>
@@ -129,6 +131,7 @@ export default function App() {
                 <Route path="/schedules" element={<WorkflowsPage />} />
                 <Route path="/schedules/create" element={<WorkflowCreatePage />} />
                 <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
+                <Route path="/pipelines" element={<PipelinesListPage />} />
                 <Route path="/pipelines/editor" element={<PipelineEditorPage />} />
                 <Route path="/history" element={<HistoryPage />} />
                 <Route path="/serving" element={<ServingPage />} />
@@ -144,7 +147,6 @@ export default function App() {
                 <Route path="/storage" element={<StoragePage />} />
                 {/* Legacy redirects */}
                 <Route path="/services" element={<Navigate to="/serving" replace />} />
-                <Route path="/pipelines" element={<Navigate to="/pipelines/editor" replace />} />
                 <Route path="/pipelines/create" element={<Navigate to="/pipelines/editor" replace />} />
                 <Route path="/run-history" element={<Navigate to="/history" replace />} />
               </Routes>

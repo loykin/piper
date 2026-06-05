@@ -1,68 +1,59 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  ArrowDown,
-  ArrowUp,
-  CalendarClock,
-  ClipboardList,
-  Code2,
-  FileCode2,
-  FolderOpen,
-  Plus,
-  Play,
-  BookOpen,
-  Trash2,
-  X,
+  ArrowDown, ArrowUp, ClipboardList,
+  Code2, FileCode2, FolderOpen, HardDrive, Plus, BookOpen, Trash2, Upload, X,
 } from 'lucide-react'
 import {
-  DataPage,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
+  DataPage, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { IconButton } from '@/components/ui/icon-button'
 import PipelineCanvas from '@/shared/components/PipelineCanvas'
-import { createRun, listRuns, type Run } from '@/features/runs/api'
+import { listRuns, type Run } from '@/features/runs/api'
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
+import { submitPipeline } from '@/features/pipelines/api'
 import {
-  buildPipelineDraftYaml,
-  defaultPipelineDraft,
-  defaultPipelineStep,
-  parsePipelineDraftYaml,
-  validatePipelineDraft,
-  type PipelineArtifactDraft,
-  type PipelineKeyValueDraft,
-  type PipelineStepDraft,
-  type PipelineTaskType,
+  buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
+  parsePipelineDraftYaml, validatePipelineDraft,
+  type PipelineArtifactDraft, type PipelineKeyValueDraft,
+  type PipelineStepDraft, type PipelineTaskType,
 } from '@/features/pipelines/editor'
-
-const SESSION_DRAFT_KEY = 'piper.pipeline.editor.draft'
 
 type SourceKind = 'notebook-volume' | 'git' | 'local' | 'object-store'
 type ActiveTab = 'design' | 'yaml'
 
+const TASK_LABELS: Record<PipelineTaskType, string> = {
+  notebook: 'Notebook Task',
+  python: 'Python Task',
+  command: 'Command Task',
+}
+
+const TASK_ICONS: Record<PipelineTaskType, React.ReactNode> = {
+  notebook: <BookOpen size={16} className="text-muted-foreground" />,
+  python: <Code2 size={16} className="text-muted-foreground" />,
+  command: <FileCode2 size={16} className="text-muted-foreground" />,
+}
+
+const SOURCE_LABELS: Record<PipelineTaskType, string> = {
+  notebook: 'Notebook file',
+  python: 'Script file',
+  command: 'Working path',
+}
+
 function buildPositions(tasks: PipelineStepDraft[]): Record<string, { x: number; y: number }> {
   const depth = new Map<string, number>()
-  const byName = new Map(tasks.map(task => [task.name, task]))
+  const byName = new Map(tasks.map(t => [t.name, t]))
 
   const walk = (name: string, seen = new Set<string>()): number => {
     if (depth.has(name)) return depth.get(name) ?? 0
     if (seen.has(name)) return 0
     seen.add(name)
     const task = byName.get(name)
-    if (!task || task.dependsOn.length === 0) {
-      depth.set(name, 0)
-      return 0
-    }
+    if (!task || task.dependsOn.length === 0) { depth.set(name, 0); return 0 }
     const value = Math.max(...task.dependsOn.map(dep => walk(dep, seen) + 1))
     depth.set(name, value)
     return value
@@ -77,69 +68,192 @@ function buildPositions(tasks: PipelineStepDraft[]): Record<string, { x: number;
     columns.set(value, list)
   }
 
+  const NODE_W = 248, NODE_H = 96, GAP_X = 96, GAP_Y = 28
   const positions: Record<string, { x: number; y: number }> = {}
-  const NODE_W = 248
-  const NODE_H = 96
-  const GAP_X = 96
-  const GAP_Y = 28
 
   for (const [col, names] of columns) {
     names.forEach((name, row) => {
       const task = byName.get(name)
-      if (!task) return
-      positions[task.id] = {
-        x: col * (NODE_W + GAP_X) + 24,
-        y: row * (NODE_H + GAP_Y) + 24,
-      }
+      if (task) positions[task.id] = { x: col * (NODE_W + GAP_X) + 24, y: row * (NODE_H + GAP_Y) + 24 }
     })
   }
 
   if (Object.keys(positions).length === 0) {
-    tasks.forEach((task, index) => {
-      positions[task.id] = {
-        x: 24 + (index % 3) * 300,
-        y: 24 + Math.floor(index / 3) * 140,
-      }
+    tasks.forEach((task, i) => {
+      positions[task.id] = { x: 24 + (i % 3) * 300, y: 24 + Math.floor(i / 3) * 140 }
     })
   }
 
   return positions
 }
 
-function emptyPair(): PipelineKeyValueDraft {
-  return { key: '', value: '' }
-}
-
-function emptyArtifact(): PipelineArtifactDraft {
-  return { name: '', path: '', from: '' }
-}
-
-function taskLabel(type: PipelineTaskType): string {
-  if (type === 'notebook') return 'Notebook Task'
-  if (type === 'python') return 'Python Task'
-  return 'Command Task'
-}
-
-function sourceLabel(type: PipelineTaskType): string {
-  if (type === 'notebook') return 'Notebook file'
-  if (type === 'python') return 'Script file'
-  return 'Working path'
-}
+function emptyPair(): PipelineKeyValueDraft { return { key: '', value: '' } }
+function emptyArtifact(): PipelineArtifactDraft { return { name: '', path: '', from: '' } }
 
 function defaultTask(type: PipelineTaskType, index = 0): PipelineStepDraft {
   const draft = defaultPipelineStep(index, type)
   draft.dependsOn = []
-  if (type === 'python') {
-    draft.command = ['python', 'task.py']
-  } else if (type === 'notebook') {
-    draft.command = []
-  }
+  if (type === 'python') draft.command = ['python', 'task.py']
+  else if (type === 'notebook') draft.command = []
   return draft
 }
+
+// --- sub-components ---
+
+interface FileBrowseDropdownProps {
+  files: string[]
+  ext?: string
+  query: string
+  onQueryChange: (q: string) => void
+  onSelect: (file: string) => void
+}
+
+function FileBrowseDropdown({ files, ext, query, onQueryChange, onSelect }: FileBrowseDropdownProps) {
+  const q = query.toLowerCase()
+  const filtered = files.filter(f => f.toLowerCase().includes(q))
+  return (
+    <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+      <div className="border-b border-border px-2 py-2">
+        <input
+          autoFocus
+          className="w-full rounded bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground"
+          placeholder={ext ? `Search ${ext} files…` : 'Search files…'}
+          value={query}
+          onChange={e => onQueryChange(e.target.value)}
+        />
+      </div>
+      {filtered.length === 0 ? (
+        <p className="px-3 py-3 text-xs text-muted-foreground">No files found.</p>
+      ) : (
+        <div className="max-h-48 overflow-y-auto">
+          {filtered.map(f => (
+            <button
+              key={f}
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
+              onClick={() => onSelect(f)}
+            >
+              {ext && <span className="font-mono text-muted-foreground">{ext}</span>}
+              <span className="truncate font-mono">{f}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface PairSectionProps {
+  label: string
+  emptyText: string
+  keyPlaceholder?: string
+  valuePlaceholder?: string
+  items: PipelineKeyValueDraft[]
+  onAdd: () => void
+  onRemove: (rowIndex: number) => void
+  onUpdate: (rowIndex: number, patch: Partial<PipelineKeyValueDraft>) => void
+}
+
+function PairSection({ label, emptyText, keyPlaceholder = 'key', valuePlaceholder = 'value', items, onAdd, onRemove, onUpdate }: PairSectionProps) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">{label}</label>
+        <Button variant="outline" size="sm" onClick={onAdd}><Plus size={14} className="mr-1.5" /> Add</Button>
+      </div>
+      <div className="space-y-2">
+        {items.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{emptyText}</p>
+        ) : items.map((item, i) => (
+          <div key={i} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
+            <Input value={item.key} placeholder={keyPlaceholder} onChange={e => onUpdate(i, { key: e.target.value })} />
+            <Input value={item.value} placeholder={valuePlaceholder} onChange={e => onUpdate(i, { value: e.target.value })} />
+            <IconButton icon={<Trash2 />} label="Remove" onClick={() => onRemove(i)} className="text-destructive hover:bg-destructive/10" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+interface ArtifactSectionProps {
+  label: string
+  kind: 'inputs' | 'outputs'
+  items: PipelineArtifactDraft[]
+  canBrowse: boolean
+  volumeFiles: string[]
+  activeBrowseKey: string | null
+  browseQuery: string
+  browseRef: React.RefObject<HTMLDivElement | null>
+  onAdd: () => void
+  onRemove: (rowIndex: number) => void
+  onUpdate: (rowIndex: number, patch: Partial<PipelineArtifactDraft>) => void
+  onBrowseToggle: (key: string) => void
+  onBrowseQueryChange: (q: string) => void
+  onBrowseSelect: (rowIndex: number, file: string) => void
+}
+
+function ArtifactSection({
+  label, kind, items, canBrowse, volumeFiles, activeBrowseKey, browseQuery, browseRef,
+  onAdd, onRemove, onUpdate, onBrowseToggle, onBrowseQueryChange, onBrowseSelect,
+}: ArtifactSectionProps) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">{label}</label>
+        <Button variant="outline" size="sm" onClick={onAdd}><Plus size={14} className="mr-1.5" /> Add</Button>
+      </div>
+      <div className="space-y-2">
+        {items.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No {label.toLowerCase()}.</p>
+        ) : items.map((item, rowIndex) => {
+          const browseKey = `${kind}-${rowIndex}`
+          const isBrowseOpen = activeBrowseKey === browseKey
+          return (
+            <div key={rowIndex} className="grid gap-1">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <Input value={item.name} placeholder="name" onChange={e => onUpdate(rowIndex, { name: e.target.value })} />
+                <IconButton icon={<Trash2 />} label="Remove" onClick={() => onRemove(rowIndex)} className="text-destructive hover:bg-destructive/10" />
+              </div>
+              <div ref={isBrowseOpen ? browseRef : null} className="relative">
+                <div className="flex gap-1.5">
+                  <Input value={item.path} placeholder="path in workspace" onChange={e => onUpdate(rowIndex, { path: e.target.value })} />
+                  {canBrowse && (
+                    <button
+                      type="button"
+                      title="Browse volume files"
+                      onClick={() => onBrowseToggle(browseKey)}
+                      className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                    >
+                      <FolderOpen size={14} />
+                    </button>
+                  )}
+                </div>
+                {isBrowseOpen && (
+                  <FileBrowseDropdown
+                    files={volumeFiles}
+                    query={browseQuery}
+                    onQueryChange={onBrowseQueryChange}
+                    onSelect={f => onBrowseSelect(rowIndex, f)}
+                  />
+                )}
+              </div>
+              <Input value={item.from} placeholder="from (task name)" onChange={e => onUpdate(rowIndex, { from: e.target.value })} />
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// --- page ---
 
 export default function PipelineEditorPage() {
   const navigate = useNavigate()
   const initialDraft = useMemo(() => defaultPipelineDraft(), [])
+
+  const [setupDone, setSetupDone] = useState(false)
   const [activeTab, setActiveTab] = useState<ActiveTab>('design')
   const [pipelineName, setPipelineName] = useState(initialDraft.name)
   const [sourceKind, setSourceKind] = useState<SourceKind>('notebook-volume')
@@ -155,77 +269,55 @@ export default function PipelineEditorPage() {
   const fileBrowserRef = useRef<HTMLDivElement>(null)
   const [artifactBrowseKey, setArtifactBrowseKey] = useState<string | null>(null)
   const artifactBrowseRef = useRef<HTMLDivElement>(null)
+  const [browseQuery, setBrowseQuery] = useState('')
   const [yamlText, setYamlText] = useState(() => buildPipelineDraftYaml({ name: initialDraft.name, steps: initialDraft.steps }))
   const [validation, setValidation] = useState<string[]>([])
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [submitModalOpen, setSubmitModalOpen] = useState(false)
+  const [submitVolumeId, setSubmitVolumeId] = useState('')
   const [runs, setRuns] = useState<Run[]>([])
   const [resetKey, setResetKey] = useState(0)
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
   const dragDropHandledRef = useRef(false)
 
-  useEffect(() => {
-    listRuns().then(setRuns).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    listNotebookVolumes()
-      .then(setVolumes)
-      .catch(() => setVolumes([]))
-  }, [])
+  useEffect(() => { listRuns().then(setRuns).catch(() => {}) }, [])
+  useEffect(() => { listNotebookVolumes().then(setVolumes).catch(() => setVolumes([])) }, [])
 
   useEffect(() => {
     if (!fileBrowserOpen && !artifactBrowseKey) return
     const handler = (e: MouseEvent) => {
-      if (fileBrowserRef.current && !fileBrowserRef.current.contains(e.target as Node)) {
-        setFileBrowserOpen(false)
-      }
-      if (artifactBrowseRef.current && !artifactBrowseRef.current.contains(e.target as Node)) {
-        setArtifactBrowseKey(null)
-      }
+      if (fileBrowserRef.current && !fileBrowserRef.current.contains(e.target as Node)) setFileBrowserOpen(false)
+      if (artifactBrowseRef.current && !artifactBrowseRef.current.contains(e.target as Node)) setArtifactBrowseKey(null)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [fileBrowserOpen, artifactBrowseKey])
 
   useEffect(() => {
-    if (sourceKind !== 'notebook-volume' || !sourceVolumeId) {
-      setVolumeFiles([])
-      return
-    }
-    listVolumeFiles(sourceVolumeId)
-      .then(setVolumeFiles)
-      .catch(() => setVolumeFiles([]))
+    if (sourceKind !== 'notebook-volume' || !sourceVolumeId) { setVolumeFiles([]); return }
+    listVolumeFiles(sourceVolumeId).then(setVolumeFiles).catch(() => setVolumeFiles([]))
   }, [sourceKind, sourceVolumeId])
 
   useEffect(() => {
     if (sourceKind !== 'notebook-volume') return
-    const selected = volumes.find(volume => volume.id === sourceVolumeId)
-    if (selected && selected.work_dir && sourceRoot !== selected.work_dir) {
-      setSourceRoot(selected.work_dir)
-    }
+    const selected = volumes.find(v => v.id === sourceVolumeId)
+    if (selected?.work_dir && sourceRoot !== selected.work_dir) setSourceRoot(selected.work_dir)
   }, [sourceKind, sourceVolumeId, sourceRoot, volumes])
 
   useEffect(() => {
-    const nextYaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
-    setYamlText(nextYaml)
+    setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks }))
     setValidation(validatePipelineDraft({ name: pipelineName, steps: tasks }))
-    if (!tasks.some(task => task.id === selectedId)) {
-      setSelectedId(tasks[0]?.id ?? '')
-    }
-    if (editingId && !tasks.some(task => task.id === editingId)) {
-      setEditingId(null)
-    }
+    if (!tasks.some(t => t.id === selectedId)) setSelectedId(tasks[0]?.id ?? '')
+    if (editingId && !tasks.some(t => t.id === editingId)) setEditingId(null)
   }, [pipelineName, tasks, selectedId, editingId])
 
   useEffect(() => {
     setPositions(prev => {
       const next = { ...prev }
-      const known = new Set(tasks.map(task => task.id))
+      const known = new Set(tasks.map(t => t.id))
       for (const task of tasks) {
-        if (!next[task.id]) {
-          next[task.id] = buildPositions(tasks)[task.id] ?? { x: 24, y: 24 }
-        }
+        if (!next[task.id]) next[task.id] = buildPositions(tasks)[task.id] ?? { x: 24, y: 24 }
       }
       for (const id of Object.keys(next)) {
         if (!known.has(id)) delete next[id]
@@ -234,26 +326,24 @@ export default function PipelineEditorPage() {
     })
   }, [tasks])
 
-  const editingIndex = useMemo(() => tasks.findIndex(task => task.id === editingId), [tasks, editingId])
+  const editingIndex = useMemo(() => tasks.findIndex(t => t.id === editingId), [tasks, editingId])
   const editingTask = editingIndex >= 0 ? tasks[editingIndex] : null
+  const selectedVolume = useMemo(() => volumes.find(v => v.id === sourceVolumeId) ?? null, [sourceVolumeId, volumes])
   const recentRuns = useMemo(() => {
     const name = pipelineName.trim()
-    return name ? runs.filter(run => run.pipeline_name === name).slice(0, 10) : runs.slice(0, 10)
+    return name ? runs.filter(r => r.pipeline_name === name).slice(0, 10) : runs.slice(0, 10)
   }, [pipelineName, runs])
-  const selectedVolume = useMemo(
-    () => volumes.find(volume => volume.id === sourceVolumeId) ?? null,
-    [sourceVolumeId, volumes],
-  )
+
+  const canBrowse = sourceKind === 'notebook-volume'
 
   function updateTask(index: number, patch: Partial<PipelineStepDraft>) {
     setTasks(current => {
-      const next = current.map((task, i) => (i !== index ? task : { ...task, ...patch }))
+      const next = current.map((task, i) => i !== index ? task : { ...task, ...patch })
       const prev = current[index]
       const nextName = patch.name?.trim()
       if (prev && nextName && nextName !== prev.name) {
         next.forEach((task, i) => {
-          if (i === index) return
-          task.dependsOn = task.dependsOn.map(dep => (dep === prev.name ? nextName : dep))
+          if (i !== index) task.dependsOn = task.dependsOn.map(dep => dep === prev.name ? nextName : dep)
         })
       }
       return next
@@ -265,9 +355,7 @@ export default function PipelineEditorPage() {
       const next = [...current, defaultTask(type, current.length)]
       const created = next[next.length - 1]
       setSelectedId(created.id)
-      if (position) {
-        setPositions(currentPositions => ({ ...currentPositions, [created.id]: position }))
-      }
+      if (position) setPositions(pos => ({ ...pos, [created.id]: position }))
       return next
     })
   }
@@ -275,25 +363,13 @@ export default function PipelineEditorPage() {
   function removeTask(index: number) {
     setTasks(current => {
       const removed = current[index]
-      const next = current
-        .filter((_, i) => i !== index)
-        .map(task => ({
-          ...task,
-          dependsOn: task.dependsOn.filter(dep => dep !== removed?.name),
-        }))
-      if (removed) {
-        setPositions(currentPositions => {
-          const nextPositions = { ...currentPositions }
-          delete nextPositions[removed.id]
-          return nextPositions
-        })
-      }
-      if (selectedId === removed?.id) {
-        setSelectedId(next[0]?.id ?? '')
-      }
-      if (editingId === removed?.id) {
-        setEditingId(null)
-      }
+      const next = current.filter((_, i) => i !== index).map(task => ({
+        ...task,
+        dependsOn: task.dependsOn.filter(dep => dep !== removed?.name),
+      }))
+      if (removed) setPositions(pos => { const p = { ...pos }; delete p[removed.id]; return p })
+      if (selectedId === removed?.id) setSelectedId(next[0]?.id ?? '')
+      if (editingId === removed?.id) setEditingId(null)
       return next
     })
   }
@@ -311,39 +387,30 @@ export default function PipelineEditorPage() {
 
   function connectTasks(sourceId: string, targetId: string) {
     setTasks(current => {
-      const source = current.find(task => task.id === sourceId)
-      const targetIndex = current.findIndex(task => task.id === targetId)
+      const source = current.find(t => t.id === sourceId)
+      const targetIndex = current.findIndex(t => t.id === targetId)
       if (!source || targetIndex < 0 || source.id === targetId) return current
-      const target = current[targetIndex]
-      const next = current.map(task => {
-        if (task.id !== target.id) return task
-        return { ...task, dependsOn: Array.from(new Set([...task.dependsOn, source.name])) }
+      setSelectedId(targetId)
+      return current.map(task => task.id !== targetId ? task : {
+        ...task,
+        dependsOn: Array.from(new Set([...task.dependsOn, source.name])),
       })
-      setSelectedId(target.id)
-      return next
     })
-  }
-
-  function resetLayout() {
-    setPositions(buildPositions(tasks))
-    setResetKey(k => k + 1)
   }
 
   function disconnectTasks(sourceId: string, targetId: string) {
     setTasks(current => {
       const source = current.find(t => t.id === sourceId)
       if (!source) return current
-      return current.map(task => {
-        if (task.id !== targetId) return task
-        return { ...task, dependsOn: task.dependsOn.filter(dep => dep !== source.name) }
+      return current.map(task => task.id !== targetId ? task : {
+        ...task,
+        dependsOn: task.dependsOn.filter(dep => dep !== source.name),
       })
     })
   }
 
-  function openTaskEditor(id: string) {
-    setSelectedId(id)
-    setEditingId(id)
-  }
+  function resetLayout() { setPositions(buildPositions(tasks)); setResetKey(k => k + 1) }
+  function openTaskEditor(id: string) { setSelectedId(id); setEditingId(id) }
 
   function applyYaml() {
     try {
@@ -360,23 +427,26 @@ export default function PipelineEditorPage() {
     }
   }
 
-  async function handleRun() {
+  async function handleSubmit() {
+    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks })
+    if (messages.length > 0) { setError(messages[0]); return }
+    setSubmitModalOpen(true)
+    setSubmitVolumeId(sourceKind === 'notebook-volume' ? sourceVolumeId : '')
+  }
+
+  async function confirmSubmit() {
     setSubmitting(true)
     setError('')
     try {
       const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
-      const { run_id } = await createRun(yaml)
-      navigate(`/runs/${run_id}`)
+      await submitPipeline({ name: pipelineName, yaml, volume_id: submitVolumeId || undefined })
+      setSubmitModalOpen(false)
+      navigate(`/pipelines?name=${encodeURIComponent(pipelineName)}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSubmitting(false)
     }
-  }
-
-  function handleSchedule() {
-    sessionStorage.setItem(SESSION_DRAFT_KEY, buildPipelineDraftYaml({ name: pipelineName, steps: tasks }))
-    navigate('/schedules/create')
   }
 
   function validateNow() {
@@ -396,22 +466,20 @@ export default function PipelineEditorPage() {
   function handlePaletteDragEnd() {
     const type = draggingTaskTypeRef.current
     draggingTaskTypeRef.current = null
-    if (!dragDropHandledRef.current && type) {
-      addTask(type)
-    }
+    if (!dragDropHandledRef.current && type) addTask(type)
     dragDropHandledRef.current = false
   }
 
-  function updateTaskField(index: number, field: keyof PipelineStepDraft, value: string) {
-    updateTask(index, { [field]: value } as Partial<PipelineStepDraft>)
+  function updateArtifactField(index: number, kind: 'inputs' | 'outputs', rowIndex: number, patch: Partial<PipelineArtifactDraft>) {
+    setTasks(current => current.map((task, i) => {
+      if (i !== index) return task
+      const items = [...task[kind]]
+      items[rowIndex] = { ...items[rowIndex], ...patch }
+      return { ...task, [kind]: items } as PipelineStepDraft
+    }))
   }
 
-  function updateArtifactField(
-    index: number,
-    kind: 'inputs' | 'outputs',
-    rowIndex: number,
-    patch: Partial<PipelineArtifactDraft>,
-  ) {
+  function updatePairField(index: number, kind: 'params' | 'env', rowIndex: number, patch: Partial<PipelineKeyValueDraft>) {
     setTasks(current => current.map((task, i) => {
       if (i !== index) return task
       const items = [...task[kind]]
@@ -421,50 +489,86 @@ export default function PipelineEditorPage() {
   }
 
   function addArtifactRow(index: number, kind: 'inputs' | 'outputs') {
-    setTasks(current => current.map((task, i) => {
-      if (i !== index) return task
-      return { ...task, [kind]: [...task[kind], emptyArtifact()] } as PipelineStepDraft
-    }))
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, [kind]: [...task[kind], emptyArtifact()] } as PipelineStepDraft
+    ))
   }
 
   function removeArtifactRow(index: number, kind: 'inputs' | 'outputs', rowIndex: number) {
-    setTasks(current => current.map((task, i) => {
-      if (i !== index) return task
-      return { ...task, [kind]: task[kind].filter((_, itemIndex) => itemIndex !== rowIndex) } as PipelineStepDraft
-    }))
-  }
-
-  function updatePairField(
-    index: number,
-    kind: 'params' | 'env',
-    rowIndex: number,
-    patch: Partial<PipelineKeyValueDraft>,
-  ) {
-    setTasks(current => current.map((task, i) => {
-      if (i !== index) return task
-      const items = [...task[kind]]
-      items[rowIndex] = { ...items[rowIndex], ...patch }
-      return { ...task, [kind]: items } as PipelineStepDraft
-    }))
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, [kind]: task[kind].filter((_, j) => j !== rowIndex) } as PipelineStepDraft
+    ))
   }
 
   function addPairRow(index: number, kind: 'params' | 'env') {
-    setTasks(current => current.map((task, i) => {
-      if (i !== index) return task
-      return { ...task, [kind]: [...task[kind], emptyPair()] } as PipelineStepDraft
-    }))
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, [kind]: [...task[kind], emptyPair()] } as PipelineStepDraft
+    ))
   }
 
   function removePairRow(index: number, kind: 'params' | 'env', rowIndex: number) {
-    setTasks(current => current.map((task, i) => {
-      if (i !== index) return task
-      return { ...task, [kind]: task[kind].filter((_, itemIndex) => itemIndex !== rowIndex) } as PipelineStepDraft
-    }))
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, [kind]: task[kind].filter((_, j) => j !== rowIndex) } as PipelineStepDraft
+    ))
   }
 
-  const sourceSummary = sourceKind === 'notebook-volume'
-    ? (selectedVolume ? `${selectedVolume.label} · ${selectedVolume.work_dir}` : 'Choose a notebook volume to seed the workspace root.')
-    : sourceRoot || 'Set a source root for the pipeline workspace.'
+  const canProceed = sourceKind === 'notebook-volume' ? sourceVolumeId !== '' : sourceRoot.trim() !== ''
+
+  if (!setupDone) {
+    return (
+      <DataPage>
+        <DataPage.Header>
+          <DataPage.TitleBlock
+            title="New Pipeline"
+            description="A pipeline uses exactly one source workspace. Lock it in before you start editing."
+          />
+        </DataPage.Header>
+        <DataPage.Content>
+          <div className="mx-auto max-w-md space-y-5 py-16">
+            <div>
+              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Pipeline Name</label>
+              <Input value={pipelineName} onChange={e => setPipelineName(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Type</label>
+              <Select value={sourceKind} onValueChange={v => setSourceKind(v as SourceKind)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="notebook-volume">Notebook Volume</SelectItem>
+                  <SelectItem value="git">Git Repository</SelectItem>
+                  <SelectItem value="local">Local Directory</SelectItem>
+                  <SelectItem value="object-store">Object Store Prefix</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {sourceKind === 'notebook-volume' ? (
+              <div>
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Notebook Volume</label>
+                <Select value={sourceVolumeId} onValueChange={v => setSourceVolumeId(v ?? '')}>
+                  <SelectTrigger><SelectValue placeholder="— select a volume —" /></SelectTrigger>
+                  <SelectContent>
+                    {volumes.length === 0 ? (
+                      <SelectItem value="__none__" disabled>No released volumes</SelectItem>
+                    ) : volumes.map(v => (
+                      <SelectItem key={v.id} value={v.id}>{v.label} · {v.work_dir}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Root</label>
+                <Input value={sourceRoot} onChange={e => setSourceRoot(e.target.value)} placeholder="/workspaces/project" />
+              </div>
+            )}
+            <Button className="w-full" disabled={!canProceed} onClick={() => setSetupDone(true)}>
+              Start Editing →
+            </Button>
+          </div>
+        </DataPage.Content>
+      </DataPage>
+    )
+  }
 
   return (
     <DataPage>
@@ -475,124 +579,78 @@ export default function PipelineEditorPage() {
         />
         <DataPage.Actions>
           <Button variant="outline" size="sm" onClick={validateNow}>Validate</Button>
-          <Button size="sm" onClick={handleRun} disabled={submitting}>
-            <Play size={14} className="mr-1.5" /> Run
+          <Button variant="ghost" size="sm" onClick={() => navigate('/pipelines')}>
+            <ClipboardList size={14} className="mr-1.5" /> Templates
           </Button>
-          <Button variant="outline" size="sm" onClick={handleSchedule}>
-            <CalendarClock size={14} className="mr-1.5" /> Schedule
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => navigate('/history')}>
-            <ClipboardList size={14} className="mr-1.5" /> Inspect
+          <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+            <Upload size={14} className="mr-1.5" /> Submit
           </Button>
         </DataPage.Actions>
       </DataPage.Header>
 
       <DataPage.Content>
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ActiveTab)}>
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5">
+          <HardDrive size={14} className="shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <span className="text-xs text-muted-foreground">Source Workspace · </span>
+            {sourceKind === 'notebook-volume' && selectedVolume ? (
+              <>
+                <span className="text-sm font-medium">{selectedVolume.label}</span>
+                <span className="ml-2 font-mono text-xs text-muted-foreground">{selectedVolume.work_dir}</span>
+              </>
+            ) : (
+              <span className="font-mono text-xs">{sourceRoot || sourceKind}</span>
+            )}
+          </div>
+        </div>
+
+        <Tabs value={activeTab} onValueChange={value => setActiveTab(value as ActiveTab)}>
           <TabsList variant="line" className="mb-4">
             <TabsTrigger value="design">Design</TabsTrigger>
             <TabsTrigger value="yaml">YAML</TabsTrigger>
           </TabsList>
 
           <TabsContent value="design" className="min-h-0">
-            <div className={`grid gap-4 ${editingTask ? 'xl:grid-cols-[320px_minmax(0,1fr)_380px]' : 'xl:grid-cols-[320px_minmax(0,1fr)]'} transition-none`}>
+            <div className={`grid gap-4 transition-none ${editingTask ? 'xl:grid-cols-[320px_minmax(0,1fr)_380px]' : 'xl:grid-cols-[320px_minmax(0,1fr)]'}`}>
+
+              {/* Task Palette */}
               <DataPage.Group surface="bordered" className="min-h-0">
                 <div className="border-b border-border px-4 py-3">
-                  <label className="mb-1 block text-xs text-muted-foreground">Pipeline Name</label>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Pipeline Name</label>
                   <Input value={pipelineName} onChange={e => setPipelineName(e.target.value)} />
                 </div>
-
                 <div className="space-y-4 p-4">
                   <div>
-                    <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Source Workspace</h2>
-                    <div className="mt-2 space-y-3">
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Type</label>
-                        <Select value={sourceKind} onValueChange={(value) => setSourceKind(value as SourceKind)}>
-                          <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="notebook-volume">Notebook Volume</SelectItem>
-                            <SelectItem value="git">Git Repository</SelectItem>
-                            <SelectItem value="local">Local Directory</SelectItem>
-                            <SelectItem value="object-store">Object Store Prefix</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {sourceKind === 'notebook-volume' ? (
-                        <div>
-                          <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Notebook Volume</label>
-                          <Select value={sourceVolumeId} onValueChange={value => setSourceVolumeId(value ?? '')}>
-                            <SelectTrigger size="sm"><SelectValue placeholder="— select volume —" /></SelectTrigger>
-                            <SelectContent>
-                              {volumes.length === 0 ? (
-                                <SelectItem value="__none__" disabled>No released volumes</SelectItem>
-                              ) : volumes.map(volume => (
-                                <SelectItem key={volume.id} value={volume.id}>
-                                  {volume.label} · {volume.work_dir}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      ) : (
-                        <div>
-                          <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Root</label>
-                          <Input value={sourceRoot} onChange={e => setSourceRoot(e.target.value)} placeholder="/workspaces/project" />
-                        </div>
-                      )}
-
-                      <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-                        {sourceSummary}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
-                    </div>
-                    <div className="mt-3 space-y-2">
+                    <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
+                    <div className="space-y-2">
                       {(['notebook', 'python', 'command'] as PipelineTaskType[]).map(type => (
                         <button
                           key={type}
                           type="button"
                           draggable
-                          onDragStart={(e) => handlePaletteDragStart(e, type)}
+                          onDragStart={e => handlePaletteDragStart(e, type)}
                           onDragEnd={handlePaletteDragEnd}
                           onClick={() => addTask(type)}
                           className="flex w-full items-center justify-between rounded-xl border border-dashed border-border bg-background px-3 py-3 text-left transition hover:border-primary hover:bg-accent"
                         >
                           <div>
-                            <div className="text-sm font-medium">{taskLabel(type)}</div>
-                            <div className="text-xs text-muted-foreground">
-                              Drag onto the canvas or click to add.
-                            </div>
+                            <div className="text-sm font-medium">{TASK_LABELS[type]}</div>
+                            <div className="text-xs text-muted-foreground">Drag onto the canvas or click to add.</div>
                           </div>
-                          {type === 'notebook' ? (
-                            <BookOpen size={16} className="text-muted-foreground" />
-                          ) : type === 'python' ? (
-                            <Code2 size={16} className="text-muted-foreground" />
-                          ) : (
-                            <FileCode2 size={16} className="text-muted-foreground" />
-                          )}
+                          {TASK_ICONS[type]}
                         </button>
                       ))}
                     </div>
                   </div>
-
                   <div className="rounded-xl border border-border bg-card px-3 py-3 text-xs text-muted-foreground">
                     <div className="font-medium text-foreground">Canvas-first editing</div>
-                    <p className="mt-1">
-                      Drag a task into the canvas or click one of the palette tiles. Double-click the node to edit its source file, parameters, and artifacts.
-                    </p>
-                    <div className="mt-2 text-[11px] uppercase tracking-wider text-muted-foreground">
-                      {tasks.length} tasks on canvas
-                    </div>
+                    <p className="mt-1">Drag a task into the canvas or click a palette tile. Double-click a node to edit its source file, parameters, and artifacts.</p>
+                    <div className="mt-2 text-[11px] uppercase tracking-wider">{tasks.length} tasks on canvas</div>
                   </div>
                 </div>
               </DataPage.Group>
 
+              {/* Task Canvas */}
               <DataPage.Group surface="bordered" className="min-h-0">
                 <div className="border-b border-border px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
@@ -611,19 +669,17 @@ export default function PipelineEditorPage() {
                     resetKey={resetKey}
                     onSelectStep={setSelectedId}
                     onDoubleClickStep={openTaskEditor}
-                    onAddStep={(type, position) => {
-                      dragDropHandledRef.current = true
-                      addTask(type, position)
-                    }}
-                    onMoveStep={(id, position) => setPositions(current => ({ ...current, [id]: position }))}
+                    onAddStep={(type, position) => { dragDropHandledRef.current = true; addTask(type, position) }}
+                    onMoveStep={(id, position) => setPositions(pos => ({ ...pos, [id]: position }))}
                     onConnectSteps={connectTasks}
                     onDisconnectSteps={disconnectTasks}
                   />
                 </div>
               </DataPage.Group>
 
+              {/* Task Editor */}
               {editingTask && (
-                <DataPage.Group surface="bordered" className="min-h-0 flex flex-col">
+                <DataPage.Group surface="bordered" className="flex min-h-0 flex-col">
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
                     <div>
                       <h2 className="text-sm font-semibold">Task Editor</h2>
@@ -658,63 +714,37 @@ export default function PipelineEditorPage() {
 
                     {(editingTask.type === 'notebook' || editingTask.type === 'python') && (
                       <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">{sourceLabel(editingTask.type)}</label>
-                        {(() => {
-                          const ext = editingTask.type === 'notebook' ? '.ipynb' : '.py'
-                          const suggestions = volumeFiles.filter(f => f.endsWith(ext))
-                          const canBrowse = sourceKind === 'notebook-volume'
-                          return (
-                            <div ref={fileBrowserRef} className="relative">
-                              <div className="flex gap-1.5">
-                                <Input
-                                  value={editingTask.sourcePath}
-                                  onChange={e => updateTask(editingIndex, { sourcePath: e.target.value })}
-                                  placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : 'scripts/train.py'}
-                                />
-                                {canBrowse && (
-                                  <button
-                                    type="button"
-                                    title="Browse files in volume"
-                                    onClick={() => setFileBrowserOpen(o => !o)}
-                                    className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                                  >
-                                    <FolderOpen size={14} />
-                                  </button>
-                                )}
-                              </div>
-                              {fileBrowserOpen && canBrowse && (
-                                <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
-                                  {!sourceVolumeId ? (
-                                    <p className="px-3 py-3 text-xs text-muted-foreground">
-                                      Select a notebook volume in Source Workspace to browse files.
-                                    </p>
-                                  ) : suggestions.length === 0 ? (
-                                    <p className="px-3 py-3 text-xs text-muted-foreground">
-                                      No {ext} files found in this volume.
-                                    </p>
-                                  ) : (
-                                    <div className="max-h-52 overflow-y-auto">
-                                      {suggestions.map(f => (
-                                        <button
-                                          key={f}
-                                          type="button"
-                                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
-                                          onClick={() => {
-                                            updateTask(editingIndex, { sourcePath: f })
-                                            setFileBrowserOpen(false)
-                                          }}
-                                        >
-                                          <span className="font-mono text-muted-foreground">{ext}</span>
-                                          <span className="truncate">{f}</span>
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })()}
+                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">
+                          {SOURCE_LABELS[editingTask.type]}
+                        </label>
+                        <div ref={fileBrowserRef} className="relative">
+                          <div className="flex gap-1.5">
+                            <Input
+                              value={editingTask.sourcePath}
+                              onChange={e => updateTask(editingIndex, { sourcePath: e.target.value })}
+                              placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : 'scripts/train.py'}
+                            />
+                            {canBrowse && (
+                              <button
+                                type="button"
+                                title="Browse files in volume"
+                                onClick={() => { setBrowseQuery(''); setFileBrowserOpen(o => !o) }}
+                                className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                              >
+                                <FolderOpen size={14} />
+                              </button>
+                            )}
+                          </div>
+                          {fileBrowserOpen && canBrowse && (
+                            <FileBrowseDropdown
+                              ext={editingTask.type === 'notebook' ? '.ipynb' : '.py'}
+                              files={volumeFiles.filter(f => f.endsWith(editingTask.type === 'notebook' ? '.ipynb' : '.py'))}
+                              query={browseQuery}
+                              onQueryChange={setBrowseQuery}
+                              onSelect={f => { updateTask(editingIndex, { sourcePath: f }); setFileBrowserOpen(false) }}
+                            />
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -730,180 +760,72 @@ export default function PipelineEditorPage() {
                       </div>
                     )}
 
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
-                        <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Parameters</label>
-                        <Button variant="outline" size="sm" onClick={() => addPairRow(editingIndex, 'params')}><Plus size={14} className="mr-1.5" /> Add</Button>
-                      </div>
-                      <div className="space-y-2">
-                        {editingTask.params.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No parameters.</p>
-                        ) : editingTask.params.map((param, rowIndex) => (
-                          <div key={`${param.key}-${rowIndex}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
-                            <Input value={param.key} placeholder="name" onChange={e => updatePairField(editingIndex, 'params', rowIndex, { key: e.target.value })} />
-                            <Input value={param.value} placeholder="value" onChange={e => updatePairField(editingIndex, 'params', rowIndex, { value: e.target.value })} />
-                            <IconButton icon={<Trash2 />} label="Remove" onClick={() => removePairRow(editingIndex, 'params', rowIndex)} className="text-destructive hover:bg-destructive/10" />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <PairSection
+                      label="Parameters"
+                      emptyText="No parameters."
+                      keyPlaceholder="name"
+                      items={editingTask.params}
+                      onAdd={() => addPairRow(editingIndex, 'params')}
+                      onRemove={i => removePairRow(editingIndex, 'params', i)}
+                      onUpdate={(i, patch) => updatePairField(editingIndex, 'params', i, patch)}
+                    />
 
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
-                        <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Environment</label>
-                        <Button variant="outline" size="sm" onClick={() => addPairRow(editingIndex, 'env')}><Plus size={14} className="mr-1.5" /> Add</Button>
-                      </div>
-                      <div className="space-y-2">
-                        {editingTask.env.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No env overrides.</p>
-                        ) : editingTask.env.map((entry, rowIndex) => (
-                          <div key={`${entry.key}-${rowIndex}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
-                            <Input value={entry.key} placeholder="NAME" onChange={e => updatePairField(editingIndex, 'env', rowIndex, { key: e.target.value })} />
-                            <Input value={entry.value} placeholder="value" onChange={e => updatePairField(editingIndex, 'env', rowIndex, { value: e.target.value })} />
-                            <IconButton icon={<Trash2 />} label="Remove" onClick={() => removePairRow(editingIndex, 'env', rowIndex)} className="text-destructive hover:bg-destructive/10" />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <PairSection
+                      label="Environment"
+                      emptyText="No env overrides."
+                      keyPlaceholder="NAME"
+                      items={editingTask.env}
+                      onAdd={() => addPairRow(editingIndex, 'env')}
+                      onRemove={i => removePairRow(editingIndex, 'env', i)}
+                      onUpdate={(i, patch) => updatePairField(editingIndex, 'env', i, patch)}
+                    />
 
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
-                        <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Inputs</label>
-                        <Button variant="outline" size="sm" onClick={() => addArtifactRow(editingIndex, 'inputs')}><Plus size={14} className="mr-1.5" /> Add</Button>
-                      </div>
-                      <div className="space-y-2">
-                        {editingTask.inputs.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No inputs.</p>
-                        ) : editingTask.inputs.map((input, rowIndex) => {
-                          const browseKey = `inputs-${rowIndex}`
-                          return (
-                            <div key={`${input.name}-${rowIndex}`} className="grid gap-1">
-                              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                                <Input value={input.name} placeholder="name" onChange={e => updateArtifactField(editingIndex, 'inputs', rowIndex, { name: e.target.value })} />
-                                <IconButton icon={<Trash2 />} label="Remove" onClick={() => removeArtifactRow(editingIndex, 'inputs', rowIndex)} className="text-destructive hover:bg-destructive/10" />
-                              </div>
-                              <div ref={artifactBrowseKey === browseKey ? artifactBrowseRef : null} className="relative">
-                                <div className="flex gap-1.5">
-                                  <Input value={input.path} placeholder="path in workspace" onChange={e => updateArtifactField(editingIndex, 'inputs', rowIndex, { path: e.target.value })} />
-                                  {sourceKind === 'notebook-volume' && (
-                                    <button
-                                      type="button"
-                                      title="Browse volume files"
-                                      onClick={() => setArtifactBrowseKey(k => k === browseKey ? null : browseKey)}
-                                      className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                                    >
-                                      <FolderOpen size={14} />
-                                    </button>
-                                  )}
-                                </div>
-                                {artifactBrowseKey === browseKey && (
-                                  <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
-                                    {!sourceVolumeId ? (
-                                      <p className="px-3 py-3 text-xs text-muted-foreground">Select a notebook volume in Source Workspace to browse files.</p>
-                                    ) : volumeFiles.length === 0 ? (
-                                      <p className="px-3 py-3 text-xs text-muted-foreground">No files found in this volume.</p>
-                                    ) : (
-                                      <div className="max-h-52 overflow-y-auto">
-                                        {volumeFiles.map(f => (
-                                          <button
-                                            key={f}
-                                            type="button"
-                                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
-                                            onClick={() => {
-                                              updateArtifactField(editingIndex, 'inputs', rowIndex, { path: f })
-                                              setArtifactBrowseKey(null)
-                                            }}
-                                          >
-                                            <span className="truncate font-mono">{f}</span>
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              <Input value={input.from} placeholder="from (task name)" onChange={e => updateArtifactField(editingIndex, 'inputs', rowIndex, { from: e.target.value })} />
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
+                    <ArtifactSection
+                      label="Inputs"
+                      kind="inputs"
+                      items={editingTask.inputs}
+                      canBrowse={canBrowse}
+                      volumeFiles={volumeFiles}
+                      activeBrowseKey={artifactBrowseKey}
+                      browseQuery={browseQuery}
+                      browseRef={artifactBrowseRef}
+                      onAdd={() => addArtifactRow(editingIndex, 'inputs')}
+                      onRemove={i => removeArtifactRow(editingIndex, 'inputs', i)}
+                      onUpdate={(i, patch) => updateArtifactField(editingIndex, 'inputs', i, patch)}
+                      onBrowseToggle={key => { setBrowseQuery(''); setArtifactBrowseKey(k => k === key ? null : key) }}
+                      onBrowseQueryChange={setBrowseQuery}
+                      onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'inputs', i, { path: f }); setArtifactBrowseKey(null) }}
+                    />
 
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
-                        <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Outputs</label>
-                        <Button variant="outline" size="sm" onClick={() => addArtifactRow(editingIndex, 'outputs')}><Plus size={14} className="mr-1.5" /> Add</Button>
-                      </div>
-                      <div className="space-y-2">
-                        {editingTask.outputs.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No outputs.</p>
-                        ) : editingTask.outputs.map((output, rowIndex) => {
-                          const browseKey = `outputs-${rowIndex}`
-                          return (
-                            <div key={`${output.name}-${rowIndex}`} className="grid gap-1">
-                              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                                <Input value={output.name} placeholder="name" onChange={e => updateArtifactField(editingIndex, 'outputs', rowIndex, { name: e.target.value })} />
-                                <IconButton icon={<Trash2 />} label="Remove" onClick={() => removeArtifactRow(editingIndex, 'outputs', rowIndex)} className="text-destructive hover:bg-destructive/10" />
-                              </div>
-                              <div ref={artifactBrowseKey === browseKey ? artifactBrowseRef : null} className="relative">
-                                <div className="flex gap-1.5">
-                                  <Input value={output.path} placeholder="path in workspace" onChange={e => updateArtifactField(editingIndex, 'outputs', rowIndex, { path: e.target.value })} />
-                                  {sourceKind === 'notebook-volume' && (
-                                    <button
-                                      type="button"
-                                      title="Browse volume files"
-                                      onClick={() => setArtifactBrowseKey(k => k === browseKey ? null : browseKey)}
-                                      className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                                    >
-                                      <FolderOpen size={14} />
-                                    </button>
-                                  )}
-                                </div>
-                                {artifactBrowseKey === browseKey && (
-                                  <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
-                                    {!sourceVolumeId ? (
-                                      <p className="px-3 py-3 text-xs text-muted-foreground">Select a notebook volume in Source Workspace to browse files.</p>
-                                    ) : volumeFiles.length === 0 ? (
-                                      <p className="px-3 py-3 text-xs text-muted-foreground">No files found in this volume.</p>
-                                    ) : (
-                                      <div className="max-h-52 overflow-y-auto">
-                                        {volumeFiles.map(f => (
-                                          <button
-                                            key={f}
-                                            type="button"
-                                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
-                                            onClick={() => {
-                                              updateArtifactField(editingIndex, 'outputs', rowIndex, { path: f })
-                                              setArtifactBrowseKey(null)
-                                            }}
-                                          >
-                                            <span className="truncate font-mono">{f}</span>
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              <Input value={output.from} placeholder="from (task name)" onChange={e => updateArtifactField(editingIndex, 'outputs', rowIndex, { from: e.target.value })} />
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
+                    <ArtifactSection
+                      label="Outputs"
+                      kind="outputs"
+                      items={editingTask.outputs}
+                      canBrowse={canBrowse}
+                      volumeFiles={volumeFiles}
+                      activeBrowseKey={artifactBrowseKey}
+                      browseQuery={browseQuery}
+                      browseRef={artifactBrowseRef}
+                      onAdd={() => addArtifactRow(editingIndex, 'outputs')}
+                      onRemove={i => removeArtifactRow(editingIndex, 'outputs', i)}
+                      onUpdate={(i, patch) => updateArtifactField(editingIndex, 'outputs', i, patch)}
+                      onBrowseToggle={key => { setBrowseQuery(''); setArtifactBrowseKey(k => k === key ? null : key) }}
+                      onBrowseQueryChange={setBrowseQuery}
+                      onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'outputs', i, { path: f }); setArtifactBrowseKey(null) }}
+                    />
 
-                    <div className="grid gap-3 grid-cols-3">
+                    <div className="grid grid-cols-3 gap-3">
                       <div>
                         <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">CPU</label>
-                        <Input value={editingTask.cpu} onChange={e => updateTaskField(editingIndex, 'cpu', e.target.value)} placeholder="500m" />
+                        <Input value={editingTask.cpu} onChange={e => updateTask(editingIndex, { cpu: e.target.value })} placeholder="500m" />
                       </div>
                       <div>
                         <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Memory</label>
-                        <Input value={editingTask.memory} onChange={e => updateTaskField(editingIndex, 'memory', e.target.value)} placeholder="1Gi" />
+                        <Input value={editingTask.memory} onChange={e => updateTask(editingIndex, { memory: e.target.value })} placeholder="1Gi" />
                       </div>
                       <div>
                         <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">GPU</label>
-                        <Input value={editingTask.gpu} onChange={e => updateTaskField(editingIndex, 'gpu', e.target.value)} placeholder="1" />
+                        <Input value={editingTask.gpu} onChange={e => updateTask(editingIndex, { gpu: e.target.value })} placeholder="1" />
                       </div>
                     </div>
 
@@ -934,18 +856,14 @@ export default function PipelineEditorPage() {
               </div>
               <div className="space-y-3 p-4">
                 {validation.length === 0 ? (
-                  <p className="text-xs text-green-300">Draft looks valid.</p>
+                  <p className="text-xs text-green-500">Draft looks valid.</p>
                 ) : (
-                  <ul className="space-y-1 text-sm text-red-300">
+                  <ul className="space-y-1 text-sm text-destructive">
                     {validation.map(msg => <li key={msg}>• {msg}</li>)}
                   </ul>
                 )}
                 {error && <p className="text-sm text-destructive">{error}</p>}
-                <YamlMirror
-                  value={yamlText}
-                  onChange={(e) => setYamlText(e.target.value)}
-                  className="min-h-[34rem]"
-                />
+                <YamlMirror value={yamlText} onChange={e => setYamlText(e.target.value)} className="min-h-[34rem]" />
               </div>
             </DataPage.Group>
           </TabsContent>
@@ -978,6 +896,45 @@ export default function PipelineEditorPage() {
         </DataPage.Group>
       </DataPage.Content>
 
+      {/* Submit modal */}
+      {submitModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Submit Pipeline Template</h2>
+              <button type="button" onClick={() => setSubmitModalOpen(false)} className="rounded p-1 hover:bg-accent">
+                <X size={14} />
+              </button>
+            </div>
+            <p className="mb-4 text-xs text-muted-foreground">
+              Submitting creates a new immutable snapshot of your source files in object storage.
+              Each submission gets its own UUID — previous snapshots are untouched.
+            </p>
+            <div className="mb-4">
+              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">
+                Notebook Volume <span className="normal-case text-muted-foreground/60">(optional — required for local source steps)</span>
+              </label>
+              <Select value={submitVolumeId} onValueChange={v => setSubmitVolumeId((v ?? '__none__') === '__none__' ? '' : (v ?? ''))}>
+                <SelectTrigger><SelectValue placeholder="— none —" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— none —</SelectItem>
+                  {volumes.map(v => (
+                    <SelectItem key={v.id} value={v.id}>{v.label} · {v.work_dir}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSubmitModalOpen(false)} disabled={submitting}>Cancel</Button>
+              <Button size="sm" onClick={confirmSubmit} disabled={submitting}>
+                <Upload size={14} className="mr-1.5" />
+                {submitting ? 'Submitting…' : 'Confirm Submit'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </DataPage>
   )
 }

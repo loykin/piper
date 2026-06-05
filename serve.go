@@ -19,6 +19,7 @@ import (
 	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/pipelinetemplate"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/schedule"
@@ -328,6 +329,22 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		ProxyDialer:      p.grpcAgentServer,
 		RPCSender:        p.grpcAgentServer,
 	}).RegisterRoutes(r.Group(""))
+
+	// Pipeline template domain
+	pipelinetemplate.NewHandler(pipelinetemplate.HandlerDeps{
+		Templates: p.repos.PipelineTemplate,
+		Volumes:   p.repos.NotebookVolume,
+		Schedules: p.repos.Schedule,
+		Store:     p.store,
+		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
+			return p.Parse(yaml)
+		},
+		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error) {
+			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, experiment)
+		},
+		OwnerID: p.ownerIDFromRequest,
+		GenID:   genScheduleID,
+	}).RegisterRoutes(r.Group("/api"))
 
 	// Built-in file server: expose /store/* routes only when using a LocalStore.
 	// Workers and K8s pods reach the store via HTTP using the master URL.

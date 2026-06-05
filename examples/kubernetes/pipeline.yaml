@@ -41,7 +41,6 @@ spec:
   - name: transform
     runner:
       image: alpine:3.20         # This step runs with Alpine
-      label: cpu
     run:
       type: command
       command:

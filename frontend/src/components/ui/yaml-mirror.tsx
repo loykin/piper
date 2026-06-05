@@ -1,19 +1,41 @@
-import * as React from 'react'
-
+import CodeMirror from '@uiw/react-codemirror'
+import { yaml } from '@codemirror/lang-yaml'
+import { oneDark } from '@codemirror/theme-one-dark'
 import { cn } from '@/lib/utils'
+import type { ChangeEvent } from 'react'
 
-type YamlMirrorProps = React.TextareaHTMLAttributes<HTMLTextAreaElement>
+interface YamlMirrorProps {
+  value: string
+  onChange?: (e: ChangeEvent<HTMLTextAreaElement>) => void
+  className?: string
+  readOnly?: boolean
+  rows?: number
+}
 
-function YamlMirror({ className, spellCheck = false, ...props }: YamlMirrorProps) {
+function YamlMirror({ value, onChange, className, readOnly, rows: _ }: YamlMirrorProps) {
   return (
-    <textarea
-      className={cn(
-        'w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm leading-5 text-foreground focus:border-primary focus:outline-none',
-        className,
-      )}
-      spellCheck={spellCheck}
-      {...props}
-    />
+    <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
+      <CodeMirror
+        value={value}
+        height="100%"
+        minHeight="34rem"
+        theme={oneDark}
+        extensions={[yaml()]}
+        readOnly={readOnly}
+        basicSetup={{
+          lineNumbers: true,
+          foldGutter: true,
+          highlightActiveLine: true,
+          autocompletion: true,
+        }}
+        onChange={val => {
+          if (!onChange) return
+          const syntheticEvent = { target: { value: val } } as ChangeEvent<HTMLTextAreaElement>
+          onChange(syntheticEvent)
+        }}
+        style={{ fontSize: 13 }}
+      />
+    </div>
   )
 }
 

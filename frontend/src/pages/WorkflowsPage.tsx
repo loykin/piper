@@ -1,31 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, Power, Plus, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
+import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { listSchedules, setScheduleEnabled, deleteSchedule, type Schedule } from '@/features/schedules/api'
 import { scheduleColumns } from '@/features/schedules/columns'
+import { useSchedules, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
 import type { DataGridColumnDef } from '@loykin/gridkit'
+import type { Schedule } from '@/features/schedules/api'
 
 export default function WorkflowsPage() {
-  const [schedules, setSchedules] = useState<Schedule[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
   const navigate = useNavigate()
-  const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
-
-  const load = () =>
-    listSchedules()
-      .then((data) => { setSchedules(data); setLoadError('') })
-      .catch(() => setLoadError('Failed to load schedules.'))
-      .finally(() => setLoading(false))
-
-  useEffect(() => {
-    load()
-    intervalRef.current = setInterval(load, 5000)
-    return () => clearInterval(intervalRef.current)
-  }, [])
+  const { data: schedules = [], isLoading, isError } = useSchedules()
+  const { mutate: deleteSchedule } = useDeleteSchedule()
+  const { mutate: toggleSchedule } = useToggleSchedule()
 
   const actionColumn: DataGridColumnDef<Schedule> = {
     id: 'actions',
@@ -39,17 +27,17 @@ export default function WorkflowsPage() {
             onClick={() => navigate(`/schedules/${s.id}`)} />
           {s.schedule_type === 'cron' && (
             <IconButton icon={<Power />} label={s.enabled ? 'Disable' : 'Enable'}
-              onClick={async (e) => {
+              onClick={(e) => {
                 e.stopPropagation()
-                try { await setScheduleEnabled(s.id, !s.enabled); await load() } catch { /* no-op */ }
+                toggleSchedule({ id: s.id, enabled: !s.enabled })
               }}
               className={s.enabled ? 'text-primary hover:bg-primary/10' : ''} />
           )}
           <IconButton icon={<Trash2 />} label="Delete"
-            onClick={async (e) => {
+            onClick={(e) => {
               e.stopPropagation()
               if (!confirm(`Delete schedule "${s.name}"?`)) return
-              try { await deleteSchedule(s.id); await load() } catch { /* no-op */ }
+              deleteSchedule(s.id)
             }}
             className="text-destructive hover:bg-destructive/10" />
         </div>
@@ -67,22 +55,18 @@ export default function WorkflowsPage() {
           description="Manage cron and one-time pipeline schedules."
         />
         <DataPage.Actions>
-          <button
-            type="button"
-            onClick={() => navigate('/schedules/create')}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
-          >
-            <Plus size={14} /> Create
-          </button>
+          <Button size="sm" onClick={() => navigate('/schedules/create')}>
+            <Plus size={14} className="mr-1.5" /> Create
+          </Button>
         </DataPage.Actions>
       </DataPage.Header>
       <DataPage.Content>
-        {loadError && (
+        {isError && (
           <div className="mb-[var(--dk-page-padding-y)] rounded border border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-            {loadError}
+            Failed to load schedules.
           </div>
         )}
-        {loading ? (
+        {isLoading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading...</div>
         ) : schedules.length === 0 ? (
           <div className="py-8 text-sm text-muted-foreground">No schedules yet. Create one to start.</div>

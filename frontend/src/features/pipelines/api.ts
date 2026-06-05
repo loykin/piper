@@ -1,31 +1,13 @@
 // pipelines feature API — pipeline template management
+export type {
+  PipelineTemplate, SubmitPipelineRequest, TriggerRunRequest, DeployRequest,
+} from './types'
+
+import type {
+  PipelineTemplate, SubmitPipelineRequest, TriggerRunRequest, DeployRequest,
+} from './types'
 
 const BASE = '/api'
-
-export interface PipelineTemplate {
-  id: string
-  name: string
-  yaml: string
-  snapshot_id: string
-  volume_id: string
-  created_at: string
-}
-
-export interface SubmitPipelineRequest {
-  name: string
-  yaml: string
-  volume_id?: string
-}
-
-export interface TriggerRunRequest {
-  params?: Record<string, unknown>
-}
-
-export interface DeployRequest {
-  cron: string
-  enabled?: boolean
-  params?: Record<string, unknown>
-}
 
 async function throwOnError(res: Response): Promise<void> {
   if (!res.ok) {

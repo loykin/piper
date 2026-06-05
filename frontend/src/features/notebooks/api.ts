@@ -1,43 +1,11 @@
 // notebooks feature API
+export type {
+  NotebookServer, NotebookVolume, NotebookWorkerInfo,
+} from './types'
+
+import type { NotebookServer, NotebookVolume, NotebookWorkerInfo } from './types'
 
 const BASE = ''
-
-export interface NotebookServer {
-  name: string
-  status: 'provisioning' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
-  env: string      // bare-metal: venv path or "conda:env-name"
-  image: string    // k8s: container image
-  endpoint: string
-  pid: number
-  work_dir: string
-  token: string
-  worker_id?: string
-  volume_id: string
-  yaml: string
-  created_at: string
-  updated_at: string
-}
-
-export interface NotebookVolume {
-  id: string
-  label: string
-  work_dir: string
-  status: 'bound' | 'released'
-  worker_id: string   // node affinity; empty for network storage (e.g. K8s CSI)
-  created_at: string
-  updated_at: string
-}
-
-export interface NotebookWorkerInfo {
-  id: string
-  kind: 'k8s' | 'baremetal'
-  mode?: 'process' | 'docker'
-  hostname: string
-  cluster_name?: string
-  gpus: string[]
-  labels?: Record<string, string>
-  last_seen: string
-}
 
 export async function listNotebooks(): Promise<NotebookServer[]> {
   const res = await fetch(`${BASE}/notebooks`)
@@ -58,7 +26,6 @@ export async function createNotebook(yaml: string, volumeId?: string): Promise<N
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ yaml, ...(volumeId ? { volume_id: volumeId } : {}) }),
   })
-  // 201 Created is the expected response for the async path.
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error ?? res.statusText)
@@ -92,8 +59,7 @@ export async function deleteNotebook(name: string): Promise<void> {
   }
 }
 
-/** Returns the master proxy URL for opening a notebook in the browser.
- *  The master proxy handles notebook auth/token forwarding. */
+/** Returns the master proxy URL for opening a notebook in the browser. */
 export function notebookProxyURL(name: string): string {
   return `/notebooks/${name}/proxy/lab/`
 }

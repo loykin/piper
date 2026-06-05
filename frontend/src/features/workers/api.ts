@@ -1,19 +1,9 @@
 // workers feature API
+export type { Worker } from './types'
+
+import type { Worker } from './types'
 
 const BASE = ''
-
-export interface Worker {
-  id: string
-  label: string
-  version: string
-  capabilities: string
-  hostname: string
-  concurrency: number
-  status: string
-  in_flight: number
-  registered_at: string
-  last_seen: string
-}
 
 export async function listWorkers(): Promise<Worker[]> {
   const res = await fetch(`${BASE}/api/workers`)

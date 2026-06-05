@@ -1,41 +1,9 @@
 // serving feature API
+export type { Service, ServiceHistory, ServingWorkerInfo } from './types'
+
+import type { Service, ServiceHistory, ServingWorkerInfo } from './types'
 
 const BASE = ''
-
-export interface Service {
-  name: string
-  run_id: string
-  artifact: string   // "step/artifact_name"
-  status: 'running' | 'stopped' | 'failed'
-  endpoint: string   // e.g. "http://localhost:9001"
-  namespace?: string
-  pid: number
-  yaml: string
-  created_at: string
-  updated_at: string
-}
-
-export interface ServiceHistory {
-  id: number
-  name: string
-  run_id: string
-  artifact: string
-  status: string
-  endpoint: string
-  namespace?: string
-  pid: number
-  yaml: string
-  deployed_at: string
-  stopped_at: string
-}
-
-export interface ServingWorkerInfo {
-  id: string
-  addr: string
-  gpus: string[]
-  hostname: string
-  last_seen: string
-}
 
 export async function listServing(): Promise<Service[]> {
   const res = await fetch(`${BASE}/serving`)

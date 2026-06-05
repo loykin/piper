@@ -22,7 +22,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { X } from 'lucide-react'
 import type { PipelineStepDraft } from '@/features/pipelines/editor'
-import type { DragEvent, MouseEvent } from 'react'
+import type { DragEvent } from 'react'
 
 interface PipelineCanvasProps {
   steps: PipelineStepDraft[]
@@ -242,7 +242,7 @@ function PipelineCanvasInner({
   )
 
   const handleNodeDragStop = useCallback(
-    (_event: MouseEvent, node: Node) => {
+    (_event: unknown, node: Node) => {
       onMoveStep(node.id, node.position)
     },
     [onMoveStep],
@@ -273,10 +273,7 @@ function PipelineCanvasInner({
   }, [fitView, steps.length])
 
   return (
-    <div
-      className="relative overflow-hidden rounded-xl border border-border bg-background"
-      style={{ height: '72vh', minHeight: '480px' }}
-    >
+    <div className="relative h-full overflow-hidden rounded-xl border border-border bg-background">
 
       <ReactFlow
         nodes={nodes}

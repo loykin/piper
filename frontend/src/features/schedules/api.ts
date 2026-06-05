@@ -1,32 +1,10 @@
 // schedules feature API
+export type { Schedule, CreateScheduleOptions } from './types'
 
 import type { Run } from '@/features/runs/api'
+import type { Schedule, CreateScheduleOptions } from './types'
 
 const BASE = ''
-
-export interface Schedule {
-  id: string
-  name: string
-  owner_id?: string
-  pipeline_yaml: string
-  schedule_type: 'immediate' | 'once' | 'cron'
-  cron_expr?: string
-  enabled: boolean
-  last_run_at?: string
-  next_run_at: string
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateScheduleOptions {
-  name: string
-  yaml: string
-  type: 'immediate' | 'once' | 'cron'
-  cron?: string
-  run_at?: string  // ISO string for type=once
-  owner_id?: string
-  params?: Record<string, unknown>
-}
 
 export async function listSchedules(): Promise<Schedule[]> {
   const res = await fetch(`${BASE}/schedules`)
@@ -79,4 +57,13 @@ export async function deleteSchedule(id: string): Promise<void> {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error ?? res.statusText)
   }
+}
+
+export async function triggerSchedule(id: string): Promise<{ run_id: string }> {
+  const res = await fetch(`${BASE}/schedules/${id}/trigger`, { method: 'POST' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
 }

@@ -1,31 +1,18 @@
-import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { RefreshCw, Square, Trash2 } from 'lucide-react'
 import { DataPage } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
-import { getServing, stopServing, restartServing, type Service } from '@/features/serving/api'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { useService, useStopService, useRestartService } from '@/features/serving/hooks'
 
 export default function ServingDetailPage() {
   const { name } = useParams<{ name: string }>()
-  const [service, setService] = useState<Service | null>(null)
-  const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
+  const { data: service, isLoading } = useService(name!)
+  const { mutateAsync: stopService } = useStopService()
+  const { mutateAsync: restartService } = useRestartService()
 
-  async function load() {
-    if (!name) return
-    const svc = await getServing(name).catch(() => null)
-    setService(svc)
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-    const t = setInterval(load, 5000)
-    return () => clearInterval(t)
-  }, [name])
-
-  if (loading) {
+  if (isLoading) {
     return (
       <DataPage>
         <DataPage.Content>
@@ -47,17 +34,17 @@ export default function ServingDetailPage() {
 
   async function handleStop() {
     if (!name || !confirm(`Stop service "${name}"?`)) return
-    try { await stopServing(name); await load() } catch { /* no-op */ }
+    try { await stopService(name) } catch { /* no-op */ }
   }
 
   async function handleRestart() {
     if (!name) return
-    try { await restartServing(name); await load() } catch { /* no-op */ }
+    try { await restartService(name) } catch { /* no-op */ }
   }
 
   async function handleDelete() {
     if (!name || !confirm(`Delete service "${name}"?`)) return
-    try { await stopServing(name); navigate('/serving') } catch { /* no-op */ }
+    try { await stopService(name); navigate('/serving') } catch { /* no-op */ }
   }
 
   return (
@@ -85,7 +72,6 @@ export default function ServingDetailPage() {
       </DataPage.Header>
 
       <DataPage.Content>
-        {/* Metadata */}
         <DataPage.Group surface="bordered" className="mb-4">
           <div className="p-4">
             <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -136,7 +122,6 @@ export default function ServingDetailPage() {
           </div>
         </DataPage.Group>
 
-        {/* YAML */}
         <DataPage.Group surface="bordered">
           <DataPage.GroupHeader title="Service YAML" className="px-4 pt-3" />
           <pre className="overflow-x-auto px-4 pb-4 text-xs leading-6 text-muted-foreground">

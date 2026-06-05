@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
-import { listWorkers, type Worker } from '@/features/workers/api'
-import { listNotebookWorkers, type NotebookWorkerInfo } from '@/features/notebooks/api'
-import { listServingWorkers, type ServingWorkerInfo } from '@/features/serving/api'
+import { useWorkers } from '@/features/workers/hooks'
+import { useNotebookWorkers } from '@/features/notebooks/hooks'
+import { useServingWorkers } from '@/features/serving/hooks'
 import { pipelineColumns, nodeColumns, type NodeInfo } from '@/features/workers/columns'
+import type { Worker } from '@/features/workers/api'
 
 function WorkerSection<T extends object>({
   title, rows, cols, emptyMsg,
@@ -41,29 +41,10 @@ function WorkerSection<T extends object>({
 }
 
 export default function WorkersPage() {
-  const [workers, setWorkers] = useState<Worker[]>([])
-  const [notebookNodes, setNotebookNodes] = useState<NotebookWorkerInfo[]>([])
-  const [servingNodes, setServingNodes] = useState<ServingWorkerInfo[]>([])
-  const [loading, setLoading] = useState(true)
-  const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
-
-  const load = () => {
-    Promise.all([
-      listWorkers().catch(() => [] as Worker[]),
-      listNotebookWorkers().catch(() => [] as NotebookWorkerInfo[]),
-      listServingWorkers().catch(() => [] as ServingWorkerInfo[]),
-    ]).then(([w, nb, sv]) => {
-      setWorkers(w)
-      setNotebookNodes(nb)
-      setServingNodes(sv)
-    }).finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    load()
-    intervalRef.current = setInterval(load, 5000)
-    return () => clearInterval(intervalRef.current)
-  }, [])
+  const { data: workers = [], isLoading: l1 } = useWorkers()
+  const { data: notebookNodes = [], isLoading: l2 } = useNotebookWorkers()
+  const { data: servingNodes = [], isLoading: l3 } = useServingWorkers()
+  const loading = l1 || l2 || l3
 
   return (
     <DataPage>
@@ -80,7 +61,7 @@ export default function WorkersPage() {
           <div className="flex flex-col gap-6">
             <WorkerSection
               title="Pipeline Workers"
-              rows={workers}
+              rows={workers as Worker[]}
               cols={pipelineColumns}
               emptyMsg="No pipeline workers registered."
             />

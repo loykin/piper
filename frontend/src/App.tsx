@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-dom'
 import {
   SidebarProvider,
@@ -16,22 +17,23 @@ import {
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch } from 'lucide-react'
-import RunDetailPage from '@/pages/RunDetailPage'
-import WorkflowsPage from '@/pages/WorkflowsPage'
-import WorkflowCreatePage from '@/pages/WorkflowCreatePage'
-import HistoryPage from '@/pages/HistoryPage'
-import ScheduleDetailPage from '@/pages/ScheduleDetailPage'
-import PipelineEditorPage from '@/pages/PipelineEditorPage'
-import PipelinesListPage from '@/pages/PipelinesListPage'
-import ServingPage from '@/pages/ServingPage'
-import ServingDetailPage from '@/pages/ServingDetailPage'
-import ServingHistoryPage from '@/pages/ServingHistoryPage'
-import WorkersPage from '@/pages/WorkersPage'
-import NotebooksPage from '@/pages/NotebooksPage'
-import NotebookCreatePage from '@/pages/NotebookCreatePage'
-import NotebookDetailPage from '@/pages/NotebookDetailPage'
-import NotebookVolumesPage from '@/pages/NotebookVolumesPage'
-import StoragePage from '@/pages/StoragePage'
+
+const RunDetailPage       = lazy(() => import('@/pages/RunDetailPage'))
+const WorkflowsPage       = lazy(() => import('@/pages/WorkflowsPage'))
+const WorkflowCreatePage  = lazy(() => import('@/pages/WorkflowCreatePage'))
+const HistoryPage         = lazy(() => import('@/pages/HistoryPage'))
+const ScheduleDetailPage  = lazy(() => import('@/pages/ScheduleDetailPage'))
+const PipelineEditorPage  = lazy(() => import('@/pages/PipelineEditorPage'))
+const PipelinesListPage   = lazy(() => import('@/pages/PipelinesListPage'))
+const ServingPage         = lazy(() => import('@/pages/ServingPage'))
+const ServingDetailPage   = lazy(() => import('@/pages/ServingDetailPage'))
+const ServingHistoryPage  = lazy(() => import('@/pages/ServingHistoryPage'))
+const WorkersPage         = lazy(() => import('@/pages/WorkersPage'))
+const NotebooksPage       = lazy(() => import('@/pages/NotebooksPage'))
+const NotebookCreatePage  = lazy(() => import('@/pages/NotebookCreatePage'))
+const NotebookDetailPage  = lazy(() => import('@/pages/NotebookDetailPage'))
+const NotebookVolumesPage = lazy(() => import('@/pages/NotebookVolumesPage'))
+const StoragePage         = lazy(() => import('@/pages/StoragePage'))
 
 const navGroups = [
   {
@@ -52,14 +54,14 @@ const navGroups = [
   {
     label: 'Development',
     items: [
-      { id: 'notebooks', label: 'Notebooks', icon: BookOpen,   to: '/notebooks' },
-      { id: 'notebook-volumes', label: 'Volumes', icon: HardDrive, to: '/notebook-volumes' },
+      { id: 'notebooks',        label: 'Notebooks', icon: BookOpen,   to: '/notebooks' },
+      { id: 'notebook-volumes', label: 'Volumes',   icon: HardDrive,  to: '/notebook-volumes' },
     ],
   },
   {
     label: 'Infrastructure',
     items: [
-      { id: 'workers', label: 'Workers', icon: Cpu, to: '/workers' },
+      { id: 'workers', label: 'Workers', icon: Cpu,      to: '/workers' },
       { id: 'storage', label: 'Storage', icon: Database, to: '/storage' },
     ],
   },
@@ -126,30 +128,32 @@ export default function App() {
           </Sidebar>
           <SidebarInset>
             <div className="h-full overflow-y-auto">
-              <Routes>
-                <Route path="/" element={<Navigate to="/schedules" replace />} />
-                <Route path="/schedules" element={<WorkflowsPage />} />
-                <Route path="/schedules/create" element={<WorkflowCreatePage />} />
-                <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
-                <Route path="/pipelines" element={<PipelinesListPage />} />
-                <Route path="/pipelines/editor" element={<PipelineEditorPage />} />
-                <Route path="/history" element={<HistoryPage />} />
-                <Route path="/serving" element={<ServingPage />} />
-                <Route path="/serving/history" element={<ServingHistoryPage />} />
-                <Route path="/serving/:name" element={<ServingDetailPage />} />
-                <Route path="/runs/:id" element={<RunDetailPage />} />
-                <Route path="/workers" element={<WorkersPage />} />
-                <Route path="/notebooks" element={<NotebooksPage />} />
-                <Route path="/notebooks/create" element={<NotebookCreatePage />} />
-                <Route path="/notebooks/:name" element={<NotebookDetailPage />} />
-                <Route path="/notebooks/:name/promote" element={<Navigate to="/pipelines/editor" replace />} />
-                <Route path="/notebook-volumes" element={<NotebookVolumesPage />} />
-                <Route path="/storage" element={<StoragePage />} />
-                {/* Legacy redirects */}
-                <Route path="/services" element={<Navigate to="/serving" replace />} />
-                <Route path="/pipelines/create" element={<Navigate to="/pipelines/editor" replace />} />
-                <Route path="/run-history" element={<Navigate to="/history" replace />} />
-              </Routes>
+              <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>}>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/schedules" replace />} />
+                  <Route path="/schedules" element={<WorkflowsPage />} />
+                  <Route path="/schedules/create" element={<WorkflowCreatePage />} />
+                  <Route path="/schedules/:id" element={<ScheduleDetailPage />} />
+                  <Route path="/pipelines" element={<PipelinesListPage />} />
+                  <Route path="/pipelines/editor" element={<PipelineEditorPage />} />
+                  <Route path="/history" element={<HistoryPage />} />
+                  <Route path="/serving" element={<ServingPage />} />
+                  <Route path="/serving/history" element={<ServingHistoryPage />} />
+                  <Route path="/serving/:name" element={<ServingDetailPage />} />
+                  <Route path="/runs/:id" element={<RunDetailPage />} />
+                  <Route path="/workers" element={<WorkersPage />} />
+                  <Route path="/notebooks" element={<NotebooksPage />} />
+                  <Route path="/notebooks/create" element={<NotebookCreatePage />} />
+                  <Route path="/notebooks/:name" element={<NotebookDetailPage />} />
+                  <Route path="/notebooks/:name/promote" element={<Navigate to="/pipelines/editor" replace />} />
+                  <Route path="/notebook-volumes" element={<NotebookVolumesPage />} />
+                  <Route path="/storage" element={<StoragePage />} />
+                  {/* Legacy redirects */}
+                  <Route path="/services" element={<Navigate to="/serving" replace />} />
+                  <Route path="/pipelines/create" element={<Navigate to="/pipelines/editor" replace />} />
+                  <Route path="/run-history" element={<Navigate to="/history" replace />} />
+                </Routes>
+              </Suspense>
             </div>
           </SidebarInset>
         </SidebarProvider>

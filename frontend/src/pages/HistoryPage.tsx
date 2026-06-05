@@ -1,43 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
-import { listRuns, deleteRun, rerunRun, type Run } from '@/features/runs/api'
 import { runColumns } from '@/features/runs/columns'
+import { useRuns, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
+import type { Run } from '@/features/runs/api'
 
 export default function HistoryPage() {
-  const [runs, setRuns] = useState<Run[]>([])
-  const [loading, setLoading] = useState(true)
-  const [deleting, setDeleting] = useState<string | null>(null)
   const navigate = useNavigate()
-  const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
-
-  const load = () =>
-    listRuns()
-      .then(setRuns)
-      .catch(() => {})
-      .finally(() => setLoading(false))
-
-  useEffect(() => {
-    load()
-    intervalRef.current = setInterval(load, 3000)
-    return () => clearInterval(intervalRef.current)
-  }, [])
+  const { data: runs = [], isLoading } = useRuns()
+  const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
+  const { mutateAsync: rerunRun } = useRerunRun()
 
   const handleDelete = (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
     if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
-    setDeleting(run.id)
-    deleteRun(run.id).then(load).catch((err) => alert(err.message)).finally(() => setDeleting(null))
+    deleteRun(run.id)
   }
 
-  const handleRerun = (e: React.MouseEvent, run: Run, failedOnly = false) => {
+  const handleRerun = async (e: React.MouseEvent, run: Run, failedOnly = false) => {
     e.stopPropagation()
-    rerunRun(run.id, failedOnly)
-      .then(({ run_id }) => navigate(`/runs/${run_id}`))
-      .catch((err) => alert(err.message))
+    try {
+      const { run_id } = await rerunRun({ id: run.id, failedOnly })
+      navigate(`/runs/${run_id}`)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err))
+    }
   }
 
   const actionColumn: DataGridColumnDef<Run> = {
@@ -55,14 +45,14 @@ export default function HistoryPage() {
           onClick={(e) => handleRerun(e, row.original, true)}
           className="text-yellow-400 hover:bg-yellow-400/10" />
         <IconButton icon={<Trash2 />} label="Delete"
-          disabled={row.original.status === 'running' || deleting === row.original.id}
+          disabled={row.original.status === 'running' || (deleting && deletingId === row.original.id)}
           onClick={(e) => handleDelete(e, row.original)}
           className="text-destructive hover:bg-destructive/10" />
       </div>
     ),
   }
 
-  const columns = useMemo(() => [...runColumns, actionColumn], [deleting])
+  const columns = useMemo(() => [...runColumns, actionColumn], [deleting, deletingId])
 
   return (
     <DataPage>
@@ -73,7 +63,7 @@ export default function HistoryPage() {
         />
       </DataPage.Header>
       <DataPage.Content>
-        {loading ? (
+        {isLoading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading…</div>
         ) : runs.length === 0 ? (
           <div className="py-8 text-sm text-muted-foreground">No runs yet.</div>

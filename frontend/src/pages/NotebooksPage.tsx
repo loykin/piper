@@ -1,57 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
-import {
-  listNotebooks, stopNotebook, startNotebook, deleteNotebook,
-  listNotebookVolumes,
-  type NotebookServer, type NotebookVolume,
-} from '@/features/notebooks/api'
 import { getNotebookColumns } from '@/features/notebooks/columns'
+import {
+  useNotebooks, useNotebookVolumes,
+  useStopNotebook, useStartNotebook, useDeleteNotebook,
+} from '@/features/notebooks/hooks'
 
 export default function NotebooksPage() {
   const navigate = useNavigate()
-  const [notebooks, setNotebooks] = useState<NotebookServer[]>([])
-  const [releasedVolumes, setReleasedVolumes] = useState<NotebookVolume[]>([])
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState<string | null>(null)
-  const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
+  const { data: notebooks = [], isLoading } = useNotebooks()
+  const { data: allVolumes = [] } = useNotebookVolumes()
+  const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
 
-  const load = () =>
-    Promise.all([
-      listNotebooks().catch(() => [] as NotebookServer[]),
-      listNotebookVolumes().catch(() => [] as NotebookVolume[]),
-    ])
-      .then(([nbs, vols]) => {
-        setNotebooks(nbs)
-        setReleasedVolumes(vols.filter(v => v.status === 'released'))
-      })
-      .finally(() => setLoading(false))
+  const { mutate: stop, isPending: stopping, variables: stoppingName } = useStopNotebook()
+  const { mutate: start, isPending: starting, variables: startingName } = useStartNotebook()
+  const { mutate: del, isPending: deleting, variables: deletingName } = useDeleteNotebook()
 
-  useEffect(() => {
-    void load()
-    intervalRef.current = setInterval(() => void load(), 5000)
-    return () => clearInterval(intervalRef.current)
-  }, [])
+  const busy = stopping ? (stoppingName ?? null)
+    : starting ? (startingName ?? null)
+    : deleting ? (deletingName ?? null)
+    : null
 
-  const withBusy = async (key: string, fn: () => Promise<void>) => {
-    setBusy(key)
-    try {
-      await fn()
-      await load()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const handleStop   = (name: string) => withBusy(name, () => stopNotebook(name))
-  const handleStart  = (name: string) => withBusy(name, () => startNotebook(name).then(() => {}))
+  const handleStop   = (name: string) => stop(name)
+  const handleStart  = (name: string) => start(name)
   const handleDelete = (name: string) => {
     if (!confirm(`Delete notebook "${name}"?\nThe volume and work directory are preserved. You can recover them from the Volumes page.`)) return
-    void withBusy(name, () => deleteNotebook(name))
+    del(name)
   }
 
   const columns = useMemo(
@@ -72,7 +49,7 @@ export default function NotebooksPage() {
       </DataPage.Header>
 
       <DataPage.Content>
-        {loading ? (
+        {isLoading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading…</div>
         ) : notebooks.length === 0 ? (
           <div className="py-12 text-center">
@@ -96,13 +73,15 @@ export default function NotebooksPage() {
                   <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
                     <span>{notebooks.length} servers</span>
                     {releasedVolumes.length > 0 && (
-                      <button
+                      <Button
                         type="button"
-                        className="text-xs text-primary hover:underline"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 text-xs"
                         onClick={() => navigate(`/notebooks/create?volume=${releasedVolumes[0].id}`)}
                       >
                         {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
-                      </button>
+                      </Button>
                     )}
                     <DataGridPaginationCompact table={table} />
                   </div>

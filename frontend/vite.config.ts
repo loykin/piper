@@ -27,5 +27,18 @@ export default defineConfig({
       '/custom': 'http://localhost:8080',
     },
   },
-  build: { outDir: 'dist' },
+  build: {
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/@xyflow/')) return 'vendor-reactflow'
+          if (id.includes('node_modules/@uiw/') || id.includes('node_modules/@codemirror/')) return 'vendor-codemirror'
+          if (id.includes('node_modules/@loykin/')) return 'vendor-loykin'
+          if (id.includes('node_modules/@tanstack/') || id.includes('node_modules/@base-ui/') || id.includes('node_modules/@floating-ui/')) return 'vendor-ui'
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router-dom')) return 'vendor-react'
+        },
+      },
+    },
+  },
 })

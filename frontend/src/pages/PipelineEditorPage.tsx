@@ -10,6 +10,7 @@ import {
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ShellMirror } from '@/components/ui/shell-mirror'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { IconButton } from '@/components/ui/icon-button'
 import PipelineCanvas from '@/shared/components/PipelineCanvas'
@@ -620,7 +621,7 @@ export default function PipelineEditorPage() {
           </TabsList>
 
           <TabsContent value="design" className="min-h-0">
-            <div className={`grid gap-4 transition-none ${editingTask ? 'xl:grid-cols-[320px_minmax(0,1fr)_380px]' : 'xl:grid-cols-[320px_minmax(0,1fr)]'}`}>
+            <div className={`grid gap-4 transition-none h-[calc(100vh-220px)] min-h-120 ${editingTask ? 'xl:grid-cols-[320px_minmax(0,1fr)_380px]' : 'xl:grid-cols-[320px_minmax(0,1fr)]'}`}>
 
               {/* Task Palette */}
               <DataPage.Group surface="bordered" className="min-h-0">
@@ -652,14 +653,14 @@ export default function PipelineEditorPage() {
               </DataPage.Group>
 
               {/* Task Canvas */}
-              <DataPage.Group surface="bordered" className="min-h-0">
-                <div className="border-b border-border px-4 py-3">
+              <DataPage.Group surface="bordered" className="flex min-h-0 flex-col">
+                <div className="shrink-0 border-b border-border px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold">Task Canvas</h2>
                     <Button variant="outline" size="sm" onClick={resetLayout}>Reset layout</Button>
                   </div>
                 </div>
-                <div className="p-3">
+                <div className="min-h-0 flex-1 p-3">
                   <PipelineCanvas
                     steps={tasks}
                     positions={positions}
@@ -678,7 +679,7 @@ export default function PipelineEditorPage() {
               {/* Task Editor */}
               {editingTask && (
                 <DataPage.Group surface="bordered" className="flex min-h-0 flex-col">
-                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
                     <div>
                       <h2 className="text-sm font-semibold">Task Editor</h2>
                       <p className="truncate text-xs text-muted-foreground">{editingTask.name}</p>
@@ -749,10 +750,10 @@ export default function PipelineEditorPage() {
                     {editingTask.type !== 'notebook' && (
                       <div>
                         <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Command</label>
-                        <textarea
-                          className="min-h-[6rem] w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono outline-none"
+                        <ShellMirror
                           value={editingTask.command.join('\n')}
                           onChange={e => updateTask(editingIndex, { command: e.target.value.split(/\n+/).map(s => s.trim()).filter(Boolean) })}
+                          minHeight="6rem"
                           placeholder={editingTask.type === 'python' ? 'python\nscript.py' : 'echo\nhello'}
                         />
                       </div>
@@ -853,7 +854,7 @@ export default function PipelineEditorPage() {
                   </ul>
                 )}
                 {error && <p className="text-sm text-destructive">{error}</p>}
-                <YamlMirror value={yamlText} onChange={e => setYamlText(e.target.value)} className="min-h-[34rem]" />
+                <YamlMirror value={yamlText} onChange={e => setYamlText(e.target.value)} className="min-h-136" />
               </div>
             </DataPage.Group>
           </TabsContent>
@@ -867,9 +868,9 @@ export default function PipelineEditorPage() {
           <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Submit Pipeline Template</h2>
-              <button type="button" onClick={() => setSubmitModalOpen(false)} className="rounded p-1 hover:bg-accent">
+              <Button type="button" variant="ghost" size="icon" onClick={() => setSubmitModalOpen(false)} className="h-7 w-7">
                 <X size={14} />
-              </button>
+              </Button>
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
               Submitting creates a new immutable snapshot of your source files in object storage.

@@ -1,176 +1,39 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { RotateCcw, RefreshCw, XCircle, Trash2 } from 'lucide-react'
-import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
-import { getRun, streamLogs, listArtifacts, artifactDownloadURL, deleteRun, cancelRun, rerunRun, retryStep, type Run, type Step, type LogLine, type StepArtifacts, type ArtifactFile } from '@/features/runs/api'
+import { useRun, useDeleteRun, useCancelRun, useRerunRun, useRetryStep } from '@/features/runs/hooks'
+import { useStepArtifacts } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
 import RunDAG from '@/shared/components/RunDAG'
-
-function formatStepTime(value?: string): string {
-  if (!value) return '—'
-  return new Date(value).toLocaleTimeString()
-}
-
-function formatStepDuration(step: Step): string {
-  if (!step.started_at) return '—'
-  const start = new Date(step.started_at).getTime()
-  const end = step.ended_at ? new Date(step.ended_at).getTime() : Date.now()
-  const ms = Math.max(0, end - start)
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  return `${(ms / 60000).toFixed(1)}m`
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
-}
+import { StepList } from '@/features/runs/components/StepList'
+import { LogViewer } from '@/features/runs/components/LogViewer'
+import { ArtifactPanel } from '@/features/runs/components/ArtifactPanel'
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [run, setRun] = useState<Run | null>(null)
-  const [steps, setSteps] = useState<Step[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [logs, setLogs] = useState<LogLine[]>([])
-  const [logDone, setLogDone] = useState(false)
-  const [autoScroll, setAutoScroll] = useState(true)
-  const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all')
-  const [logSearch, setLogSearch] = useState('')
-  const [artifacts, setArtifacts] = useState<StepArtifacts[]>([])
-  const [preview, setPreview] = useState<{ title: string; text: string } | null>(null)
-  const logEndRef = useRef<HTMLDivElement>(null)
-  const esRef = useRef<EventSource | null>(null)
+  const [selectedStep, setSelectedStep] = useState<string | null>(null)
 
-  const load = useCallback(() => {
-    if (!id) return
-    getRun(id)
-      .then(({ run, steps }) => {
-        setRun(run)
-        setSteps(steps)
-        if (!selected && steps.length > 0) {
-          setSelected(steps[0].step_name)
-        }
-      })
-      .catch(() => {})
-    listArtifacts(id).then(setArtifacts).catch(() => {})
-  }, [id, selected])
+  const { data: runData, isLoading } = useRun(id!)
+  const run = runData?.run ?? null
+  const steps = runData?.steps ?? []
+
+  const { data: allArtifacts = [] } = useStepArtifacts(id!, selectedStep)
+
+  const { mutate: deleteRun } = useDeleteRun()
+  const { mutate: cancelRun } = useCancelRun()
+  const { mutate: rerunRun } = useRerunRun()
+  const { mutate: retryStep } = useRetryStep()
 
   useEffect(() => {
-    load()
-    const iv = setInterval(() => {
-      if (run?.status === 'running') load()
-    }, 2000)
-    return () => clearInterval(iv)
-  }, [load, run?.status])
-
-  useEffect(() => {
-    if (!id || !selected) return
-    esRef.current?.close()
-    setLogs([])
-    setLogDone(false)
-
-    const es = streamLogs(
-      id,
-      selected,
-      (line) => setLogs(prev => [...prev, line]),
-      (status) => {
-        setLogDone(true)
-        console.log('log stream done:', status)
-      },
-    )
-    esRef.current = es
-    return () => es.close()
-  }, [id, selected])
-
-  useEffect(() => {
-    if (!autoScroll) return
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs, autoScroll])
-
-  const visibleLogs = logs.filter((line) => {
-    if (streamFilter !== 'all' && line.stream !== streamFilter) return false
-    return !(logSearch && !line.line.toLowerCase().includes(logSearch.toLowerCase()));
-
-  })
-
-  const previewArtifact = async (step: string, art: string, file: ArtifactFile) => {
-    if (file.size > 128 * 1024) {
-      alert('Preview is limited to files up to 128 KB.')
-      return
+    if (steps.length && !selectedStep) {
+      setSelectedStep(steps[0].step_name)
     }
-    const res = await fetch(artifactDownloadURL(id!, step, art, file.path))
-    if (!res.ok) {
-      alert(`Preview failed: ${res.status}`)
-      return
-    }
-    setPreview({ title: `${step}/${art}/${file.path}`, text: await res.text() })
-  }
+  }, [steps, selectedStep])
 
-  const columns: DataGridColumnDef<Step>[] = [
-    {
-      accessorKey: 'step_name',
-      header: 'Step',
-      meta: { minWidth: 220, flex: 1 },
-      cell: ({ row }) => (
-        <button
-          type="button"
-          onClick={() => setSelected(row.original.step_name)}
-          className={`text-left ${selected === row.original.step_name ? 'text-indigo-300' : 'text-gray-200 hover:text-white'}`}
-        >
-          {row.original.step_name}
-        </button>
-      ),
-    },
-    {
-      accessorKey: 'status',
-      header: 'Status',
-      meta: { minWidth: 140 },
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
-    },
-    {
-      accessorKey: 'started_at',
-      header: 'Started',
-      meta: { minWidth: 140 },
-      cell: ({ row }) => <span className="text-gray-400">{formatStepTime(row.original.started_at)}</span>,
-    },
-    {
-      id: 'duration',
-      header: 'Duration',
-      meta: { minWidth: 120, align: 'right' },
-      cell: ({ row }) => <span className="text-gray-400">{formatStepDuration(row.original)}</span>,
-    },
-    {
-      id: 'error',
-      header: 'Error',
-      meta: { minWidth: 240, flex: 1 },
-      cell: ({ row }) => (
-        <span className="block truncate text-xs text-red-400">{row.original.error ?? '—'}</span>
-      ),
-    },
-    {
-      id: 'actions',
-      header: '',
-      meta: { minWidth: 90, align: 'right' },
-      cell: ({ row }) => (
-        <IconButton icon={<RefreshCw />} label="Retry"
-          disabled={row.original.status !== 'failed'}
-          onClick={(e) => {
-            e.stopPropagation()
-            retryStep(run!.id, row.original.step_name)
-              .then(({ run_id }) => navigate(`/runs/${run_id}`))
-              .catch((err) => alert(err.message))
-          }}
-          className="text-yellow-400 hover:bg-yellow-950" />
-      ),
-    },
-  ]
-
-  if (!run) {
+  if (isLoading || !run) {
     return (
       <DataPage>
         <DataPage.Content>
@@ -194,22 +57,22 @@ export default function RunDetailPage() {
               disabled={run.status !== 'running' && run.status !== 'scheduled'}
               onClick={() => {
                 if (!confirm(`Cancel run ${run.id}?`)) return
-                cancelRun(run.id).then(load).catch((err) => alert(err.message))
+                cancelRun(run.id)
               }}
               className="text-orange-400 hover:bg-orange-950" />
             <IconButton icon={<RotateCcw />} label="Rerun"
               disabled={run.status === 'running' || run.status === 'scheduled'}
-              onClick={() => rerunRun(run.id).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
+              onClick={() => rerunRun({ id: run.id }, { onSuccess: (data) => navigate(`/runs/${data.run_id}`) })}
               className="text-indigo-400 hover:bg-indigo-950" />
             <IconButton icon={<RefreshCw />} label="Retry Failed"
               disabled={run.status !== 'failed'}
-              onClick={() => rerunRun(run.id, true).then(({ run_id }) => navigate(`/runs/${run_id}`)).catch((err) => alert(err.message))}
+              onClick={() => rerunRun({ id: run.id, failedOnly: true }, { onSuccess: (data) => navigate(`/runs/${data.run_id}`) })}
               className="text-yellow-400 hover:bg-yellow-950" />
             <IconButton icon={<Trash2 />} label="Delete Run"
               disabled={run.status === 'running'}
               onClick={() => {
                 if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
-                deleteRun(run.id).then(() => navigate('/history')).catch((err) => alert(err.message))
+                deleteRun(run.id, { onSuccess: () => navigate('/history') })
               }}
               className="text-destructive hover:bg-destructive/10" />
           </div>
@@ -217,155 +80,29 @@ export default function RunDetailPage() {
       </DataPage.Header>
 
       <DataPage.Content>
-      {/* DAG */}
-      <RunDAG
-        pipelineYaml={run.pipeline_yaml}
-        steps={steps}
-        selected={selected}
-        onSelectStep={setSelected}
-      />
+        <RunDAG
+          pipelineYaml={run.pipeline_yaml}
+          steps={steps}
+          selected={selectedStep}
+          onSelectStep={setSelectedStep}
+        />
 
-      {/* Steps table */}
-      <DataPage.Group surface="none" className="mb-4">
-        <DataPage.GroupHeader title="Steps" className="px-4 pt-3" />
-        <DataPage.GroupBody className="[&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-          <DataGrid
-            data={steps}
-            columns={columns}
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={(row) => setSelected(row.step_name)}
-            pagination={{ pageSize: 10 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{steps.length} results</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
-          />
-        </DataPage.GroupBody>
-      </DataPage.Group>
+        <StepList
+          steps={steps}
+          selectedId={selectedStep}
+          onSelect={setSelectedStep}
+          onRetry={(stepName) => {
+            retryStep({ runId: run.id, stepId: stepName }, {
+              onSuccess: (data) => navigate(`/runs/${data.run_id}`),
+              onError: (err) => alert(err.message),
+            })
+          }}
+        />
 
-      {/* Artifacts */}
-      {artifacts.length > 0 && (
-        <DataPage.Group surface="bordered" className="mb-4">
-          <DataPage.GroupHeader title="Artifacts" className="px-4 pt-3" />
-          <div className="divide-y divide-border">
-            {artifacts.map((sa) =>
-              sa.artifacts.map((art) => (
-                <div key={`${sa.step}/${art.name}`} className="px-4 py-3">
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="rounded bg-gray-800 px-2 py-0.5 font-mono text-xs text-gray-400">{sa.step}</span>
-                    <span className="text-sm font-medium text-gray-200">{art.name}</span>
-                    <span className="text-xs text-gray-500">({art.files.length} file{art.files.length !== 1 ? 's' : ''})</span>
-                  </div>
-                  <div className="space-y-1">
-                    {art.files.map((f) => (
-                      <div key={f.path} className="flex items-center justify-between rounded px-2 py-1 hover:bg-gray-900">
-                        <span className="font-mono text-xs text-gray-300">{f.path}</span>
-                        <div className="flex items-center gap-4">
-                          <span className="text-xs text-gray-500">{formatFileSize(f.size)}</span>
-                          <span className="text-xs text-gray-500">{new Date(f.modified_at).toLocaleString()}</span>
-                          <a
-                            href={artifactDownloadURL(id!, sa.step, art.name, f.path)}
-                            download
-                            className="text-xs text-indigo-400 hover:text-indigo-300"
-                          >
-                            Download
-                          </a>
-                          <button
-                            type="button"
-                            onClick={() => previewArtifact(sa.step, art.name, f)}
-                            className="text-xs text-gray-400 hover:text-gray-200"
-                          >
-                            Preview
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </DataPage.Group>
-      )}
+        <ArtifactPanel runId={id!} artifacts={allArtifacts} />
 
-      <div className="flex flex-col gap-3">
-        {selected && (          <>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-300">
-                {selected}
-                {!logDone && (
-                  <span className="ml-2 inline-block h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
-                )}
-              </h3>
-              {steps.find(step => step.step_name === selected)?.error && (
-                <span className="text-xs text-red-400">
-                  {steps.find(step => step.step_name === selected)?.error}
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={streamFilter}
-                onChange={(e) => setStreamFilter(e.target.value as 'all' | 'stdout' | 'stderr')}
-                className="rounded border border-gray-800 bg-gray-950 px-2 py-1 text-xs text-gray-300"
-              >
-                <option value="all">All streams</option>
-                <option value="stdout">stdout</option>
-                <option value="stderr">stderr</option>
-              </select>
-              <input
-                value={logSearch}
-                onChange={(e) => setLogSearch(e.target.value)}
-                placeholder="Search logs"
-                className="min-w-56 rounded border border-gray-800 bg-gray-950 px-2 py-1 text-xs text-gray-300 outline-none focus:border-indigo-700"
-              />
-              <label className="ml-auto inline-flex items-center gap-2 text-xs text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={autoScroll}
-                  onChange={(e) => setAutoScroll(e.target.checked)}
-                  className="accent-indigo-500"
-                />
-                Auto-scroll
-              </label>
-            </div>
-
-            <div className="h-130 overflow-y-auto rounded-xl border border-gray-800 bg-gray-950 p-4 font-mono text-xs leading-5">
-              {visibleLogs.length === 0 && (
-                <span className="text-gray-600">{logDone ? 'No output.' : 'Waiting for logs…'}</span>
-              )}
-              {visibleLogs.map((line, index) => (
-                <div
-                  key={index}
-                  className={`flex gap-3 ${line.stream === 'stderr' ? 'text-red-400' : 'text-gray-300'}`}
-                >
-                  <span className="w-20 shrink-0 select-none text-gray-600">
-                    {new Date(line.ts).toLocaleTimeString()}
-                  </span>
-                  <span className="break-all">{line.line}</span>
-                </div>
-              ))}
-              <div ref={logEndRef} />
-            </div>
-          </>
-        )}
-      </div>
+        <LogViewer runId={id!} stepId={selectedStep} />
       </DataPage.Content>
-      {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={() => setPreview(null)}>
-          <div className="max-h-[80vh] w-full max-w-4xl overflow-hidden rounded-lg border border-border bg-card" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h3 className="font-mono text-xs text-muted-foreground">{preview.title}</h3>
-              <button type="button" onClick={() => setPreview(null)} className="text-sm text-muted-foreground hover:text-foreground">Close</button>
-            </div>
-            <pre className="max-h-[68vh] overflow-auto p-4 text-xs leading-5 text-foreground">{preview.text}</pre>
-          </div>
-        </div>
-      )}
     </DataPage>
   )
 }

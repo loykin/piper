@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Power, Trash2 } from 'lucide-react'
-import { getSchedule, listScheduleRuns, setScheduleEnabled, deleteSchedule, type Schedule } from '@/features/schedules/api'
-import type { Run } from '@/features/runs/api'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
 import RunDAG from '@/shared/components/RunDAG'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { useSchedule, useScheduleRuns, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
+import type { Run } from '@/features/runs/api'
 
 const TYPE_LABEL: Record<string, string> = {
   immediate: 'Immediate',
@@ -16,66 +15,50 @@ const TYPE_LABEL: Record<string, string> = {
   cron: 'Cron',
 }
 
+const runColumns: DataGridColumnDef<Run>[] = [
+  {
+    id: 'id',
+    header: 'Run ID',
+    meta: { minWidth: 200, flex: 1 },
+    cell: ({ row }) => (
+      <Link to={`/runs/${row.original.id}`} className="font-mono text-xs text-primary hover:underline">
+        {row.original.id}
+      </Link>
+    ),
+  },
+  {
+    id: 'status',
+    header: 'Status',
+    meta: { minWidth: 110 },
+    cell: ({ row }) => <StatusBadge status={row.original.status} />,
+  },
+  {
+    id: 'started_at',
+    header: 'Started',
+    meta: { minWidth: 180 },
+    cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.started_at).toLocaleString()}</span>,
+  },
+  {
+    id: 'ended_at',
+    header: 'Ended',
+    meta: { minWidth: 180 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {row.original.ended_at ? new Date(row.original.ended_at).toLocaleString() : '-'}
+      </span>
+    ),
+  },
+]
+
 export default function ScheduleDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const [schedule, setSchedule] = useState<Schedule | null>(null)
-  const [runs, setRuns] = useState<Run[]>([])
-  const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
+  const { data: schedule, isLoading: scheduleLoading } = useSchedule(id!)
+  const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id!)
+  const { mutate: deleteSchedule } = useDeleteSchedule()
+  const { mutate: toggleSchedule } = useToggleSchedule()
 
-  async function load() {
-    if (!id) return
-    const [sc, rs] = await Promise.all([
-      getSchedule(id).catch(() => null),
-      listScheduleRuns(id).catch(() => [] as Run[]),
-    ])
-    setSchedule(sc)
-    setRuns(rs)
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-    const t = setInterval(load, 5000)
-    return () => clearInterval(t)
-  }, [id])
-
-  const selected = useMemo(() => null, [])
-
-  const runColumns: DataGridColumnDef<Run>[] = [
-    {
-      id: 'id',
-      header: 'Run ID',
-      meta: { minWidth: 200, flex: 1 },
-      cell: ({ row }) => (
-        <Link to={`/runs/${row.original.id}`} className="font-mono text-xs text-primary hover:underline">
-          {row.original.id}
-        </Link>
-      ),
-    },
-    {
-      id: 'status',
-      header: 'Status',
-      meta: { minWidth: 110 },
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
-    },
-    {
-      id: 'started_at',
-      header: 'Started',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.started_at).toLocaleString()}</span>,
-    },
-    {
-      id: 'ended_at',
-      header: 'Ended',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">
-          {row.original.ended_at ? new Date(row.original.ended_at).toLocaleString() : '-'}
-        </span>
-      ),
-    },
-  ]
+  const loading = scheduleLoading || runsLoading
 
   if (loading) {
     return (
@@ -110,23 +93,20 @@ export default function ScheduleDetailPage() {
         <DataPage.Actions>
           {isCron && (
             <IconButton icon={<Power />} label={schedule.enabled ? 'Disable' : 'Enable'}
-              onClick={async () => {
-                try { await setScheduleEnabled(schedule.id, !schedule.enabled); await load() } catch { /* no-op */ }
-              }}
+              onClick={() => toggleSchedule({ id: schedule.id, enabled: !schedule.enabled })}
               className={schedule.enabled ? 'text-primary hover:bg-primary/10' : ''} />
           )}
           <Badge variant="outline">{TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}</Badge>
           <IconButton icon={<Trash2 />} label="Delete"
-            onClick={async () => {
+            onClick={() => {
               if (!confirm(`Delete schedule "${schedule.name}"?`)) return
-              try { await deleteSchedule(schedule.id); navigate('/schedules') } catch { /* no-op */ }
+              deleteSchedule(schedule.id, { onSuccess: () => navigate('/schedules') })
             }}
             className="text-destructive hover:bg-destructive/10" />
         </DataPage.Actions>
       </DataPage.Header>
 
       <DataPage.Content>
-        {/* Meta info */}
         <DataPage.Group surface="bordered" className="mb-4">
           <div className="p-4">
             <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -166,22 +146,17 @@ export default function ScheduleDetailPage() {
           </div>
         </DataPage.Group>
 
-        {/* Pipeline DAG */}
         <DataPage.Group surface="bordered" className="mb-4">
           <RunDAG
             pipelineYaml={schedule.pipeline_yaml}
             steps={[]}
-            selected={selected}
+            selected={null}
             onSelectStep={() => {}}
           />
         </DataPage.Group>
 
-        {/* Run History */}
         <DataPage.Group surface="none" className="mb-4">
-          <DataPage.GroupHeader
-            title="Run History"
-            className="px-4 pt-3"
-          />
+          <DataPage.GroupHeader title="Run History" className="px-4 pt-3" />
           {runs.length === 0 ? (
             <div className="px-4 py-8 text-sm text-muted-foreground">
               {schedule.schedule_type === 'immediate' ? 'Running...' : 'No runs yet.'}
@@ -205,7 +180,6 @@ export default function ScheduleDetailPage() {
           )}
         </DataPage.Group>
 
-        {/* YAML */}
         <DataPage.Group surface="bordered">
           <DataPage.GroupHeader title="Pipeline YAML" className="px-4 pt-3" />
           <pre className="overflow-x-auto px-4 pb-4 text-xs leading-6 text-muted-foreground">{schedule.pipeline_yaml || '(empty)'}</pre>

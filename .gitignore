@@ -9,7 +9,7 @@ frontend/node_modules/
 
 # Runtime-generated files
 piper-outputs/
-notebooks/
+/notebooks/
 *.db
 *.db-shm
 *.db-wal

@@ -402,8 +402,8 @@ func TestExampleNotebookServerYAMLs(t *testing.T) {
 // ─── Baremetal notebook lifecycle e2e ────────────────────────────────────────
 
 // TestExampleNotebookBaremetal tests the full notebook lifecycle (create →
-// running → stop → stopped) through the AgentDriver baremetal path using an
-// in-process piper server and a real notebook worker agent.
+// running → stop → restart → running → stop) through the AgentDriver baremetal
+// path using an in-process piper server and a real notebook worker.
 func TestExampleNotebookBaremetal(t *testing.T) {
 	port := freePort(t)
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -481,7 +481,32 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	if !pollNotebookStatus(t, serverURL, nbName, "stopped", 30*time.Second) {
 		t.Fatalf("notebook %s did not reach stopped", nbName)
 	}
-	t.Logf("notebook %s stopped successfully", nbName)
+	t.Logf("notebook %s stopped, restarting...", nbName)
+
+	restartResp, err := http.Post(serverURL+"/notebooks/"+nbName+"/start", "application/json", nil)
+	if err != nil {
+		t.Fatalf("restart notebook: %v", err)
+	}
+	restartResp.Body.Close()
+	if restartResp.StatusCode >= 300 {
+		t.Fatalf("restart notebook: status %d", restartResp.StatusCode)
+	}
+	if !pollNotebookStatus(t, serverURL, nbName, "running", 30*time.Second) {
+		t.Fatalf("notebook %s did not reach running after restart", nbName)
+	}
+
+	finalStopResp, err := http.Post(serverURL+"/notebooks/"+nbName+"/stop", "application/json", nil)
+	if err != nil {
+		t.Fatalf("final stop notebook: %v", err)
+	}
+	finalStopResp.Body.Close()
+	if finalStopResp.StatusCode >= 300 {
+		t.Fatalf("final stop notebook: status %d", finalStopResp.StatusCode)
+	}
+	if !pollNotebookStatus(t, serverURL, nbName, "stopped", 30*time.Second) {
+		t.Fatalf("notebook %s did not reach stopped after restart", nbName)
+	}
+	t.Logf("notebook %s restart lifecycle completed", nbName)
 }
 
 // pollNotebookStatus polls GET /notebooks/:name until the notebook reaches the

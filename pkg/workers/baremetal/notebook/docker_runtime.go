@@ -25,6 +25,7 @@ const (
 	dockerNotebookPort  = "8888/tcp"
 	dockerManagedLabel  = "piper.managed"
 	dockerNotebookLabel = "piper.notebook"
+	dockerWorkerLabel   = "piper.worker-id"
 )
 
 type DockerConfig struct {
@@ -49,6 +50,7 @@ type DockerVolume struct {
 
 type dockerAPI interface {
 	ContainerCreate(ctx context.Context, options dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error)
+	ContainerInspect(ctx context.Context, containerID string, options dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error)
 	ContainerStart(ctx context.Context, containerID string, options dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error)
 	ContainerStop(ctx context.Context, containerID string, options dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error)
 	ContainerRemove(ctx context.Context, containerID string, options dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error)
@@ -57,13 +59,17 @@ type dockerAPI interface {
 }
 
 type dockerRuntime struct {
+	workerID   string
 	cfg        DockerConfig
 	client     dockerAPI
 	mu         sync.Mutex
-	containers map[string]string
+	containers map[string]string // name -> containerID cache; Docker daemon is source of truth
 }
 
-func newDockerRuntime(cfg DockerConfig) (*dockerRuntime, error) {
+func newDockerRuntime(cfg DockerConfig, workerID string) (*dockerRuntime, error) {
+	if workerID == "" {
+		return nil, fmt.Errorf("docker notebook runtime requires a stable worker ID")
+	}
 	normalized, err := normalizeDockerConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -73,6 +79,7 @@ func newDockerRuntime(cfg DockerConfig) (*dockerRuntime, error) {
 		return nil, err
 	}
 	return &dockerRuntime{
+		workerID:   workerID,
 		cfg:        normalized,
 		client:     cli,
 		containers: make(map[string]string),
@@ -92,12 +99,15 @@ func newDockerClient() (*dockerclient.Client, error) {
 	return dockerclient.New(dockerclient.FromEnv)
 }
 
-func newDockerRuntimeWithClient(cfg DockerConfig, cli dockerAPI) (*dockerRuntime, error) {
+func newDockerRuntimeWithClient(cfg DockerConfig, workerID string, cli dockerAPI) (*dockerRuntime, error) {
+	if workerID == "" {
+		return nil, fmt.Errorf("docker notebook runtime requires a stable worker ID")
+	}
 	normalized, err := normalizeDockerConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &dockerRuntime{cfg: normalized, client: cli, containers: make(map[string]string)}, nil
+	return &dockerRuntime{workerID: workerID, cfg: normalized, client: cli, containers: make(map[string]string)}, nil
 }
 
 func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
@@ -144,7 +154,9 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 		}
 		_ = r.removeContainer(context.Background(), created.ID)
 		r.mu.Lock()
-		delete(r.containers, req.Name)
+		if r.containers[req.Name] == created.ID {
+			delete(r.containers, req.Name)
+		}
 		r.mu.Unlock()
 		if req.OnExit != nil {
 			req.OnExit(status)
@@ -208,11 +220,104 @@ func (r *dockerRuntime) KillAll(ctx context.Context) error {
 }
 
 func (r *dockerRuntime) Status(name string) string {
-	ids, err := r.findManagedContainer(context.Background(), name)
-	if err != nil || len(ids) == 0 {
+	items, err := r.listManagedContainers(context.Background(), name)
+	if err != nil {
+		r.mu.Lock()
+		_, tracked := r.containers[name]
+		r.mu.Unlock()
+		if tracked {
+			return notebook.StatusRunning
+		}
 		return notebook.StatusStopped
 	}
-	return notebook.StatusRunning
+	if len(items) == 0 {
+		return notebook.StatusStopped
+	}
+	for _, item := range items {
+		if item.State == container.StateRunning || item.State == container.StateRestarting {
+			return notebook.StatusRunning
+		}
+	}
+	return notebook.StatusStopped
+}
+
+// Recover reconnects to containers left running by a previous worker instance.
+// onRecovered is called synchronously before the exit watcher is attached.
+func (r *dockerRuntime) Recover(
+	ctx context.Context,
+	onRecovered func(recoveredRuntime) func(status string),
+	onTerminal func(name, status string),
+) error {
+	items, err := r.listManagedContainers(ctx, "")
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		name := item.Labels[dockerNotebookLabel]
+		if name == "" {
+			continue
+		}
+		// Docker applies the worker label filter server-side. Recheck ownership at
+		// this boundary so a non-conforming client or daemon response cannot attach
+		// another worker's container to this runtime.
+		if item.Labels[dockerWorkerLabel] != r.workerID {
+			continue
+		}
+		id := item.ID
+		if item.State == container.StateRunning || item.State == container.StateRestarting {
+			r.mu.Lock()
+			r.containers[name] = id
+			r.mu.Unlock()
+			onExit := onRecovered(recoveredRuntime{Name: name, Port: dockerHostPort(item)})
+			wait := r.client.ContainerWait(context.Background(), id, dockerclient.ContainerWaitOptions{
+				Condition: container.WaitConditionNotRunning,
+			})
+			go func(nbName, containerID string) {
+				status := notebook.StatusStopped
+				select {
+				case err := <-wait.Error:
+					if err != nil {
+						status = notebook.StatusFailed
+					}
+				case result := <-wait.Result:
+					if result.StatusCode != 0 {
+						status = notebook.StatusFailed
+					}
+				}
+				_ = r.removeContainer(context.Background(), containerID)
+				r.mu.Lock()
+				if r.containers[nbName] == containerID {
+					delete(r.containers, nbName)
+				}
+				r.mu.Unlock()
+				onExit(status)
+			}(name, id)
+		} else {
+			status := r.containerExitStatus(ctx, id)
+			if err := r.removeContainer(ctx, id); err != nil {
+				return fmt.Errorf("remove terminal notebook container %s: %w", id, err)
+			}
+			onTerminal(name, status)
+		}
+	}
+	return nil
+}
+
+func (r *dockerRuntime) containerExitStatus(ctx context.Context, id string) string {
+	result, err := r.client.ContainerInspect(ctx, id, dockerclient.ContainerInspectOptions{})
+	if err == nil && result.Container.State != nil && result.Container.State.ExitCode == 0 {
+		return notebook.StatusStopped
+	}
+	return notebook.StatusFailed
+}
+
+func dockerHostPort(item container.Summary) int {
+	for _, port := range item.Ports {
+		if port.PrivatePort == 8888 && port.Type == "tcp" {
+			return int(port.PublicPort)
+		}
+	}
+	return 0
 }
 
 func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerclient.ContainerCreateOptions, error) {
@@ -272,6 +377,7 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 	labels := map[string]string{
 		dockerManagedLabel:  "true",
 		dockerNotebookLabel: req.Name,
+		dockerWorkerLabel:   r.workerID,
 	}
 	prepSteps, err := prepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendDocker)
 	if err != nil {
@@ -326,17 +432,26 @@ func (r *dockerRuntime) removeContainer(ctx context.Context, id string) error {
 	return err
 }
 
-func (r *dockerRuntime) findManagedContainer(ctx context.Context, name string) ([]string, error) {
+func (r *dockerRuntime) listManagedContainers(ctx context.Context, name string) ([]container.Summary, error) {
 	filters := dockerclient.Filters{}.Add("label", dockerManagedLabel+"=true")
 	if name != "" {
 		filters = filters.Add("label", dockerNotebookLabel+"="+name)
 	}
+	filters = filters.Add("label", dockerWorkerLabel+"="+r.workerID)
 	list, err := r.client.ContainerList(ctx, dockerclient.ContainerListOptions{All: true, Filters: filters})
 	if err != nil {
 		return nil, fmt.Errorf("list notebook containers: %w", err)
 	}
-	ids := make([]string, 0, len(list.Items))
-	for _, item := range list.Items {
+	return list.Items, nil
+}
+
+func (r *dockerRuntime) findManagedContainer(ctx context.Context, name string) ([]string, error) {
+	items, err := r.listManagedContainers(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
 		ids = append(ids, item.ID)
 	}
 	return ids, nil

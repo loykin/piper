@@ -1,10 +1,7 @@
 package meta
 
+import "github.com/piper/piper/pkg/internal/k8smeta"
+
 func Labels(clusterName, kind, id string) map[string]string {
-	return map[string]string{
-		"app.kubernetes.io/managed-by": "piper",
-		"piper.io/cluster":             clusterName,
-		"piper.io/workload-kind":       kind,
-		"piper.io/workload-id":         id,
-	}
+	return k8smeta.WorkloadLabels(clusterName, kind, id)
 }

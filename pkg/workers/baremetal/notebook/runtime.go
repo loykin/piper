@@ -2,6 +2,7 @@ package notebookworker
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,6 +26,25 @@ type Runtime interface {
 	Status(name string) string
 }
 
+type recoveredRuntime struct {
+	Name string
+	Port int
+}
+
+// recoverableRuntime is implemented only by runtimes whose external engine can
+// survive a worker restart and be reattached, such as Docker.
+type recoverableRuntime interface {
+	Recover(
+		ctx context.Context,
+		onRecovered func(recoveredRuntime) func(status string),
+		onTerminal func(name, status string),
+	) error
+}
+
+type targetedRecoveryRuntime interface {
+	RecoverTarget(name string, port int, onExit func(status string)) (bool, error)
+}
+
 type RuntimeStartRequest struct {
 	Name    string
 	Spec    notebook.NotebookServerSpec
@@ -45,12 +65,23 @@ type StartedNotebook struct {
 
 type processRuntime struct {
 	supervisor *workload.ProcessSupervisor
+	pidDir     string
 }
 
-func newProcessRuntime() *processRuntime {
+func newProcessRuntime(notebooksRoot string) *processRuntime {
+	if notebooksRoot == "" {
+		notebooksRoot = "notebooks"
+	}
+	absRoot, _ := filepath.Abs(notebooksRoot)
 	return &processRuntime{
 		supervisor: workload.NewProcessSupervisor(),
+		pidDir:     filepath.Join(absRoot, ".piper", "processes"),
 	}
+}
+
+func (r *processRuntime) pidFile(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return filepath.Join(r.pidDir, fmt.Sprintf("%x.pid", sum[:16]))
 }
 
 func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
@@ -97,6 +128,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		Dir:     req.WorkDir,
 		Port:    req.Port,
 		GPUs:    gpus,
+		PIDFile: r.pidFile(req.Name),
 	}, func(status string) {
 		slog.Info("notebook runtime exited", "name", req.Name, "status", status)
 		if req.OnExit != nil {
@@ -108,6 +140,15 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 	}
 
 	return &StartedNotebook{Endpoint: endpoint, PID: pid, Token: req.Token, EnvPath: envPath}, nil
+}
+
+func (r *processRuntime) RecoverTarget(name string, port int, onExit func(status string)) (bool, error) {
+	_, running, err := r.supervisor.Recover(workload.ProcessSpec{
+		Name:    name,
+		Port:    port,
+		PIDFile: r.pidFile(name),
+	}, onExit)
+	return running, err
 }
 
 func (r *processRuntime) Stop(_ context.Context, name string) error {

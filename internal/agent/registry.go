@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-// Registry tracks live execution agents. It does not persist workload state.
+// Registry tracks connected worker transport endpoints. It does not persist or
+// infer workload state.
 //
 // Agent liveness is connection-driven: agents are added via Register when their
 // gRPC stream opens and removed via Remove when it closes. There is no TTL-based

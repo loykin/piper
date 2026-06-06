@@ -14,6 +14,7 @@ type ProcessSpec struct {
 	Name    string
 	Command []string
 	Env     map[string]string
+	PIDFile string
 	// Dir is the working directory for the subprocess.
 	// Empty means inherit the parent process's working directory.
 	Dir        string

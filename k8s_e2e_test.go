@@ -763,6 +763,47 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 		t.Fatal("notebook volume_id is empty")
 	}
 
+	// Restart only the worker. The notebook StatefulSet belongs to Kubernetes,
+	// so worker reconnect must not recreate or terminate the notebook pod.
+	podName := "piper-nb-" + nbName + "-0"
+	podUID := strings.TrimSpace(kubectl(t, "-n", ns, "get", "pod", podName, "-o", "jsonpath={.metadata.uid}"))
+	kubectl(t, "-n", ns, "rollout", "restart", "deployment/piper-k8s-worker")
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
+	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
+	podUIDAfterWorkerRestart := strings.TrimSpace(kubectl(t, "-n", ns, "get", "pod", podName, "-o", "jsonpath={.metadata.uid}"))
+	if podUIDAfterWorkerRestart != podUID {
+		t.Fatalf("notebook pod changed after worker restart: before=%s after=%s", podUID, podUIDAfterWorkerRestart)
+	}
+	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 2*time.Minute) {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("notebook %s did not remain running after worker restart", nbName)
+	}
+
+	// Crash the notebook pod itself. StatefulSet must replace it and the worker
+	// must report the recovered observed state to the master.
+	kubectl(t, "-n", ns, "delete", "pod", podName, "--wait=false")
+	deadline := time.Now().Add(3 * time.Minute)
+	replacementUID := ""
+	for time.Now().Before(deadline) {
+		out, err := kubectlContext(ctx, nil, "-n", ns, "get", "pod", podName, "-o", "jsonpath={.metadata.uid}")
+		if err == nil {
+			replacementUID = strings.TrimSpace(out)
+			if replacementUID != "" && replacementUID != podUID {
+				break
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	if replacementUID == "" || replacementUID == podUID {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("StatefulSet did not replace crashed notebook pod")
+	}
+	kubectl(t, "-n", ns, "wait", "pod/"+podName, "--for=condition=Ready", "--timeout=180s")
+	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 2*time.Minute) {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("notebook %s did not return to running after pod crash", nbName)
+	}
+
 	// Stop.
 	k8sE2ENotebookAction(t, serverURL, nbName, "stop")
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "stopped", 2*time.Minute) {

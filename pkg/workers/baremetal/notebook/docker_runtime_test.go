@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -35,7 +36,7 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 			ContainerPath: "/mnt/datasets",
 			ReadOnly:      true,
 		}},
-	}, &fakeDockerClient{})
+	}, "test-agent", &fakeDockerClient{})
 	if err != nil {
 		t.Fatalf("new runtime: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 }
 
 func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {
-	rt, err := newDockerRuntimeWithClient(DockerConfig{}, &fakeDockerClient{})
+	rt, err := newDockerRuntimeWithClient(DockerConfig{}, "test-agent", &fakeDockerClient{})
 	if err != nil {
 		t.Fatalf("new runtime: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {
 }
 
 func TestDockerRuntimePrepWrapsLaunchCommand(t *testing.T) {
-	rt, err := newDockerRuntimeWithClient(DockerConfig{Image: "jupyter/scipy-notebook:latest"}, &fakeDockerClient{})
+	rt, err := newDockerRuntimeWithClient(DockerConfig{Image: "jupyter/scipy-notebook:latest"}, "test-agent", &fakeDockerClient{})
 	if err != nil {
 		t.Fatalf("new runtime: %v", err)
 	}
@@ -230,10 +231,85 @@ func TestDockerGPUResources(t *testing.T) {
 	}
 }
 
+func TestDockerRecoverRegistersBeforeWatching(t *testing.T) {
+	cli := &recoveryDockerClient{
+		items: []container.Summary{{
+			ID:    "running-id",
+			State: container.StateRunning,
+			Labels: map[string]string{
+				dockerManagedLabel:  "true",
+				dockerNotebookLabel: "demo",
+				dockerWorkerLabel:   "worker-1",
+			},
+			Ports: []container.PortSummary{{PrivatePort: 8888, PublicPort: 18888, Type: "tcp"}},
+		}},
+	}
+	rt, err := newDockerRuntimeWithClient(DockerConfig{}, "worker-1", cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registered := false
+	cli.onWait = func() {
+		if !registered {
+			t.Error("ContainerWait attached before worker registration")
+		}
+	}
+	if err := rt.Recover(context.Background(), func(rec recoveredRuntime) func(string) {
+		registered = true
+		if rec.Name != "demo" || rec.Port != 18888 {
+			t.Fatalf("recovered = %#v", rec)
+		}
+		return func(string) {}
+	}, func(string, string) {}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDockerRecoverOnlyUsesCurrentWorkerContainers(t *testing.T) {
+	cli := &recoveryDockerClient{
+		items: []container.Summary{
+			{ID: "other", State: container.StateRunning, Labels: map[string]string{
+				dockerManagedLabel: "true", dockerNotebookLabel: "other", dockerWorkerLabel: "worker-2",
+			}},
+		},
+	}
+	rt, err := newDockerRuntimeWithClient(DockerConfig{}, "worker-1", cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var exits []string
+	if err := rt.Recover(context.Background(), func(recoveredRuntime) func(string) {
+		t.Fatal("another worker's container should not be recovered")
+		return func(string) {}
+	}, func(name, status string) {
+		exits = append(exits, name+":"+status)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(exits) != 0 {
+		t.Fatalf("exits = %v", exits)
+	}
+	if len(cli.removed) != 0 {
+		t.Fatalf("removed = %v", cli.removed)
+	}
+}
+
+func TestDockerRuntimeRequiresWorkerID(t *testing.T) {
+	if _, err := newDockerRuntimeWithClient(DockerConfig{}, "", &fakeDockerClient{}); err == nil {
+		t.Fatal("expected empty worker ID to be rejected")
+	}
+}
+
 type fakeDockerClient struct{}
 
 func (f *fakeDockerClient) ContainerCreate(context.Context, dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
 	return dockerclient.ContainerCreateResult{ID: "container-id"}, nil
+}
+
+func (f *fakeDockerClient) ContainerInspect(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+	return dockerclient.ContainerInspectResult{}, nil
 }
 
 func (f *fakeDockerClient) ContainerStart(context.Context, string, dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error) {
@@ -257,4 +333,42 @@ func (f *fakeDockerClient) ContainerWait(context.Context, string, dockerclient.C
 	errs := make(chan error, 1)
 	result <- container.WaitResponse{StatusCode: 0}
 	return dockerclient.ContainerWaitResult{Result: result, Error: errs}
+}
+
+type recoveryDockerClient struct {
+	mu      sync.Mutex
+	items   []container.Summary
+	removed []string
+	onWait  func()
+}
+
+func (f *recoveryDockerClient) ContainerCreate(context.Context, dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
+	return dockerclient.ContainerCreateResult{}, nil
+}
+func (f *recoveryDockerClient) ContainerInspect(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+	return dockerclient.ContainerInspectResult{Container: container.InspectResponse{State: &container.State{ExitCode: 0}}}, nil
+}
+func (f *recoveryDockerClient) ContainerStart(context.Context, string, dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error) {
+	return dockerclient.ContainerStartResult{}, nil
+}
+func (f *recoveryDockerClient) ContainerStop(context.Context, string, dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error) {
+	return dockerclient.ContainerStopResult{}, nil
+}
+func (f *recoveryDockerClient) ContainerRemove(_ context.Context, id string, _ dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error) {
+	f.mu.Lock()
+	f.removed = append(f.removed, id)
+	f.mu.Unlock()
+	return dockerclient.ContainerRemoveResult{}, nil
+}
+func (f *recoveryDockerClient) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	return dockerclient.ContainerListResult{Items: f.items}, nil
+}
+func (f *recoveryDockerClient) ContainerWait(context.Context, string, dockerclient.ContainerWaitOptions) dockerclient.ContainerWaitResult {
+	if f.onWait != nil {
+		f.onWait()
+	}
+	return dockerclient.ContainerWaitResult{
+		Result: make(chan container.WaitResponse),
+		Error:  make(chan error),
+	}
 }

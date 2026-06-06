@@ -3,6 +3,9 @@ package notebookdispatch
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/pkg/notebook"
@@ -114,7 +117,7 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 	if d == nil || d.repo == nil {
 		return nil
 	}
-	byAgent := make(map[string][]string)
+	byAgent := make(map[string][]notebook.WorkerSyncStatusTarget)
 	for _, nb := range servers {
 		if nb == nil {
 			continue
@@ -125,11 +128,14 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 			// Status remains as last-known until the worker reconnects and reports.
 			continue
 		}
-		byAgent[agentInfo.ID] = append(byAgent[agentInfo.ID], nb.Name)
+		byAgent[agentInfo.ID] = append(byAgent[agentInfo.ID], notebook.WorkerSyncStatusTarget{
+			Name: nb.Name,
+			Port: notebookEndpointPort(nb.Endpoint),
+		})
 	}
-	for agentID, names := range byAgent {
+	for agentID, targets := range byAgent {
 		var result notebook.WorkerSyncStatusResponse
-		if err := d.rpc.SendRPC(ctx, agentID, iagent.MethodNotebookSyncStatus, notebook.WorkerSyncStatusRequest{Names: names}, &result); err != nil {
+		if err := d.rpc.SendRPC(ctx, agentID, iagent.MethodNotebookSyncStatus, notebook.WorkerSyncStatusRequest{Targets: targets}, &result); err != nil {
 			return fmt.Errorf("notebook agent sync status: %w", err)
 		}
 		for name, status := range result.Statuses {
@@ -139,6 +145,20 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 		}
 	}
 	return nil
+}
+
+func notebookEndpointPort(endpoint string) int {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return 0
+	}
+	target := u.Query().Get("target")
+	_, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(port)
+	return n
 }
 
 func (d *AgentDriver) selectAgent(workerID string) (*iagent.Info, error) {

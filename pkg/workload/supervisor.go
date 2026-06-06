@@ -11,19 +11,29 @@ import (
 	"github.com/loykin/provisr/core/history"
 )
 
-// ExitHandler receives the normalized exit status ("stopped", "failed") for a managed process.
+// ExitHandler receives the normalized exit status ("stopped", "failed") for a
+// managed process. A registered handler is invoked at most once and may run on
+// provisr's event delivery goroutine, so it must be concurrency-safe.
 type ExitHandler func(status string)
+
+type exitRegistration struct {
+	pid int
+	fn  ExitHandler
+}
 
 // exitSink dispatches EventStop notifications to per-process onExit handlers
 // and unregisters the process from the manager after exit.
 type exitSink struct {
 	mu        sync.Mutex
-	callbacks map[string]ExitHandler
-	manager   *core.Manager
+	callbacks map[string]exitRegistration
+	pending   map[string][]history.Event
 }
 
-func newExitSink(mgr *core.Manager) *exitSink {
-	return &exitSink{callbacks: make(map[string]ExitHandler), manager: mgr}
+func newExitSink() *exitSink {
+	return &exitSink{
+		callbacks: make(map[string]exitRegistration),
+		pending:   make(map[string][]history.Event),
+	}
 }
 
 func (s *exitSink) register(name string, fn ExitHandler) {
@@ -31,8 +41,44 @@ func (s *exitSink) register(name string, fn ExitHandler) {
 		return
 	}
 	s.mu.Lock()
-	s.callbacks[name] = fn
+	s.callbacks[name] = exitRegistration{fn: fn}
+	delete(s.pending, name)
 	s.mu.Unlock()
+}
+
+func (s *exitSink) deregister(name string) {
+	s.mu.Lock()
+	delete(s.callbacks, name)
+	delete(s.pending, name)
+	s.mu.Unlock()
+}
+
+func (s *exitSink) bindPID(name string, pid int) {
+	var fn ExitHandler
+	var status string
+
+	s.mu.Lock()
+	reg, ok := s.callbacks[name]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	reg.pid = pid
+	s.callbacks[name] = reg
+	for _, evt := range s.pending[name] {
+		if evt.Record.PID == pid {
+			fn = reg.fn
+			status = evt.Record.LastStatus
+			delete(s.callbacks, name)
+			break
+		}
+	}
+	delete(s.pending, name)
+	s.mu.Unlock()
+
+	if fn != nil {
+		fn(status)
+	}
 }
 
 func (s *exitSink) Send(_ context.Context, evt history.Event) error {
@@ -40,10 +86,25 @@ func (s *exitSink) Send(_ context.Context, evt history.Event) error {
 		return nil
 	}
 	name := evt.Record.Name
+
+	var fn ExitHandler
 	s.mu.Lock()
-	fn := s.callbacks[name]
-	delete(s.callbacks, name)
+	reg, ok := s.callbacks[name]
+	if !ok {
+		s.mu.Unlock()
+		return nil
+	}
+	if reg.pid == 0 {
+		s.pending[name] = append(s.pending[name], evt)
+		s.mu.Unlock()
+		return nil
+	}
+	if reg.pid == evt.Record.PID {
+		fn = reg.fn
+		delete(s.callbacks, name)
+	}
 	s.mu.Unlock()
+
 	if fn != nil {
 		fn(evt.Record.LastStatus)
 	}
@@ -59,7 +120,7 @@ type ProcessSupervisor struct {
 // NewProcessSupervisor creates an empty supervisor.
 func NewProcessSupervisor() *ProcessSupervisor {
 	mgr := core.New()
-	sink := newExitSink(mgr)
+	sink := newExitSink()
 	mgr.SetHistorySinks(sink)
 	return &ProcessSupervisor{manager: mgr, sink: sink}
 }
@@ -85,26 +146,59 @@ func (s *ProcessSupervisor) Start(spec ProcessSpec, onExit ExitHandler) (pid int
 		Args:    args,
 		Env:     env,
 		WorkDir: spec.Dir,
+		PIDFile: spec.PIDFile,
 	}
 
 	// Stop any running instance before registering the callback for the new one.
-	_ = s.manager.Stop(spec.Name, 5*time.Second)
+	// provisr waits for actual process exit and returns an error if it
+	// cannot guarantee that the old instance is gone.
+	if err := s.manager.Stop(spec.Name, 5*time.Second); err != nil && !isNotFound(err) {
+		return 0, "", fmt.Errorf("stop existing process %q: %w", spec.Name, err)
+	}
 
 	// Register callback for the new start after the old process has stopped.
 	s.sink.register(spec.Name, onExit)
 
 	// Register also starts the process.
 	if err := s.manager.Register(pspec); err != nil {
+		s.sink.deregister(spec.Name)
 		return 0, "", err
 	}
 
 	st, err := s.manager.Status(spec.Name)
 	if err != nil {
+		s.sink.deregister(spec.Name)
 		return 0, "", err
 	}
+	s.sink.bindPID(spec.Name, st.PID)
 
 	endpoint = fmt.Sprintf("http://localhost:%d", spec.Port)
 	return st.PID, endpoint, nil
+}
+
+// Recover reattaches to a process recorded in spec.PIDFile. Process identity,
+// liveness, and PID reuse validation are owned by provisr.
+func (s *ProcessSupervisor) Recover(spec ProcessSpec, onExit ExitHandler) (pid int, running bool, err error) {
+	s.sink.register(spec.Name, onExit)
+	if err := s.manager.Recover(core.Spec{
+		Name:    spec.Name,
+		PIDFile: spec.PIDFile,
+	}); err != nil {
+		s.sink.deregister(spec.Name)
+		return 0, false, err
+	}
+
+	st, err := s.manager.Status(spec.Name)
+	if err != nil {
+		s.sink.deregister(spec.Name)
+		return 0, false, err
+	}
+	if !st.Running || st.PID <= 0 {
+		s.sink.deregister(spec.Name)
+		return 0, false, nil
+	}
+	s.sink.bindPID(spec.Name, st.PID)
+	return st.PID, true, nil
 }
 
 // Stop marks a tracked process as intentionally stopped and signals it.

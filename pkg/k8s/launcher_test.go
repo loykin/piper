@@ -314,7 +314,7 @@ func TestCancelRunDeletesJobsByRunLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(jobs.Items) != 1 || jobs.Items[0].Labels["piper/run-id"] != "run-2" {
+	if len(jobs.Items) != 1 || jobs.Items[0].Labels["piper.io/run-id"] != "run-2" {
 		t.Fatalf("remaining jobs = %#v, want only run-2", jobs.Items)
 	}
 }
@@ -351,21 +351,37 @@ func TestReconcileJobsReportsFailedJob(t *testing.T) {
 }
 
 func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
-	client := fake.NewSimpleClientset(&batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "job-1",
-			Namespace: "jobs",
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "piper",
-			},
-			Annotations: map[string]string{
-				"piper/task-id": "run-1:step-1",
+	client := fake.NewSimpleClientset(
+		&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "job-1",
+				Namespace: "jobs",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "piper",
+					"piper.io/worker-id":           "Worker-1",
+				},
+				Annotations: map[string]string{
+					"piper.io/task-id": "run-1:step-1",
+				},
 			},
 		},
-	})
-	launcher := NewWithClient(Config{Namespace: "jobs"}, client)
+		&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "other-worker-job",
+				Namespace: "jobs",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "piper",
+					"piper.io/worker-id":           "worker-2",
+				},
+				Annotations: map[string]string{
+					"piper.io/task-id": "run-2:step-1",
+				},
+			},
+		},
+	)
+	launcher := NewWithClient(Config{Namespace: "jobs", WorkerID: "Worker 1"}, client)
 
-	launcher.RecoverJobs(context.Background(), "agent-1")
+	launcher.RecoverJobs(context.Background())
 	taskIDs := launcher.ActiveTaskIDs()
 	if len(taskIDs) != 1 || taskIDs[0] != "run-1:step-1" {
 		t.Fatalf("active task IDs = %v", taskIDs)
@@ -373,8 +389,8 @@ func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
 	launcher.mu.Lock()
 	rec := launcher.watched["job-1"]
 	launcher.mu.Unlock()
-	if rec.WorkerID != "agent-1" {
-		t.Fatalf("worker ID = %q, want agent-1", rec.WorkerID)
+	if rec.WorkerID != "Worker 1" {
+		t.Fatalf("worker ID = %q, want Worker 1", rec.WorkerID)
 	}
 }
 

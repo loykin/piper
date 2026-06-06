@@ -1,3 +1,7 @@
+// Package agent contains the master-side directory of connected worker
+// transport endpoints. An agent is not a separate workload owner or source of
+// workload state; it is the connection-scoped representation of a Worker used
+// for routing RPCs and tunnels.
 package agent
 
 import "time"
@@ -13,8 +17,8 @@ const (
 	CapabilityTunnel   = "tunnel"
 )
 
-// Info describes an execution target registered with the server.
-// It is deliberately runtime metadata, not workload state.
+// Info describes a connected worker endpoint registered with the server.
+// It is connection/runtime metadata only, never workload state.
 type Info struct {
 	ID           string            `json:"id"`
 	Kind         string            `json:"kind"`

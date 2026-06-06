@@ -64,7 +64,35 @@ jobs:
       - name: Run Docker notebook e2e
         run: |
           PIPER_NOTEBOOK_DOCKER_E2E_IMAGE=jupyter/minimal-notebook:latest \
-            go test ./pkg/workers/baremetal/notebook -run TestDockerRuntimeE2E_StartStopNotebook -v -timeout=3m
+            go test ./pkg/workers/baremetal/notebook -run '^TestDockerRuntimeE2E_' -v -count=1 -timeout=6m
+
+  process-notebook-e2e:
+    name: Process Notebook E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install Jupyter environment
+        run: |
+          python -m venv /tmp/piper-jupyter-e2e
+          /tmp/piper-jupyter-e2e/bin/pip install --quiet jupyterlab ipykernel
+
+      - name: Run process notebook e2e
+        run: |
+          PIPER_NOTEBOOK_PROCESS_E2E=1 \
+          PIPER_NOTEBOOK_PROCESS_E2E_ENV=/tmp/piper-jupyter-e2e \
+            go test ./pkg/workers/baremetal/notebook -run '^TestProcessRuntimeE2E_' -v -count=1 -timeout=6m
 
   examples-e2e:
     name: Examples E2E

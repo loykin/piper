@@ -5,7 +5,6 @@ package notebookworker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -15,8 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -47,22 +44,14 @@ type Worker struct {
 	mu            sync.Mutex
 	notebooks     map[string]*localNotebook
 	reservedPorts map[int]struct{}
+	terminal      map[string]string
+	nextGen       uint64
 }
 
 type localNotebook struct {
 	name string
 	port int
-}
-
-// notebookStateFile is the on-disk record written when a notebook starts.
-// It lets the next worker startup detect and kill orphaned processes.
-// StartedAt is stored so we can reject PID-reuse: if the process with the
-// recorded PID started after StartedAt, it is a different process.
-type notebookStateFile struct {
-	Name      string    `json:"name"`
-	PID       int       `json:"pid"`
-	Port      int       `json:"port"`
-	StartedAt time.Time `json:"started_at"`
+	gen  uint64 // incremented on each start to distinguish stale OnExit callbacks
 }
 
 // New creates a new Worker.
@@ -89,6 +78,7 @@ func New(cfg Config) *Worker {
 		portAllocator: nil,
 		notebooks:     make(map[string]*localNotebook),
 		reservedPorts: make(map[int]struct{}),
+		terminal:      make(map[string]string),
 	}
 	w.portAllocator = w.allocatePort
 
@@ -110,9 +100,9 @@ func New(cfg Config) *Worker {
 func newRuntime(cfg Config) (Runtime, error) {
 	switch cfg.Mode {
 	case "", RuntimeProcess:
-		return newProcessRuntime(), nil
+		return newProcessRuntime(cfg.NotebooksRoot), nil
 	case RuntimeDocker:
-		return newDockerRuntime(cfg.Docker)
+		return newDockerRuntime(cfg.Docker, cfg.ID)
 	default:
 		return nil, fmt.Errorf("unsupported notebook worker mode %q", cfg.Mode)
 	}
@@ -129,15 +119,11 @@ func (r *failingRuntime) Status(string) string               { return notebook.S
 
 // Run connects to the master via gRPC and serves until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
-	w.cleanupOrphans()
+	w.recoverContainers(ctx)
 	defer func() {
 		if err := w.runtime.KillAll(context.Background()); err != nil {
 			slog.Warn("notebook worker cleanup failed", "err", err)
-			// Do NOT remove state files on failed KillAll: processes may still be
-			// running, and the files let the next startup detect and kill orphans.
-			return
 		}
-		w.removeAllStateFiles()
 	}()
 	return w.client.Run(ctx)
 }
@@ -164,6 +150,23 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		return nil, fmt.Errorf("metadata.name is required")
 	}
 
+	if recoverable, ok := w.runtime.(targetedRecoveryRuntime); ok {
+		w.mu.Lock()
+		_, active := w.notebooks[name]
+		w.mu.Unlock()
+		if !active {
+			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{Name: name}); err != nil {
+				return nil, err
+			}
+		}
+		w.mu.Lock()
+		_, active = w.notebooks[name]
+		w.mu.Unlock()
+		if active {
+			return nil, fmt.Errorf("notebook %q is already active", name)
+		}
+	}
+
 	port, err := w.pickPort()
 	if err != nil {
 		return nil, err
@@ -182,11 +185,34 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", name)
 	target := fmt.Sprintf("127.0.0.1:%d", port)
 
+	// Register the notebook entry before starting so that an OnExit callback that
+	// fires before runtime.Start returns cannot race with the post-start registration.
+	w.mu.Lock()
+	if _, exists := w.notebooks[name]; exists {
+		w.mu.Unlock()
+		w.releasePort(port)
+		return nil, fmt.Errorf("notebook %q is already active", name)
+	}
+	w.nextGen++
+	gen := w.nextGen
+	delete(w.terminal, name)
+	w.notebooks[name] = &localNotebook{name: name, port: port, gen: gen}
+	w.mu.Unlock()
+
 	go func() {
 		if err := os.MkdirAll(workDir, 0755); err != nil {
 			slog.Error("notebook worker: cannot create work dir", "name", name, "err", err)
-			w.pushStatus(name, notebook.StatusFailed, "", workDir, "", 0, "")
+			w.mu.Lock()
+			current := w.notebooks[name] != nil && w.notebooks[name].gen == gen
+			if current {
+				delete(w.notebooks, name)
+				w.terminal[name] = notebook.StatusFailed
+			}
+			w.mu.Unlock()
 			w.releasePort(port)
+			if current {
+				w.pushStatus(name, notebook.StatusFailed, "", workDir, "", 0, "")
+			}
 			return
 		}
 
@@ -206,19 +232,41 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 				slog.Info("notebook runtime exited", "name", name, "status", status)
 				w.mu.Lock()
 				nb := w.notebooks[name]
-				delete(w.notebooks, name)
-				w.mu.Unlock()
-				if nb != nil {
-					w.releasePort(nb.port)
+				current := nb != nil && nb.gen == gen
+				if current {
+					delete(w.notebooks, name)
+					w.terminal[name] = status
 				}
-				w.removeStateFile(name)
-				w.pushStatus(name, status, "", "", "", 0, "")
+				w.mu.Unlock()
+				// Always release this start's port regardless of generation.
+				// State/status updates are only pushed for the current generation.
+				w.releasePort(port)
+				if current {
+					w.pushStatus(name, status, "", "", "", 0, "")
+				}
 			},
 		})
 		if err != nil {
 			slog.Error("notebook worker: start failed", "name", name, "err", err)
-			w.pushStatus(name, notebook.StatusFailed, "", workDir, "", 0, "")
+			w.mu.Lock()
+			current := w.notebooks[name] != nil && w.notebooks[name].gen == gen
+			if current {
+				delete(w.notebooks, name)
+				w.terminal[name] = notebook.StatusFailed
+			}
+			w.mu.Unlock()
 			w.releasePort(port)
+			if current {
+				w.pushStatus(name, notebook.StatusFailed, "", workDir, "", 0, "")
+			}
+			return
+		}
+
+		// Guard against a fast exit that already fired OnExit before we get here.
+		w.mu.Lock()
+		nb := w.notebooks[name]
+		w.mu.Unlock()
+		if nb == nil || nb.gen != gen {
 			return
 		}
 
@@ -228,16 +276,6 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			statusToken = token
 		}
 
-		w.mu.Lock()
-		w.notebooks[name] = &localNotebook{
-			name: name,
-			port: port,
-		}
-		w.mu.Unlock()
-
-		if started.PID > 0 {
-			w.writeStateFile(name, started.PID, port)
-		}
 		w.pushStatus(name, notebook.StatusRunning, endpoint, workDir, statusToken, started.PID, started.EnvPath)
 	}()
 
@@ -254,6 +292,16 @@ func (w *Worker) stopNotebook(_ context.Context, name string) error {
 	w.mu.Unlock()
 
 	if !ok {
+		if recoverable, recoverableOK := w.runtime.(targetedRecoveryRuntime); recoverableOK {
+			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{Name: name}); err != nil {
+				return err
+			}
+			w.mu.Lock()
+			nb, ok = w.notebooks[name]
+			w.mu.Unlock()
+		}
+	}
+	if !ok {
 		return nil
 	}
 
@@ -264,9 +312,12 @@ func (w *Worker) stopNotebook(_ context.Context, name string) error {
 	}
 
 	w.mu.Lock()
-	delete(w.notebooks, name)
+	current := w.notebooks[name] != nil && w.notebooks[name].gen == nb.gen
+	if current {
+		delete(w.notebooks, name)
+		w.terminal[name] = notebook.StatusStopped
+	}
 	w.mu.Unlock()
-	w.removeStateFile(name)
 	w.releasePort(nb.port)
 	return nil
 }
@@ -340,8 +391,30 @@ func (w *Worker) listFiles(_ context.Context, req notebook.FSListFilesRequest) (
 }
 
 func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequest) (notebook.WorkerSyncStatusResponse, error) {
-	statuses := make(map[string]string, len(req.Names))
-	for _, name := range req.Names {
+	statuses := make(map[string]string, len(req.Targets))
+	for _, target := range req.Targets {
+		name := target.Name
+		w.mu.Lock()
+		terminal := w.terminal[name]
+		activeNotebook := w.notebooks[name]
+		active := activeNotebook != nil
+		if active && activeNotebook.port == 0 && target.Port > 0 {
+			activeNotebook.port = target.Port
+			w.reservedPorts[target.Port] = struct{}{}
+		}
+		w.mu.Unlock()
+		if terminal != "" {
+			statuses[name] = terminal
+			continue
+		}
+
+		if !active {
+			if recoverable, ok := w.runtime.(targetedRecoveryRuntime); ok {
+				if err := w.recoverProcessTarget(recoverable, target); err != nil {
+					return notebook.WorkerSyncStatusResponse{}, err
+				}
+			}
+		}
 		statuses[name] = w.runtime.Status(name)
 	}
 	return notebook.WorkerSyncStatusResponse{Statuses: statuses}, nil
@@ -442,85 +515,108 @@ func parsePortRange(s string) (int, int, error) {
 	return start, end, nil
 }
 
-// stateDir returns the directory where per-notebook state files are stored.
-func (w *Worker) stateDir() string {
-	abs, _ := filepath.Abs(w.notebooksRoot())
-	return filepath.Join(abs, ".piper")
-}
-
-func (w *Worker) writeStateFile(name string, pid, port int) {
-	dir := w.stateDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
+// recoverContainers reconnects to Docker containers running from a previous
+// worker instance. Process recovery is target-driven during status sync.
+func (w *Worker) recoverContainers(ctx context.Context) {
+	recoverable, ok := w.runtime.(recoverableRuntime)
+	if !ok {
 		return
 	}
-	data, _ := json.Marshal(notebookStateFile{Name: name, PID: pid, Port: port, StartedAt: time.Now()})
-	path := filepath.Join(dir, name+".json")
-	_ = os.WriteFile(path, data, 0644)
-}
+	onRecovered := func(rec recoveredRuntime) func(status string) {
+		w.mu.Lock()
+		w.nextGen++
+		gen := w.nextGen
+		delete(w.terminal, rec.Name)
+		w.notebooks[rec.Name] = &localNotebook{name: rec.Name, port: rec.Port, gen: gen}
+		if rec.Port > 0 {
+			w.reservedPorts[rec.Port] = struct{}{}
+		}
+		w.mu.Unlock()
 
-func (w *Worker) removeStateFile(name string) {
-	_ = os.Remove(filepath.Join(w.stateDir(), name+".json"))
-}
+		return func(status string) {
+			w.mu.Lock()
+			nb := w.notebooks[rec.Name]
+			current := nb != nil && nb.gen == gen
+			if current {
+				delete(w.notebooks, rec.Name)
+				w.terminal[rec.Name] = status
+			}
+			w.mu.Unlock()
+			w.releasePort(rec.Port)
+			if current {
+				w.pushStatus(rec.Name, status, "", "", "", 0, "")
+			}
+		}
+	}
+	onTerminal := func(name, status string) {
+		w.mu.Lock()
+		_, active := w.notebooks[name]
+		if !active {
+			w.terminal[name] = status
+		}
+		w.mu.Unlock()
+		if !active {
+			w.pushStatus(name, status, "", "", "", 0, "")
+		}
+	}
 
-func (w *Worker) removeAllStateFiles() {
-	entries, err := os.ReadDir(w.stateDir())
-	if err != nil {
+	if err := recoverable.Recover(ctx, onRecovered, onTerminal); err != nil {
+		slog.Warn("notebook worker: runtime recovery failed", "err", err)
 		return
 	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			_ = os.Remove(filepath.Join(w.stateDir(), e.Name()))
-		}
-	}
 }
 
-// cleanupOrphans kills any JupyterLab processes left behind by a previous
-// worker crash (SIGKILL) by reading PID files from the state directory.
-func (w *Worker) cleanupOrphans() {
-	dir := w.stateDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
+func (w *Worker) recoverProcessTarget(runtime targetedRecoveryRuntime, target notebook.WorkerSyncStatusTarget) error {
+	if target.Name == "" {
+		return nil
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			_ = os.Remove(path)
-			continue
-		}
-		var state notebookStateFile
-		if err := json.Unmarshal(data, &state); err != nil || state.PID <= 0 {
-			_ = os.Remove(path)
-			continue
-		}
-		if w.killOrphan(state) {
-			slog.Info("notebook worker: killed orphan process", "name", state.Name, "pid", state.PID)
-		}
-		_ = os.Remove(path)
-	}
-}
 
-// killOrphan sends SIGTERM to a process only if it is still alive AND started
-// before or around the recorded StartedAt time (PID-reuse guard).
-// Returns true if the signal was sent.
-func (w *Worker) killOrphan(state notebookStateFile) bool {
-	proc, err := os.FindProcess(state.PID)
+	w.mu.Lock()
+	w.nextGen++
+	gen := w.nextGen
+	delete(w.terminal, target.Name)
+	recoveredNotebook := &localNotebook{name: target.Name, port: target.Port, gen: gen}
+	w.notebooks[target.Name] = recoveredNotebook
+	if target.Port > 0 {
+		w.reservedPorts[target.Port] = struct{}{}
+	}
+	w.mu.Unlock()
+
+	running, err := runtime.RecoverTarget(target.Name, target.Port, func(status string) {
+		w.mu.Lock()
+		nb := w.notebooks[target.Name]
+		current := nb != nil && nb.gen == gen
+		port := recoveredNotebook.port
+		if current {
+			delete(w.notebooks, target.Name)
+			w.terminal[target.Name] = status
+		}
+		w.mu.Unlock()
+		w.releasePort(port)
+		if current {
+			w.pushStatus(target.Name, status, "", "", "", 0, "")
+		}
+	})
 	if err != nil {
-		return false
+		w.mu.Lock()
+		port := recoveredNotebook.port
+		if nb := w.notebooks[target.Name]; nb != nil && nb.gen == gen {
+			delete(w.notebooks, target.Name)
+		}
+		w.mu.Unlock()
+		w.releasePort(port)
+		return fmt.Errorf("recover notebook %q: %w", target.Name, err)
 	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return false // process is gone
+	if !running {
+		w.mu.Lock()
+		port := recoveredNotebook.port
+		if nb := w.notebooks[target.Name]; nb != nil && nb.gen == gen {
+			delete(w.notebooks, target.Name)
+		}
+		w.mu.Unlock()
+		w.releasePort(port)
+		return nil
 	}
-	// PID-reuse guard: if the process started significantly after our StartedAt,
-	// the PID was recycled and the process belongs to someone else.
-	if !state.StartedAt.IsZero() && isPIDNewerThan(state.PID, state.StartedAt.Add(5*time.Second)) {
-		slog.Warn("notebook worker: skipping orphan kill — PID reused", "pid", state.PID, "name", state.Name)
-		return false
-	}
-	_ = proc.Signal(syscall.SIGTERM)
-	return true
+
+	return nil
 }

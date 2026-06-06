@@ -16,7 +16,7 @@ import (
 func TestNotebookProvisionVolumeCreatesPVC(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	a := New(Config{
-		AgentID:     "agent-1",
+		WorkerID:    "worker-1",
 		ClusterName: "gpu-a",
 		Client:      client,
 		Namespace:   "notebooks",
@@ -45,7 +45,7 @@ func TestNotebookProvisionVolumeCreatesPVC(t *testing.T) {
 func TestNotebookStartCreatesStatefulSetAndService(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	a := New(Config{
-		AgentID:     "agent-1",
+		WorkerID:    "worker-1",
 		ClusterName: "gpu-a",
 		Client:      client,
 		Namespace:   "notebooks",
@@ -63,7 +63,7 @@ spec: {}
 	if err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
 	}
-	wantEndpoint := "tunnel://agent-1?target=piper-nb-my-notebook.notebooks.svc.cluster.local:8888"
+	wantEndpoint := "tunnel://worker-1?target=piper-nb-my-notebook.notebooks.svc.cluster.local:8888"
 	if resp.Endpoint != wantEndpoint {
 		t.Fatalf("endpoint = %q, want %q", resp.Endpoint, wantEndpoint)
 	}
@@ -105,7 +105,7 @@ spec: {}
 func TestNotebookStartPrepWrapsContainerCommand(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	a := New(Config{
-		AgentID:     "agent-1",
+		WorkerID:    "worker-1",
 		ClusterName: "gpu-a",
 		Client:      client,
 		Namespace:   "notebooks",
@@ -152,7 +152,7 @@ func TestNotebookStopScalesStatefulSetToZero(t *testing.T) {
 			Replicas: &replicas,
 		},
 	})
-	a := New(Config{AgentID: "agent-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
+	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
 	if err := a.stopNotebook(context.Background(), notebook.WorkerStopRequest{Name: "demo"}); err != nil {
 		t.Fatalf("stopNotebook returned error: %v", err)
@@ -170,7 +170,7 @@ func TestNotebookDeprovisionDeletesPVC(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-vol-volabc", Namespace: "notebooks"},
 	})
-	a := New(Config{AgentID: "agent-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
+	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
 	if err := a.deprovisionNotebookVolume(context.Background(), notebook.WorkerDeprovisionVolumeRequest{VolumeID: "vol-abc"}); err != nil {
 		t.Fatalf("deprovisionNotebookVolume returned error: %v", err)
@@ -192,7 +192,7 @@ func TestNotebookStartUpdatesExistingStatefulSet(t *testing.T) {
 		},
 	})
 	a := New(Config{
-		AgentID:     "agent-1",
+		WorkerID:    "worker-1",
 		ClusterName: "gpu-a",
 		Client:      client,
 		Namespace:   "notebooks",
@@ -225,9 +225,11 @@ func TestNotebookSyncStatusReportsReadyStatefulSet(t *testing.T) {
 			ReadyReplicas: 1,
 		},
 	})
-	a := New(Config{AgentID: "agent-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
+	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
-	resp, err := a.syncNotebookStatus(context.Background(), notebook.WorkerSyncStatusRequest{Names: []string{"demo"}})
+	resp, err := a.syncNotebookStatus(context.Background(), notebook.WorkerSyncStatusRequest{
+		Targets: []notebook.WorkerSyncStatusTarget{{Name: "demo"}},
+	})
 	if err != nil {
 		t.Fatalf("syncNotebookStatus returned error: %v", err)
 	}
@@ -247,6 +249,7 @@ func TestObserveOnceReportsStateChanges(t *testing.T) {
 				"piper.io/workload-kind":       "notebook",
 				"piper.io/workload-id":         "demo",
 			},
+			Annotations: map[string]string{"piper.io/workload-id": "demo"},
 		},
 		Spec: appsv1.StatefulSetSpec{Replicas: &replicas},
 		Status: appsv1.StatefulSetStatus{

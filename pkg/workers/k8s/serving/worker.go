@@ -16,6 +16,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/workers/k8s/internal/meta"
 	"github.com/piper/piper/pkg/workload"
@@ -133,7 +134,12 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	}
 
 	deployment := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   ns,
+			Labels:      labels,
+			Annotations: k8smeta.WorkloadAnnotations(svc.Metadata.Name),
+		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -173,7 +179,12 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	}
 
 	k8sSvc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   ns,
+			Labels:      labels,
+			Annotations: k8smeta.WorkloadAnnotations(svc.Metadata.Name),
+		},
 		Spec: corev1.ServiceSpec{
 			Selector: labels,
 			Ports: []corev1.ServicePort{
@@ -262,7 +273,7 @@ func (a *Worker) Observe(ctx context.Context) {
 }
 
 func (a *Worker) observeOnce(ctx context.Context) {
-	selector := "app.kubernetes.io/managed-by=piper,piper.io/workload-kind=serving"
+	selector := k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=serving"
 	namespaces := a.observedNamespaces()
 	seenNamespaces := make(map[string]struct{}, len(namespaces))
 	for _, namespace := range namespaces {
@@ -279,7 +290,7 @@ func (a *Worker) observeOnce(ctx context.Context) {
 		}
 		for i := range items.Items {
 			deployment := &items.Items[i]
-			name := deployment.Labels["piper.io/workload-id"]
+			name := deployment.Annotations[k8smeta.AnnotationWorkloadID]
 			status := observedDeploymentStatus(deployment)
 			if name == "" || status == "" || !a.statusChanged(name, status) {
 				continue

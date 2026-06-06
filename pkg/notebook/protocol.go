@@ -44,7 +44,12 @@ type WorkerDeprovisionVolumeRequest struct {
 }
 
 type WorkerSyncStatusRequest struct {
-	Names []string `json:"names"`
+	Targets []WorkerSyncStatusTarget `json:"targets"`
+}
+
+type WorkerSyncStatusTarget struct {
+	Name string `json:"name"`
+	Port int    `json:"port,omitempty"`
 }
 
 type WorkerSyncStatusResponse struct {

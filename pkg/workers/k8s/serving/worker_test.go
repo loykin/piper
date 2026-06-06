@@ -128,6 +128,7 @@ func TestObserveOnceReportsDeploymentTransitions(t *testing.T) {
 				"piper.io/workload-kind":       "serving",
 				"piper.io/workload-id":         "demo",
 			},
+			Annotations: map[string]string{"piper.io/workload-id": "demo"},
 		},
 		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
 	}

@@ -29,7 +29,7 @@ type Config struct {
 	TTLAfterFinished     *int32
 	// StorageURL selects the artifact store backend passed to K8s Job agents.
 	StorageURL   string
-	AgentID      string
+	WorkerID     string
 	ReportResult func(proto.TaskResult) error
 	RenewLeases  func([]string) error
 }
@@ -103,6 +103,7 @@ func (a *Worker) pipelineLauncher(namespace string) *k8s.Launcher {
 		DefaultImage:         a.cfg.DefaultImage,
 		AgentImagePullPolicy: a.cfg.AgentImagePullPolicy,
 		TTLAfterFinished:     a.cfg.TTLAfterFinished,
+		WorkerID:             a.cfg.WorkerID,
 	}, a.cfg.Client)
 	a.launchers[namespace] = launcher
 	return launcher
@@ -132,7 +133,7 @@ func (a *Worker) observeOnce(ctx context.Context) {
 	}
 	a.mu.Unlock()
 	for _, launcher := range launchers {
-		launcher.RecoverJobs(ctx, a.cfg.AgentID)
+		launcher.RecoverJobs(ctx)
 		if a.cfg.RenewLeases != nil {
 			taskIDs := launcher.ActiveTaskIDs()
 			if len(taskIDs) > 0 {
@@ -141,7 +142,7 @@ func (a *Worker) observeOnce(ctx context.Context) {
 		}
 		if a.cfg.ReportResult != nil {
 			launcher.ReconcileJobs(ctx, func(_ context.Context, result proto.TaskResult) error {
-				result.WorkerID = a.cfg.AgentID
+				result.WorkerID = a.cfg.WorkerID
 				return a.cfg.ReportResult(result)
 			})
 		}

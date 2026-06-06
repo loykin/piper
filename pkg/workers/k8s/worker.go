@@ -69,7 +69,7 @@ func New(cfg Config) *Worker {
 	var pipelineObserver *k8spipeline.Worker
 	if cfg.K8sClient != nil {
 		notebookObserver = k8snotebook.Register(client.Dispatcher(), k8snotebook.Config{
-			AgentID:      cfg.ID,
+			WorkerID:     cfg.ID,
 			ClusterName:  cfg.ClusterName,
 			Namespaces:   cfg.Namespaces,
 			Client:       cfg.K8sClient,
@@ -92,7 +92,7 @@ func New(cfg Config) *Worker {
 			},
 		})
 		pipelineObserver = k8spipeline.Register(client.Dispatcher(), k8spipeline.Config{
-			AgentID:              cfg.ID,
+			WorkerID:             cfg.ID,
 			MasterURL:            cfg.MasterURL,
 			Token:                cfg.Token,
 			Namespaces:           cfg.Namespaces,

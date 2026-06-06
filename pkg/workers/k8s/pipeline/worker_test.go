@@ -59,7 +59,7 @@ func TestPipelineCancelDeletesJobs(t *testing.T) {
 			Name:      "job-1",
 			Namespace: "runs",
 			Labels: map[string]string{
-				"piper/run-id": "run-1",
+				"piper.io/run-id": "run-1",
 			},
 		},
 	})

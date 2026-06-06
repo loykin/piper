@@ -27,6 +27,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
@@ -67,6 +68,11 @@ type Config struct {
 
 	// TTLAfterFinished: seconds after which a finished Job is automatically deleted. nil means no auto-deletion.
 	TTLAfterFinished *int32
+
+	// WorkerID is the stable identity of this K8s worker.
+	// Jobs are labeled piper.io/worker-id=WorkerID so RecoverJobs only observes
+	// workloads owned by this worker in a shared namespace.
+	WorkerID string
 }
 
 const (
@@ -214,7 +220,7 @@ func (l *Launcher) ReconcileJobs(ctx context.Context, report func(context.Contex
 	l.mu.Unlock()
 
 	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/managed-by=piper",
+		LabelSelector: k8smeta.ManagedSelector(),
 	})
 	if err != nil {
 		return
@@ -271,10 +277,14 @@ func (l *Launcher) ActiveTaskIDs() []string {
 	return taskIDs
 }
 
-// RecoverJobs rebuilds the in-memory watch set after an agent restart.
-func (l *Launcher) RecoverJobs(ctx context.Context, workerID string) {
+// RecoverJobs rebuilds the in-memory watch set after a worker restart.
+func (l *Launcher) RecoverJobs(ctx context.Context) {
+	selector := k8smeta.ManagedSelector()
+	if l.cfg.WorkerID != "" {
+		selector = k8smeta.WorkerSelector(l.cfg.WorkerID)
+	}
 	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/managed-by=piper",
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return
@@ -283,7 +293,7 @@ func (l *Launcher) RecoverJobs(ctx context.Context, workerID string) {
 	defer l.mu.Unlock()
 	for i := range jobs.Items {
 		job := &jobs.Items[i]
-		taskID := job.Annotations["piper/task-id"]
+		taskID := job.Annotations[k8smeta.AnnotationTaskID]
 		if taskID == "" {
 			continue
 		}
@@ -296,7 +306,7 @@ func (l *Launcher) RecoverJobs(ctx context.Context, workerID string) {
 		}
 		l.watched[job.Name] = watchedJob{
 			TaskID:    taskID,
-			WorkerID:  workerID,
+			WorkerID:  l.cfg.WorkerID,
 			Attempt:   1,
 			StartedAt: startedAt,
 		}
@@ -356,7 +366,7 @@ func k8sJobFailureMessage(job batchv1.Job) string {
 
 // CancelRun deletes all piper Jobs associated with a run.
 func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
-	selector := "piper/run-id=" + sanitizeLabel(runID)
+	selector := k8smeta.LabelRunID + "=" + k8smeta.LabelValue(runID)
 	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -389,6 +399,18 @@ func (l *Launcher) buildAgentArgs(_ *proto.Task, taskB64 string) []string {
 	return args
 }
 
+func (l *Launcher) jobLabels(task *proto.Task) map[string]string {
+	labels := map[string]string{
+		k8smeta.LabelManagedBy: k8smeta.ManagedByPiper,
+		k8smeta.LabelRunID:     k8smeta.LabelValue(task.RunID),
+		k8smeta.LabelStepName:  k8smeta.LabelValue(task.StepName),
+	}
+	if l.cfg.WorkerID != "" {
+		labels[k8smeta.LabelWorkerID] = k8smeta.LabelValue(l.cfg.WorkerID)
+	}
+	return labels
+}
+
 func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) *batchv1.Job {
 	backoffLimit := int32(0) // piper queue manages retries
 	var ttl *int32
@@ -402,13 +424,9 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 			Name:      jobName(task),
 			Namespace: l.cfg.Namespace,
 			Annotations: map[string]string{
-				"piper/task-id": task.ID,
+				k8smeta.AnnotationTaskID: task.ID,
 			},
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "piper",
-				"piper/run-id":                 sanitizeLabel(task.RunID),
-				"piper/step-name":              sanitizeLabel(task.StepName),
-			},
+			Labels: l.jobLabels(task),
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: ttl,
@@ -569,24 +587,4 @@ func sanitizeName(s string) string {
 		name = strings.TrimRight(name[:63], "-")
 	}
 	return name
-}
-
-// sanitizeLabel normalizes a string to comply with K8s label value rules.
-// Allows [a-zA-Z0-9._-], max 63 characters.
-func sanitizeLabel(s string) string {
-	var b strings.Builder
-	for _, c := range s {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z',
-			c >= '0' && c <= '9', c == '-', c == '_', c == '.':
-			b.WriteRune(c)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	v := b.String()
-	if len(v) > 63 {
-		v = v[:63]
-	}
-	return v
 }

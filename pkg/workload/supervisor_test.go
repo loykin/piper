@@ -1,8 +1,13 @@
 package workload
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/loykin/provisr/core/history"
 )
 
 func TestProcessSupervisorStartReportsStoppedOnCleanExit(t *testing.T) {
@@ -171,6 +176,41 @@ func TestProcessSupervisorRestartSameName(t *testing.T) {
 	_ = s.Stop("restartable")
 }
 
+func TestExitSinkBindsCallbackToProcessPID(t *testing.T) {
+	sink := newExitSink()
+	statusCh := make(chan string, 1)
+	sink.register("restartable", func(status string) { statusCh <- status })
+
+	if err := sink.Send(context.Background(), history.Event{
+		Type:   history.EventStop,
+		Record: history.Record{Name: "restartable", PID: 100, LastStatus: "stopped"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sink.bindPID("restartable", 200)
+
+	select {
+	case status := <-statusCh:
+		t.Fatalf("stale PID event reached new callback: %q", status)
+	default:
+	}
+
+	if err := sink.Send(context.Background(), history.Event{
+		Type:   history.EventStop,
+		Record: history.Record{Name: "restartable", PID: 200, LastStatus: "failed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case status := <-statusCh:
+		if status != "failed" {
+			t.Fatalf("status = %q, want failed", status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("matching PID event was not delivered")
+	}
+}
+
 func TestProcessSupervisorStatusWhileRunning(t *testing.T) {
 	s := NewProcessSupervisor()
 
@@ -190,5 +230,54 @@ func TestProcessSupervisorStatusWhileRunning(t *testing.T) {
 	}
 	if status == "stopped" || status == "failed" {
 		t.Fatalf("status = %q, expected running/starting", status)
+	}
+}
+
+func TestProcessSupervisorRecoverFromPIDFile(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "recover.pid")
+	original := NewProcessSupervisor()
+
+	pid, _, err := original.Start(ProcessSpec{
+		Name:    "recoverable",
+		Command: []string{"sh", "-c", "sleep 30"},
+		PIDFile: pidFile,
+	}, nil)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(func() { _ = original.Stop("recoverable") })
+
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatalf("PID file was not written: %v", err)
+	}
+
+	recovered := NewProcessSupervisor()
+	exitCh := make(chan string, 1)
+	recoveredPID, running, err := recovered.Recover(ProcessSpec{
+		Name:    "recoverable",
+		PIDFile: pidFile,
+	}, func(status string) {
+		exitCh <- status
+	})
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	if !running {
+		t.Fatal("recovered process is not running")
+	}
+	if recoveredPID != pid {
+		t.Fatalf("recovered PID = %d, want %d", recoveredPID, pid)
+	}
+
+	if err := recovered.Stop("recoverable"); err != nil {
+		t.Fatalf("stop recovered process: %v", err)
+	}
+	select {
+	case status := <-exitCh:
+		if status != "stopped" {
+			t.Fatalf("recovered exit status = %q, want stopped", status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for recovered process exit")
 	}
 }

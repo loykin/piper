@@ -18,6 +18,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/workers/k8s/internal/meta"
 	"github.com/piper/piper/pkg/workload"
@@ -27,7 +28,7 @@ import (
 type Dispatcher = *grpcagent.Dispatcher
 
 type Config struct {
-	AgentID      string
+	WorkerID     string
 	ClusterName  string
 	Namespaces   []string
 	Client       kubernetes.Interface
@@ -99,7 +100,7 @@ func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.Worke
 			Namespace: ns,
 			Labels:    a.k8sLabels("notebook-volume", req.VolumeID),
 			Annotations: map[string]string{
-				"piper.io/volume-id": req.VolumeID,
+				k8smeta.AnnotationVolumeID: req.VolumeID,
 			},
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
@@ -211,7 +212,12 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	}
 
 	sts := &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   ns,
+			Labels:      labels,
+			Annotations: k8smeta.WorkloadAnnotations(spec.Metadata.Name),
+		},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -253,7 +259,7 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	return &notebook.WorkerStartResponse{
 		Token:    token,
 		WorkDir:  workDir,
-		Endpoint: fmt.Sprintf("tunnel://%s?target=%s", a.cfg.AgentID, svcTarget),
+		Endpoint: fmt.Sprintf("tunnel://%s?target=%s", a.cfg.WorkerID, svcTarget),
 	}, nil
 }
 
@@ -290,8 +296,9 @@ func (a *Worker) deprovisionNotebookVolume(ctx context.Context, req notebook.Wor
 }
 
 func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSyncStatusRequest) (notebook.WorkerSyncStatusResponse, error) {
-	statuses := make(map[string]string, len(req.Names))
-	for _, name := range req.Names {
+	statuses := make(map[string]string, len(req.Targets))
+	for _, target := range req.Targets {
+		name := target.Name
 		sts, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).Get(ctx, notebookWorkloadName(name), metav1.GetOptions{})
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
@@ -333,7 +340,7 @@ func (a *Worker) Observe(ctx context.Context) {
 }
 
 func (a *Worker) observeOnce(ctx context.Context) {
-	selector := "app.kubernetes.io/managed-by=piper,piper.io/workload-kind=notebook"
+	selector := k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=notebook"
 	items, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -342,7 +349,7 @@ func (a *Worker) observeOnce(ctx context.Context) {
 	}
 	for i := range items.Items {
 		sts := &items.Items[i]
-		name := sts.Labels["piper.io/workload-id"]
+		name := sts.Annotations[k8smeta.AnnotationWorkloadID]
 		if name == "" {
 			continue
 		}

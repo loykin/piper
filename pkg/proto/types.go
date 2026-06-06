@@ -2,7 +2,7 @@ package proto
 
 import "time"
 
-// Task-level status values reported by workers/agents to the master.
+// Task-level status values reported by workers to the master.
 // These must match the string literals in queue.go taskStatus constants.
 const (
 	TaskStatusDone   = "done"

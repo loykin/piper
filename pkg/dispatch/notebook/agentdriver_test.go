@@ -176,7 +176,11 @@ func TestAgentDriverSyncStatus(t *testing.T) {
 	rpc := &recordingAgentRPC{}
 	driver := NewAgentDriver(iagent.NewRouter(reg), rpc, repo)
 
-	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "agent-1"}}, func(name, status string) {
+	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{
+		Name:     "demo",
+		WorkerID: "agent-1",
+		Endpoint: "tunnel://agent-1?target=127.0.0.1:18888",
+	}}, func(name, status string) {
 		_ = repo.SetStatus(context.Background(), name, status)
 	}); err != nil {
 		t.Fatalf("SyncStatus returned error: %v", err)
@@ -187,6 +191,10 @@ func TestAgentDriverSyncStatus(t *testing.T) {
 	}
 	if rpc.calls[0].Method != iagent.MethodNotebookSyncStatus {
 		t.Fatalf("method = %q", rpc.calls[0].Method)
+	}
+	req := rpc.calls[0].Payload.(notebook.WorkerSyncStatusRequest)
+	if len(req.Targets) != 1 || req.Targets[0].Name != "demo" || req.Targets[0].Port != 18888 {
+		t.Fatalf("sync targets = %+v", req.Targets)
 	}
 }
 

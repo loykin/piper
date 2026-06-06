@@ -31,15 +31,18 @@ type Config struct {
 type serviceRecord struct {
 	status   string
 	endpoint string
+	gen      uint64 // incremented on each deploy; health goroutines check this to avoid writing stale state
+	exitAs   string
 }
 
-// Worker is the serving worker agent.
+// Worker manages bare-metal serving workloads and reports their state.
 type Worker struct {
 	cfg        Config
 	client     *grpcagent.Client
 	supervisor *workload.ProcessSupervisor
 	mu         sync.Mutex
 	services   map[string]*serviceRecord // only active (not-yet-exited) services
+	nextGen    uint64
 }
 
 // New creates a new Worker.
@@ -120,22 +123,29 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		GPUs:       rt.GPUs,
 	}
 
-	_, endpoint, err := w.supervisor.Start(spec, func(status string) {
-		// Process exited — remove from services map, then push final status.
-		slog.Info("serving process exited", "name", name, "status", status)
-		w.mu.Lock()
-		delete(w.services, name)
-		w.mu.Unlock()
-		w.pushStatus(name, status, "")
-	})
+	endpoint := fmt.Sprintf("http://localhost:%d", rt.Port)
+	gen, err := w.reserveService(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
-	// Register the service as "starting"; health check goroutine will update this.
-	w.mu.Lock()
-	w.services[name] = &serviceRecord{status: serving.StatusStarting, endpoint: endpoint}
-	w.mu.Unlock()
+	_, startedEndpoint, err := w.supervisor.Start(spec, func(status string) {
+		// Process exited — remove from services map, then push final status.
+		slog.Info("serving process exited", "name", name, "status", status)
+		if removed, finalStatus := w.completeService(name, gen, status); removed {
+			w.pushStatus(name, finalStatus, "")
+		}
+	})
+	if err != nil {
+		w.removeService(name, gen)
+		return nil, err
+	}
+	endpoint = startedEndpoint
+
+	// A fast process exit may have removed this generation before Start returned.
+	if !w.isCurrentService(name, gen) {
+		return &deployResponse{Endpoint: endpoint}, nil
+	}
 
 	healthPath := rt.HealthPath
 	if healthPath == "" {
@@ -144,25 +154,96 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	go func() {
 		if err := workload.WaitReady(context.Background(), endpoint+healthPath, 30*time.Second); err != nil {
 			slog.Warn("serving health check timed out", "name", name, "endpoint", endpoint)
-			w.mu.Lock()
-			if rec, ok := w.services[name]; ok {
-				rec.status = serving.StatusFailed
-				rec.endpoint = ""
+			// Keep the service tracked while stopping. The exit override makes the
+			// OnExit callback report "failed" instead of the stop signal result.
+			if w.failService(name, gen) {
+				if stopErr := w.supervisor.Stop(name); stopErr != nil {
+					slog.Warn("serving process stop after health failure failed", "name", name, "err", stopErr)
+					// The process is still tracked. Report the unhealthy workload as
+					// failed while retaining the record for later stop/reconciliation.
+					w.pushStatus(name, serving.StatusFailed, "")
+				}
 			}
-			w.mu.Unlock()
-			w.pushStatus(name, serving.StatusFailed, "")
 			return
 		}
-		w.mu.Lock()
-		if rec, ok := w.services[name]; ok {
-			rec.status = serving.StatusRunning
+		if w.updateService(name, gen, serving.StatusRunning, endpoint) {
+			w.pushStatus(name, serving.StatusRunning, endpoint)
 		}
-		w.mu.Unlock()
-		w.pushStatus(name, serving.StatusRunning, endpoint)
 	}()
 
-	w.pushStatus(name, serving.StatusStarting, endpoint)
+	if w.isCurrentService(name, gen) {
+		w.pushStatus(name, serving.StatusStarting, endpoint)
+	}
 	return &deployResponse{Endpoint: endpoint}, nil
+}
+
+func (w *Worker) reserveService(name, endpoint string) (uint64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, exists := w.services[name]; exists {
+		return 0, fmt.Errorf("service %q is already active", name)
+	}
+	w.nextGen++
+	gen := w.nextGen
+	w.services[name] = &serviceRecord{status: serving.StatusStarting, endpoint: endpoint, gen: gen}
+	return gen, nil
+}
+
+func (w *Worker) isCurrentService(name string, gen uint64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	rec := w.services[name]
+	return rec != nil && rec.gen == gen
+}
+
+func (w *Worker) updateService(name string, gen uint64, status, endpoint string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	rec := w.services[name]
+	if rec == nil || rec.gen != gen {
+		return false
+	}
+	rec.status = status
+	rec.endpoint = endpoint
+	return true
+}
+
+func (w *Worker) removeService(name string, gen uint64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	rec := w.services[name]
+	if rec == nil || rec.gen != gen {
+		return false
+	}
+	delete(w.services, name)
+	return true
+}
+
+func (w *Worker) failService(name string, gen uint64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	rec := w.services[name]
+	if rec == nil || rec.gen != gen {
+		return false
+	}
+	rec.status = serving.StatusFailed
+	rec.endpoint = ""
+	rec.exitAs = serving.StatusFailed
+	return true
+}
+
+func (w *Worker) completeService(name string, gen uint64, status string) (bool, string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	rec := w.services[name]
+	if rec == nil || rec.gen != gen {
+		return false, ""
+	}
+	if rec.exitAs != "" {
+		status = rec.exitAs
+	}
+	delete(w.services, name)
+	return true, status
 }
 
 func (w *Worker) stop(_ context.Context, name string) error {

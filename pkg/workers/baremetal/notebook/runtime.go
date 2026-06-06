@@ -130,7 +130,6 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		GPUs:    gpus,
 		PIDFile: r.pidFile(req.Name),
 	}, func(status string) {
-		slog.Info("notebook runtime exited", "name", req.Name, "status", status)
 		if req.OnExit != nil {
 			req.OnExit(status)
 		}

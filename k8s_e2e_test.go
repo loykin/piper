@@ -165,6 +165,7 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 
 			serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 			waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+			waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"pipeline"}, 30*time.Second)
 
 			runID := k8sE2EPostRun(t, serverURL, string(yamlBytes))
 			t.Logf("submitted run %s (want=%s)", runID, tc.wantStatus)

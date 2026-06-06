@@ -219,6 +219,27 @@ func findE2EAgentByCapability(t *testing.T, serverURL, capability string) string
 	return ""
 }
 
+func findE2EPollingWorker(t *testing.T, serverURL string) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(serverURL + "/api/workers")
+		if err == nil {
+			var workers []struct {
+				ID string `json:"id"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&workers)
+			resp.Body.Close()
+			if len(workers) > 0 && workers[0].ID != "" {
+				return workers[0].ID
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("no polling pipeline worker registered")
+	return ""
+}
+
 // postRun submits a pipeline YAML to the server and returns the run ID.
 func postRun(t *testing.T, serverURL, yaml string) string {
 	t.Helper()
@@ -325,7 +346,7 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 
 	startE2EWorker(t, srv.URL)
 	startE2EServingWorker(t, srv.URL, p.cfg.Server.AgentAddr, "serving-agent")
-	pipelineAgentID := findE2EAgentByCapability(t, srv.URL, "pipeline")
+	pipelineWorkerID := findE2EPollingWorker(t, srv.URL)
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
 metadata:
@@ -337,7 +358,7 @@ spec:
     - name: hello
       run:
         command: ["echo", "baremetal-worker-ok"]
-`, pipelineAgentID))
+`, pipelineWorkerID))
 	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
 
 	postService(t, srv.URL, `

@@ -65,10 +65,20 @@ func (r *servingRepo) SetStatus(ctx context.Context, name, status string) error 
 func (r *servingRepo) SetStatusEndpoint(ctx context.Context, name, status, endpoint string) error {
 	q := r.db.Rebind(`UPDATE services
 		SET status=?,
-		    endpoint=CASE WHEN ? <> '' THEN ? ELSE endpoint END,
+		    endpoint=CASE
+		        WHEN ? IN (?, ?) THEN ''
+		        WHEN ? <> '' THEN ?
+		        ELSE endpoint
+		    END,
+		    pid=CASE WHEN ? IN (?, ?) THEN 0 ELSE pid END,
 		    updated_at=?
 		WHERE name=?`)
-	_, err := r.db.ExecContext(ctx, q, status, endpoint, endpoint, time.Now(), name)
+	_, err := r.db.ExecContext(ctx, q,
+		status,
+		status, serving.StatusStopped, serving.StatusFailed,
+		endpoint, endpoint,
+		status, serving.StatusStopped, serving.StatusFailed,
+		time.Now(), name)
 	return err
 }
 

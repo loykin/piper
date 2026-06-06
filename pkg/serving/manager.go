@@ -54,6 +54,8 @@ func (m *Manager) Deploy(ctx context.Context, svc ModelService, art artifact.Res
 	if rec.Name == "" {
 		rec.Name = name
 	}
+	rec.RunID = art.RunID
+	rec.YAML = yamlStr
 
 	if err := m.repo.Upsert(ctx, rec); err != nil {
 		return err
@@ -113,20 +115,13 @@ func (m *Manager) UpdateStatus(ctx context.Context, agentID, name, status, endpo
 		return fmt.Errorf("service %q owned by worker %q, push from %q rejected", name, svc.WorkerID, agentID)
 	}
 	previousStatus := svc.Status
-	if status != "" {
-		svc.Status = status
+	if status == "" {
+		status = previousStatus
 	}
-	if endpoint != "" {
-		svc.Endpoint = endpoint
-	}
-	if status == StatusStopped || status == StatusFailed {
-		svc.Endpoint = ""
-		svc.PID = 0
-	}
-	if err := m.repo.Update(ctx, svc); err != nil {
+	if err := m.repo.SetStatusEndpoint(ctx, name, status, endpoint); err != nil {
 		return err
 	}
-	if status == "" || status == previousStatus {
+	if status == previousStatus {
 		return nil
 	}
 	m.emit("service.status", map[string]any{"name": name, "status": status})

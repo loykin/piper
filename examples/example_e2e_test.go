@@ -413,6 +413,7 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 
 	p, err := piper.New(piper.Config{

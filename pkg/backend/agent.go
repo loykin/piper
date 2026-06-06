@@ -16,9 +16,10 @@ type AgentRPC interface {
 }
 
 type AgentBackend struct {
-	router    *iagent.Router
-	rpc       AgentRPC
-	runAgents sync.Map // run id -> pipelineRunAgent
+	router     *iagent.Router
+	rpc        AgentRPC
+	runAgents  sync.Map // run id -> pipelineRunAgent
+	taskAgents sync.Map // task id -> agent id
 }
 
 type pipelineRunAgent struct {
@@ -42,11 +43,27 @@ func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 	if err != nil {
 		return err
 	}
-	if err := b.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodPipelineDispatch, task, nil); err != nil {
+	taskCopy := *task
+	taskCopy.WorkerID = agentInfo.ID
+	b.taskAgents.Store(task.ID, agentInfo.ID)
+	if err := b.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodPipelineDispatch, &taskCopy, nil); err != nil {
+		b.taskAgents.Delete(task.ID)
 		return fmt.Errorf("pipeline agent dispatch: %w", err)
 	}
 	b.runAgents.Store(task.RunID, pipelineRunAgent{AgentID: agentInfo.ID, Namespace: placement.Namespace})
 	return nil
+}
+
+func (b *AgentBackend) OwnerForTask(taskID string) string {
+	owner, ok := b.taskAgents.Load(taskID)
+	if !ok {
+		return ""
+	}
+	return owner.(string)
+}
+
+func (b *AgentBackend) ReleaseTask(taskID string) {
+	b.taskAgents.Delete(taskID)
 }
 
 func (b *AgentBackend) CancelRun(ctx context.Context, runID string) error {
@@ -89,3 +106,4 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 
 var _ ExecutionBackend = (*AgentBackend)(nil)
 var _ CancelableBackend = (*AgentBackend)(nil)
+var _ TaskOwner = (*AgentBackend)(nil)

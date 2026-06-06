@@ -87,7 +87,7 @@ func (d *AgentDriver) Start(ctx context.Context, spec notebook.NotebookServerSpe
 func (d *AgentDriver) Stop(ctx context.Context, nb *notebook.NotebookServer) error {
 	agentInfo, err := d.selectAgent(nb.WorkerID)
 	if err != nil {
-		return nil
+		return notebook.ErrAgentUnavailable
 	}
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStop, map[string]any{
 		"name": nb.Name,
@@ -110,7 +110,7 @@ func (d *AgentDriver) DeprovisionVolume(ctx context.Context, vol *notebook.Noteb
 	return nil
 }
 
-func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.NotebookServer) error {
+func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.NotebookServer, apply func(name, status string)) error {
 	if d == nil || d.repo == nil {
 		return nil
 	}
@@ -121,9 +121,8 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 		}
 		agentInfo, err := d.selectAgent(nb.WorkerID)
 		if err != nil {
-			if nb.Status == notebook.StatusRunning || nb.Status == notebook.StatusStarting {
-				_ = d.repo.SetStatus(ctx, nb.Name, notebook.StatusStopped)
-			}
+			// Worker is offline — notebook state is unknown, not "stopped".
+			// Status remains as last-known until the worker reconnects and reports.
 			continue
 		}
 		byAgent[agentInfo.ID] = append(byAgent[agentInfo.ID], nb.Name)
@@ -135,7 +134,7 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 		}
 		for name, status := range result.Statuses {
 			if status != "" {
-				_ = d.repo.SetStatus(ctx, name, status)
+				apply(name, status)
 			}
 		}
 	}

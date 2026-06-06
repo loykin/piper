@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -25,11 +26,20 @@ type Config struct {
 	ID        string // UUID; caller must generate
 }
 
+// serviceRecord holds the worker-observed state of an active service.
+// A service is present only while its process is running; it is removed on exit.
+type serviceRecord struct {
+	status   string
+	endpoint string
+}
+
 // Worker is the serving worker agent.
 type Worker struct {
 	cfg        Config
 	client     *grpcagent.Client
 	supervisor *workload.ProcessSupervisor
+	mu         sync.Mutex
+	services   map[string]*serviceRecord // only active (not-yet-exited) services
 }
 
 // New creates a new Worker.
@@ -47,6 +57,7 @@ func New(cfg Config) *Worker {
 		cfg:        cfg,
 		client:     client,
 		supervisor: workload.NewProcessSupervisor(),
+		services:   make(map[string]*serviceRecord),
 	}
 
 	d := client.Dispatcher()
@@ -54,9 +65,7 @@ func New(cfg Config) *Worker {
 	_ = grpcagent.RegisterJSON(d, iagent.MethodServingStop, func(ctx context.Context, req servingStopRequest) (any, error) {
 		return nil, w.stop(ctx, req.Name)
 	})
-	_ = grpcagent.RegisterJSON(d, iagent.MethodServingRestart, func(ctx context.Context, req servingRestartRequest) (any, error) {
-		return nil, w.restart(ctx, req.Name)
-	})
+	_ = grpcagent.RegisterJSON(d, iagent.MethodServingSyncStatus, w.syncStatus)
 
 	return w
 }
@@ -69,10 +78,6 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 type servingStopRequest struct {
-	Name string `json:"name"`
-}
-
-type servingRestartRequest struct {
 	Name string `json:"name"`
 }
 
@@ -116,12 +121,21 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	}
 
 	_, endpoint, err := w.supervisor.Start(spec, func(status string) {
+		// Process exited — remove from services map, then push final status.
 		slog.Info("serving process exited", "name", name, "status", status)
+		w.mu.Lock()
+		delete(w.services, name)
+		w.mu.Unlock()
 		w.pushStatus(name, status, "")
 	})
 	if err != nil {
 		return nil, err
 	}
+
+	// Register the service as "starting"; health check goroutine will update this.
+	w.mu.Lock()
+	w.services[name] = &serviceRecord{status: serving.StatusStarting, endpoint: endpoint}
+	w.mu.Unlock()
 
 	healthPath := rt.HealthPath
 	if healthPath == "" {
@@ -130,18 +144,28 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	go func() {
 		if err := workload.WaitReady(context.Background(), endpoint+healthPath, 30*time.Second); err != nil {
 			slog.Warn("serving health check timed out", "name", name, "endpoint", endpoint)
+			w.mu.Lock()
+			if rec, ok := w.services[name]; ok {
+				rec.status = serving.StatusFailed
+				rec.endpoint = ""
+			}
+			w.mu.Unlock()
+			w.pushStatus(name, serving.StatusFailed, "")
+			return
 		}
+		w.mu.Lock()
+		if rec, ok := w.services[name]; ok {
+			rec.status = serving.StatusRunning
+		}
+		w.mu.Unlock()
+		w.pushStatus(name, serving.StatusRunning, endpoint)
 	}()
 
-	w.pushStatus(name, serving.StatusRunning, endpoint)
+	w.pushStatus(name, serving.StatusStarting, endpoint)
 	return &deployResponse{Endpoint: endpoint}, nil
 }
 
 func (w *Worker) stop(_ context.Context, name string) error {
-	return w.supervisor.Stop(name)
-}
-
-func (w *Worker) restart(_ context.Context, name string) error {
 	return w.supervisor.Stop(name)
 }
 
@@ -150,16 +174,28 @@ func (w *Worker) shutdown() {
 }
 
 func (w *Worker) pushStatus(name, status, endpoint string) {
-	type payload struct {
-		Name     string `json:"name"`
-		Status   string `json:"status"`
-		Endpoint string `json:"endpoint,omitempty"`
-	}
-	if err := w.client.SendPush(iagent.MethodServingStatusUpdate, payload{
+	if err := w.client.SendPush(iagent.MethodServingStatusUpdate, serving.WorkerStatusUpdate{
 		Name:     name,
 		Status:   status,
 		Endpoint: endpoint,
 	}); err != nil {
 		slog.Warn("serving worker: status push failed", "name", name, "status", status, "err", err)
 	}
+}
+
+// syncStatus answers a master sync request using the worker's own services map
+// as the single source of truth. supervisor is not queried here — it is the
+// process engine, not the state store.
+func (w *Worker) syncStatus(_ context.Context, req serving.WorkerSyncStatusRequest) (serving.WorkerSyncStatusResponse, error) {
+	statuses := make(map[string]string, len(req.Services))
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, target := range req.Services {
+		if rec, ok := w.services[target.Name]; ok {
+			statuses[target.Name] = rec.status
+		} else {
+			statuses[target.Name] = serving.StatusStopped
+		}
+	}
+	return serving.WorkerSyncStatusResponse{Statuses: statuses}, nil
 }

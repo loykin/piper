@@ -8,6 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/piper/piper/pkg/serving"
 )
 
 func TestServingDeployCreatesDeploymentAndService(t *testing.T) {
@@ -112,5 +114,48 @@ func TestServingStopDeletesDeploymentAndService(t *testing.T) {
 	}
 	if _, err := client.CoreV1().Services("serving").Get(context.Background(), "demo", metav1.GetOptions{}); err == nil {
 		t.Fatal("expected service to be deleted")
+	}
+}
+
+func TestObserveOnceReportsDeploymentTransitions(t *testing.T) {
+	replicas := int32(1)
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo",
+			Namespace: "serving",
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "piper",
+				"piper.io/workload-kind":       "serving",
+				"piper.io/workload-id":         "demo",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
+	}
+	client := fake.NewSimpleClientset(deployment)
+	var updates []serving.WorkerStatusUpdate
+	a := New(Config{
+		Client:    client,
+		Namespace: "serving",
+		ReportStatus: func(update serving.WorkerStatusUpdate) error {
+			updates = append(updates, update)
+			return nil
+		},
+	})
+
+	a.observeOnce(context.Background())
+	if len(updates) != 1 || updates[0].Status != serving.StatusStarting {
+		t.Fatalf("updates = %#v, want starting", updates)
+	}
+	current, err := client.AppsV1().Deployments("serving").Get(context.Background(), "demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Status.ReadyReplicas = 1
+	if _, err := client.AppsV1().Deployments("serving").Update(context.Background(), current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	a.observeOnce(context.Background())
+	if len(updates) != 2 || updates[1].Status != serving.StatusRunning {
+		t.Fatalf("updates = %#v, want running transition", updates)
 	}
 }

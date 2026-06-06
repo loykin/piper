@@ -4,10 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/event"
@@ -76,14 +72,18 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 		return fmt.Errorf("service %q not found", name)
 	}
 
+	if svc.Status == StatusStopped || svc.Status == StatusStopping {
+		return nil
+	}
+	if err := m.repo.SetStatus(ctx, name, StatusStopping); err != nil {
+		return fmt.Errorf("set service stopping: %w", err)
+	}
 	if err := m.driver.Stop(ctx, svc); err != nil {
-		slog.Warn("driver stop failed", "name", name, "err", err)
+		if restoreErr := m.repo.SetStatus(ctx, name, svc.Status); restoreErr != nil {
+			return fmt.Errorf("stop service: %v; restore status: %w", err, restoreErr)
+		}
+		return fmt.Errorf("stop service: %w", err)
 	}
-
-	if err := m.repo.SetStatus(ctx, name, StatusStopped); err != nil {
-		return err
-	}
-	m.emit("service.stopped", map[string]any{"name": name})
 	return nil
 }
 
@@ -91,49 +91,6 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 func (m *Manager) Restart(ctx context.Context, svc ModelService, art artifact.Resolved, yamlStr string) error {
 	_ = m.Stop(ctx, svc.Metadata.Name)
 	return m.Deploy(ctx, svc, art, yamlStr)
-}
-
-// CheckHealth polls the endpoint of each running service and updates its status.
-func (m *Manager) CheckHealth(ctx context.Context) {
-	services, err := m.repo.List(ctx)
-	if err != nil {
-		slog.Warn("list services for health check failed", "err", err)
-		return
-	}
-	for _, svc := range services {
-		if svc.Status == StatusStopped || svc.Endpoint == "" {
-			continue
-		}
-		healthy := m.serviceHealthy(ctx, svc)
-		next := StatusFailed
-		if healthy {
-			next = StatusRunning
-		}
-		if next != svc.Status {
-			if err := m.repo.SetStatus(ctx, svc.Name, next); err != nil {
-				slog.Warn("update service health status failed", "name", svc.Name, "status", next, "err", err)
-			}
-		}
-	}
-}
-
-func (m *Manager) serviceHealthy(ctx context.Context, svc *Service) bool {
-	var ms ModelService
-	healthPath := "/"
-	if svc.YAML != "" && yaml.Unmarshal([]byte(svc.YAML), &ms) == nil && ms.Spec.Runtime.HealthPath != "" {
-		healthPath = ms.Spec.Runtime.HealthPath
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, svc.Endpoint+healthPath, nil)
-	if err != nil {
-		return false
-	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return resp.StatusCode < 500
 }
 
 // SetYAML stores the original YAML on the service record.
@@ -146,14 +103,59 @@ func (m *Manager) SetYAML(ctx context.Context, name, yaml string) error {
 	return m.repo.Update(ctx, svc)
 }
 
-// UpdateStatus updates the status (and optionally endpoint) of a service by name.
-// Used by worker callback endpoints.
-func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint string) error {
-	if err := m.repo.SetStatusEndpoint(ctx, name, status, endpoint); err != nil {
+// UpdateStatus applies backend-observed state from the owning worker.
+func (m *Manager) UpdateStatus(ctx context.Context, agentID, name, status, endpoint string) error {
+	svc, err := m.repo.Get(ctx, name)
+	if err != nil || svc == nil {
+		return fmt.Errorf("service %q not found", name)
+	}
+	if agentID != "" && svc.WorkerID != "" && svc.WorkerID != agentID {
+		return fmt.Errorf("service %q owned by worker %q, push from %q rejected", name, svc.WorkerID, agentID)
+	}
+	previousStatus := svc.Status
+	if status != "" {
+		svc.Status = status
+	}
+	if endpoint != "" {
+		svc.Endpoint = endpoint
+	}
+	if status == StatusStopped || status == StatusFailed {
+		svc.Endpoint = ""
+		svc.PID = 0
+	}
+	if err := m.repo.Update(ctx, svc); err != nil {
 		return err
+	}
+	if status == "" || status == previousStatus {
+		return nil
 	}
 	m.emit("service.status", map[string]any{"name": name, "status": status})
 	return nil
+}
+
+func (m *Manager) SyncAgent(ctx context.Context, agentID string) {
+	syncer, ok := m.driver.(StatusSyncer)
+	if !ok {
+		return
+	}
+	services, err := m.repo.List(ctx)
+	if err != nil {
+		return
+	}
+	active := make([]*Service, 0)
+	for _, svc := range services {
+		if svc.WorkerID == agentID && svc.Status != StatusStopped {
+			active = append(active, svc)
+		}
+	}
+	if len(active) == 0 {
+		return
+	}
+	_ = syncer.SyncStatus(ctx, active, func(name, status string) {
+		if err := m.UpdateStatus(ctx, agentID, name, status, ""); err != nil {
+			slog.Warn("serving sync apply failed", "agent", agentID, "name", name, "status", status, "err", err)
+		}
+	})
 }
 
 func (m *Manager) emit(eventType string, fields map[string]any) {

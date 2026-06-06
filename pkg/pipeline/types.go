@@ -87,16 +87,18 @@ type Step struct {
 }
 
 type Run struct {
-	Type     string   `yaml:"type"`   // notebook | python | command
-	Source   string   `yaml:"source"` // git | s3 | http | local
-	Repo     string   `yaml:"repo"`
-	Branch   string   `yaml:"branch"`
-	Path     string   `yaml:"path"`
-	Notebook string   `yaml:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
-	Dir      string   `yaml:"dir"`                // sub-directory name for the source checkout (defaults to step name)
-	URL      string   `yaml:"url"`                // http/https URL (source: http)
-	Command  []string `yaml:"command"`
-	Image    string   `yaml:"image"` // Docker image to use for this step (optional)
+	Type           string   `yaml:"type"`   // notebook | python | command
+	Source         string   `yaml:"source"` // git | s3 | http | local
+	Repo           string   `yaml:"repo"`
+	Branch         string   `yaml:"branch"`
+	Path           string   `yaml:"path"`
+	Notebook       string   `yaml:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
+	Deps           []string `yaml:"deps,omitempty"`     // extra files/dirs to snapshot alongside the entry point
+	Dir            string   `yaml:"dir"`                // sub-directory name for the source checkout (defaults to step name)
+	URL            string   `yaml:"url"`                // http/https URL (source: http)
+	Command        []string `yaml:"command"`
+	Image          string   `yaml:"image"`                     // Docker image to use for this step (optional)
+	SnapshotPrefix string   `yaml:"snapshot_prefix,omitempty"` // set at runtime after submit; worker downloads this prefix
 }
 
 type Artifact struct {

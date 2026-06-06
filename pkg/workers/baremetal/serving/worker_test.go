@@ -52,11 +52,3 @@ func TestServingWorker_StopNonExistent(t *testing.T) {
 		t.Fatalf("stop nonexistent: %v", err)
 	}
 }
-
-func TestServingWorker_RestartNonExistent(t *testing.T) {
-	w := New(Config{ID: "test-id"})
-	// restart on unknown service is idempotent.
-	if err := w.restart(context.Background(), "nonexistent"); err != nil {
-		t.Fatalf("restart nonexistent: %v", err)
-	}
-}

@@ -53,6 +53,7 @@ type Worker struct {
 }
 
 type trackedCancel struct {
+	taskID string
 	runID  string
 	cancel context.CancelFunc
 }
@@ -166,7 +167,7 @@ func (w *Worker) Run(ctx context.Context) error {
 func (w *Worker) trackCancel(taskID, runID string, cancel context.CancelFunc) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.cancels[taskID] = trackedCancel{runID: runID, cancel: cancel}
+	w.cancels[taskID] = trackedCancel{taskID: taskID, runID: runID, cancel: cancel}
 }
 
 func (w *Worker) untrackCancel(taskID string) {
@@ -353,9 +354,13 @@ func (w *Worker) heartbeat(ctx context.Context) error {
 
 	w.mu.Lock()
 	inFlight := w.inFlight
+	taskIDs := make([]string, 0, len(w.cancels))
+	for taskID := range w.cancels {
+		taskIDs = append(taskIDs, taskID)
+	}
 	w.mu.Unlock()
 
-	body, _ := json.Marshal(map[string]any{"in_flight": inFlight})
+	body, _ := json.Marshal(map[string]any{"in_flight": inFlight, "task_ids": taskIDs})
 	url := fmt.Sprintf("%s/api/workers/%s/heartbeat", w.cfg.MasterURL, w.id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

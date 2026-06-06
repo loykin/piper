@@ -17,6 +17,7 @@ type TaskQueuer interface {
 	Next(label string) *proto.Task
 	NextForWorker(workerID, label string) *proto.Task
 	Complete(ctx context.Context, result proto.TaskResult) error
+	RenewLeases(workerID string, taskIDs []string)
 }
 
 // WorkerRegistrar abstracts the worker registry for the worker handler.
@@ -92,7 +93,8 @@ func (h *Handler) listWorkers(c *gin.Context) {
 func (h *Handler) workerHeartbeat(c *gin.Context) {
 	workerID := c.Param("id")
 	var body struct {
-		InFlight int `json:"in_flight"`
+		InFlight int      `json:"in_flight"`
+		TaskIDs  []string `json:"task_ids"`
 	}
 	_ = c.ShouldBindJSON(&body) // body is optional
 
@@ -100,6 +102,7 @@ func (h *Handler) workerHeartbeat(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
+	h.deps.Queue.RenewLeases(workerID, body.TaskIDs)
 	c.Status(http.StatusOK)
 }
 
@@ -131,6 +134,7 @@ func (h *Handler) handleTaskComplete(c *gin.Context, action string) {
 	taskID := c.Param("id")
 	var body struct {
 		Error     string    `json:"error,omitempty"`
+		WorkerID  string    `json:"worker_id,omitempty"`
 		StartedAt time.Time `json:"started_at"`
 		EndedAt   time.Time `json:"ended_at"`
 		Attempts  int       `json:"attempts"`
@@ -142,6 +146,7 @@ func (h *Handler) handleTaskComplete(c *gin.Context, action string) {
 
 	if err := h.deps.Queue.Complete(c.Request.Context(), proto.TaskResult{
 		TaskID:    taskID,
+		WorkerID:  body.WorkerID,
 		Status:    action,
 		Error:     body.Error,
 		StartedAt: body.StartedAt,

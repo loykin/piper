@@ -10,41 +10,56 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/serving"
 )
 
-func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager) func(ctx context.Context, method string, payload []byte) {
-	return func(ctx context.Context, method string, payload []byte) {
+type pipelineStatusQueue interface {
+	Complete(ctx context.Context, result proto.TaskResult) error
+	RenewLeases(workerID string, taskIDs []string)
+}
+
+func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, pipelineQueue pipelineStatusQueue) func(ctx context.Context, agentID, method string, payload []byte) {
+	return func(ctx context.Context, agentID, method string, payload []byte) {
 		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		switch method {
 		case iagent.MethodNotebookStatusUpdate:
-			if err := handleNotebookStatusPush(pushCtx, payload, nbMgr); err != nil {
-				slog.Warn("notebook status push failed", "err", err)
+			if err := handleNotebookStatusPush(pushCtx, agentID, payload, nbMgr); err != nil {
+				slog.Warn("notebook status push failed", "agent_id", agentID, "err", err)
 			}
 		case iagent.MethodServingStatusUpdate:
-			if err := handleServingStatusPush(pushCtx, payload, servingMgr); err != nil {
-				slog.Warn("serving status push failed", "err", err)
+			if err := handleServingStatusPush(pushCtx, agentID, payload, servingMgr); err != nil {
+				slog.Warn("serving status push failed", "agent_id", agentID, "err", err)
+			}
+		case iagent.MethodPipelineLeaseRenew:
+			var body struct {
+				TaskIDs []string `json:"task_ids"`
+			}
+			if err := json.Unmarshal(payload, &body); err != nil {
+				slog.Warn("pipeline lease push unmarshal failed", "agent_id", agentID, "err", err)
+				return
+			}
+			pipelineQueue.RenewLeases(agentID, body.TaskIDs)
+		case iagent.MethodPipelineTaskResult:
+			var result proto.TaskResult
+			if err := json.Unmarshal(payload, &result); err != nil {
+				slog.Warn("pipeline result push unmarshal failed", "agent_id", agentID, "err", err)
+				return
+			}
+			result.WorkerID = agentID
+			if err := pipelineQueue.Complete(pushCtx, result); err != nil {
+				slog.Warn("pipeline result push failed", "agent_id", agentID, "task_id", result.TaskID, "err", err)
 			}
 		default:
-			slog.Warn("unknown worker push method", "method", method)
+			slog.Warn("unknown worker push method", "agent_id", agentID, "method", method)
 		}
 	}
 }
 
-type notebookStatusPush struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Endpoint string `json:"endpoint"`
-	WorkDir  string `json:"work_dir"`
-	Token    string `json:"token"`
-	PID      int    `json:"pid"`
-	Env      string `json:"env"`
-}
-
-func handleNotebookStatusPush(ctx context.Context, payload []byte, nbMgr *notebook.Manager) error {
-	var body notebookStatusPush
+func handleNotebookStatusPush(ctx context.Context, agentID string, payload []byte, nbMgr *notebook.Manager) error {
+	var body notebook.WorkerStatusUpdate
 	if err := json.Unmarshal(payload, &body); err != nil {
 		slog.Warn("notebook status push unmarshal failed", "err", err)
 		return err
@@ -53,17 +68,11 @@ func handleNotebookStatusPush(ctx context.Context, payload []byte, nbMgr *notebo
 		slog.Warn("notebook status push missing name")
 		return nil
 	}
-	return nbMgr.UpdateStatus(ctx, body.Name, body.Status, body.Endpoint, body.WorkDir, body.Token, body.PID, body.Env)
+	return nbMgr.UpdateStatus(ctx, agentID, body.Name, body.Status, body.Endpoint, body.WorkDir, body.Token, body.PID, body.Env)
 }
 
-type servingStatusPush struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Endpoint string `json:"endpoint"`
-}
-
-func handleServingStatusPush(ctx context.Context, payload []byte, servingMgr *serving.Manager) error {
-	var body servingStatusPush
+func handleServingStatusPush(ctx context.Context, agentID string, payload []byte, servingMgr *serving.Manager) error {
+	var body serving.WorkerStatusUpdate
 	if err := json.Unmarshal(payload, &body); err != nil {
 		slog.Warn("serving status push unmarshal failed", "err", err)
 		return err
@@ -72,15 +81,14 @@ func handleServingStatusPush(ctx context.Context, payload []byte, servingMgr *se
 		slog.Warn("serving status push missing name")
 		return nil
 	}
-	for attempt := 0; attempt < 20; attempt++ {
-		if err := servingMgr.UpdateStatus(ctx, body.Name, body.Status, body.Endpoint); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
-			return err
+	if err := servingMgr.UpdateStatus(ctx, agentID, body.Name, body.Status, body.Endpoint); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Push arrived before deploy RPC completed on master — drop silently.
+			// The worker will push the final status (running/failed) after health check.
+			slog.Debug("serving status push dropped: service not yet registered", "name", body.Name, "status", body.Status)
+			return nil
 		}
-		return nil
+		return err
 	}
-	return sql.ErrNoRows
+	return nil
 }

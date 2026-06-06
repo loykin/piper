@@ -16,6 +16,7 @@ export interface PipelineStepDraft {
   name: string
   type: PipelineTaskType
   sourcePath: string
+  deps: string[]
   dependsOn: string[]
   command: string[]
   inputs: PipelineArtifactDraft[]
@@ -59,6 +60,7 @@ export function defaultPipelineStep(index = 0, type: PipelineTaskType = 'command
     name,
     type,
     sourcePath: '',
+    deps: [],
     dependsOn: index > 0 ? [nextStepName(index - 1)] : [],
     command: type === 'command' ? [...DEFAULT_STEP_COMMAND, name] : [],
     inputs: defaultArtifacts(),
@@ -133,6 +135,23 @@ function parseSourcePath(block: string, type: PipelineTaskType): string {
   return trimQuotes(pathMatch?.[1] ?? '')
 }
 
+function parseDeps(block: string): string[] {
+  const deps: string[] = []
+  const inlineDeps = block.match(/deps:\s*\[([^\]]*)]/)
+  if (inlineDeps) {
+    deps.push(...parseInlineList(inlineDeps[1]))
+  } else {
+    const depsBlock = block.match(/deps:([\s\S]*?)(?=\n\s+\w|\n\s*-\s+name:|$)/)
+    if (depsBlock) {
+      for (const m of depsBlock[1].matchAll(/^\s*-\s+(.+)$/gm)) {
+        const dep = trimQuotes(m[1])
+        if (dep) deps.push(dep)
+      }
+    }
+  }
+  return deps
+}
+
 function parseCommand(block: string): string[] {
   const command: string[] = []
   const inlineCommand = block.match(/command:\s*\[([^\]]*)]/)
@@ -153,6 +172,7 @@ function parseCommand(block: string): string[] {
 function parseStepFields(block: string): Omit<PipelineStepDraft, 'id' | 'name'> {
   const type = parseTaskType(block)
   const sourcePath = parseSourcePath(block, type)
+  const deps = parseDeps(block)
   const command = parseCommand(block)
   const params = Object.entries(parseMapBlock(block, 'params')).map(([key, value]) => ({ key, value }))
   const env = Object.entries(parseMapBlock(block, 'env')).map(([key, value]) => ({ key, value }))
@@ -164,6 +184,7 @@ function parseStepFields(block: string): Omit<PipelineStepDraft, 'id' | 'name'> 
   return {
     type,
     sourcePath,
+    deps,
     dependsOn: [],
     command: command.length > 0 ? command : (type === 'command' ? [...DEFAULT_STEP_COMMAND] : []),
     inputs,
@@ -208,6 +229,7 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
       dependsOn,
       type: parsed.type,
       sourcePath: parsed.sourcePath,
+      deps: parsed.deps,
       command: parsed.command,
       inputs: parsed.inputs,
       outputs: parsed.outputs,
@@ -273,6 +295,7 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
     }
     lines.push('      run:')
     lines.push(`        type: ${step.type}`)
+    const deps = step.deps.map(d => d.trim()).filter(Boolean)
     if (step.type === 'notebook') {
       if (step.sourcePath.trim()) lines.push(`        notebook: ${JSON.stringify(step.sourcePath.trim())}`)
     } else {
@@ -282,6 +305,12 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
         for (const arg of command) {
           lines.push(`          - ${JSON.stringify(arg)}`)
         }
+      }
+    }
+    if (deps.length > 0) {
+      lines.push('        deps:')
+      for (const dep of deps) {
+        lines.push(`          - ${JSON.stringify(dep)}`)
       }
     }
     lines.push(...formatMapBlock('params', params))

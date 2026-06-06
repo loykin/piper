@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/workload"
@@ -45,18 +44,11 @@ type StartedNotebook struct {
 }
 
 type processRuntime struct {
-	mu         sync.Mutex
-	notebooks  map[string]*processNotebook
 	supervisor *workload.ProcessSupervisor
-}
-
-type processNotebook struct {
-	port int
 }
 
 func newProcessRuntime() *processRuntime {
 	return &processRuntime{
-		notebooks:  make(map[string]*processNotebook),
 		supervisor: workload.NewProcessSupervisor(),
 	}
 }
@@ -72,7 +64,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 	if err != nil {
 		return nil, err
 	}
-	bin, extraArgs, envPath, err := prepareProcessEnv(env, req.WorkDir, len(prepSteps) == 0)
+	bin, extraArgs, envPath, err := prepareProcessEnv(env, req.WorkDir, true)
 	if err != nil {
 		return nil, err
 	}
@@ -99,10 +91,6 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		command = []string{"sh", "-lc", script}
 	}
 
-	r.mu.Lock()
-	r.notebooks[req.Name] = &processNotebook{port: req.Port}
-	r.mu.Unlock()
-
 	pid, endpoint, err := r.supervisor.Start(workload.ProcessSpec{
 		Name:    req.Name,
 		Command: command,
@@ -111,17 +99,11 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		GPUs:    gpus,
 	}, func(status string) {
 		slog.Info("notebook runtime exited", "name", req.Name, "status", status)
-		r.mu.Lock()
-		delete(r.notebooks, req.Name)
-		r.mu.Unlock()
 		if req.OnExit != nil {
 			req.OnExit(status)
 		}
 	})
 	if err != nil {
-		r.mu.Lock()
-		delete(r.notebooks, req.Name)
-		r.mu.Unlock()
 		return nil, err
 	}
 
@@ -129,22 +111,10 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 }
 
 func (r *processRuntime) Stop(_ context.Context, name string) error {
-	r.mu.Lock()
-	_, ok := r.notebooks[name]
-	if ok {
-		delete(r.notebooks, name)
-	}
-	r.mu.Unlock()
-	if !ok {
-		return nil
-	}
 	return r.supervisor.Stop(name)
 }
 
 func (r *processRuntime) KillAll(_ context.Context) error {
-	r.mu.Lock()
-	r.notebooks = make(map[string]*processNotebook)
-	r.mu.Unlock()
 	return r.supervisor.KillAll()
 }
 

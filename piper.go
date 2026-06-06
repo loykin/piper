@@ -147,10 +147,16 @@ func New(cfg Config) (*Piper, error) {
 
 	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook))
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
-	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr))
-
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
+	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q))
+	// On agent (re)connect: sync notebook status so master DB catches up on any
+	// state changes that occurred while the connection was down.
+	grpcSrv.SetConnectHandler(func(agentID string) {
+		nbMgr.SyncAgent(context.Background(), agentID)
+		servingMgr.SyncAgent(context.Background(), agentID)
+	})
+
 	q.SetRetryPolicy(cfg.MaxRetries+1, cfg.RetryDelay)
 	p := &Piper{
 		cfg:     cfg,
@@ -250,8 +256,6 @@ func (p *Piper) runCleanup(ctx context.Context) {
 				p.registry.Cleanup()
 			}
 			p.reconcileBackend(ctx)
-			p.serving.manager.CheckHealth(ctx)
-			p.notebookManager.CheckHealth(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.cleanupRetention(ctx)
 		}
@@ -560,7 +564,6 @@ func (p *Piper) SetBackend(b backend.ExecutionBackend) {
 func (p *Piper) workerRegistry() *iworker.Registry {
 	if p.registry == nil {
 		p.registry = iworker.NewRegistry(p.repos.Worker)
-		p.registry.SetAgentRegistry(p.agentRegistry)
 	}
 	return p.registry
 }

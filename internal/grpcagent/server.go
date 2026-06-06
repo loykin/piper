@@ -19,20 +19,22 @@ import (
 )
 
 // PushHandler is called when a worker sends an async StatusPush.
-type PushHandler func(ctx context.Context, method string, payload []byte)
+// agentID identifies the sending agent so callers can validate ownership.
+type PushHandler func(ctx context.Context, agentID, method string, payload []byte)
 
 // Server implements AgentServiceServer. It maintains one stream per connected
 // worker and exposes SendRPC for master-initiated commands.
 type Server struct {
 	agentpb.UnimplementedAgentServiceServer
 
-	mu          sync.RWMutex
-	conns       map[string]*workerConn // agentID → connection
-	subMu       sync.Mutex
-	subs        map[string][]chan struct{} // agentID → waiters
-	onReg       func(info Registration)    // called when a worker registers
-	onLost      func(agentID string)       // called when a worker disconnects
-	pushHandler PushHandler
+	mu             sync.RWMutex
+	conns          map[string]*workerConn // agentID → connection
+	subMu          sync.Mutex
+	subs           map[string][]chan struct{} // agentID → waiters
+	onReg          func(info Registration)    // called when a worker registers
+	onLost         func(agentID string)       // called when a worker disconnects
+	pushHandler    PushHandler
+	connectHandler func(agentID string) // called after onReg completes
 }
 
 type pushMessage struct {
@@ -116,6 +118,11 @@ func NewServer(onReg func(Registration), onLost func(agentID string)) *Server {
 // SetPushHandler registers the handler for worker-initiated StatusPush messages.
 func (s *Server) SetPushHandler(h PushHandler) { s.pushHandler = h }
 
+// SetConnectHandler registers a callback invoked (in a goroutine) after each
+// agent registration completes. Use it to trigger state reconciliation on connect
+// and reconnect, after the agent registry has already been updated.
+func (s *Server) SetConnectHandler(fn func(agentID string)) { s.connectHandler = fn }
+
 // GRPCServer returns a new *grpc.Server with this service registered.
 func (s *Server) GRPCServer(opts ...grpc.ServerOption) *grpc.Server {
 	srv := grpc.NewServer(opts...)
@@ -155,7 +162,10 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 	defer s.unregister(reg.Id, conn)
 
 	if s.onReg != nil {
-		go s.onReg(info)
+		s.onReg(info) // synchronous so agentReg is updated before connectHandler fires
+	}
+	if s.connectHandler != nil {
+		go s.connectHandler(reg.Id)
 	}
 	slog.Info("grpc agent connected", "id", reg.Id, "kind", reg.Kind, "hostname", reg.Hostname)
 	go conn.runPushLoop(s.pushHandler)
@@ -286,15 +296,18 @@ func (s *Server) register(conn *workerConn) {
 
 func (s *Server) unregister(agentID string, conn *workerConn) {
 	s.mu.Lock()
-	if s.conns[agentID] == conn {
+	isCurrent := s.conns[agentID] == conn
+	if isCurrent {
 		delete(s.conns, agentID)
 	}
 	s.mu.Unlock()
 	conn.close()
-	if s.onLost != nil {
+	// Only fire onLost when this was still the active connection.
+	// If a newer connection already replaced it, the new registration must not be removed.
+	if isCurrent && s.onLost != nil {
 		go s.onLost(agentID)
 	}
-	slog.Info("grpc agent disconnected", "id", agentID)
+	slog.Info("grpc agent disconnected", "id", agentID, "was_current", isCurrent)
 }
 
 // ── per-worker connection ─────────────────────────────────────────────────────
@@ -337,7 +350,7 @@ func (c *workerConn) runPushLoop(handler PushHandler) {
 			return
 		}
 		if handler != nil {
-			handler(context.Background(), msg.method, msg.payload)
+			handler(context.Background(), c.agentID, msg.method, msg.payload)
 		}
 	}
 }

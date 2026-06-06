@@ -50,3 +50,15 @@ type WorkerSyncStatusRequest struct {
 type WorkerSyncStatusResponse struct {
 	Statuses map[string]string `json:"statuses"`
 }
+
+// WorkerStatusUpdate is the backend-neutral observed state reported by a worker.
+// Runtime-specific workers populate the fields they can observe.
+type WorkerStatusUpdate struct {
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Endpoint string `json:"endpoint,omitempty"`
+	WorkDir  string `json:"work_dir,omitempty"`
+	Token    string `json:"token,omitempty"`
+	PID      int    `json:"pid,omitempty"`
+	Env      string `json:"env,omitempty"`
+}

@@ -38,13 +38,15 @@ const (
 )
 
 type taskEntry struct {
-	task        *proto.Task
-	step        *pipeline.Step
-	status      taskStatus
-	attempts    int
-	maxAttempts int
-	startedAt   *time.Time
-	retryTimer  *time.Timer
+	task             *proto.Task
+	step             *pipeline.Step
+	status           taskStatus
+	attempts         int
+	maxAttempts      int
+	assignedWorkerID string
+	startedAt        *time.Time
+	leaseAt          *time.Time
+	retryTimer       *time.Timer
 }
 
 type runEntry struct {
@@ -225,6 +227,7 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 				entry.status = taskRunning
 				entry.attempts = 1
 				entry.startedAt = &rs.StartedAt
+				entry.leaseAt = &rs.StartedAt
 			}
 		}
 		r.tasks[s.Name] = entry
@@ -270,9 +273,12 @@ func (q *Queue) NextForWorker(workerID, label string) *proto.Task {
 			if entry.task.Label != "" && entry.task.Label != label {
 				continue
 			}
+			entry.assignedWorkerID = workerID
 			q.startTaskLocked(context.Background(), r.runID, entry)
 			slog.Info("task dispatched", "task_id", entry.task.ID, "label", label)
-			return entry.task
+			task := *entry.task
+			task.WorkerID = workerID
+			return &task
 		}
 	}
 	return nil
@@ -299,6 +305,24 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	if !ok {
 		return fmt.Errorf("step %s not found in run %s", stepName, runID)
 	}
+	ownerID := entry.assignedWorkerID
+	if ownerID == "" {
+		ownerID = entry.task.WorkerID
+	}
+	if ownerID == "" {
+		if owner, ok := q.backend.(backend.TaskOwner); ok {
+			ownerID = owner.OwnerForTask(result.TaskID)
+		}
+	}
+	if ownerID != "" && result.WorkerID == "" {
+		return fmt.Errorf("task %s completion missing worker identity", result.TaskID)
+	}
+	if result.WorkerID != "" && ownerID != "" && result.WorkerID != ownerID {
+		return fmt.Errorf("task %s owned by worker %q, result from %q rejected", result.TaskID, ownerID, result.WorkerID)
+	}
+	if owner, ok := q.backend.(backend.TaskOwner); ok {
+		owner.ReleaseTask(result.TaskID)
+	}
 
 	endedAt := result.EndedAt
 	if entry.attempts == 0 {
@@ -313,6 +337,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		q.stopRetryTimerLocked(entry)
 		entry.status = taskDone
 		entry.startedAt = nil
+		entry.leaseAt = nil
 		q.emit("step.done", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts})
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
@@ -329,7 +354,9 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	} else if entry.attempts < entry.maxAttempts {
 		q.stopRetryTimerLocked(entry)
 		entry.status = taskRetrying
+		entry.assignedWorkerID = ""
 		entry.startedAt = nil
+		entry.leaseAt = nil
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
 			StepName:  stepName,
@@ -346,6 +373,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		q.stopRetryTimerLocked(entry)
 		entry.status = taskFailed
 		entry.startedAt = nil
+		entry.leaseAt = nil
 		q.emit("step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": result.Error})
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
 			RunID:     runID,
@@ -450,6 +478,7 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 	entry.status = taskRunning
 	now := time.Now()
 	entry.startedAt = &now
+	entry.leaseAt = &now
 	q.emit("step.running", map[string]any{"run_id": runID, "step": entry.step.Name, "task_id": entry.task.ID, "attempt": entry.attempts})
 	if err := q.stepRepo.Upsert(ctx, &run.Step{
 		RunID:     runID,
@@ -459,6 +488,41 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 		Attempts:  entry.attempts,
 	}); err != nil {
 		slog.Warn("upsert running step failed", "task_id", entry.task.ID, "err", err)
+	}
+}
+
+// RenewLeases records that workerID is still executing the given tasks.
+// Worker liveness and task state remain separate: only explicit task IDs renew leases.
+func (q *Queue) RenewLeases(workerID string, taskIDs []string) {
+	if workerID == "" || len(taskIDs) == 0 {
+		return
+	}
+	now := time.Now()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, taskID := range taskIDs {
+		runID, stepName, err := SplitTaskID(taskID)
+		if err != nil {
+			continue
+		}
+		r := q.runs[runID]
+		if r == nil {
+			continue
+		}
+		entry := r.tasks[stepName]
+		if entry == nil || entry.status != taskRunning {
+			continue
+		}
+		if entry.assignedWorkerID == "" {
+			if entry.task.WorkerID != "" && entry.task.WorkerID != workerID {
+				continue
+			}
+			entry.assignedWorkerID = workerID
+		}
+		if entry.assignedWorkerID != workerID {
+			continue
+		}
+		entry.leaseAt = &now
 	}
 }
 
@@ -599,6 +663,7 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 					q.stopRetryTimerLocked(entry)
 					entry.status = taskFailed
 					entry.startedAt = nil
+					entry.leaseAt = nil
 					if err := q.stepRepo.Upsert(ctx, &run.Step{
 						RunID:    runID,
 						StepName: entry.step.Name,
@@ -622,10 +687,10 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 
 func (q *Queue) runExpiredLocked(r *runEntry, cutoff time.Time) bool {
 	for _, entry := range r.tasks {
-		if entry.status != taskRunning || entry.startedAt == nil {
+		if entry.status != taskRunning || entry.leaseAt == nil {
 			continue
 		}
-		if entry.startedAt.Before(cutoff) {
+		if entry.leaseAt.Before(cutoff) {
 			return true
 		}
 	}

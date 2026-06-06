@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
@@ -26,19 +28,31 @@ type Config struct {
 	DefaultImage         string
 	TTLAfterFinished     *int32
 	// StorageURL selects the artifact store backend passed to K8s Job agents.
-	StorageURL string
+	StorageURL   string
+	AgentID      string
+	ReportResult func(proto.TaskResult) error
+	RenewLeases  func([]string) error
 }
 
 type Worker struct {
-	cfg Config
+	cfg       Config
+	mu        sync.Mutex
+	launchers map[string]*k8s.Launcher
 }
 
 func New(cfg Config) *Worker {
-	return &Worker{cfg: cfg}
+	w := &Worker{cfg: cfg, launchers: make(map[string]*k8s.Launcher)}
+	w.pipelineLauncher(cfg.Namespace)
+	for _, namespace := range cfg.Namespaces {
+		w.pipelineLauncher(namespace)
+	}
+	return w
 }
 
-func Register(dispatcher Dispatcher, cfg Config) {
-	New(cfg).register(dispatcher)
+func Register(dispatcher Dispatcher, cfg Config) *Worker {
+	w := New(cfg)
+	w.register(dispatcher)
+	return w
 }
 
 type pipelineCancelRunRequest struct {
@@ -74,9 +88,15 @@ func (a *Worker) cancelPipelineRun(ctx context.Context, req pipelineCancelRunReq
 }
 
 func (a *Worker) pipelineLauncher(namespace string) *k8s.Launcher {
-	return k8s.NewWithClient(k8s.Config{
+	namespace = a.pipelineNamespace(namespace)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if launcher := a.launchers[namespace]; launcher != nil {
+		return launcher
+	}
+	launcher := k8s.NewWithClient(k8s.Config{
 		AgentImage:           a.pipelineWorkerImage(),
-		Namespace:            a.pipelineNamespace(namespace),
+		Namespace:            namespace,
 		MasterURL:            a.cfg.MasterURL,
 		Token:                a.cfg.Token,
 		StorageURL:           a.cfg.StorageURL,
@@ -84,6 +104,48 @@ func (a *Worker) pipelineLauncher(namespace string) *k8s.Launcher {
 		AgentImagePullPolicy: a.cfg.AgentImagePullPolicy,
 		TTLAfterFinished:     a.cfg.TTLAfterFinished,
 	}, a.cfg.Client)
+	a.launchers[namespace] = launcher
+	return launcher
+}
+
+func (a *Worker) Observe(ctx context.Context) {
+	if a.cfg.ReportResult == nil && a.cfg.RenewLeases == nil {
+		return
+	}
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		a.observeOnce(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a *Worker) observeOnce(ctx context.Context) {
+	a.mu.Lock()
+	launchers := make([]*k8s.Launcher, 0, len(a.launchers))
+	for _, launcher := range a.launchers {
+		launchers = append(launchers, launcher)
+	}
+	a.mu.Unlock()
+	for _, launcher := range launchers {
+		launcher.RecoverJobs(ctx, a.cfg.AgentID)
+		if a.cfg.RenewLeases != nil {
+			taskIDs := launcher.ActiveTaskIDs()
+			if len(taskIDs) > 0 {
+				_ = a.cfg.RenewLeases(taskIDs)
+			}
+		}
+		if a.cfg.ReportResult != nil {
+			launcher.ReconcileJobs(ctx, func(_ context.Context, result proto.TaskResult) error {
+				result.WorkerID = a.cfg.AgentID
+				return a.cfg.ReportResult(result)
+			})
+		}
+	}
 }
 
 func (a *Worker) pipelineNamespace(namespace string) string {

@@ -1,6 +1,13 @@
 package notebook
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrAgentUnavailable is returned by Driver.Stop (and similar methods) when the
+// target worker agent is not currently connected.
+var ErrAgentUnavailable = errors.New("notebook: agent unavailable")
 
 // Driver abstracts notebook lifecycle from the server's perspective. The
 // Manager stays backend-agnostic: it persists desired lifecycle state and calls
@@ -30,6 +37,8 @@ type Driver interface {
 
 // StatusSyncer is implemented by drivers that need periodic status reconciliation.
 // The gRPC agent driver uses it to ask connected workers for observed state.
+// apply is called for each status update so the Manager can persist and emit
+// lifecycle events through its normal UpdateStatus path.
 type StatusSyncer interface {
-	SyncStatus(ctx context.Context, servers []*NotebookServer) error
+	SyncStatus(ctx context.Context, servers []*NotebookServer, apply func(name, status string)) error
 }

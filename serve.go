@@ -305,14 +305,13 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 
 	// Serving domain
 	serving.NewHandler(serving.HandlerDeps{
-		Services:     p.repos.Serving,
-		Deploy:       p.DeployServiceAs,
-		Stop:         p.StopService,
-		Restart:      p.RestartService,
-		UpdateStatus: p.serving.manager.UpdateStatus,
-		Proxy:        p.serving.proxy,
-		OwnerID:      p.ownerIDFromRequest,
-		Hooks:        &piperServingHooks{p: p},
+		Services: p.repos.Serving,
+		Deploy:   p.DeployServiceAs,
+		Stop:     p.StopService,
+		Restart:  p.RestartService,
+		Proxy:    p.serving.proxy,
+		OwnerID:  p.ownerIDFromRequest,
+		Hooks:    &piperServingHooks{p: p},
 	}).RegisterRoutes(r.Group(""))
 
 	// Notebook domain

@@ -406,10 +406,65 @@ func TestCleanupUsesRunningStartTimeNotQueueAddedAt(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected task to start")
 	}
-	q.runs["run-cleanup"].tasks["first"].startedAt = ptrTime(time.Now().Add(-time.Hour))
+	q.runs["run-cleanup"].tasks["first"].leaseAt = ptrTime(time.Now().Add(-time.Hour))
 	q.Cleanup(ctx, time.Second)
 	if runRepo.status["run-cleanup"] != run.StatusFailed {
 		t.Fatalf("run status = %q, want failed", runRepo.status["run-cleanup"])
+	}
+}
+
+func TestRenewLeasesPreventsRunningTaskExpiry(t *testing.T) {
+	ctx := context.Background()
+	pl := &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: "lease"},
+		Spec: pipeline.Spec{Steps: []pipeline.Step{
+			{Name: "first", Run: pipeline.Run{Command: []string{"sleep", "60"}}},
+		}},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRepo := &memoryRunRepo{}
+	q := NewQueue(context.Background(), runRepo, &memoryStepRepo{})
+	q.Add(ctx, pl, dag, "run-lease", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+	task := q.NextForWorker("worker-a", "")
+	if task == nil {
+		t.Fatal("expected task")
+	}
+	q.runs["run-lease"].tasks["first"].leaseAt = ptrTime(time.Now().Add(-time.Hour))
+	q.RenewLeases("worker-a", []string{task.ID})
+	q.Cleanup(ctx, time.Second)
+	if runRepo.status["run-lease"] == run.StatusFailed {
+		t.Fatal("renewed task lease expired")
+	}
+}
+
+func TestCompleteRejectsDifferentWorker(t *testing.T) {
+	ctx := context.Background()
+	pl := &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: "owner"},
+		Spec: pipeline.Spec{Steps: []pipeline.Step{
+			{Name: "first", Run: pipeline.Run{Command: []string{"true"}}},
+		}},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
+	q.Add(ctx, pl, dag, "run-owner", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+	task := q.NextForWorker("worker-a", "")
+	now := time.Now()
+	err = q.Complete(ctx, proto.TaskResult{
+		TaskID: task.ID, WorkerID: "worker-b", Status: proto.TaskStatusDone,
+		StartedAt: now, EndedAt: now, Attempts: 1,
+	})
+	if err == nil {
+		t.Fatal("completion from non-owner was accepted")
+	}
+	if stats := q.Stats(); stats.Running != 1 {
+		t.Fatalf("stats = %+v, want task still running", stats)
 	}
 }
 

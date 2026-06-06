@@ -11,11 +11,13 @@ const (
 
 	MethodServingDeploy       = "serving.deploy"
 	MethodServingStop         = "serving.stop"
-	MethodServingRestart      = "serving.restart"
+	MethodServingSyncStatus   = "serving.sync_status"
 	MethodServingStatusUpdate = "serving.status_update"
 
-	MethodPipelineDispatch  = "pipeline.dispatch"
-	MethodPipelineCancelRun = "pipeline.cancel_run"
+	MethodPipelineDispatch   = "pipeline.dispatch"
+	MethodPipelineCancelRun  = "pipeline.cancel_run"
+	MethodPipelineLeaseRenew = "pipeline.lease_renew"
+	MethodPipelineTaskResult = "pipeline.task_result"
 
 	MethodFSListFiles = "fs.list_files"
 )

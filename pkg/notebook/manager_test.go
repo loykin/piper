@@ -555,9 +555,27 @@ func TestManager_Stop_RunningServer(t *testing.T) {
 		t.Error("driver.Stop not called")
 	}
 
+	// Stop RPC delivered successfully: status is "stopping" until the worker
+	// pushes the final "stopped" status via UpdateStatus.
 	nb := repo.get("nb-stop")
-	if nb.Status != StatusStopped {
-		t.Errorf("status = %q, want %q", nb.Status, StatusStopped)
+	if nb.Status != StatusStopping {
+		t.Errorf("status = %q, want %q", nb.Status, StatusStopping)
+	}
+}
+
+func TestManager_Stop_DriverFailureRestoresObservedStatus(t *testing.T) {
+	repo := newFakeRepo()
+	drv := newFakeDriver()
+	drv.stopErr = ErrAgentUnavailable
+	m := New(repo, newFakeVols(), drv)
+	ctx := context.Background()
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-offline", Status: StatusRunning})
+
+	if err := m.Stop(ctx, "nb-offline"); !errors.Is(err, ErrAgentUnavailable) {
+		t.Fatalf("Stop() error = %v, want ErrAgentUnavailable", err)
+	}
+	if got := repo.get("nb-offline").Status; got != StatusRunning {
+		t.Fatalf("status = %q, want last observed status %q", got, StatusRunning)
 	}
 }
 
@@ -752,7 +770,7 @@ func TestManager_UpdateStatus_FullUpdate(t *testing.T) {
 	_ = vols.Create(ctx, vol)
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-us", Status: StatusStarting, VolumeID: "vol-us"})
 
-	err := m.UpdateStatus(ctx, "nb-us", StatusRunning, "http://worker:8888", "/new/workdir", "new-token", 42, "base")
+	err := m.UpdateStatus(ctx, "", "nb-us", StatusRunning, "http://worker:8888", "/new/workdir", "new-token", 42, "base")
 	if err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
@@ -783,8 +801,44 @@ func TestManager_UpdateStatus_FullUpdate(t *testing.T) {
 
 func TestManager_UpdateStatus_NotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	if err := m.UpdateStatus(context.Background(), "ghost", StatusRunning, "", "", "", 0, ""); err == nil {
+	if err := m.UpdateStatus(context.Background(), "", "ghost", StatusRunning, "", "", "", 0, ""); err == nil {
 		t.Fatal("UpdateStatus() on missing server expected error")
+	}
+}
+
+func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
+	repo := newFakeRepo()
+	m := New(repo, newFakeVols(), newFakeDriver())
+	ctx := context.Background()
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-owned", WorkerID: "worker-a", Status: StatusRunning})
+
+	err := m.UpdateStatus(ctx, "worker-b", "nb-owned", StatusStopped, "", "", "", 0, "")
+	if err == nil {
+		t.Fatal("UpdateStatus() accepted update from non-owner")
+	}
+	if got := repo.get("nb-owned").Status; got != StatusRunning {
+		t.Fatalf("status = %q, want unchanged %q", got, StatusRunning)
+	}
+}
+
+func TestManagerUpdateStatusClearsRuntimeFieldsWhenStopped(t *testing.T) {
+	repo := newFakeRepo()
+	m := New(repo, newFakeVols(), newFakeDriver())
+	ctx := context.Background()
+	_ = repo.Create(ctx, &NotebookServer{
+		Name:     "nb-stale-runtime",
+		Status:   StatusRunning,
+		Endpoint: "tunnel://worker-a?target=127.0.0.1:8888",
+		PID:      123,
+		Token:    "secret",
+	})
+
+	if err := m.UpdateStatus(ctx, "", "nb-stale-runtime", StatusStopped, "", "", "", 0, ""); err != nil {
+		t.Fatalf("UpdateStatus() error: %v", err)
+	}
+	nb := repo.get("nb-stale-runtime")
+	if nb.Endpoint != "" || nb.PID != 0 || nb.Token != "" {
+		t.Fatalf("runtime fields not cleared: endpoint=%q pid=%d token=%q", nb.Endpoint, nb.PID, nb.Token)
 	}
 }
 
@@ -795,7 +849,7 @@ func TestManager_UpdateStatus_PartialUpdate(t *testing.T) {
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-partial", Status: StatusStarting, Token: "keep-me", PID: 0})
 
 	// Only update status; other fields should be preserved.
-	if err := m.UpdateStatus(ctx, "nb-partial", StatusRunning, "", "", "", 0, ""); err != nil {
+	if err := m.UpdateStatus(ctx, "", "nb-partial", StatusRunning, "", "", "", 0, ""); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 

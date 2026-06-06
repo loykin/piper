@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/piper/piper/internal/agent"
 )
 
 const workerTTL = 30 * time.Second
@@ -20,7 +18,6 @@ type Registry struct {
 	mu      sync.Mutex
 	workers map[string]*Info
 	repo    Repository // nil means DB is not used (embedded mode)
-	agents  *agent.Registry
 }
 
 // NewRegistry creates a new Registry backed by the given repository.
@@ -29,12 +26,6 @@ func NewRegistry(repo Repository) *Registry {
 		workers: make(map[string]*Info),
 		repo:    repo,
 	}
-}
-
-func (r *Registry) SetAgentRegistry(agents *agent.Registry) {
-	r.mu.Lock()
-	r.agents = agents
-	r.mu.Unlock()
 }
 
 // Register registers a Worker. Re-registering with the same ID updates it.
@@ -46,18 +37,8 @@ func (r *Registry) Register(info Info) {
 
 	r.mu.Lock()
 	r.workers[info.ID] = &info
-	agents := r.agents
 	r.mu.Unlock()
 	slog.Info("event", "type", "worker.registered", "worker_id", info.ID, "label", info.Label, "version", info.Version, "capabilities", info.Capabilities, "hostname", info.Hostname)
-
-	if agents != nil {
-		agents.Register(agent.FromPipelineWorker(agent.PipelineWorker{
-			ID:           info.ID,
-			Label:        info.Label,
-			Capabilities: info.Capabilities,
-			Hostname:     info.Hostname,
-		}))
-	}
 
 	if r.repo != nil {
 		if err := r.repo.Upsert(context.Background(), &WorkerRecord{
@@ -87,12 +68,7 @@ func (r *Registry) Heartbeat(id string, inFlight int) error {
 	}
 	w.LastSeen = time.Now()
 	w.InFlight = inFlight
-	agents := r.agents
 	r.mu.Unlock()
-
-	if agents != nil {
-		_ = agents.Heartbeat(id)
-	}
 
 	if r.repo != nil {
 		if err := r.repo.Heartbeat(context.Background(), id, inFlight); err != nil {
@@ -111,11 +87,7 @@ func (r *Registry) Touch(id string) {
 	if w, ok := r.workers[id]; ok {
 		w.LastSeen = time.Now()
 	}
-	agents := r.agents
 	r.mu.Unlock()
-	if agents != nil {
-		agents.Touch(id)
-	}
 }
 
 // List returns the list of active workers that have responded within the TTL.
@@ -143,12 +115,7 @@ func (r *Registry) Cleanup() {
 			slog.Info("event", "type", "worker.lost", "worker_id", id, "last_seen", w.LastSeen)
 		}
 	}
-	agents := r.agents
 	r.mu.Unlock()
-
-	if agents != nil {
-		agents.Cleanup()
-	}
 
 	if r.repo != nil {
 		if err := r.repo.MarkOffline(context.Background(), cutoff); err != nil {

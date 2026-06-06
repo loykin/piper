@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -35,19 +37,24 @@ type Config struct {
 	StorageSize  string
 	// PodDefaults are cluster-wide defaults applied to every notebook pod.
 	// Merged before the per-notebook pod_template (defaults lose on conflict).
-	PodDefaults corev1.PodTemplateSpec
+	PodDefaults  corev1.PodTemplateSpec
+	ReportStatus func(notebook.WorkerStatusUpdate) error
 }
 
 type Worker struct {
-	cfg Config
+	cfg        Config
+	statusMu   sync.Mutex
+	lastStatus map[string]string
 }
 
 func New(cfg Config) *Worker {
-	return &Worker{cfg: cfg}
+	return &Worker{cfg: cfg, lastStatus: make(map[string]string)}
 }
 
-func Register(dispatcher Dispatcher, cfg Config) {
-	New(cfg).register(dispatcher)
+func Register(dispatcher Dispatcher, cfg Config) *Worker {
+	w := New(cfg)
+	w.register(dispatcher)
+	return w
 }
 
 func (a *Worker) register(dispatcher Dispatcher) {
@@ -304,6 +311,79 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSync
 		}
 	}
 	return notebook.WorkerSyncStatusResponse{Statuses: statuses}, nil
+}
+
+// Observe reports Kubernetes-observed notebook state. It is independent of the
+// master connection: failed pushes are recovered by the generic reconnect sync.
+func (a *Worker) Observe(ctx context.Context) {
+	if a.cfg.Client == nil || a.cfg.ReportStatus == nil {
+		return
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	a.observeOnce(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.observeOnce(ctx)
+		}
+	}
+}
+
+func (a *Worker) observeOnce(ctx context.Context) {
+	selector := "app.kubernetes.io/managed-by=piper,piper.io/workload-kind=notebook"
+	items, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).List(ctx, metav1.ListOptions{
+		LabelSelector: selector,
+	})
+	if err != nil {
+		return
+	}
+	for i := range items.Items {
+		sts := &items.Items[i]
+		name := sts.Labels["piper.io/workload-id"]
+		if name == "" {
+			continue
+		}
+		status := observedStatefulSetStatus(sts)
+		if status == "" || !a.statusChanged(name, status) {
+			continue
+		}
+		_ = a.cfg.ReportStatus(notebook.WorkerStatusUpdate{Name: name, Status: status})
+	}
+}
+
+func (a *Worker) statusChanged(name, status string) bool {
+	a.statusMu.Lock()
+	defer a.statusMu.Unlock()
+	if a.lastStatus[name] == status {
+		return false
+	}
+	a.lastStatus[name] = status
+	return true
+}
+
+func observedStatefulSetStatus(sts *appsv1.StatefulSet) string {
+	desired := int32(1)
+	if sts.Spec.Replicas != nil {
+		desired = *sts.Spec.Replicas
+	}
+	if desired == 0 && sts.Status.ReadyReplicas == 0 {
+		return notebook.StatusStopped
+	}
+	for _, condition := range sts.Status.Conditions {
+		if condition.Type == appsv1.StatefulSetConditionType("ReplicaFailure") && condition.Status == corev1.ConditionTrue {
+			return notebook.StatusFailed
+		}
+	}
+	if desired > 0 && sts.Status.ReadyReplicas >= desired {
+		return notebook.StatusRunning
+	}
+	if desired > 0 {
+		return notebook.StatusStarting
+	}
+	return ""
 }
 
 func (a *Worker) notebookNamespace() string {

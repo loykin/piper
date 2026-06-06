@@ -10,6 +10,74 @@ import (
 	"github.com/piper/piper/pkg/serving"
 )
 
+// stubServingRepo is a minimal in-memory serving.Repository for tests.
+type stubServingRepo struct {
+	services map[string]*serving.Service
+}
+
+func newStubServingRepo(initial ...*serving.Service) *stubServingRepo {
+	r := &stubServingRepo{services: make(map[string]*serving.Service)}
+	for _, s := range initial {
+		r.services[s.Name] = s
+	}
+	return r
+}
+
+func (r *stubServingRepo) Get(_ context.Context, name string) (*serving.Service, error) {
+	s, ok := r.services[name]
+	if !ok {
+		return nil, nil
+	}
+	return s, nil
+}
+
+func (r *stubServingRepo) Create(_ context.Context, s *serving.Service) error {
+	r.services[s.Name] = s
+	return nil
+}
+
+func (r *stubServingRepo) Update(_ context.Context, s *serving.Service) error {
+	r.services[s.Name] = s
+	return nil
+}
+
+func (r *stubServingRepo) List(_ context.Context) ([]*serving.Service, error) {
+	out := make([]*serving.Service, 0, len(r.services))
+	for _, s := range r.services {
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (r *stubServingRepo) Delete(_ context.Context, name string) error {
+	delete(r.services, name)
+	return nil
+}
+
+func (r *stubServingRepo) SetStatus(_ context.Context, name, status string) error {
+	if s, ok := r.services[name]; ok {
+		s.Status = status
+	}
+	return nil
+}
+
+func (r *stubServingRepo) ListHistory(_ context.Context) ([]*serving.ServiceHistory, error) {
+	return nil, nil
+}
+
+func (r *stubServingRepo) Upsert(_ context.Context, s *serving.Service) error {
+	r.services[s.Name] = s
+	return nil
+}
+
+func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, name, status, endpoint string) error {
+	if s, ok := r.services[name]; ok {
+		s.Status = status
+		s.Endpoint = endpoint
+	}
+	return nil
+}
+
 type recordingServingAgentRPC struct {
 	calls []servingAgentRPCCall
 }
@@ -72,26 +140,5 @@ func TestServingAgentDriverDeployNoAgent(t *testing.T) {
 
 	if _, err := driver.Deploy(context.Background(), spec, artifact.Resolved{S3URI: "s3://models/demo"}, ""); err == nil {
 		t.Fatal("expected error when no serving agent is registered")
-	}
-}
-
-func TestServingAgentDriverStopAndRestart(t *testing.T) {
-	repo := newStubServingRepo(&serving.Service{Name: "demo", WorkerID: "agent-1"})
-	driver, rpc := newServingAgentDriver(repo)
-	spec := serving.ModelService{}
-	spec.Metadata.Name = "demo"
-	spec.Spec.Model.FromURI = "s3://models/demo"
-
-	if err := driver.Stop(context.Background(), &serving.Service{Name: "demo", WorkerID: "agent-1"}); err != nil {
-		t.Fatalf("Stop returned error: %v", err)
-	}
-	if err := driver.Restart(context.Background(), spec, artifact.Resolved{S3URI: "s3://models/demo"}, "metadata:\n  name: demo\n"); err != nil {
-		t.Fatalf("Restart returned error: %v", err)
-	}
-	if rpc.calls[0].Method != iagent.MethodServingStop {
-		t.Fatalf("first method = %q", rpc.calls[0].Method)
-	}
-	if rpc.calls[1].Method != iagent.MethodServingRestart {
-		t.Fatalf("second method = %q", rpc.calls[1].Method)
 	}
 }

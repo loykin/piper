@@ -350,6 +350,34 @@ func TestReconcileJobsReportsFailedJob(t *testing.T) {
 	}
 }
 
+func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
+	client := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "job-1",
+			Namespace: "jobs",
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "piper",
+			},
+			Annotations: map[string]string{
+				"piper/task-id": "run-1:step-1",
+			},
+		},
+	})
+	launcher := NewWithClient(Config{Namespace: "jobs"}, client)
+
+	launcher.RecoverJobs(context.Background(), "agent-1")
+	taskIDs := launcher.ActiveTaskIDs()
+	if len(taskIDs) != 1 || taskIDs[0] != "run-1:step-1" {
+		t.Fatalf("active task IDs = %v", taskIDs)
+	}
+	launcher.mu.Lock()
+	rec := launcher.watched["job-1"]
+	launcher.mu.Unlock()
+	if rec.WorkerID != "agent-1" {
+		t.Fatalf("worker ID = %q, want agent-1", rec.WorkerID)
+	}
+}
+
 // ─── Dispatch image resolution logic (unit, without K8s API) ─────────────────
 
 func TestDispatch_noImage(t *testing.T) {

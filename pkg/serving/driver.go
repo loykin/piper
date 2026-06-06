@@ -15,5 +15,8 @@ type Driver interface {
 	ArtifactTarget() artifact.Target
 	Deploy(ctx context.Context, spec ModelService, art artifact.Resolved, yamlStr string) (*Service, error)
 	Stop(ctx context.Context, svc *Service) error
-	Restart(ctx context.Context, spec ModelService, art artifact.Resolved, yamlStr string) error
+}
+
+type StatusSyncer interface {
+	SyncStatus(ctx context.Context, services []*Service, apply func(name, status string)) error
 }

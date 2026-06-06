@@ -144,6 +144,79 @@ function FileBrowseDropdown({ files, ext, query, onQueryChange, onSelect }: File
   )
 }
 
+interface DepBrowseDropdownProps {
+  files: string[]
+  query: string
+  onQueryChange: (q: string) => void
+  onSelect: (path: string) => void
+}
+
+function DepBrowseDropdown({ files, query, onQueryChange, onSelect }: DepBrowseDropdownProps) {
+  const dirs = [...new Set(
+    files.flatMap(f => {
+      const parts = f.split('/')
+      const result: string[] = []
+      for (let i = 1; i < parts.length; i++) {
+        result.push(parts.slice(0, i).join('/') + '/')
+      }
+      return result
+    })
+  )].sort()
+
+  const q = query.toLowerCase()
+  const filteredDirs = dirs.filter(d => d.toLowerCase().includes(q))
+  const filteredFiles = files.filter(f => f.toLowerCase().includes(q))
+  const empty = filteredDirs.length === 0 && filteredFiles.length === 0
+
+  return (
+    <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+      <div className="border-b border-border px-2 py-2">
+        <input
+          autoFocus
+          className="w-full rounded bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground"
+          placeholder="Search files and directories…"
+          value={query}
+          onChange={e => onQueryChange(e.target.value)}
+        />
+      </div>
+      {empty ? (
+        <p className="px-3 py-3 text-xs text-muted-foreground">No results.</p>
+      ) : (
+        <div className="max-h-52 overflow-y-auto">
+          {filteredDirs.length > 0 && (
+            <>
+              <p className="px-3 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Directories</p>
+              {filteredDirs.map(d => (
+                <button key={d} type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
+                  onClick={() => onSelect(d)}
+                >
+                  <span className="shrink-0 text-muted-foreground">📁</span>
+                  <span className="truncate font-mono">{d}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {filteredFiles.length > 0 && (
+            <>
+              <p className="px-3 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Files</p>
+              {filteredFiles.map(f => (
+                <button key={f} type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
+                  onClick={() => onSelect(f)}
+                >
+                  <span className="shrink-0 text-muted-foreground">📄</span>
+                  <span className="truncate font-mono">{f}</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface PairSectionProps {
   label: string
   emptyText: string
@@ -352,6 +425,27 @@ export default function PipelineEditorPage() {
       }
       return next
     })
+  }
+
+  function updateDep(index: number, depIndex: number, val: string) {
+    setTasks(current => current.map((task, i) => {
+      if (i !== index) return task
+      const deps = [...task.deps]
+      deps[depIndex] = val
+      return { ...task, deps }
+    }))
+  }
+
+  function addDep(index: number) {
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, deps: [...task.deps, ''] }
+    ))
+  }
+
+  function removeDep(index: number, depIndex: number) {
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, deps: task.deps.filter((_, j) => j !== depIndex) }
+    ))
   }
 
   function addTask(type: PipelineTaskType = 'command', position?: { x: number; y: number }) {
@@ -756,6 +850,56 @@ export default function PipelineEditorPage() {
                           minHeight="6rem"
                           placeholder={editingTask.type === 'python' ? 'python\nscript.py' : 'echo\nhello'}
                         />
+                      </div>
+                    )}
+
+                    {(editingTask.type === 'notebook' || editingTask.type === 'python') && (
+                      <div>
+                        <div className="mb-2 flex items-center justify-between">
+                          <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Source Dependencies</label>
+                          <Button variant="outline" size="sm" onClick={() => addDep(editingIndex)}><Plus size={14} className="mr-1.5" /> Add</Button>
+                        </div>
+                        {editingTask.deps.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No extra files or directories. Entry point only.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {editingTask.deps.map((dep, di) => {
+                              const browseKey = `dep-${di}`
+                              const isBrowseOpen = artifactBrowseKey === browseKey
+                              return (
+                                <div key={di} ref={isBrowseOpen ? artifactBrowseRef : null} className="relative">
+                                  <div className="flex gap-2">
+                                    <Input
+                                      value={dep}
+                                      placeholder="models/  or  utils/helper.py"
+                                      onChange={e => updateDep(editingIndex, di, e.target.value)}
+                                    />
+                                    {canBrowse && (
+                                      <button
+                                        type="button"
+                                        title="Browse volume files"
+                                        onClick={() => { setBrowseQuery(''); setArtifactBrowseKey(k => k === browseKey ? null : browseKey) }}
+                                        className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                      >
+                                        <FolderOpen size={14} />
+                                      </button>
+                                    )}
+                                    <IconButton icon={<Trash2 />} label="Remove" onClick={() => removeDep(editingIndex, di)} className="text-destructive hover:bg-destructive/10" />
+                                  </div>
+                                  {isBrowseOpen && (
+                                    <DepBrowseDropdown
+                                      files={volumeFiles}
+                                      query={browseQuery}
+                                      onQueryChange={setBrowseQuery}
+                                      onSelect={f => { updateDep(editingIndex, di, f); setArtifactBrowseKey(null) }}
+                                    />
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                        <p className="mt-1 text-[11px] text-muted-foreground">Append <code>/</code> for directories (e.g. <code>models/</code>). All contents are included in the snapshot.</p>
                       </div>
                     )}
 

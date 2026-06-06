@@ -235,3 +235,53 @@ func TestNotebookSyncStatusReportsReadyStatefulSet(t *testing.T) {
 		t.Fatalf("status = %q, want running", resp.Statuses["demo"])
 	}
 }
+
+func TestObserveOnceReportsStateChanges(t *testing.T) {
+	replicas := int32(1)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "piper-nb-demo",
+			Namespace: "notebooks",
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "piper",
+				"piper.io/workload-kind":       "notebook",
+				"piper.io/workload-id":         "demo",
+			},
+		},
+		Spec: appsv1.StatefulSetSpec{Replicas: &replicas},
+		Status: appsv1.StatefulSetStatus{
+			ReadyReplicas: 1,
+		},
+	}
+	client := fake.NewSimpleClientset(sts)
+	var updates []notebook.WorkerStatusUpdate
+	a := New(Config{
+		Client:    client,
+		Namespace: "notebooks",
+		ReportStatus: func(update notebook.WorkerStatusUpdate) error {
+			updates = append(updates, update)
+			return nil
+		},
+	})
+
+	a.observeOnce(context.Background())
+	a.observeOnce(context.Background())
+	if len(updates) != 1 || updates[0].Name != "demo" || updates[0].Status != notebook.StatusRunning {
+		t.Fatalf("updates = %#v, want one running update", updates)
+	}
+
+	current, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), sts.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := int32(0)
+	current.Spec.Replicas = &zero
+	current.Status.ReadyReplicas = 0
+	if _, err := client.AppsV1().StatefulSets("notebooks").Update(context.Background(), current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	a.observeOnce(context.Background())
+	if len(updates) != 2 || updates[1].Status != notebook.StatusStopped {
+		t.Fatalf("updates = %#v, want stopped transition", updates)
+	}
+}

@@ -10,6 +10,7 @@ frontend/node_modules/
 # Runtime-generated files
 piper-outputs/
 /notebooks/
+pkg/workers/baremetal/notebook/notebooks/
 *.db
 *.db-shm
 *.db-wal

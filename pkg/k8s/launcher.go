@@ -90,6 +90,7 @@ type Launcher struct {
 
 type watchedJob struct {
 	TaskID    string
+	WorkerID  string
 	Attempt   int
 	StartedAt time.Time
 }
@@ -248,6 +249,7 @@ func (l *Launcher) watchJob(name string, task *proto.Task) {
 	}
 	l.watched[name] = watchedJob{
 		TaskID:    task.ID,
+		WorkerID:  task.WorkerID,
 		Attempt:   attempt,
 		StartedAt: time.Now().UTC(),
 	}
@@ -259,10 +261,53 @@ func (l *Launcher) unwatchJob(name string) {
 	delete(l.watched, name)
 }
 
+func (l *Launcher) ActiveTaskIDs() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	taskIDs := make([]string, 0, len(l.watched))
+	for _, rec := range l.watched {
+		taskIDs = append(taskIDs, rec.TaskID)
+	}
+	return taskIDs
+}
+
+// RecoverJobs rebuilds the in-memory watch set after an agent restart.
+func (l *Launcher) RecoverJobs(ctx context.Context, workerID string) {
+	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/managed-by=piper",
+	})
+	if err != nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		taskID := job.Annotations["piper/task-id"]
+		if taskID == "" {
+			continue
+		}
+		if _, exists := l.watched[job.Name]; exists {
+			continue
+		}
+		startedAt := job.CreationTimestamp.Time
+		if startedAt.IsZero() {
+			startedAt = time.Now().UTC()
+		}
+		l.watched[job.Name] = watchedJob{
+			TaskID:    taskID,
+			WorkerID:  workerID,
+			Attempt:   1,
+			StartedAt: startedAt,
+		}
+	}
+}
+
 func (l *Launcher) reportWatchedJob(ctx context.Context, report func(context.Context, proto.TaskResult) error, name string, rec watchedJob, status, msg string) {
 	now := time.Now().UTC()
 	if err := report(ctx, proto.TaskResult{
 		TaskID:    rec.TaskID,
+		WorkerID:  rec.WorkerID,
 		Status:    status,
 		Error:     msg,
 		StartedAt: rec.StartedAt,

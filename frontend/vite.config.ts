@@ -31,6 +31,9 @@ export default defineConfig({
     outDir: 'dist',
     rollupOptions: {
       output: {
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]',
         manualChunks(id) {
           if (id.includes('node_modules/@xyflow/')) return 'vendor-reactflow'
           if (id.includes('node_modules/@uiw/') || id.includes('node_modules/@codemirror/')) return 'vendor-codemirror'

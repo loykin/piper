@@ -43,7 +43,7 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 	return &serving.Service{
 		Name:     spec.Metadata.Name,
 		Artifact: artifactLabel(spec),
-		Status:   serving.StatusRunning,
+		Status:   serving.StatusStarting,
 		Endpoint: result.Endpoint,
 		WorkerID: agentInfo.ID,
 		YAML:     yamlStr,
@@ -53,7 +53,7 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 func (d *AgentDriver) Stop(ctx context.Context, svc *serving.Service) error {
 	agentInfo, err := d.selectAgent(serviceWorkerID(svc))
 	if err != nil {
-		return nil
+		return err
 	}
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodServingStop, map[string]any{
 		"name":      svc.Name,
@@ -64,16 +64,31 @@ func (d *AgentDriver) Stop(ctx context.Context, svc *serving.Service) error {
 	return nil
 }
 
-func (d *AgentDriver) Restart(ctx context.Context, spec serving.ModelService, _ artifact.Resolved, _ string) error {
-	existing, _ := d.repo.Get(ctx, spec.Metadata.Name)
-	agentInfo, err := d.selectAgent(serviceWorkerID(existing))
-	if err != nil {
-		return err
+func (d *AgentDriver) SyncStatus(ctx context.Context, services []*serving.Service, apply func(name, status string)) error {
+	byAgent := make(map[string][]serving.WorkerSyncStatusTarget)
+	for _, svc := range services {
+		if svc == nil {
+			continue
+		}
+		agentInfo, err := d.selectAgent(svc.WorkerID)
+		if err != nil {
+			continue
+		}
+		byAgent[agentInfo.ID] = append(byAgent[agentInfo.ID], serving.WorkerSyncStatusTarget{
+			Name:      svc.Name,
+			Namespace: svc.Namespace,
+		})
 	}
-	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodServingRestart, map[string]any{
-		"name": spec.Metadata.Name,
-	}, nil); err != nil {
-		return fmt.Errorf("serving agent restart: %w", err)
+	for agentID, targets := range byAgent {
+		var result serving.WorkerSyncStatusResponse
+		if err := d.rpc.SendRPC(ctx, agentID, iagent.MethodServingSyncStatus, serving.WorkerSyncStatusRequest{Services: targets}, &result); err != nil {
+			return fmt.Errorf("serving agent sync status: %w", err)
+		}
+		for name, status := range result.Statuses {
+			if status != "" {
+				apply(name, status)
+			}
+		}
 	}
 	return nil
 }

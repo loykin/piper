@@ -106,11 +106,14 @@ func (h *Handler) submit(c *gin.Context) {
 		}
 
 		// Upload local files to object storage
-		uploaded, uploadErr := h.uploadSnapshot(c.Request.Context(), snapshotID, vol.WorkDir, localPaths)
-		if uploadErr != nil {
-			// Rollback: delete already-uploaded objects
-			if len(uploaded) > 0 {
-				_ = h.deps.Store.Delete(c.Request.Context(), uploaded...)
+		if uploadErr := h.uploadSnapshot(c.Request.Context(), snapshotID, vol.WorkDir, localPaths); uploadErr != nil {
+			// Rollback: delete snapshot prefix
+			if objs, _ := h.deps.Store.List(c.Request.Context(), "snapshots/"+snapshotID+"/"); len(objs) > 0 {
+				keys := make([]string, len(objs))
+				for i, o := range objs {
+					keys[i] = o.Key
+				}
+				_ = h.deps.Store.Delete(c.Request.Context(), keys...)
 			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("snapshot upload failed: %s", uploadErr)})
 			return
@@ -272,57 +275,72 @@ func (h *Handler) deploy(c *gin.Context) {
 	c.JSON(http.StatusCreated, sc)
 }
 
-// extractLocalPaths returns all source paths from steps where source is local or empty.
+// extractLocalPaths returns all source paths (entry point + deps) from steps where source is local or empty.
 func extractLocalPaths(pl *pipeline.Pipeline) []string {
 	seen := map[string]bool{}
 	var paths []string
-	for _, step := range pl.Spec.Steps {
-		src := step.Run.Source
-		if src != "" && src != "local" {
-			continue
-		}
-		p := step.Run.Path
-		if step.Run.Notebook != "" {
-			p = step.Run.Notebook
-		}
+	add := func(p string) {
 		p = strings.TrimSpace(p)
 		if p != "" && !seen[p] {
 			seen[p] = true
 			paths = append(paths, p)
 		}
 	}
+	for _, step := range pl.Spec.Steps {
+		src := step.Run.Source
+		if src != "" && src != "local" {
+			continue
+		}
+		if step.Run.Notebook != "" {
+			add(step.Run.Notebook)
+		} else {
+			add(step.Run.Path)
+		}
+		for _, dep := range step.Run.Deps {
+			add(dep)
+		}
+	}
 	return paths
 }
 
-// uploadSnapshot copies local source files into object storage under the snapshot prefix.
-// Returns the list of successfully uploaded keys so the caller can roll back on error.
-func (h *Handler) uploadSnapshot(ctx context.Context, snapshotID, workDir string, paths []string) ([]string, error) {
-	var uploaded []string
+// uploadSnapshot copies local source files/directories into object storage under the snapshot prefix.
+// Files are stored at snapshots/{id}/{rel}; directories are walked and stored preserving structure.
+func (h *Handler) uploadSnapshot(ctx context.Context, snapshotID, workDir string, paths []string) error {
+	prefix := "snapshots/" + snapshotID
 	for _, rel := range paths {
-		src := filepath.Join(workDir, rel)
-		f, err := os.Open(src)
+		rel = filepath.ToSlash(strings.TrimSpace(rel))
+		rel = strings.TrimSuffix(rel, "/")
+		local := filepath.Join(workDir, filepath.FromSlash(rel))
+
+		info, err := os.Stat(local)
 		if err != nil {
-			return uploaded, fmt.Errorf("open %s: %w", rel, err)
+			return fmt.Errorf("stat %s: %w", rel, err)
 		}
-		info, statErr := f.Stat()
-		size := int64(-1)
-		if statErr == nil {
-			size = info.Size()
+
+		if info.IsDir() {
+			if err := blobstore.UploadDir(ctx, h.deps.Store, local, prefix+"/"+rel); err != nil {
+				return fmt.Errorf("upload dir %s: %w", rel, err)
+			}
+		} else {
+			f, err := os.Open(local)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", rel, err)
+			}
+			putErr := h.deps.Store.Put(ctx, prefix+"/"+rel, f, info.Size())
+			_ = f.Close()
+			if putErr != nil {
+				return fmt.Errorf("upload %s: %w", rel, putErr)
+			}
 		}
-		key := "snapshots/" + snapshotID + "/" + rel
-		putErr := h.deps.Store.Put(ctx, key, f, size)
-		_ = f.Close()
-		if putErr != nil {
-			return uploaded, fmt.Errorf("upload %s: %w", rel, putErr)
-		}
-		uploaded = append(uploaded, key)
 	}
-	return uploaded, nil
+	return nil
 }
 
 // rewriteLocalSources rewrites `source: local` (or empty) step sources to `source: s3`
-// with paths prefixed by the snapshot. It also sets metadata.name = templateName so that
-// runs triggered from a template record pipeline_name = template.name, not the YAML metadata.
+// and records the snapshot prefix so the worker can download the full snapshot directory.
+// Entry point paths (path/notebook) remain relative — the worker resolves them within the snapshot.
+// It also sets metadata.name = templateName so that runs triggered from a template record
+// pipeline_name = template.name, not the YAML metadata.
 func rewriteLocalSources(yamlText, snapshotID, templateName string) string {
 	pl, err := pipeline.Parse([]byte(yamlText))
 	if err != nil {
@@ -336,11 +354,8 @@ func rewriteLocalSources(yamlText, snapshotID, templateName string) string {
 			continue
 		}
 		pl.Spec.Steps[i].Run.Source = "s3"
-		if step.Run.Notebook != "" {
-			pl.Spec.Steps[i].Run.Notebook = "snapshots/" + snapshotID + "/" + step.Run.Notebook
-		} else if step.Run.Path != "" {
-			pl.Spec.Steps[i].Run.Path = "snapshots/" + snapshotID + "/" + step.Run.Path
-		}
+		pl.Spec.Steps[i].Run.SnapshotPrefix = "snapshots/" + snapshotID + "/"
+		// path and notebook stay relative; worker resolves them within the downloaded snapshot dir
 	}
 
 	b, err := yaml.Marshal(pl)

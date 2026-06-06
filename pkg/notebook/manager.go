@@ -206,7 +206,7 @@ func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec,
 }
 
 // Stop halts the server process but keeps the DB record and volume.
-// Status transitions: running → stopping → stopped.
+// Status transitions: running -> stopping -> stopped via worker observation.
 func (m *Manager) Stop(ctx context.Context, name string) error {
 	nb, err := m.repo.Get(ctx, name)
 	if err != nil || nb == nil {
@@ -215,14 +215,18 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 	if nb.Status == StatusStopped || nb.Status == StatusStopping {
 		return nil
 	}
-	_ = m.repo.SetStatus(ctx, name, StatusStopping)
+	if err := m.repo.SetStatus(ctx, name, StatusStopping); err != nil {
+		return fmt.Errorf("notebook: set status stopping: %w", err)
+	}
 	if err := m.driver.Stop(ctx, nb); err != nil {
-		slog.Warn("notebook driver stop failed", "name", name, "err", err)
+		// A transport failure says nothing about workload state. Restore the last
+		// observed status and let the caller retry when the worker is reachable.
+		if restoreErr := m.repo.SetStatus(ctx, name, nb.Status); restoreErr != nil {
+			return fmt.Errorf("notebook: stop failed: %v; restore status: %w", err, restoreErr)
+		}
+		return fmt.Errorf("notebook: stop: %w", err)
 	}
-	if err := m.repo.SetStatus(ctx, name, StatusStopped); err != nil {
-		return fmt.Errorf("notebook: set status stopped: %w", err)
-	}
-	m.emit("notebook.stopped", map[string]any{"name": name})
+	// Stop RPC delivered: worker will push StatusStopped when the process exits.
 	return nil
 }
 
@@ -350,14 +354,18 @@ func (m *Manager) PurgeVolume(ctx context.Context, volumeID string) error {
 	return nil
 }
 
-// UpdateStatus updates the runtime state of a notebook server.
-// Called by worker agents via the PATCH /api/notebooks/:name/status callback
-// when process status changes (e.g. running, stopped, failed).
-func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint, workDir, token string, pid int, env string) error {
+// UpdateStatus applies a status update from a worker agent.
+// agentID is the sending agent; when non-empty, the update is rejected if the
+// notebook is owned by a different worker (guards against stale or rogue pushes).
+func (m *Manager) UpdateStatus(ctx context.Context, agentID, name, status, endpoint, workDir, token string, pid int, env string) error {
 	nb, err := m.repo.Get(ctx, name)
 	if err != nil || nb == nil {
 		return fmt.Errorf("notebook %q not found", name)
 	}
+	if agentID != "" && nb.WorkerID != "" && nb.WorkerID != agentID {
+		return fmt.Errorf("notebook %q owned by worker %q, push from %q rejected", name, nb.WorkerID, agentID)
+	}
+	previousStatus := nb.Status
 	if status != "" {
 		nb.Status = status
 	}
@@ -376,6 +384,11 @@ func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint, work
 	if env != "" {
 		nb.Env = env
 	}
+	if status == StatusStopped || status == StatusFailed {
+		nb.Endpoint = ""
+		nb.PID = 0
+		nb.Token = ""
+	}
 
 	if workDir != "" && nb.VolumeID != "" {
 		if vol, err := m.vols.Get(ctx, nb.VolumeID); err == nil && vol != nil && vol.WorkDir != workDir {
@@ -387,13 +400,26 @@ func (m *Manager) UpdateStatus(ctx context.Context, name, status, endpoint, work
 	if err := m.repo.Update(ctx, nb); err != nil {
 		return fmt.Errorf("notebook: update: %w", err)
 	}
-	m.emit("notebook.status", map[string]any{"name": name, "status": status})
+	if status == "" || status == previousStatus {
+		return nil
+	}
+	switch status {
+	case StatusRunning:
+		m.emit("notebook.running", map[string]any{"name": name})
+	case StatusStopped:
+		m.emit("notebook.stopped", map[string]any{"name": name})
+	case StatusFailed:
+		m.emit("notebook.failed", map[string]any{"name": name})
+	default:
+		m.emit("notebook.status", map[string]any{"name": name, "status": status})
+	}
 	return nil
 }
 
-// CheckHealth syncs notebook status for K8s-backed notebooks.
-// For worker-backed notebooks this is a no-op (status arrives via HTTP callback).
-func (m *Manager) CheckHealth(ctx context.Context) {
+// SyncAgent requests current notebook status from a specific agent.
+// Called when an agent (re)connects so master DB reflects any state changes
+// that occurred while the agent was offline or gRPC was disconnected.
+func (m *Manager) SyncAgent(ctx context.Context, agentID string) {
 	syncer, ok := m.driver.(StatusSyncer)
 	if !ok {
 		return
@@ -404,14 +430,20 @@ func (m *Manager) CheckHealth(ctx context.Context) {
 	}
 	active := make([]*NotebookServer, 0)
 	for _, s := range servers {
-		if s.Status == StatusStarting || s.Status == StatusRunning {
+		if s.WorkerID == agentID && (s.Status == StatusStarting || s.Status == StatusRunning || s.Status == StatusStopping) {
 			active = append(active, s)
 		}
 	}
 	if len(active) == 0 {
 		return
 	}
-	_ = syncer.SyncStatus(ctx, active)
+	apply := func(name, status string) {
+		// Route through UpdateStatus so events are emitted (e.g. stopped, failed).
+		if err := m.UpdateStatus(ctx, agentID, name, status, "", "", "", 0, ""); err != nil {
+			slog.Warn("notebook sync apply failed", "agent", agentID, "name", name, "status", status, "err", err)
+		}
+	}
+	_ = syncer.SyncStatus(ctx, active, apply)
 }
 
 func (m *Manager) emit(eventType string, fields map[string]any) {

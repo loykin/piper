@@ -5,6 +5,7 @@ package notebookworker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -49,6 +52,17 @@ type Worker struct {
 type localNotebook struct {
 	name string
 	port int
+}
+
+// notebookStateFile is the on-disk record written when a notebook starts.
+// It lets the next worker startup detect and kill orphaned processes.
+// StartedAt is stored so we can reject PID-reuse: if the process with the
+// recorded PID started after StartedAt, it is a different process.
+type notebookStateFile struct {
+	Name      string    `json:"name"`
+	PID       int       `json:"pid"`
+	Port      int       `json:"port"`
+	StartedAt time.Time `json:"started_at"`
 }
 
 // New creates a new Worker.
@@ -115,10 +129,15 @@ func (r *failingRuntime) Status(string) string               { return notebook.S
 
 // Run connects to the master via gRPC and serves until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
+	w.cleanupOrphans()
 	defer func() {
 		if err := w.runtime.KillAll(context.Background()); err != nil {
 			slog.Warn("notebook worker cleanup failed", "err", err)
+			// Do NOT remove state files on failed KillAll: processes may still be
+			// running, and the files let the next startup detect and kill orphans.
+			return
 		}
+		w.removeAllStateFiles()
 	}()
 	return w.client.Run(ctx)
 }
@@ -192,6 +211,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 				if nb != nil {
 					w.releasePort(nb.port)
 				}
+				w.removeStateFile(name)
 				w.pushStatus(name, status, "", "", "", 0, "")
 			},
 		})
@@ -202,14 +222,21 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			return
 		}
 
-		w.mu.Lock()
-		w.notebooks[name] = &localNotebook{name: name, port: port}
-		w.mu.Unlock()
-
 		endpoint := fmt.Sprintf("tunnel://%s?target=%s", w.cfg.ID, target)
 		statusToken := started.Token
 		if statusToken == "" {
 			statusToken = token
+		}
+
+		w.mu.Lock()
+		w.notebooks[name] = &localNotebook{
+			name: name,
+			port: port,
+		}
+		w.mu.Unlock()
+
+		if started.PID > 0 {
+			w.writeStateFile(name, started.PID, port)
 		}
 		w.pushStatus(name, notebook.StatusRunning, endpoint, workDir, statusToken, started.PID, started.EnvPath)
 	}()
@@ -224,16 +251,24 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 func (w *Worker) stopNotebook(_ context.Context, name string) error {
 	w.mu.Lock()
 	nb, ok := w.notebooks[name]
-	if ok {
-		delete(w.notebooks, name)
-	}
 	w.mu.Unlock()
 
 	if !ok {
 		return nil
 	}
+
+	// Stop runtime first. Clean up local state only after success so that
+	// a failed stop leaves the notebook in a recoverable, tracked state.
+	if err := w.runtime.Stop(context.Background(), nb.name); err != nil {
+		return err
+	}
+
+	w.mu.Lock()
+	delete(w.notebooks, name)
+	w.mu.Unlock()
+	w.removeStateFile(name)
 	w.releasePort(nb.port)
-	return w.runtime.Stop(context.Background(), nb.name)
+	return nil
 }
 
 func (w *Worker) deprovisionVolume(_ context.Context, req notebook.WorkerDeprovisionVolumeRequest) error {
@@ -313,16 +348,7 @@ func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequ
 }
 
 func (w *Worker) pushStatus(name, status, endpoint, workDir, token string, pid int, env string) {
-	type payload struct {
-		Name     string `json:"name"`
-		Status   string `json:"status"`
-		Endpoint string `json:"endpoint,omitempty"`
-		WorkDir  string `json:"work_dir,omitempty"`
-		Token    string `json:"token,omitempty"`
-		PID      int    `json:"pid,omitempty"`
-		Env      string `json:"env,omitempty"`
-	}
-	if err := w.client.SendPush(iagent.MethodNotebookStatusUpdate, payload{
+	if err := w.client.SendPush(iagent.MethodNotebookStatusUpdate, notebook.WorkerStatusUpdate{
 		Name:     name,
 		Status:   status,
 		Endpoint: endpoint,
@@ -414,4 +440,87 @@ func parsePortRange(s string) (int, int, error) {
 		return 0, 0, fmt.Errorf("invalid port_range %q", s)
 	}
 	return start, end, nil
+}
+
+// stateDir returns the directory where per-notebook state files are stored.
+func (w *Worker) stateDir() string {
+	abs, _ := filepath.Abs(w.notebooksRoot())
+	return filepath.Join(abs, ".piper")
+}
+
+func (w *Worker) writeStateFile(name string, pid, port int) {
+	dir := w.stateDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
+	data, _ := json.Marshal(notebookStateFile{Name: name, PID: pid, Port: port, StartedAt: time.Now()})
+	path := filepath.Join(dir, name+".json")
+	_ = os.WriteFile(path, data, 0644)
+}
+
+func (w *Worker) removeStateFile(name string) {
+	_ = os.Remove(filepath.Join(w.stateDir(), name+".json"))
+}
+
+func (w *Worker) removeAllStateFiles() {
+	entries, err := os.ReadDir(w.stateDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			_ = os.Remove(filepath.Join(w.stateDir(), e.Name()))
+		}
+	}
+}
+
+// cleanupOrphans kills any JupyterLab processes left behind by a previous
+// worker crash (SIGKILL) by reading PID files from the state directory.
+func (w *Worker) cleanupOrphans() {
+	dir := w.stateDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			_ = os.Remove(path)
+			continue
+		}
+		var state notebookStateFile
+		if err := json.Unmarshal(data, &state); err != nil || state.PID <= 0 {
+			_ = os.Remove(path)
+			continue
+		}
+		if w.killOrphan(state) {
+			slog.Info("notebook worker: killed orphan process", "name", state.Name, "pid", state.PID)
+		}
+		_ = os.Remove(path)
+	}
+}
+
+// killOrphan sends SIGTERM to a process only if it is still alive AND started
+// before or around the recorded StartedAt time (PID-reuse guard).
+// Returns true if the signal was sent.
+func (w *Worker) killOrphan(state notebookStateFile) bool {
+	proc, err := os.FindProcess(state.PID)
+	if err != nil {
+		return false
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return false // process is gone
+	}
+	// PID-reuse guard: if the process started significantly after our StartedAt,
+	// the PID was recycled and the process belongs to someone else.
+	if !state.StartedAt.IsZero() && isPIDNewerThan(state.PID, state.StartedAt.Add(5*time.Second)) {
+		slog.Warn("notebook worker: skipping orphan kill — PID reused", "pid", state.PID, "name", state.Name)
+		return false
+	}
+	_ = proc.Signal(syscall.SIGTERM)
+	return true
 }

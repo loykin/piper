@@ -25,15 +25,13 @@ type ServingHooks interface {
 
 // HandlerDeps holds all dependencies required by the serving handler.
 type HandlerDeps struct {
-	Services       Repository
-	Deploy         func(ctx context.Context, yaml []byte, ownerID string) (*Service, error)
-	Stop           func(ctx context.Context, name string) error
-	Restart        func(ctx context.Context, name string) error
-	UpdateStatus   func(ctx context.Context, name, status, endpoint string) error
-	Proxy          http.Handler
-	OwnerID        func(r *http.Request) string
-	Hooks          ServingHooks
-	WorkerRegistry *ServingWorkerRegistry // nil disables worker registration routes
+	Services Repository
+	Deploy   func(ctx context.Context, yaml []byte, ownerID string) (*Service, error)
+	Stop     func(ctx context.Context, name string) error
+	Restart  func(ctx context.Context, name string) error
+	Proxy    http.Handler
+	OwnerID  func(r *http.Request) string
+	Hooks    ServingHooks
 }
 
 // Handler is the Gin HTTP handler for the /services domain.
@@ -58,18 +56,6 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/serving/:name", h.getService)
 	rg.DELETE("/serving/:name", h.deleteService)
 	rg.POST("/serving/:name/restart", h.restartService)
-
-	// Worker callback: status update from serving worker agent.
-	if h.deps.UpdateStatus != nil {
-		rg.PATCH("/api/servings/:name/status", h.updateServiceStatus)
-	}
-
-	// Worker registration routes.
-	if h.deps.WorkerRegistry != nil {
-		rg.POST("/api/serving-workers", h.registerWorker)
-		rg.POST("/api/serving-workers/:id/heartbeat", h.heartbeatWorker)
-		rg.GET("/api/serving-workers", h.listWorkers)
-	}
 }
 
 // GET /serving
@@ -186,51 +172,6 @@ func (h *Handler) restartService(c *gin.Context) {
 		}
 	}
 	c.Status(http.StatusOK)
-}
-
-// PATCH /api/servings/:name/status — called by serving worker agents.
-func (h *Handler) updateServiceStatus(c *gin.Context) {
-	name := c.Param("name")
-	var body struct {
-		Status   string `json:"status"`
-		Endpoint string `json:"endpoint"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.deps.UpdateStatus(c.Request.Context(), name, body.Status, body.Endpoint); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.Status(http.StatusNoContent)
-}
-
-// POST /api/serving-workers
-func (h *Handler) registerWorker(c *gin.Context) {
-	var info ServingWorkerInfo
-	if err := c.ShouldBindJSON(&info); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if info.ID == "" || info.Addr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id and addr are required"})
-		return
-	}
-	h.deps.WorkerRegistry.Register(&info)
-	c.JSON(http.StatusOK, gin.H{"id": info.ID})
-}
-
-// POST /api/serving-workers/:id/heartbeat
-func (h *Handler) heartbeatWorker(c *gin.Context) {
-	id := c.Param("id")
-	h.deps.WorkerRegistry.Heartbeat(id)
-	c.Status(http.StatusNoContent)
-}
-
-// GET /api/serving-workers
-func (h *Handler) listWorkers(c *gin.Context) {
-	c.JSON(http.StatusOK, h.deps.WorkerRegistry.List())
 }
 
 // checkServiceAccess calls BeforeGetService hook (if set) and then the

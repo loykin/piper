@@ -45,7 +45,7 @@ func TestWorkerConnPushLoopProcessesMessagesInOrder(t *testing.T) {
 	var mu sync.Mutex
 	got := make([]string, 0, 2)
 
-	go conn.runPushLoop(func(ctx context.Context, method string, payload []byte) {
+	go conn.runPushLoop(func(ctx context.Context, agentID, method string, payload []byte) {
 		mu.Lock()
 		got = append(got, method)
 		mu.Unlock()
@@ -88,5 +88,37 @@ func TestWorkerConnPushLoopProcessesMessagesInOrder(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 2 || got[0] != "one" || got[1] != "two" {
 		t.Fatalf("push order = %v, want [one two]", got)
+	}
+}
+
+func TestUnregisterReplacedConnectionDoesNotReportAgentLost(t *testing.T) {
+	lost := make(chan string, 1)
+	s := NewServer(nil, func(agentID string) { lost <- agentID })
+	oldConn := newWorkerConn("agent-1", nil)
+	newConn := newWorkerConn("agent-1", nil)
+	go oldConn.runPushLoop(nil)
+	go newConn.runPushLoop(nil)
+
+	s.register(oldConn)
+	s.register(newConn)
+	s.unregister("agent-1", oldConn)
+
+	select {
+	case id := <-lost:
+		t.Fatalf("replaced connection reported agent %q lost", id)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if got := s.conns["agent-1"]; got != newConn {
+		t.Fatal("new connection was removed by old connection cleanup")
+	}
+
+	s.unregister("agent-1", newConn)
+	select {
+	case id := <-lost:
+		if id != "agent-1" {
+			t.Fatalf("lost agent = %q", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active connection cleanup did not report agent lost")
 	}
 }

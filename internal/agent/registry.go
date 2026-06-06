@@ -8,9 +8,14 @@ import (
 	"time"
 )
 
-const ttl = 60 * time.Second
-
 // Registry tracks live execution agents. It does not persist workload state.
+//
+// Agent liveness is connection-driven: agents are added via Register when their
+// gRPC stream opens and removed via Remove when it closes. There is no TTL-based
+// eviction — the transport layer signals disconnection explicitly.
+//
+// Pipeline workers (HTTP polling) call Remove explicitly when their heartbeat
+// expires, so no Cleanup sweep is needed here either.
 type Registry struct {
 	mu     sync.RWMutex
 	agents map[string]*Info
@@ -45,33 +50,11 @@ func (r *Registry) Register(info Info) {
 	slog.Info("event", "type", "agent.registered", "agent_id", info.ID, "kind", info.Kind, "cluster", info.ClusterName, "capabilities", info.Capabilities)
 }
 
-func (r *Registry) Heartbeat(id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	a, ok := r.agents[id]
-	if !ok {
-		return fmt.Errorf("agent %s not registered", id)
-	}
-	a.LastSeen = time.Now()
-	return nil
-}
-
-func (r *Registry) Touch(id string) {
-	if id == "" {
-		return
-	}
-	r.mu.Lock()
-	if a, ok := r.agents[id]; ok {
-		a.LastSeen = time.Now()
-	}
-	r.mu.Unlock()
-}
-
 func (r *Registry) Get(id string) (*Info, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	a, ok := r.agents[id]
-	if !ok || expired(a) {
+	if !ok {
 		return nil, fmt.Errorf("agent %q not available", id)
 	}
 	return cloneInfo(*a), nil
@@ -81,7 +64,7 @@ func (r *Registry) GetByHostname(hostname string, kind WorkloadKind) (*Info, err
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, a := range r.agents {
-		if expired(a) || a.Hostname != hostname || !hasCapability(a, string(kind)) {
+		if a.Hostname != hostname || !hasCapability(a, string(kind)) {
 			continue
 		}
 		return cloneInfo(*a), nil
@@ -94,9 +77,6 @@ func (r *Registry) List() []Info {
 	defer r.mu.RUnlock()
 	out := make([]Info, 0, len(r.agents))
 	for _, a := range r.agents {
-		if expired(a) {
-			continue
-		}
 		out = append(out, *cloneInfo(*a))
 	}
 	return out
@@ -109,17 +89,6 @@ func (r *Registry) Remove(id string) {
 	slog.Info("event", "type", "agent.removed", "agent_id", id)
 }
 
-func (r *Registry) Cleanup() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for id, a := range r.agents {
-		if expired(a) {
-			delete(r.agents, id)
-			slog.Info("event", "type", "agent.lost", "agent_id", id, "last_seen", a.LastSeen)
-		}
-	}
-}
-
 func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 	capability := string(kind)
 	r.mu.RLock()
@@ -127,7 +96,7 @@ func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 
 	out := make([]Info, 0, len(r.agents))
 	for _, a := range r.agents {
-		if expired(a) || !hasCapability(a, capability) {
+		if !hasCapability(a, capability) {
 			continue
 		}
 		if p.ClusterName != "" && a.ClusterName != p.ClusterName {
@@ -142,10 +111,6 @@ func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 		out = append(out, *cloneInfo(*a))
 	}
 	return out
-}
-
-func expired(a *Info) bool {
-	return time.Since(a.LastSeen) >= ttl
 }
 
 func hasCapability(a *Info, capability string) bool {

@@ -304,19 +304,21 @@ func (l *batchLogger) flush(ctx context.Context) {
 
 type taskResult struct {
 	Error     string    `json:"error,omitempty"`
+	WorkerID  string    `json:"worker_id,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`
 	Attempts  int       `json:"attempts"`
 }
 
 func (r *Runner) reportDone(task *proto.Task, startedAt time.Time) {
-	r.report(task.ID, proto.TaskStatusDone, taskResult{StartedAt: startedAt, EndedAt: time.Now(), Attempts: 1})
+	r.report(task.ID, proto.TaskStatusDone, taskResult{WorkerID: task.WorkerID, StartedAt: startedAt, EndedAt: time.Now(), Attempts: 1})
 }
 
 func (r *Runner) reportFailed(task *proto.Task, err error, startedAt time.Time) {
 	slog.Error("task failed", "task_id", task.ID, "err", err)
 	r.report(task.ID, proto.TaskStatusFailed, taskResult{
 		Error:     err.Error(),
+		WorkerID:  task.WorkerID,
 		StartedAt: startedAt,
 		EndedAt:   time.Now(),
 		Attempts:  1,

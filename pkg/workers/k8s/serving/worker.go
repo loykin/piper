@@ -3,6 +3,8 @@ package servingworker
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 	appsv1 "k8s.io/api/apps/v1"
@@ -23,22 +25,32 @@ import (
 type Dispatcher = *grpcagent.Dispatcher
 
 type Config struct {
-	ClusterName string
-	Namespaces  []string
-	Client      kubernetes.Interface
-	Namespace   string
+	ClusterName  string
+	Namespaces   []string
+	Client       kubernetes.Interface
+	Namespace    string
+	ReportStatus func(serving.WorkerStatusUpdate) error
 }
 
 type Worker struct {
-	cfg Config
+	cfg        Config
+	statusMu   sync.Mutex
+	lastStatus map[string]string
+	namespaces map[string]struct{}
 }
 
 func New(cfg Config) *Worker {
-	return &Worker{cfg: cfg}
+	return &Worker{
+		cfg:        cfg,
+		lastStatus: make(map[string]string),
+		namespaces: make(map[string]struct{}),
+	}
 }
 
-func Register(dispatcher Dispatcher, cfg Config) {
-	New(cfg).register(dispatcher)
+func Register(dispatcher Dispatcher, cfg Config) *Worker {
+	w := New(cfg)
+	w.register(dispatcher)
+	return w
 }
 
 type servingDeployRequest struct {
@@ -61,14 +73,7 @@ func (a *Worker) register(dispatcher Dispatcher) {
 	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodServingStop, func(ctx context.Context, req servingStopRequest) (any, error) {
 		return nil, a.stopServing(ctx, req)
 	})
-	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodServingRestart, func(ctx context.Context, req servingDeployRequest) (any, error) {
-		var spec serving.ModelService
-		if err := yaml.Unmarshal([]byte(req.YAML), &spec); err != nil {
-			return nil, err
-		}
-		_ = a.stopServing(ctx, servingStopRequest{Name: spec.Metadata.Name})
-		return a.deployServing(ctx, req)
-	})
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodServingSyncStatus, a.syncStatus)
 }
 
 func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (servingDeployResponse, error) {
@@ -101,6 +106,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	if ns == "" {
 		ns = a.servingNamespace()
 	}
+	a.rememberNamespace(ns)
 	replicas := int32(svc.Spec.K8s.Replicas)
 	if replicas == 0 {
 		replicas = 1
@@ -211,7 +217,123 @@ func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error 
 	if err := a.cfg.Client.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
 		return err
 	}
+	if a.cfg.ReportStatus != nil {
+		a.statusChanged(req.Name, serving.StatusStopped)
+		_ = a.cfg.ReportStatus(serving.WorkerStatusUpdate{Name: req.Name, Status: serving.StatusStopped})
+	}
 	return nil
+}
+
+func (a *Worker) syncStatus(ctx context.Context, req serving.WorkerSyncStatusRequest) (serving.WorkerSyncStatusResponse, error) {
+	statuses := make(map[string]string, len(req.Services))
+	for _, target := range req.Services {
+		ns := target.Namespace
+		if ns == "" {
+			ns = a.servingNamespace()
+		}
+		a.rememberNamespace(ns)
+		deployment, err := a.cfg.Client.AppsV1().Deployments(ns).Get(ctx, workload.SafeName(target.Name), metav1.GetOptions{})
+		if err != nil {
+			if k8serrors.IsNotFound(err) {
+				statuses[target.Name] = serving.StatusStopped
+			}
+			continue
+		}
+		statuses[target.Name] = observedDeploymentStatus(deployment)
+	}
+	return serving.WorkerSyncStatusResponse{Statuses: statuses}, nil
+}
+
+func (a *Worker) Observe(ctx context.Context) {
+	if a.cfg.Client == nil || a.cfg.ReportStatus == nil {
+		return
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	a.observeOnce(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.observeOnce(ctx)
+		}
+	}
+}
+
+func (a *Worker) observeOnce(ctx context.Context) {
+	selector := "app.kubernetes.io/managed-by=piper,piper.io/workload-kind=serving"
+	namespaces := a.observedNamespaces()
+	seenNamespaces := make(map[string]struct{}, len(namespaces))
+	for _, namespace := range namespaces {
+		if namespace == "" {
+			continue
+		}
+		if _, seen := seenNamespaces[namespace]; seen {
+			continue
+		}
+		seenNamespaces[namespace] = struct{}{}
+		items, err := a.cfg.Client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			continue
+		}
+		for i := range items.Items {
+			deployment := &items.Items[i]
+			name := deployment.Labels["piper.io/workload-id"]
+			status := observedDeploymentStatus(deployment)
+			if name == "" || status == "" || !a.statusChanged(name, status) {
+				continue
+			}
+			_ = a.cfg.ReportStatus(serving.WorkerStatusUpdate{Name: name, Status: status})
+		}
+	}
+}
+
+func (a *Worker) rememberNamespace(namespace string) {
+	if namespace == "" {
+		return
+	}
+	a.statusMu.Lock()
+	a.namespaces[namespace] = struct{}{}
+	a.statusMu.Unlock()
+}
+
+func (a *Worker) observedNamespaces() []string {
+	a.statusMu.Lock()
+	defer a.statusMu.Unlock()
+	namespaces := make([]string, 0, len(a.namespaces)+len(a.cfg.Namespaces)+1)
+	namespaces = append(namespaces, a.servingNamespace())
+	namespaces = append(namespaces, a.cfg.Namespaces...)
+	for namespace := range a.namespaces {
+		namespaces = append(namespaces, namespace)
+	}
+	return namespaces
+}
+
+func (a *Worker) statusChanged(name, status string) bool {
+	a.statusMu.Lock()
+	defer a.statusMu.Unlock()
+	if a.lastStatus[name] == status {
+		return false
+	}
+	a.lastStatus[name] = status
+	return true
+}
+
+func observedDeploymentStatus(deployment *appsv1.Deployment) string {
+	desired := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desired = *deployment.Spec.Replicas
+	}
+	for _, condition := range deployment.Status.Conditions {
+		if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {
+			return serving.StatusFailed
+		}
+	}
+	if desired > 0 && deployment.Status.ReadyReplicas >= desired {
+		return serving.StatusRunning
+	}
+	return serving.StatusStarting
 }
 
 func (a *Worker) servingNamespace() string {

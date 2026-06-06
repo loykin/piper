@@ -3,10 +3,8 @@ package workload
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -26,62 +24,6 @@ type ProcessSpec struct {
 	// Sets CUDA_VISIBLE_DEVICES and ROCR_VISIBLE_DEVICES.
 	// Empty string leaves the host defaults unchanged.
 	GPUs string
-}
-
-// StartProcess launches a subprocess according to spec and returns
-// the process PID, its HTTP endpoint, and the underlying *exec.Cmd.
-// The process is started under context.Background() so it is not killed
-// when the caller's request context expires.
-func StartProcess(spec ProcessSpec) (pid int, endpoint string, cmd *exec.Cmd, err error) {
-	if len(spec.Command) == 0 {
-		return 0, "", nil, fmt.Errorf("workload: command must not be empty")
-	}
-	if spec.Port == 0 {
-		return 0, "", nil, fmt.Errorf("workload: port must be set")
-	}
-
-	args := ExpandArgs(spec.Command, spec.Env)
-	//nolint:gosec
-	cmd = exec.CommandContext(context.Background(), args[0], args[1:]...)
-
-	// Merge caller-supplied env vars on top of the process environment.
-	extra := os.Environ()
-	for k, v := range spec.Env {
-		extra = append(extra, k+"="+v)
-	}
-	if spec.GPUs != "" {
-		extra = append(extra,
-			"CUDA_VISIBLE_DEVICES="+spec.GPUs,
-			"ROCR_VISIBLE_DEVICES="+spec.GPUs,
-		)
-	}
-	cmd.Env = extra
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if spec.Dir != "" {
-		cmd.Dir = spec.Dir
-	}
-
-	if err = cmd.Start(); err != nil {
-		return 0, "", nil, fmt.Errorf("start process %q: %w", spec.Name, err)
-	}
-
-	endpoint = fmt.Sprintf("http://localhost:%d", spec.Port)
-	return cmd.Process.Pid, endpoint, cmd, nil
-}
-
-// KillPID sends SIGKILL to the given process ID on a best-effort basis.
-func KillPID(pid int) {
-	if pid <= 0 {
-		return
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return
-	}
-	if err := proc.Kill(); err != nil {
-		slog.Warn("workload: kill process failed", "pid", pid, "err", err)
-	}
 }
 
 // WaitReady polls url until it returns a non-5xx response or the timeout

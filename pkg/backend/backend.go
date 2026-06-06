@@ -23,6 +23,14 @@ type CancelableBackend interface {
 	CancelRun(ctx context.Context, runID string) error
 }
 
+// TaskOwner reports the worker selected by an active backend for a task.
+// It lets the queue validate worker-originated completion without owning
+// backend placement details.
+type TaskOwner interface {
+	OwnerForTask(taskID string) string
+	ReleaseTask(taskID string)
+}
+
 // LocalBackend dispatches tasks to an in-process runner.
 //
 // The runner still reports task completion through its configured MasterURL.

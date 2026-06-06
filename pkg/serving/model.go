@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	StatusRunning = "running"
-	StatusStopped = "stopped"
-	StatusFailed  = "failed"
+	StatusStarting = "starting"
+	StatusRunning  = "running"
+	StatusStopping = "stopping"
+	StatusStopped  = "stopped"
+	StatusFailed   = "failed"
 )
 
 // Service represents a deployed ModelService record in the database.

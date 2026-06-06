@@ -140,7 +140,9 @@ func TestAgentDriverStopAndDeprovision(t *testing.T) {
 	}
 }
 
-func TestAgentDriverSyncStatusMarksDisconnectedAgentStopped(t *testing.T) {
+func TestAgentDriverSyncStatusSkipsDisconnectedAgent(t *testing.T) {
+	// When the agent is offline, SyncStatus must NOT change the notebook status.
+	// The worker is the source of truth; an unreachable agent means "unknown", not "stopped".
 	repo := newFakeRepo()
 	if err := repo.Create(context.Background(), &notebook.NotebookServer{Name: "demo", WorkerID: "old-agent", Status: notebook.StatusRunning}); err != nil {
 		t.Fatalf("create repo record: %v", err)
@@ -148,12 +150,19 @@ func TestAgentDriverSyncStatusMarksDisconnectedAgentStopped(t *testing.T) {
 	reg := iagent.NewRegistry()
 	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{}, repo)
 
-	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "old-agent", Status: notebook.StatusRunning}}); err != nil {
+	applied := false
+	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "old-agent", Status: notebook.StatusRunning}}, func(name, status string) {
+		applied = true
+		_ = repo.SetStatus(context.Background(), name, status)
+	}); err != nil {
 		t.Fatalf("SyncStatus returned error: %v", err)
 	}
+	if applied {
+		t.Fatal("apply was called for offline agent; expected no-op")
+	}
 	nb, _ := repo.Get(context.Background(), "demo")
-	if nb.Status != notebook.StatusStopped {
-		t.Fatalf("status = %q, want stopped", nb.Status)
+	if nb.Status != notebook.StatusRunning {
+		t.Fatalf("status changed to %q; want unchanged %q", nb.Status, notebook.StatusRunning)
 	}
 }
 
@@ -167,7 +176,9 @@ func TestAgentDriverSyncStatus(t *testing.T) {
 	rpc := &recordingAgentRPC{}
 	driver := NewAgentDriver(iagent.NewRouter(reg), rpc, repo)
 
-	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "agent-1"}}); err != nil {
+	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "agent-1"}}, func(name, status string) {
+		_ = repo.SetStatus(context.Background(), name, status)
+	}); err != nil {
 		t.Fatalf("SyncStatus returned error: %v", err)
 	}
 	nb, _ := repo.Get(context.Background(), "demo")

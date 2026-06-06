@@ -1,152 +1,156 @@
 package workload
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/loykin/provisr/core"
+	"github.com/loykin/provisr/core/history"
 )
 
-// ExitHandler receives the normalized exit status for a managed process.
+// ExitHandler receives the normalized exit status ("stopped", "failed") for a managed process.
 type ExitHandler func(status string)
 
-type processRecord struct {
-	pid        int
-	stopped    bool
-	generation int64
-	onExit     ExitHandler
+// exitSink dispatches EventStop notifications to per-process onExit handlers
+// and unregisters the process from the manager after exit.
+type exitSink struct {
+	mu        sync.Mutex
+	callbacks map[string]ExitHandler
+	manager   *core.Manager
 }
 
-// ProcessSupervisor tracks named processes and normalizes their shutdown path.
+func newExitSink(mgr *core.Manager) *exitSink {
+	return &exitSink{callbacks: make(map[string]ExitHandler), manager: mgr}
+}
+
+func (s *exitSink) register(name string, fn ExitHandler) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.callbacks[name] = fn
+	s.mu.Unlock()
+}
+
+func (s *exitSink) Send(_ context.Context, evt history.Event) error {
+	if evt.Type != history.EventStop {
+		return nil
+	}
+	name := evt.Record.Name
+	s.mu.Lock()
+	fn := s.callbacks[name]
+	delete(s.callbacks, name)
+	s.mu.Unlock()
+	if fn != nil {
+		fn(evt.Record.LastStatus)
+	}
+	return nil
+}
+
+// ProcessSupervisor tracks named processes via provisr core.Manager.
 type ProcessSupervisor struct {
-	mu        sync.Mutex
-	processes map[string]*processRecord
-	nextGen   int64
-	wg        sync.WaitGroup
+	manager *core.Manager
+	sink    *exitSink
 }
 
 // NewProcessSupervisor creates an empty supervisor.
 func NewProcessSupervisor() *ProcessSupervisor {
-	return &ProcessSupervisor{
-		processes: make(map[string]*processRecord),
-	}
+	mgr := core.New()
+	sink := newExitSink(mgr)
+	mgr.SetHistorySinks(sink)
+	return &ProcessSupervisor{manager: mgr, sink: sink}
 }
 
-// Start launches a process and tracks its lifecycle under name.
+// Start launches a process and tracks its lifecycle under spec.Name.
+// If a process with the same name is already running it is stopped first.
 func (s *ProcessSupervisor) Start(spec ProcessSpec, onExit ExitHandler) (pid int, endpoint string, err error) {
-	pid, endpoint, cmd, err := StartProcess(spec)
+	args := ExpandArgs(spec.Command, spec.Env)
+
+	env := make([]string, 0, len(spec.Env)+2)
+	for k, v := range spec.Env {
+		env = append(env, k+"="+v)
+	}
+	if spec.GPUs != "" {
+		env = append(env,
+			"CUDA_VISIBLE_DEVICES="+spec.GPUs,
+			"ROCR_VISIBLE_DEVICES="+spec.GPUs,
+		)
+	}
+
+	pspec := core.Spec{
+		Name:    spec.Name,
+		Args:    args,
+		Env:     env,
+		WorkDir: spec.Dir,
+	}
+
+	// Stop any running instance before registering the callback for the new one.
+	_ = s.manager.Stop(spec.Name, 5*time.Second)
+
+	// Register callback for the new start after the old process has stopped.
+	s.sink.register(spec.Name, onExit)
+
+	// Register also starts the process.
+	if err := s.manager.Register(pspec); err != nil {
+		return 0, "", err
+	}
+
+	st, err := s.manager.Status(spec.Name)
 	if err != nil {
 		return 0, "", err
 	}
 
-	s.mu.Lock()
-	s.nextGen++
-	gen := s.nextGen
-	s.processes[spec.Name] = &processRecord{
-		pid:        pid,
-		generation: gen,
-		onExit:     onExit,
-	}
-	s.wg.Add(1)
-	s.mu.Unlock()
-
-	go s.watch(spec.Name, gen, cmd)
-	return pid, endpoint, nil
+	endpoint = fmt.Sprintf("http://localhost:%d", spec.Port)
+	return st.PID, endpoint, nil
 }
 
-// Stop marks a tracked process as intentionally stopped and best-effort kills it.
+// Stop marks a tracked process as intentionally stopped and signals it.
+// Stopping a non-existent process is a no-op.
 func (s *ProcessSupervisor) Stop(name string) error {
-	pid, ok := s.markStopped(name)
-	if !ok {
+	err := s.manager.Stop(name, 5*time.Second)
+	if err != nil && isNotFound(err) {
 		return nil
 	}
-	KillPID(pid)
-	return nil
+	return err
+}
+
+func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "not registered")
 }
 
 // KillAll stops all tracked processes and waits for their exit handlers.
 func (s *ProcessSupervisor) KillAll() error {
-	pids := s.markAllStopped()
-	for _, pid := range pids {
-		KillPID(pid)
-	}
-	s.wg.Wait()
-	return nil
+	return s.manager.Shutdown()
 }
 
-// Status reports whether a process is currently tracked.
+// Status reports the current state of a tracked process.
+// Returns ok=false when the process is not tracked or is stopped.
 func (s *ProcessSupervisor) Status(name string) (status string, ok bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rec, ok := s.processes[name]
-	if !ok {
+	st, err := s.manager.Status(name)
+	if err != nil || st.State == "stopped" || st.State == "failed" || st.State == "" {
 		return "", false
 	}
-	if rec.stopped {
-		return "stopped", true
-	}
-	return "running", true
+	return st.State, true
 }
 
-func (s *ProcessSupervisor) markStopped(name string) (int, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rec, ok := s.processes[name]
-	if !ok {
-		return 0, false
-	}
-	rec.stopped = true
-	return rec.pid, true
-}
-
-func (s *ProcessSupervisor) markAllStopped() []int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	pids := make([]int, 0, len(s.processes))
-	for _, rec := range s.processes {
-		rec.stopped = true
-		pids = append(pids, rec.pid)
-	}
-	return pids
-}
-
-func (s *ProcessSupervisor) watch(name string, gen int64, cmd *exec.Cmd) {
-	defer s.wg.Done()
-
-	err := cmd.Wait()
-	status := "stopped"
-	if err != nil {
-		status = "failed"
-	}
-
-	var onExit ExitHandler
-	s.mu.Lock()
-	rec, ok := s.processes[name]
-	if ok && rec.generation == gen {
-		if rec.stopped {
-			status = "stopped"
-		}
-		onExit = rec.onExit
-		delete(s.processes, name)
-	}
-	s.mu.Unlock()
-
-	if onExit != nil {
-		onExit(status)
-	}
-}
-
-// Active returns the names of all tracked processes.
+// Active returns the names of all currently running or starting processes.
 func (s *ProcessSupervisor) Active() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	active := make([]string, 0, len(s.processes))
-	for name := range s.processes {
-		active = append(active, name)
+	statuses, err := s.manager.StatusAll("")
+	if err != nil {
+		return nil
 	}
-	return active
-}
-
-// String is useful in debugging and tests.
-func (s *ProcessSupervisor) String() string {
-	return fmt.Sprintf("ProcessSupervisor(active=%d)", len(s.Active()))
+	names := make([]string, 0, len(statuses))
+	for _, st := range statuses {
+		if st.State != "stopped" && st.State != "failed" && st.State != "" {
+			names = append(names, st.Name)
+		}
+	}
+	return names
 }

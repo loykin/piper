@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -353,6 +354,143 @@ func TestExampleArtifacts(t *testing.T) {
 	if status != "success" {
 		t.Errorf("run %s: status=%q, want success", runID, status)
 	}
+}
+
+// TestExampleNotebookPipelineTemplate snapshots a notebook workspace through
+// the PipelineTemplate API, then executes notebook -> Python steps and verifies
+// dependency installation, sibling imports, and artifact handoff.
+func TestExampleNotebookPipelineTemplate(t *testing.T) {
+	pythonEnv := os.Getenv("PIPER_PIPELINE_TEMPLATE_E2E_ENV")
+	if pythonEnv != "" {
+		t.Setenv("PATH", filepath.Join(pythonEnv, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	if out, err := exec.Command("papermill", "--version").CombinedOutput(); err != nil {
+		t.Skipf("papermill is required; set PIPER_PIPELINE_TEMPLATE_E2E_ENV to a prepared venv: %v (%s)", err, out)
+	}
+
+	root := moduleRoot(t)
+	workspace := filepath.Join(root, "examples", "notebook-template")
+	pipelineYAML, err := os.ReadFile(filepath.Join(workspace, "pipeline.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	port := freePort(t)
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	tmpDir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "pipeline-template.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+
+	storeDir := filepath.Join(tmpDir, "store")
+	p, err := piper.New(piper.Config{
+		DB:        db,
+		OutputDir: filepath.Join(tmpDir, "server-outputs"),
+		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
+		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	const volumeID = "notebook-template-volume"
+	now := time.Now()
+	if _, err := db.Exec(
+		`INSERT INTO notebook_volumes (id, label, work_dir, status, worker_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		volumeID, "notebook-template", workspace, notebook.VolumeStatusReleased, "", now, now,
+	); err != nil {
+		t.Fatalf("register notebook volume: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
+	waitReady(t, serverURL+"/api/pipelines", 10*time.Second)
+
+	w, err := worker.New(worker.Config{
+		MasterURL:   serverURL,
+		OutputDir:   filepath.Join(tmpDir, "worker-outputs"),
+		StorageURL:  serverURL + "/store",
+		Concurrency: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = w.Run(ctx) }()
+
+	templateID := submitPipelineTemplate(t, serverURL, string(pipelineYAML), volumeID)
+	runID := runPipelineTemplate(t, serverURL, templateID)
+	if status := pollRunStatus(t, serverURL, runID, 2*time.Minute); status != "success" {
+		t.Fatalf("run %s: status=%q, want success", runID, status)
+	}
+
+	summaryPath := filepath.Join(storeDir, runID, "summarize", "summary", "summary.json")
+	summaryBytes, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read final artifact: %v", err)
+	}
+	var summary struct {
+		Count  int    `json:"count"`
+		Sum    int    `json:"sum"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(summaryBytes, &summary); err != nil {
+		t.Fatalf("decode final artifact: %v", err)
+	}
+	if summary.Count != 4 || summary.Sum != 30 || summary.Source != "notebook" {
+		t.Fatalf("unexpected final artifact: %+v", summary)
+	}
+}
+
+func submitPipelineTemplate(t *testing.T, baseURL, yamlText, volumeID string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{
+		"name":      "notebook-template-flow",
+		"yaml":      yamlText,
+		"volume_id": volumeID,
+	})
+	resp, err := http.Post(baseURL+"/api/pipelines", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /pipelines: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /pipelines returned %d: %s", resp.StatusCode, payload)
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	return result.ID
+}
+
+func runPipelineTemplate(t *testing.T, baseURL, templateID string) string {
+	t.Helper()
+	resp, err := http.Post(baseURL+"/api/pipelines/"+templateID+"/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("POST /pipelines/:id/run: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /pipelines/:id/run returned %d: %s", resp.StatusCode, payload)
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	return result.ID
 }
 
 // ─── Example YAML parsing (static) ───────────────────────────────────────────

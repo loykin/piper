@@ -104,11 +104,22 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Download dependencies
         run: go mod download
 
+      - name: Install pipeline notebook environment
+        run: |
+          python -m venv /tmp/piper-pipeline-template-e2e
+          /tmp/piper-pipeline-template-e2e/bin/pip install --quiet papermill ipykernel setuptools
+
       - name: Run examples e2e (library, bare-metal, YAML parsing)
-        run: go test -tags=example_e2e -v -timeout=120s ./examples/
+        run: |
+          PIPER_PIPELINE_TEMPLATE_E2E_ENV=/tmp/piper-pipeline-template-e2e \
+            go test -tags=example_e2e -v -timeout=5m ./examples/
 
   k8s-e2e:
     name: K8s E2E

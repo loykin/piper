@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 
 	"github.com/piper/piper/pkg/pipeline"
@@ -34,7 +35,14 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 		if err != nil {
 			return fmt.Errorf("fetch failed: %w", err)
 		}
-		workDir = fetchDir
+		scriptPath, err = filepath.Abs(scriptPath)
+		if err != nil {
+			return fmt.Errorf("resolve source path: %w", err)
+		}
+		workDir, err = filepath.Abs(fetchDir)
+		if err != nil {
+			return fmt.Errorf("resolve source work dir: %w", err)
+		}
 		extraEnv = append(extraEnv, "PIPER_SCRIPT_PATH="+scriptPath)
 	}
 
@@ -46,6 +54,10 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	}
 	if stderr == nil {
 		stderr = os.Stderr
+	}
+
+	if err := runPrepare(ctx, step, cfg, workDir, stdout, stderr); err != nil {
+		return err
 	}
 
 	cmd := exec.Command(step.Run.Command[0], step.Run.Command[1:]...)

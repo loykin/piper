@@ -1,0 +1,48 @@
+apiVersion: piper/v1
+kind: Pipeline
+
+metadata:
+  name: notebook-template-flow
+  description: Notebook workspace snapshot, notebook execution, and Python artifact handoff
+
+spec:
+  steps:
+    - name: build-features
+      run:
+        type: notebook
+        source: local
+        notebook: notebooks/build_features.ipynb
+        deps:
+          - support
+          - vendor/tinyrecord
+        prepare:
+          - [python3, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
+      env:
+        PYTHONPATH: ".deps:."
+        PAPERMILL_PROGRESS_BAR: "false"
+      params:
+        multiplier: 3
+      outputs:
+        - name: features
+          path: features.json
+
+    - name: summarize
+      depends_on: [build-features]
+      run:
+        type: python
+        source: local
+        path: scripts/summarize.py
+        deps:
+          - support
+          - vendor/tinyrecord
+        prepare:
+          - [python3, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
+        command: [sh, -c, 'python3 "$PIPER_SCRIPT_PATH"']
+      env:
+        PYTHONPATH: ".deps:."
+      inputs:
+        - name: features
+          from: build-features/features
+      outputs:
+        - name: summary
+          path: summary.json

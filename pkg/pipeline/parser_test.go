@@ -113,6 +113,25 @@ spec:
 	}
 }
 
+func TestParse_emptyPrepareCommand(t *testing.T) {
+	yaml := `
+metadata:
+  name: bad-prepare
+spec:
+  steps:
+    - name: train
+      run:
+        type: command
+        prepare:
+          - []
+        command: [echo, train]
+`
+	_, err := Parse([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected empty prepare command error")
+	}
+}
+
 func TestParse_emptyStepName(t *testing.T) {
 	yaml := `
 metadata:

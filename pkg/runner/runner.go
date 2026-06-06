@@ -167,6 +167,7 @@ func (r *Runner) execute(
 
 	cfg := executor.ExecConfig{
 		WorkDir:   task.WorkDir,
+		SourceDir: filepath.Join(outputDir, "_source"),
 		InputDir:  filepath.Join(r.cfg.InputDir, task.RunID),
 		OutputDir: outputDir,
 		RunID:     task.RunID,
@@ -177,8 +178,9 @@ func (r *Runner) execute(
 		Vars:      task.Vars,
 		GPUs:      step.Resources.GPU,
 		SourceCfg: source.Config{
-			GitToken: r.cfg.GitToken,
-			GitUser:  r.cfg.GitUser,
+			GitToken:   r.cfg.GitToken,
+			GitUser:    r.cfg.GitUser,
+			StorageURL: r.cfg.StorageURL,
 		},
 	}
 

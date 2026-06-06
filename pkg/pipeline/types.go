@@ -34,6 +34,11 @@ func (p *Pipeline) Validate() error {
 				return fmt.Errorf("step %q depends on unknown step %q", s.Name, dep)
 			}
 		}
+		for i, command := range s.Run.Prepare {
+			if len(command) == 0 {
+				return fmt.Errorf("step %q prepare[%d] command is empty", s.Name, i)
+			}
+		}
 	}
 	return nil
 }
@@ -87,18 +92,19 @@ type Step struct {
 }
 
 type Run struct {
-	Type           string   `yaml:"type"`   // notebook | python | command
-	Source         string   `yaml:"source"` // git | s3 | http | local
-	Repo           string   `yaml:"repo"`
-	Branch         string   `yaml:"branch"`
-	Path           string   `yaml:"path"`
-	Notebook       string   `yaml:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
-	Deps           []string `yaml:"deps,omitempty"`     // extra files/dirs to snapshot alongside the entry point
-	Dir            string   `yaml:"dir"`                // sub-directory name for the source checkout (defaults to step name)
-	URL            string   `yaml:"url"`                // http/https URL (source: http)
-	Command        []string `yaml:"command"`
-	Image          string   `yaml:"image"`                     // Docker image to use for this step (optional)
-	SnapshotPrefix string   `yaml:"snapshot_prefix,omitempty"` // set at runtime after submit; worker downloads this prefix
+	Type           string     `yaml:"type"`   // notebook | python | command
+	Source         string     `yaml:"source"` // git | s3 | http | local
+	Repo           string     `yaml:"repo"`
+	Branch         string     `yaml:"branch"`
+	Path           string     `yaml:"path"`
+	Notebook       string     `yaml:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
+	Deps           []string   `yaml:"deps,omitempty"`     // extra files/dirs to snapshot alongside the entry point
+	Prepare        [][]string `yaml:"prepare,omitempty"`  // commands run sequentially after source fetch and before the entry point
+	Dir            string     `yaml:"dir"`                // sub-directory name for the source checkout (defaults to step name)
+	URL            string     `yaml:"url"`                // http/https URL (source: http)
+	Command        []string   `yaml:"command"`
+	Image          string     `yaml:"image"`                     // Docker image to use for this step (optional)
+	SnapshotPrefix string     `yaml:"snapshot_prefix,omitempty"` // set at runtime after submit; worker downloads this prefix
 }
 
 type Artifact struct {

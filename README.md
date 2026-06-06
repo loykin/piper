@@ -796,6 +796,7 @@ examples/           usage examples
 | `examples/artifacts/` | S3 artifact passing between steps |
 | `examples/git-source/` | Fetching scripts from a Git repository |
 | `examples/notebook/` | Jupyter notebook execution via papermill |
+| `examples/notebook-template/` | Notebook workspace snapshot, `prepare`, notebook-to-Python artifacts |
 | `examples/bare-metal/` | Server + worker setup with label routing (Go + YAML) |
 | `examples/kubernetes/` | Per-step container images on Kubernetes |
 | `examples/serving/` | ModelService deployment and inference proxy |

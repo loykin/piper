@@ -55,6 +55,7 @@ func newE2EServer(t *testing.T) (*Piper, *testutil.Server) {
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
+	p.SetDispatchMode("agent")
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
@@ -83,15 +84,15 @@ func startE2EAgentServer(t *testing.T, p *Piper) string {
 	return addr
 }
 
-// startE2EWorker starts a worker goroutine connected to masterURL.
-// The worker is stopped when the test ends via t.Cleanup.
-func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config)) {
+// startE2EWorker starts a gRPC pipeline worker goroutine and blocks until it
+// registers with the master. The worker is stopped when the test ends via t.Cleanup.
+func startE2EWorker(t *testing.T, agentAddr, masterURL string, extra ...func(*worker.Config)) {
 	t.Helper()
 	cfg := worker.Config{
-		MasterURL:    masterURL,
-		OutputDir:    t.TempDir(),
-		PollInterval: 50 * time.Millisecond,
-		Concurrency:  2,
+		AgentAddr:   agentAddr,
+		MasterURL:   masterURL,
+		OutputDir:   t.TempDir(),
+		Concurrency: 2,
 	}
 	for _, f := range extra {
 		f(&cfg)
@@ -110,6 +111,30 @@ func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config
 		cancel()
 		<-done
 	})
+	// Wait for the worker to appear as a pipeline agent before returning so that
+	// tests can submit pipelines immediately without racing against dispatch.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(masterURL + "/api/agents")
+		if err == nil {
+			var agents []struct {
+				Capabilities []string `json:"capabilities"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			resp.Body.Close()
+			for _, a := range agents {
+				for _, c := range a.Capabilities {
+					if c == "pipeline" {
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	t.Fatal("pipeline worker did not register within 5s")
 }
 
 func startE2EServingWorker(t *testing.T, httpURL, agentAddr, id string) {
@@ -294,8 +319,8 @@ func waitRunStatus(t *testing.T, serverURL, runID, wantStatus string, timeout ti
 // TestE2E_WorkerExecutesPipeline verifies the full polling worker flow:
 // server receives a pipeline, worker picks it up, executes it, and reports back.
 func TestE2E_WorkerExecutesPipeline(t *testing.T) {
-	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
+	p, srv := newE2EServer(t)
+	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL)
 
 	yaml := `
 metadata:
@@ -344,9 +369,10 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 
-	startE2EWorker(t, srv.URL)
+	p.SetDispatchMode("agent")
+	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL)
 	startE2EServingWorker(t, srv.URL, p.cfg.Server.AgentAddr, "serving-agent")
-	pipelineWorkerID := findE2EPollingWorker(t, srv.URL)
+	pipelineWorkerID := findE2EAgentByCapability(t, srv.URL, "pipeline")
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
 metadata:
@@ -384,8 +410,8 @@ spec:
 // TestE2E_RunCancellation verifies that canceling a run via the API propagates
 // through the SSE event stream to the worker, which stops the in-flight task.
 func TestE2E_RunCancellation(t *testing.T) {
-	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
+	p, srv := newE2EServer(t)
+	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL)
 
 	yaml := `
 metadata:
@@ -417,8 +443,8 @@ spec:
 // TestE2E_StepMetrics verifies that PIPER_METRIC lines printed by a step are
 // parsed and stored, and retrievable via GET /runs/{id}/metrics.
 func TestE2E_StepMetrics(t *testing.T) {
-	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
+	p, srv := newE2EServer(t)
+	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL)
 
 	yaml := `
 metadata:
@@ -475,8 +501,8 @@ func TestE2E_WorkerS3Artifacts(t *testing.T) {
 		t.Fatalf("create bucket: %v", err)
 	}
 
-	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
+	p, srv := newE2EServer(t)
+	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL, func(cfg *worker.Config) {
 		cfg.StorageURL = fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
 	})
 
@@ -512,8 +538,8 @@ spec:
 // TestE2E_MultiStepParallel verifies that independent steps run in parallel
 // and dependent steps wait for their prerequisites.
 func TestE2E_MultiStepParallel(t *testing.T) {
-	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
+	p, srv := newE2EServer(t)
+	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL)
 
 	yaml := `
 metadata:
@@ -589,6 +615,7 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Serv
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
+	p.SetDispatchMode("agent")
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
@@ -616,6 +643,7 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
+	p.SetDispatchMode("agent")
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
@@ -720,7 +748,7 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 	startE2EServingWorker(t, srv.URL, piperInst.cfg.Server.AgentAddr, "fake-serving-worker")
 
 	// Worker shares the same storage backend as the server.
-	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
+	startE2EWorker(t, piperInst.cfg.Server.AgentAddr, srv.URL, func(cfg *worker.Config) {
 		cfg.OutputDir = outputDir
 		cfg.StorageURL = storageURL
 	})

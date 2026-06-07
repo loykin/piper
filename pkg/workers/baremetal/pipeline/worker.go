@@ -39,7 +39,7 @@ type Config struct {
 	Concurrency int
 	// Runtime selects the execution environment: "baremetal" (default) or "docker".
 	Runtime RuntimeType
-	// Artifact store configuration passed through to piper agent exec.
+	// Artifact store connection passed through to piper agent exec.
 	MasterURL  string
 	Token      string
 	StorageURL string
@@ -47,6 +47,10 @@ type Config struct {
 	// MetaDir is the directory for baremetal runtime metadata sidecar files.
 	MetaDir     string
 	RemoteStore bool
+	// Git source credentials forwarded to piper agent exec as environment variables.
+	// Falls back to PIPER_GIT_USER / PIPER_GIT_TOKEN env vars when empty.
+	GitUser  string
+	GitToken string
 	// Docker-specific config (only used when Runtime == "docker").
 	DefaultImage  string
 	DockerNetwork string
@@ -223,18 +227,23 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 
 	runtimeKey := taskruntime.RuntimeKey(w.cfg.ID, task.RunID, task.StepName, task.Attempt)
 
-	// ExecSpec is environment-agnostic. Each Driver resolves paths and builds
-	// agent exec args internally based on its own execution environment.
 	spec := taskruntime.ExecSpec{
-		RuntimeKey:    runtimeKey,
-		HostOutputDir: w.cfg.OutputDir,
-		MasterURL:     w.cfg.MasterURL,
-		Token:         w.cfg.Token,
-		StorageURL:    w.cfg.StorageURL,
-		Env: []string{
-			"PIPER_GIT_USER=" + os.Getenv("PIPER_GIT_USER"),
-			"PIPER_GIT_TOKEN=" + os.Getenv("PIPER_GIT_TOKEN"),
-		},
+		RuntimeKey: runtimeKey,
+		OutputDir:  w.cfg.OutputDir,
+		MasterURL:  w.cfg.MasterURL,
+		Token:      w.cfg.Token,
+		StorageURL: w.cfg.StorageURL,
+		Env:        w.gitEnv(),
+	}
+
+	// Image must be resolved here (in the worker layer) for container runtimes.
+	// Baremetal subprocesses run the host binary directly — no image needed.
+	if w.cfg.Runtime == RuntimeDocker {
+		image, err := taskruntime.ResolveImage(task, w.cfg.DefaultImage)
+		if err != nil {
+			return err
+		}
+		spec.Image = image
 	}
 
 	handle, err := w.driver.Start(ctx, task, spec)
@@ -317,22 +326,19 @@ func (w *Worker) buildResult(handle taskruntime.Handle, exit taskruntime.Exit) p
 // cancelRun stops all active jobs for the given run.
 func (w *Worker) cancelRun(runID string) {
 	w.mu.Lock()
-	var toCancel []string
-	for key, tt := range w.active {
+	var toStop []trackedTask
+	for _, tt := range w.active {
 		if tt.handle.RunID == runID {
-			toCancel = append(toCancel, key)
+			toStop = append(toStop, *tt)
 			tt.cancel()
 		}
 	}
 	w.mu.Unlock()
 
-	for _, key := range toCancel {
-		w.mu.Lock()
-		tt := w.active[key]
-		w.mu.Unlock()
-		if tt != nil {
-			_ = w.driver.Stop(context.Background(), tt.handle, 10*time.Second)
-		}
+	// Stop the drivers using the handles captured under the lock.
+	// Re-querying w.active would race with the observe goroutine's cleanup.
+	for _, tt := range toStop {
+		_ = w.driver.Stop(context.Background(), tt.handle, 10*time.Second)
 	}
 }
 
@@ -378,6 +384,23 @@ func (w *Worker) shutdown() {
 	}
 	if closer, ok := w.driver.(interface{ Close() error }); ok {
 		_ = closer.Close()
+	}
+}
+
+// gitEnv returns the PIPER_GIT_* environment variables for forwarding to
+// piper agent exec subprocesses. Config values take precedence over env vars.
+func (w *Worker) gitEnv() []string {
+	user := w.cfg.GitUser
+	if user == "" {
+		user = os.Getenv("PIPER_GIT_USER")
+	}
+	token := w.cfg.GitToken
+	if token == "" {
+		token = os.Getenv("PIPER_GIT_TOKEN")
+	}
+	return []string{
+		"PIPER_GIT_USER=" + user,
+		"PIPER_GIT_TOKEN=" + token,
 	}
 }
 

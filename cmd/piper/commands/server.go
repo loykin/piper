@@ -69,6 +69,8 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 				Token:       p.Config().Server.Token,
 				StorageURL:  resolveStorageURLFromViper(),
 				OutputDir:   viper.GetString("worker.output_dir"),
+				GitUser:     viper.GetString("git.user"),
+				GitToken:    viper.GetString("git.token"),
 			}
 			w, err := worker.New(wCfg)
 			if err != nil {

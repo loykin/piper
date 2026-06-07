@@ -34,6 +34,8 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 
 	handle, err := driver.Start(context.Background(), task, taskruntime.ExecSpec{
 		RuntimeKey: "worker-1-run-1-train-a1",
+		Image:      "python:3.12", // pre-resolved by the worker layer
+		Namespace:  "jobs",        // pre-resolved by the worker layer
 		MasterURL:  "http://master:8080",
 		Token:      "token",
 		StorageURL: "s3://bucket",
@@ -156,56 +158,6 @@ func TestDriverRejectsUnsafeTTL(t *testing.T) {
 		TTLAfterFinished: &ttl,
 	}); err == nil {
 		t.Fatal("expected short TTL to be rejected")
-	}
-}
-
-func TestResolveImagePriority(t *testing.T) {
-	cases := []struct {
-		name          string
-		runnerImage   string
-		runImage      string
-		pipelineImage string
-		defaultImage  string
-		want          string
-		wantErr       bool
-	}{
-		{name: "runner", runnerImage: "runner:1", runImage: "run:1", pipelineImage: "pipeline:1", defaultImage: "default:1", want: "runner:1"},
-		{name: "run", runImage: "run:1", pipelineImage: "pipeline:1", defaultImage: "default:1", want: "run:1"},
-		{name: "pipeline", pipelineImage: "pipeline:1", defaultImage: "default:1", want: "pipeline:1"},
-		{name: "worker default", defaultImage: "default:1", want: "default:1"},
-		{name: "missing", wantErr: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			task := testTask(t, "jobs")
-			var step pipeline.Step
-			if err := json.Unmarshal(task.Step, &step); err != nil {
-				t.Fatal(err)
-			}
-			step.Runner.Image = tc.runnerImage
-			step.Run.Image = tc.runImage
-			task.Step, _ = json.Marshal(step)
-			var pl pipeline.Pipeline
-			if err := json.Unmarshal(task.Pipeline, &pl); err != nil {
-				t.Fatal(err)
-			}
-			pl.Spec.Defaults.Image = tc.pipelineImage
-			task.Pipeline, _ = json.Marshal(pl)
-
-			got, err := resolveImage(task, tc.defaultImage)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected image resolution error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tc.want {
-				t.Fatalf("image = %q, want %q", got, tc.want)
-			}
-		})
 	}
 }
 

@@ -89,7 +89,9 @@ func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
 	// The server's SQLite DB lands at workDir/piper-outputs/piper.db (default).
 	workDir := t.TempDir()
 	serverPort := freeLocalPort(t)
+	agentPort := freeLocalPort(t)
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", serverPort)
+	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
 
 	configPath := filepath.Join(workDir, "piper.yaml")
 	writeBinaryE2EFile(t, configPath, fmt.Sprintf(`
@@ -100,13 +102,17 @@ source:
     secret_key: "test"
     bucket: %q
     use_ssl: false
-`, s3Endpoint, bucket))
+pipeline:
+  dispatch_mode: agent
+worker:
+  agent_addr: %q
+`, s3Endpoint, bucket, agentAddr))
 
 	// ── Server subprocess ─────────────────────────────────────────────────────
-	// Pass --addr explicitly: server.addr in the config file is ignored because
-	// buildConfig() runs before initConfig() loads the YAML.
+	// Pass --addr and --agent-addr explicitly: server.addr in the config file is
+	// ignored because buildConfig() runs before initConfig() loads the YAML.
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	srvCmd := exec.Command(binary, "server", "--config", configPath, "--addr", listenAddr)
+	srvCmd := exec.Command(binary, "server", "--config", configPath, "--addr", listenAddr, "--agent-addr", agentAddr)
 	srvCmd.Dir = workDir
 	srvCmd.Stdout = os.Stdout
 	srvCmd.Stderr = os.Stderr
@@ -118,8 +124,8 @@ source:
 	waitHTTPReady(t, serverURL+"/health", 15*time.Second)
 
 	// ── Worker subprocess ─────────────────────────────────────────────────────
-	// --master is required by cobra; S3 credentials come from the config file.
-	wrkCmd := exec.Command(binary, "worker", "--config", configPath, "--master", serverURL)
+	// --master and --agent-addr are required; S3 credentials come from the config file.
+	wrkCmd := exec.Command(binary, "worker", "--config", configPath, "--master", serverURL, "--agent-addr", agentAddr)
 	wrkCmd.Dir = workDir
 	wrkCmd.Stdout = os.Stdout
 	wrkCmd.Stderr = os.Stderr
@@ -127,6 +133,10 @@ source:
 		t.Fatalf("start worker: %v", err)
 	}
 	t.Cleanup(func() { _ = wrkCmd.Process.Kill() })
+
+	// Wait for the worker to register before submitting pipelines: in agent
+	// dispatch mode an unregistered worker causes immediate task failure.
+	waitBinaryE2EAgent(t, serverURL, "pipeline", 15*time.Second)
 
 	// ── Submit pipeline ───────────────────────────────────────────────────────
 	const pipelineYAML = `
@@ -181,6 +191,33 @@ func writeBinaryE2EFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// waitBinaryE2EAgent polls /api/agents until an agent with the given capability
+// appears, or fails the test after timeout.
+func waitBinaryE2EAgent(t *testing.T, serverURL, capability string, timeout time.Duration) {
+	t.Helper()
+	client := &http.Client{Timeout: time.Second}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(serverURL + "/api/agents") //nolint:noctx
+		if err == nil {
+			var agents []struct {
+				Capabilities []string `json:"capabilities"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&agents)
+			_ = resp.Body.Close()
+			for _, a := range agents {
+				for _, c := range a.Capabilities {
+					if c == capability {
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("no %q agent registered within %s", capability, timeout)
 }
 
 func waitHTTPReady(t *testing.T, url string, timeout time.Duration) {

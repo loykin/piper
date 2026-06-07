@@ -38,6 +38,8 @@ func newWorkerCmd() *cobra.Command {
 				OutputDir:     viper.GetString("worker.output_dir"),
 				MetaDir:       viper.GetString("worker.meta_dir"),
 				RemoteStore:   viper.GetString("storage.url") != "" || viper.GetString("s3.bucket") != "",
+				GitUser:       viper.GetString("git.user"),
+				GitToken:      viper.GetString("git.token"),
 				DefaultImage:  viper.GetString("worker.default_image"),
 				DockerNetwork: viper.GetString("worker.docker_network"),
 			}

@@ -4,13 +4,11 @@ package docker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +16,6 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	dockerclient "github.com/moby/moby/client"
 
-	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/taskruntime" //nolint:depguard
 )
@@ -83,16 +80,17 @@ func (d *Driver) Close() error {
 }
 
 // Start creates and runs a container for the given pipeline step.
+// spec.Image must be pre-resolved by the worker; Start returns an error if it is empty.
 func (d *Driver) Start(ctx context.Context, task *proto.Task, spec taskruntime.ExecSpec) (taskruntime.Handle, error) {
-	image, err := resolveImage(task, d.cfg.DefaultImage)
-	if err != nil {
-		return taskruntime.Handle{}, err
+	image := spec.Image
+	if image == "" {
+		return taskruntime.Handle{}, fmt.Errorf("docker driver: spec.Image is required (resolve image before calling Start)")
 	}
 
 	// Docker uses container-side paths for agent exec; mounts host dirs at those paths.
 	resultDir := d.cfg.ResultDir
 	if resultDir == "" {
-		resultDir = filepath.Join(spec.HostOutputDir, ".results")
+		resultDir = filepath.Join(spec.OutputDir, ".results")
 	}
 	if err := os.MkdirAll(resultDir, 0755); err != nil {
 		return taskruntime.Handle{}, fmt.Errorf("create result dir: %w", err)
@@ -146,7 +144,7 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec taskruntime.E
 		// output artifacts
 		{
 			Type:   mount.TypeBind,
-			Source: spec.HostOutputDir,
+			Source: spec.OutputDir,
 			Target: taskruntime.ContainerOutputDir,
 		},
 	}
@@ -286,33 +284,4 @@ func (d *Driver) Recover(ctx context.Context) ([]taskruntime.Handle, error) {
 		slog.Info("docker: recovered container", "runtime_key", runtimeKey, "container_id", c.ID[:12])
 	}
 	return handles, nil
-}
-
-// resolveImage returns the container image for the step using K8s-equivalent priority:
-//
-//	step.runner.image → step.run.image → pipeline defaults.image → worker default
-func resolveImage(task *proto.Task, workerDefault string) (string, error) {
-	var step pipeline.Step
-	if len(task.Step) > 0 {
-		_ = json.Unmarshal(task.Step, &step)
-	}
-	if step.Runner.Image != "" {
-		return step.Runner.Image, nil
-	}
-	if step.Run.Image != "" {
-		return step.Run.Image, nil
-	}
-
-	var pl pipeline.Pipeline
-	if len(task.Pipeline) > 0 {
-		_ = json.Unmarshal(task.Pipeline, &pl)
-	}
-	if pl.Spec.Defaults.Image != "" {
-		return pl.Spec.Defaults.Image, nil
-	}
-
-	if workerDefault != "" {
-		return workerDefault, nil
-	}
-	return "", fmt.Errorf("step %q: no container image configured (set step.run.image, spec.defaults.image, or --default-image)", strings.TrimSpace(task.StepName))
 }

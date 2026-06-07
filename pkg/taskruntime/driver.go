@@ -48,14 +48,24 @@ type Exit struct {
 type ExecSpec struct {
 	RuntimeKey string
 
+	// Image is the resolved container image. Empty for baremetal (no container).
+	// Must be pre-resolved by the worker before calling Driver.Start(); drivers
+	// must not re-derive this from the task payload.
+	Image string
+
+	// Namespace is the resolved K8s namespace. Empty for baremetal and docker
+	// (ignored by those drivers). Pre-resolved and validated by the K8s worker.
+	Namespace string
+
 	// Artifact store connection (passed through to piper agent exec).
 	MasterURL  string
 	Token      string
 	StorageURL string
 
-	// HostOutputDir is the root output directory on the host filesystem.
-	// Baremetal uses it directly; Docker/K8s mount it into the container.
-	HostOutputDir string
+	// OutputDir is the output directory on the host filesystem.
+	// Baremetal uses it directly; Docker bind-mounts it into the container.
+	// K8s ignores it (uses emptyDir volumes managed by Kubernetes).
+	OutputDir string
 
 	// Env carries additional environment variables injected into the execution
 	// environment (e.g. PIPER_GIT_USER, PIPER_GIT_TOKEN).

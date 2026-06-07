@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -105,12 +106,23 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		return a.initErr
 	}
 
+	// Resolve image and namespace here (worker layer), not inside the driver.
+	image, err := taskruntime.ResolveImage(task, a.cfg.DefaultImage)
+	if err != nil {
+		return err
+	}
+	namespace := taskruntime.ResolveNamespace(task, a.cfg.Namespace)
+	if len(a.cfg.Namespaces) > 0 && !slices.Contains(a.cfg.Namespaces, namespace) {
+		return fmt.Errorf("k8s pipeline worker: namespace %q is not in the allowed list", namespace)
+	}
+
 	spec := taskruntime.ExecSpec{
-		RuntimeKey:    taskruntime.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
-		HostOutputDir: "/piper-outputs", // K8s uses emptyDir; HostOutputDir is not mounted
-		MasterURL:     a.cfg.MasterURL,
-		Token:         a.cfg.Token,
-		StorageURL:    a.cfg.StorageURL,
+		RuntimeKey: taskruntime.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
+		Image:      image,
+		Namespace:  namespace,
+		MasterURL:  a.cfg.MasterURL,
+		Token:      a.cfg.Token,
+		StorageURL: a.cfg.StorageURL,
 	}
 
 	handle, err := a.driver.Start(ctx, task, spec)

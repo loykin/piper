@@ -5,7 +5,6 @@ package k8sdriver
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/piper/piper/pkg/internal/k8smeta"
 	k8slauncher "github.com/piper/piper/pkg/k8s"
-	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/taskruntime"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -86,13 +84,15 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec taskruntime.E
 	if spec.RuntimeKey == "" {
 		return taskruntime.Handle{}, fmt.Errorf("k8s driver: runtime key is required")
 	}
-	namespace, err := d.resolveNamespace(task)
-	if err != nil {
-		return taskruntime.Handle{}, err
+	// Image and namespace are pre-resolved by the K8s worker; drivers must not
+	// re-derive them from the task payload.
+	image := spec.Image
+	if image == "" {
+		return taskruntime.Handle{}, fmt.Errorf("k8s driver: spec.Image is required (resolve image before calling Start)")
 	}
-	image, err := resolveImage(task, d.cfg.DefaultImage)
-	if err != nil {
-		return taskruntime.Handle{}, err
+	namespace := spec.Namespace
+	if namespace == "" {
+		namespace = d.defaultNamespace()
 	}
 	agentArgs, err := taskruntime.BuildAgentExec(task, taskruntime.AgentExecConfig{
 		MasterURL:  spec.MasterURL,
@@ -263,43 +263,6 @@ func (d *Driver) reconcileOnce(ctx context.Context) {
 }
 
 // ── namespace / launcher helpers ─────────────────────────────────────────────
-
-func (d *Driver) resolveNamespace(task *proto.Task) (string, error) {
-	var pl pipeline.Pipeline
-	if err := json.Unmarshal(task.Pipeline, &pl); err != nil {
-		return "", fmt.Errorf("k8s driver: unmarshal pipeline: %w", err)
-	}
-	namespace := pl.Spec.Placement.Namespace
-	if namespace == "" {
-		namespace = d.defaultNamespace()
-	}
-	if len(d.cfg.Namespaces) > 0 && namespace != d.cfg.Namespace && !slices.Contains(d.cfg.Namespaces, namespace) {
-		return "", fmt.Errorf("k8s driver: namespace %q is not allowed", namespace)
-	}
-	return namespace, nil
-}
-
-func resolveImage(task *proto.Task, defaultImage string) (string, error) {
-	var step pipeline.Step
-	if err := json.Unmarshal(task.Step, &step); err != nil {
-		return "", fmt.Errorf("k8s driver: unmarshal step: %w", err)
-	}
-	var pl pipeline.Pipeline
-	if err := json.Unmarshal(task.Pipeline, &pl); err != nil {
-		return "", fmt.Errorf("k8s driver: unmarshal pipeline: %w", err)
-	}
-	for _, image := range []string{
-		step.Runner.Image,
-		step.Run.Image,
-		pl.Spec.Defaults.Image,
-		defaultImage,
-	} {
-		if image != "" {
-			return image, nil
-		}
-	}
-	return "", fmt.Errorf("step %q: no container image configured", step.Name)
-}
 
 func (d *Driver) launcher(namespace string) *k8slauncher.Launcher {
 	d.launcherMu.Lock()

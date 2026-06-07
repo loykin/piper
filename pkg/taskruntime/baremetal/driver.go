@@ -105,7 +105,7 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec taskruntime.Exe
 	pidFile := d.pidPath(spec.RuntimeKey)
 
 	// Baremetal uses host-side paths directly.
-	resultDir := filepath.Join(spec.HostOutputDir, ".results")
+	resultDir := filepath.Join(spec.OutputDir, ".results")
 	if err := os.MkdirAll(resultDir, 0755); err != nil {
 		return taskruntime.Handle{}, fmt.Errorf("create result dir: %w", err)
 	}
@@ -115,8 +115,8 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec taskruntime.Exe
 		MasterURL:  spec.MasterURL,
 		Token:      spec.Token,
 		StorageURL: spec.StorageURL,
-		OutputDir:  spec.HostOutputDir,
-		InputDir:   spec.HostOutputDir,
+		OutputDir:  spec.OutputDir,
+		InputDir:   spec.OutputDir,
 		ResultFile: resultPath,
 		ReportMode: taskruntime.ReportModeFile,
 	})

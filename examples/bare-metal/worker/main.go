@@ -25,10 +25,14 @@ func main() {
 	flag.Parse()
 
 	w, err := worker.New(worker.Config{
-		MasterURL:   *master,
-		Label:       *label,
-		Concurrency: *concurrency,
-		OutputDir:   os.TempDir() + "/piper-worker-outputs",
+		Agent: worker.AgentConfig{
+			Label:       *label,
+			Concurrency: *concurrency,
+		},
+		Store: worker.StoreConfig{
+			MasterURL: *master,
+			OutputDir: os.TempDir() + "/piper-worker-outputs",
+		},
 	})
 	if err != nil {
 		log.Fatal(err)

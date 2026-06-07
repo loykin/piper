@@ -20,30 +20,54 @@ import (
 	k8sserving "github.com/piper/piper/pkg/workers/k8s/serving"
 )
 
-type Config struct {
-	// AgentAddr is the gRPC address of the piper master agent server, e.g. "master:9090".
-	AgentAddr string
-	// MasterURL is the HTTP address of the piper master (used by pipeline job pods for callbacks).
-	MasterURL   string
-	Token       string
+// AgentConfig configures the gRPC connection to the master agent server
+// and this worker's identity within the agent registry.
+type AgentConfig struct {
+	Addr        string // gRPC address of the master agent server, e.g. "master:9090"
 	ID          string
 	ClusterName string
-	Namespaces  []string
-	K8sClient   kubernetes.Interface
+}
 
-	NotebookNamespace    string
-	ServingNamespace     string
-	PipelineNamespace    string
+// MasterConfig holds the HTTP connection to the piper master,
+// forwarded to K8s Job pods for artifact callbacks.
+type MasterConfig struct {
+	URL   string
+	Token string
+}
+
+// K8sConfig groups all Kubernetes cluster options: client, namespaces,
+// images, storage, and pod defaults for all workload types.
+type K8sConfig struct {
+	Client     kubernetes.Interface
+	Namespaces []string // namespaces this worker may manage across all workload types
+
+	// Namespace routing per workload type (defaults to first Namespaces entry or "default").
+	NotebookNamespace string
+	ServingNamespace  string
+	PipelineNamespace string
+
+	// Container images.
 	NotebookImage        string
-	PipelineWorkerImage  string
-	StorageClass         string
-	StorageSize          string
+	PipelineWorkerImage  string // piper agent image for pipeline Job init containers
+	DefaultImage         string // fallback step image
 	AgentImagePullPolicy string
-	DefaultImage         string
-	TTLAfterFinished     *int32
-	StorageURL           string
-	ResultOutboxDir      string
-	PodDefaults          corev1.PodTemplateSpec
+
+	// Storage.
+	StorageClass     string
+	StorageSize      string
+	TTLAfterFinished *int32
+
+	PodDefaults corev1.PodTemplateSpec
+}
+
+type Config struct {
+	Agent  AgentConfig
+	Master MasterConfig
+	K8s    K8sConfig
+	// StorageURL is the artifact store URL forwarded to pipeline Job pods.
+	StorageURL string
+	// ResultOutboxDir is the durable directory for unacknowledged pipeline results.
+	ResultOutboxDir string
 }
 
 type Worker struct {
@@ -58,21 +82,21 @@ type Worker struct {
 
 func New(cfg Config) *Worker {
 	capabilities := []string{iagent.CapabilityK8s}
-	if cfg.K8sClient != nil {
+	if cfg.K8s.Client != nil {
 		capabilities = append(capabilities, iagent.CapabilityNotebook, iagent.CapabilityServing, iagent.CapabilityPipeline)
 	}
 
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		AgentAddr:    cfg.AgentAddr,
-		AgentID:      cfg.ID,
+		AgentAddr:    cfg.Agent.Addr,
+		AgentID:      cfg.Agent.ID,
 		Kind:         iagent.KindK8s,
-		ClusterName:  cfg.ClusterName,
+		ClusterName:  cfg.Agent.ClusterName,
 		Capabilities: capabilities,
 		Runtime:      iagent.RuntimeK8s,
 	})
 	outboxDir := cfg.ResultOutboxDir
 	if outboxDir == "" {
-		outboxDir = filepath.Join(os.TempDir(), "piper-result-outbox", cfg.ID)
+		outboxDir = filepath.Join(os.TempDir(), "piper-result-outbox", cfg.Agent.ID)
 	}
 	outbox, err := taskruntime.NewResultOutbox(
 		outboxDir,
@@ -89,42 +113,46 @@ func New(cfg Config) *Worker {
 	var notebookObserver *k8snotebook.Worker
 	var servingObserver *k8sserving.Worker
 	var pipelineObserver *k8spipeline.Worker
-	if cfg.K8sClient != nil {
+	if cfg.K8s.Client != nil {
 		notebookObserver = k8snotebook.Register(client.Dispatcher(), k8snotebook.Config{
-			WorkerID:     cfg.ID,
-			ClusterName:  cfg.ClusterName,
-			Namespaces:   cfg.Namespaces,
-			Client:       cfg.K8sClient,
-			Namespace:    cfg.NotebookNamespace,
-			Image:        cfg.NotebookImage,
-			StorageClass: cfg.StorageClass,
-			StorageSize:  cfg.StorageSize,
-			PodDefaults:  cfg.PodDefaults,
+			WorkerID:     cfg.Agent.ID,
+			ClusterName:  cfg.Agent.ClusterName,
+			Namespaces:   cfg.K8s.Namespaces,
+			Client:       cfg.K8s.Client,
+			Namespace:    cfg.K8s.NotebookNamespace,
+			Image:        cfg.K8s.NotebookImage,
+			StorageClass: cfg.K8s.StorageClass,
+			StorageSize:  cfg.K8s.StorageSize,
+			PodDefaults:  cfg.K8s.PodDefaults,
 			ReportStatus: func(update notebook.WorkerStatusUpdate) error {
 				return client.SendPush(iagent.MethodNotebookStatusUpdate, update)
 			},
 		})
 		servingObserver = k8sserving.Register(client.Dispatcher(), k8sserving.Config{
-			ClusterName: cfg.ClusterName,
-			Namespaces:  cfg.Namespaces,
-			Client:      cfg.K8sClient,
-			Namespace:   cfg.ServingNamespace,
+			ClusterName: cfg.Agent.ClusterName,
+			Namespaces:  cfg.K8s.Namespaces,
+			Client:      cfg.K8s.Client,
+			Namespace:   cfg.K8s.ServingNamespace,
 			ReportStatus: func(update serving.WorkerStatusUpdate) error {
 				return client.SendPush(iagent.MethodServingStatusUpdate, update)
 			},
 		})
 		pipelineObserver = k8spipeline.Register(client.Dispatcher(), k8spipeline.Config{
-			WorkerID:             cfg.ID,
-			MasterURL:            cfg.MasterURL,
-			Token:                cfg.Token,
-			Namespaces:           cfg.Namespaces,
-			Client:               cfg.K8sClient,
-			Namespace:            cfg.PipelineNamespace,
-			WorkerImage:          cfg.PipelineWorkerImage,
-			AgentImagePullPolicy: cfg.AgentImagePullPolicy,
-			DefaultImage:         cfg.DefaultImage,
-			TTLAfterFinished:     cfg.TTLAfterFinished,
-			StorageURL:           cfg.StorageURL,
+			WorkerID: cfg.Agent.ID,
+			Store: k8spipeline.StoreConfig{
+				MasterURL:  cfg.Master.URL,
+				Token:      cfg.Master.Token,
+				StorageURL: cfg.StorageURL,
+			},
+			K8s: k8spipeline.K8sConfig{
+				Client:               cfg.K8s.Client,
+				Namespace:            cfg.K8s.PipelineNamespace,
+				Namespaces:           cfg.K8s.Namespaces,
+				AgentImage:           cfg.K8s.PipelineWorkerImage,
+				AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
+				DefaultImage:         cfg.K8s.DefaultImage,
+				TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
+			},
 			ReportResult: func(result proto.TaskResult) error {
 				if outbox == nil {
 					return fmt.Errorf("result outbox unavailable")
@@ -151,7 +179,7 @@ func (a *Worker) Run(ctx context.Context) error {
 	if a.initErr != nil {
 		return fmt.Errorf("k8s worker result outbox: %w", a.initErr)
 	}
-	if a.cfg.ClusterName == "" {
+	if a.cfg.Agent.ClusterName == "" {
 		return fmt.Errorf("k8s worker: cluster name is required")
 	}
 	if a.notebookObserver != nil {

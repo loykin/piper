@@ -9,8 +9,7 @@ import (
 
 func TestNewWorker_defaultsApplied(t *testing.T) {
 	w, err := worker.New(worker.Config{
-		AgentAddr: "localhost:9090",
-		ID:        "test-worker",
+		Agent: worker.AgentConfig{Addr: "localhost:9090", ID: "test-worker"},
 	})
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
@@ -21,7 +20,7 @@ func TestNewWorker_defaultsApplied(t *testing.T) {
 func TestNewWorker_missingAgentAddr(t *testing.T) {
 	// AgentAddr is required; grpcagent.NewClient validates it on Run, not New.
 	// New() itself should succeed even without AgentAddr (validated at connect time).
-	_, err := worker.New(worker.Config{ID: "test-worker"})
+	_, err := worker.New(worker.Config{Agent: worker.AgentConfig{ID: "test-worker"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

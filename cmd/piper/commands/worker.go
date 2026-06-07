@@ -27,21 +27,29 @@ func newWorkerCmd() *cobra.Command {
 			}
 
 			cfg := worker.Config{
-				AgentAddr:     viper.GetString("worker.agent_addr"),
-				ID:            id,
-				Label:         viper.GetString("worker.label"),
-				Concurrency:   viper.GetInt("worker.concurrency"),
-				Runtime:       runtime,
-				MasterURL:     viper.GetString("worker.master"),
-				Token:         viper.GetString("worker.token"),
-				StorageURL:    resolveStorageURLFromViper(),
-				OutputDir:     viper.GetString("worker.output_dir"),
-				MetaDir:       viper.GetString("worker.meta_dir"),
-				RemoteStore:   viper.GetString("storage.url") != "" || viper.GetString("s3.bucket") != "",
-				GitUser:       viper.GetString("git.user"),
-				GitToken:      viper.GetString("git.token"),
-				DefaultImage:  viper.GetString("worker.default_image"),
-				DockerNetwork: viper.GetString("worker.docker_network"),
+				Agent: worker.AgentConfig{
+					Addr:        viper.GetString("worker.agent_addr"),
+					ID:          id,
+					Label:       viper.GetString("worker.label"),
+					Concurrency: viper.GetInt("worker.concurrency"),
+				},
+				Store: worker.StoreConfig{
+					MasterURL:   viper.GetString("worker.master"),
+					Token:       viper.GetString("worker.token"),
+					StorageURL:  resolveStorageURLFromViper(),
+					OutputDir:   viper.GetString("worker.output_dir"),
+					RemoteStore: viper.GetString("storage.url") != "" || viper.GetString("s3.bucket") != "",
+					GitUser:     viper.GetString("git.user"),
+					GitToken:    viper.GetString("git.token"),
+				},
+				Runtime: runtime,
+				Baremetal: worker.BaremetalConfig{
+					MetaDir: viper.GetString("worker.meta_dir"),
+				},
+				Docker: worker.DockerConfig{
+					DefaultImage: viper.GetString("worker.default_image"),
+					Network:      viper.GetString("worker.docker_network"),
+				},
 			}
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

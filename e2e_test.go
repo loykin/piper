@@ -89,10 +89,14 @@ func startE2EAgentServer(t *testing.T, p *Piper) string {
 func startE2EWorker(t *testing.T, agentAddr, masterURL string, extra ...func(*worker.Config)) {
 	t.Helper()
 	cfg := worker.Config{
-		AgentAddr:   agentAddr,
-		MasterURL:   masterURL,
-		OutputDir:   t.TempDir(),
-		Concurrency: 2,
+		Agent: worker.AgentConfig{
+			Addr:        agentAddr,
+			Concurrency: 2,
+		},
+		Store: worker.StoreConfig{
+			MasterURL: masterURL,
+			OutputDir: t.TempDir(),
+		},
 	}
 	for _, f := range extra {
 		f(&cfg)
@@ -503,7 +507,7 @@ func TestE2E_WorkerS3Artifacts(t *testing.T) {
 
 	p, srv := newE2EServer(t)
 	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL, func(cfg *worker.Config) {
-		cfg.StorageURL = fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
+		cfg.Store.StorageURL = fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
 	})
 
 	yaml := `
@@ -749,8 +753,8 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 
 	// Worker shares the same storage backend as the server.
 	startE2EWorker(t, piperInst.cfg.Server.AgentAddr, srv.URL, func(cfg *worker.Config) {
-		cfg.OutputDir = outputDir
-		cfg.StorageURL = storageURL
+		cfg.Store.OutputDir = outputDir
+		cfg.Store.StorageURL = storageURL
 	})
 
 	// Pipeline YAML with on_success.deploy wired to our service.

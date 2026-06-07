@@ -22,7 +22,7 @@ func isRegistered(d *grpcagent.Dispatcher, method string) bool {
 }
 
 func TestWorkloadHandlersAreRegisteredWhenK8sClientExists(t *testing.T) {
-	a := New(Config{ID: "agent-1", ClusterName: "gpu-a", K8sClient: fake.NewSimpleClientset()})
+	a := New(Config{Agent: AgentConfig{ID: "agent-1", ClusterName: "gpu-a"}, K8s: K8sConfig{Client: fake.NewSimpleClientset()}})
 	d := a.client.Dispatcher()
 
 	methods := []string{
@@ -40,7 +40,7 @@ func TestWorkloadHandlersAreRegisteredWhenK8sClientExists(t *testing.T) {
 }
 
 func TestWorkloadHandlersAreNotRegisteredWithoutK8sClient(t *testing.T) {
-	a := New(Config{ID: "agent-1", ClusterName: "gpu-a"})
+	a := New(Config{Agent: AgentConfig{ID: "agent-1", ClusterName: "gpu-a"}})
 	d := a.client.Dispatcher()
 
 	methods := []string{

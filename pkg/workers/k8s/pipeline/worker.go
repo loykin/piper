@@ -18,19 +18,30 @@ import (
 
 type Dispatcher = *grpcagent.Dispatcher
 
-// Config holds K8s pipeline worker configuration.
-type Config struct {
-	WorkerID             string
-	MasterURL            string
-	Token                string
-	Namespaces           []string
+// StoreConfig holds the master connection and artifact store settings
+// forwarded to K8s Job pods via piper agent exec arguments.
+type StoreConfig struct {
+	MasterURL  string
+	Token      string
+	StorageURL string
+}
+
+// K8sConfig holds Kubernetes-specific driver and placement options.
+type K8sConfig struct {
 	Client               kubernetes.Interface
-	Namespace            string
-	WorkerImage          string
+	Namespace            string   // primary namespace for Jobs
+	Namespaces           []string // allowed namespaces (policy check)
+	AgentImage           string   // piper binary image used in init containers
 	AgentImagePullPolicy string
 	DefaultImage         string
 	TTLAfterFinished     *int32
-	StorageURL           string
+}
+
+// Config holds K8s pipeline worker configuration grouped by layer.
+type Config struct {
+	WorkerID string
+	Store    StoreConfig
+	K8s      K8sConfig
 	// ReportResult is called with the final TaskResult for each completed step.
 	// Typically enqueues into a ResultOutbox for durable delivery.
 	ReportResult func(proto.TaskResult) error
@@ -60,13 +71,13 @@ type trackedTask struct {
 func New(cfg Config) *Worker {
 	driver, err := k8sdriver.New(k8sdriver.Config{
 		WorkerID:             cfg.WorkerID,
-		Namespace:            cfg.Namespace,
-		Namespaces:           cfg.Namespaces,
-		AgentImagePullPolicy: cfg.AgentImagePullPolicy,
+		Namespace:            cfg.K8s.Namespace,
+		Namespaces:           cfg.K8s.Namespaces,
+		AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
 		AgentImage:           pipelineWorkerImage(cfg),
-		DefaultImage:         cfg.DefaultImage,
-		TTLAfterFinished:     cfg.TTLAfterFinished,
-		K8sClient:            cfg.Client,
+		DefaultImage:         cfg.K8s.DefaultImage,
+		TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
+		K8sClient:            cfg.K8s.Client,
 	})
 	return &Worker{
 		cfg:        cfg,
@@ -107,12 +118,12 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	}
 
 	// Resolve image and namespace here (worker layer), not inside the driver.
-	image, err := taskruntime.ResolveImage(task, a.cfg.DefaultImage)
+	image, err := taskruntime.ResolveImage(task, a.cfg.K8s.DefaultImage)
 	if err != nil {
 		return err
 	}
-	namespace := taskruntime.ResolveNamespace(task, a.cfg.Namespace)
-	if len(a.cfg.Namespaces) > 0 && !slices.Contains(a.cfg.Namespaces, namespace) {
+	namespace := taskruntime.ResolveNamespace(task, a.cfg.K8s.Namespace)
+	if len(a.cfg.K8s.Namespaces) > 0 && !slices.Contains(a.cfg.K8s.Namespaces, namespace) {
 		return fmt.Errorf("k8s pipeline worker: namespace %q is not in the allowed list", namespace)
 	}
 
@@ -120,9 +131,9 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		RuntimeKey: taskruntime.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
 		Image:      image,
 		Namespace:  namespace,
-		MasterURL:  a.cfg.MasterURL,
-		Token:      a.cfg.Token,
-		StorageURL: a.cfg.StorageURL,
+		MasterURL:  a.cfg.Store.MasterURL,
+		Token:      a.cfg.Store.Token,
+		StorageURL: a.cfg.Store.StorageURL,
 	}
 
 	handle, err := a.driver.Start(ctx, task, spec)
@@ -278,10 +289,10 @@ func (a *Worker) ActiveTaskIDs() []string {
 	return ids
 }
 
-// pipelineWorkerImage resolves the worker image for the given step (unused by K8sDriver directly).
+// pipelineWorkerImage returns the piper agent image used in Job init containers.
 func pipelineWorkerImage(cfg Config) string {
-	if cfg.WorkerImage != "" {
-		return cfg.WorkerImage
+	if cfg.K8s.AgentImage != "" {
+		return cfg.K8s.AgentImage
 	}
 	return "piper/piper:latest"
 }

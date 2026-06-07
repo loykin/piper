@@ -61,16 +61,20 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			localAgentConnAddr := localAgentConnURL(localAgentAddr)
 
 			wCfg := worker.Config{
-				AgentAddr:   localAgentConnAddr,
-				ID:          worker.NewID("local"),
-				Label:       "local",
-				Concurrency: localConcurrency,
-				MasterURL:   localMasterURL(addr),
-				Token:       p.Config().Server.Token,
-				StorageURL:  resolveStorageURLFromViper(),
-				OutputDir:   viper.GetString("worker.output_dir"),
-				GitUser:     viper.GetString("git.user"),
-				GitToken:    viper.GetString("git.token"),
+				Agent: worker.AgentConfig{
+					Addr:        localAgentConnAddr,
+					ID:          worker.NewID("local"),
+					Label:       "local",
+					Concurrency: localConcurrency,
+				},
+				Store: worker.StoreConfig{
+					MasterURL:  localMasterURL(addr),
+					Token:      p.Config().Server.Token,
+					StorageURL: resolveStorageURLFromViper(),
+					OutputDir:  viper.GetString("worker.output_dir"),
+					GitUser:    viper.GetString("git.user"),
+					GitToken:   viper.GetString("git.token"),
+				},
 			}
 			w, err := worker.New(wCfg)
 			if err != nil {

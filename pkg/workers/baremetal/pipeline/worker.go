@@ -30,30 +30,48 @@ const (
 	RuntimeDocker    RuntimeType = "docker"
 )
 
-// Config holds Worker configuration.
-type Config struct {
-	AgentAddr   string // gRPC address of master agent server, e.g. "master:9090"
-	ID          string // stable worker identity (UUID)
+// AgentConfig configures the gRPC connection to the master agent server
+// and this worker's identity within the agent registry.
+type AgentConfig struct {
+	Addr        string // gRPC address of master agent server, e.g. "master:9090"
+	ID          string // stable worker identity
 	Label       string
 	Hostname    string
 	Concurrency int
-	// Runtime selects the execution environment: "baremetal" (default) or "docker".
-	Runtime RuntimeType
-	// Artifact store connection passed through to piper agent exec.
-	MasterURL  string
-	Token      string
-	StorageURL string
-	OutputDir  string
-	// MetaDir is the directory for baremetal runtime metadata sidecar files.
-	MetaDir     string
-	RemoteStore bool
-	// Git source credentials forwarded to piper agent exec as environment variables.
-	// Falls back to PIPER_GIT_USER / PIPER_GIT_TOKEN env vars when empty.
+}
+
+// StoreConfig holds the master connection and artifact store settings
+// forwarded to every piper agent exec subprocess.
+type StoreConfig struct {
+	MasterURL   string
+	Token       string
+	StorageURL  string
+	OutputDir   string
+	RemoteStore bool // true when using a remote store (S3, HTTP); false for local file://
+	// Git source credentials forwarded as PIPER_GIT_USER / PIPER_GIT_TOKEN.
+	// Falls back to environment variables when empty.
 	GitUser  string
 	GitToken string
-	// Docker-specific config (only used when Runtime == "docker").
-	DefaultImage  string
-	DockerNetwork string
+}
+
+// BaremetalConfig holds options specific to the baremetal subprocess driver.
+type BaremetalConfig struct {
+	MetaDir string // directory for metadata + PID sidecar files; default: $TMPDIR/piper-meta
+}
+
+// DockerConfig holds options specific to the Docker container driver.
+type DockerConfig struct {
+	DefaultImage string
+	Network      string
+}
+
+// Config holds full Worker configuration grouped by layer.
+type Config struct {
+	Agent     AgentConfig
+	Store     StoreConfig
+	Runtime   RuntimeType // baremetal (default) or docker
+	Baremetal BaremetalConfig
+	Docker    DockerConfig
 }
 
 // trackedTask holds state for an in-flight step execution.
@@ -76,20 +94,20 @@ type Worker struct {
 
 // New creates a new Worker.
 func New(cfg Config) (*Worker, error) {
-	if cfg.Concurrency <= 0 {
-		cfg.Concurrency = 4
+	if cfg.Agent.Concurrency <= 0 {
+		cfg.Agent.Concurrency = 4
 	}
-	if cfg.OutputDir == "" {
-		cfg.OutputDir = "./piper-outputs"
+	if cfg.Store.OutputDir == "" {
+		cfg.Store.OutputDir = "./piper-outputs"
 	}
-	hostname := cfg.Hostname
+	hostname := cfg.Agent.Hostname
 	if hostname == "" {
 		hostname, _ = os.Hostname()
 	}
 
 	labels := map[string]string{}
-	if cfg.Label != "" {
-		labels["label"] = cfg.Label
+	if cfg.Agent.Label != "" {
+		labels["label"] = cfg.Agent.Label
 	}
 
 	runtime := string(cfg.Runtime)
@@ -97,25 +115,25 @@ func New(cfg Config) (*Worker, error) {
 		runtime = string(RuntimeBaremetal)
 	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		AgentAddr:    cfg.AgentAddr,
-		AgentID:      cfg.ID,
+		AgentAddr:    cfg.Agent.Addr,
+		AgentID:      cfg.Agent.ID,
 		Kind:         iagent.KindBareMetal,
 		Hostname:     hostname,
 		Capabilities: []string{iagent.CapabilityPipeline},
 		Labels:       labels,
 		Runtime:      runtime,
-		Capacity:     cfg.Concurrency,
+		Capacity:     cfg.Agent.Concurrency,
 	})
 
 	var driver taskruntime.Driver
 	switch cfg.Runtime {
 	case RuntimeDocker:
 		d, err := dockerdriver.New(dockerdriver.Config{
-			WorkerID:     cfg.ID,
-			DefaultImage: cfg.DefaultImage,
-			ResultDir:    filepath.Join(cfg.OutputDir, ".results"),
-			OutputDir:    cfg.OutputDir,
-			Network:      cfg.DockerNetwork,
+			WorkerID:     cfg.Agent.ID,
+			DefaultImage: cfg.Docker.DefaultImage,
+			ResultDir:    filepath.Join(cfg.Store.OutputDir, ".results"),
+			OutputDir:    cfg.Store.OutputDir,
+			Network:      cfg.Docker.Network,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("docker driver: %w", err)
@@ -123,9 +141,9 @@ func New(cfg Config) (*Worker, error) {
 		driver = d
 	default: // RuntimeBaremetal
 		d, err := baremetal.New(baremetal.Config{
-			WorkerID:    cfg.ID,
-			MetaDir:     cfg.MetaDir,
-			RemoteStore: cfg.RemoteStore,
+			WorkerID:    cfg.Agent.ID,
+			MetaDir:     cfg.Baremetal.MetaDir,
+			RemoteStore: cfg.Store.RemoteStore,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("baremetal driver: %w", err)
@@ -145,7 +163,7 @@ func New(cfg Config) (*Worker, error) {
 		}
 	}
 	outbox, err := taskruntime.NewResultOutbox(
-		filepath.Join(cfg.OutputDir, ".result-outbox", cfg.ID),
+		filepath.Join(cfg.Store.OutputDir, ".result-outbox", cfg.Agent.ID),
 		func(result proto.TaskResult) error {
 			return client.SendPush(iagent.MethodPipelineTaskResult, result)
 		},
@@ -219,27 +237,27 @@ func (w *Worker) Run(ctx context.Context) error {
 // dispatch is called by the gRPC dispatcher when the master sends a pipeline.dispatch RPC.
 func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	w.mu.Lock()
-	if w.inFlight >= w.cfg.Concurrency {
+	if w.inFlight >= w.cfg.Agent.Concurrency {
 		w.mu.Unlock()
 		return &iagent.BusyError{Reason: "worker at capacity"}
 	}
 	w.mu.Unlock()
 
-	runtimeKey := taskruntime.RuntimeKey(w.cfg.ID, task.RunID, task.StepName, task.Attempt)
+	runtimeKey := taskruntime.RuntimeKey(w.cfg.Agent.ID, task.RunID, task.StepName, task.Attempt)
 
 	spec := taskruntime.ExecSpec{
 		RuntimeKey: runtimeKey,
-		OutputDir:  w.cfg.OutputDir,
-		MasterURL:  w.cfg.MasterURL,
-		Token:      w.cfg.Token,
-		StorageURL: w.cfg.StorageURL,
+		OutputDir:  w.cfg.Store.OutputDir,
+		MasterURL:  w.cfg.Store.MasterURL,
+		Token:      w.cfg.Store.Token,
+		StorageURL: w.cfg.Store.StorageURL,
 		Env:        w.gitEnv(),
 	}
 
 	// Image must be resolved here (in the worker layer) for container runtimes.
 	// Baremetal subprocesses run the host binary directly — no image needed.
 	if w.cfg.Runtime == RuntimeDocker {
-		image, err := taskruntime.ResolveImage(task, w.cfg.DefaultImage)
+		image, err := taskruntime.ResolveImage(task, w.cfg.Docker.DefaultImage)
 		if err != nil {
 			return err
 		}
@@ -287,14 +305,14 @@ func (w *Worker) buildResult(handle taskruntime.Handle, exit taskruntime.Exit) p
 	// Driver pre-parsed the result (e.g. K8s reads termination log via K8s API).
 	if exit.Result != nil {
 		r := *exit.Result
-		r.WorkerID = w.cfg.ID
+		r.WorkerID = w.cfg.Agent.ID
 		return r
 	}
 
 	if exit.InfraFailure != nil {
 		return proto.TaskResult{
 			TaskID:    handle.TaskID,
-			WorkerID:  w.cfg.ID,
+			WorkerID:  w.cfg.Agent.ID,
 			Status:    proto.TaskStatusFailed,
 			Error:     exit.InfraFailure.Error(),
 			StartedAt: time.Now(),
@@ -307,7 +325,7 @@ func (w *Worker) buildResult(handle taskruntime.Handle, exit taskruntime.Exit) p
 	if exit.ResultPath != "" {
 		if data, err := os.ReadFile(exit.ResultPath); err == nil {
 			if r, err := taskruntime.ReadAgentResult(data); err == nil {
-				r.WorkerID = w.cfg.ID
+				r.WorkerID = w.cfg.Agent.ID
 				return r
 			}
 		}
@@ -315,7 +333,7 @@ func (w *Worker) buildResult(handle taskruntime.Handle, exit taskruntime.Exit) p
 
 	return proto.TaskResult{
 		TaskID:   handle.TaskID,
-		WorkerID: w.cfg.ID,
+		WorkerID: w.cfg.Agent.ID,
 		Status:   proto.TaskStatusFailed,
 		Error:    "result unavailable after job completion",
 		EndedAt:  time.Now(),
@@ -390,11 +408,11 @@ func (w *Worker) shutdown() {
 // gitEnv returns the PIPER_GIT_* environment variables for forwarding to
 // piper agent exec subprocesses. Config values take precedence over env vars.
 func (w *Worker) gitEnv() []string {
-	user := w.cfg.GitUser
+	user := w.cfg.Store.GitUser
 	if user == "" {
 		user = os.Getenv("PIPER_GIT_USER")
 	}
-	token := w.cfg.GitToken
+	token := w.cfg.Store.GitToken
 	if token == "" {
 		token = os.Getenv("PIPER_GIT_TOKEN")
 	}

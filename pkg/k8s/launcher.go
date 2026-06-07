@@ -1,20 +1,18 @@
-// Package k8s provides an ExecutionBackend implementation that runs piper tasks as K8s Jobs.
+// Package k8s provides prepared Kubernetes Job lifecycle primitives.
 //
-// How it works (agent injection pattern):
-//  1. An initContainer copies the /piper binary from the piper image into an emptyDir
-//  2. The step container's entrypoint is replaced with /piper-tools/piper agent exec --task=<encoded task> ...
-//  3. piper agent downloads input artifacts from S3, runs the command, uploads outputs to S3, and reports completion to the master
-//
-// The full proto.Task is base64-encoded and passed as --task; the agent decodes it and drives execution.
-// Runs natively on K8s without modifying user images.
+// Execution policy such as image resolution and agent argument construction
+// belongs to pkg/taskruntime/k8s.Driver. Launcher only creates, observes,
+// recovers, and deletes Jobs from already prepared execution inputs.
 package k8s
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,11 +28,10 @@ import (
 	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/runner"
+	"github.com/piper/piper/pkg/taskruntime"
 )
 
-// Config is the Launcher configuration.
-// Maps 1:1 to piper.K8sConfig.
+// Config is the Kubernetes Job primitive configuration.
 type Config struct {
 	// AgentImage: image containing the piper CLI binary (used as initContainer)
 	AgentImage string
@@ -47,20 +44,6 @@ type Config struct {
 
 	// Kubeconfig: path to kubeconfig file for out-of-cluster execution (defaults to KUBECONFIG or ~/.kube/config)
 	Kubeconfig string
-
-	// MasterURL: piper server URL accessible from within a Pod
-	MasterURL string
-
-	// Token: auth token for the piper server
-	Token string
-
-	// StorageURL selects the artifact store backend for step artifact transfer.
-	// Supported schemes: s3://, http://, https://, file://
-	// e.g. "s3://my-bucket?endpoint=http://minio:9000&s3ForcePathStyle=true&accessKey=…&secretKey=…"
-	StorageURL string
-
-	// DefaultImage: fallback container image when a step has no image configured
-	DefaultImage string
 
 	// AgentImagePullPolicy: image pull policy for the agent initContainer.
 	// Defaults to corev1.PullAlways when empty.
@@ -85,8 +68,7 @@ const (
 	agentExecSubcmd = "exec"
 )
 
-// Launcher implements backend.ExecutionBackend.
-// The queue calls Dispatch whenever a task becomes ready.
+// Launcher owns Kubernetes API operations for prepared Jobs.
 type Launcher struct {
 	cfg       Config
 	clientset kubernetes.Interface
@@ -97,8 +79,19 @@ type Launcher struct {
 type watchedJob struct {
 	TaskID    string
 	WorkerID  string
+	RunID     string
+	StepName  string
 	Attempt   int
 	StartedAt time.Time
+}
+
+// JobHandle is the runtime metadata needed to recover a K8s Job.
+type JobHandle struct {
+	RuntimeKey string
+	TaskID     string
+	RunID      string
+	StepName   string
+	Attempt    int
 }
 
 // New creates a Launcher.
@@ -157,47 +150,37 @@ func (l *Launcher) pullPolicy() corev1.PullPolicy {
 	return corev1.PullAlways
 }
 
-// Dispatch creates a K8s Job for the given task.
-// It does not wait for the Job to complete — the piper agent command inside the Job reports results to the master.
-func (l *Launcher) Dispatch(ctx context.Context, task *proto.Task) error {
-	var step pipeline.Step
-	if err := json.Unmarshal(task.Step, &step); err != nil {
-		return fmt.Errorf("unmarshal step: %w", err)
+// CreateJob creates a Job from execution inputs already resolved by a runtime Driver.
+func (l *Launcher) CreateJob(ctx context.Context, task *proto.Task, runtimeKey, image string, agentArgs, env []string) (string, error) {
+	if task == nil {
+		return "", fmt.Errorf("task is required")
+	}
+	if image == "" {
+		return "", fmt.Errorf("container image is required")
+	}
+	job := l.buildJob(task, image, agentArgs, env)
+	if runtimeKey != "" {
+		job.Name = sanitizeName(runtimeKey)
 	}
 
-	var pl pipeline.Pipeline
-	if err := json.Unmarshal(task.Pipeline, &pl); err != nil {
-		return fmt.Errorf("unmarshal pipeline: %w", err)
+	_, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("create job %s: %w", job.Name, err)
 	}
+	l.watchJob(job.Name, task)
+	return job.Name, nil
+}
 
-	// Resolve container image: step.runner > step.run > pipeline defaults > launcher default
-	image := step.Runner.Image
-	if image == "" {
-		image = step.Run.Image
+// DeleteJob deletes one Job and removes it from the launcher's watch set.
+func (l *Launcher) DeleteJob(ctx context.Context, name string) error {
+	if name == "" {
+		return fmt.Errorf("job name is required")
 	}
-	if image == "" {
-		image = pl.Spec.Defaults.Image
-	}
-	if image == "" {
-		image = l.cfg.DefaultImage
-	}
-	if image == "" {
-		return fmt.Errorf("step %q: no container image configured (set step.run.image, spec.defaults.image, or k8s.default_image)", step.Name)
-	}
-
-	taskB64, err := runner.EncodeTask(task)
+	err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
 		return err
 	}
-	agentArgs := l.buildAgentArgs(task, taskB64)
-
-	job := l.buildJob(task, image, agentArgs)
-
-	_, err = l.clientset.BatchV1().Jobs(l.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("create job %s: %w", job.Name, err)
-	}
-	l.watchJob(job.Name, task)
+	l.unwatchJob(name)
 	return nil
 }
 
@@ -234,13 +217,59 @@ func (l *Launcher) ReconcileJobs(ctx context.Context, report func(context.Contex
 		job, ok := present[name]
 		switch {
 		case !ok:
+			// Job disappeared before TTL cleanup — infra failure, no termination log.
 			l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusFailed, "k8s job disappeared before reporting completion")
-		case jobSucceeded(job):
-			l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusDone, "")
-		case jobFailed(job):
-			l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusFailed, k8sJobFailureMessage(job))
+		case jobSucceeded(job) || jobFailed(job):
+			// Try to read the AgentResult from the pod termination log first.
+			if result, ok := l.readTerminationResult(ctx, job, rec); ok {
+				result.WorkerID = rec.WorkerID
+				if err := report(ctx, result); err == nil || strings.Contains(err.Error(), "not found in queue") {
+					l.unwatchJob(name)
+				}
+			} else if jobFailed(job) {
+				l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusFailed, k8sJobFailureMessage(job))
+			} else {
+				// Job succeeded but no valid termination log — infra issue.
+				l.reportWatchedJob(ctx, report, name, rec, proto.TaskStatusFailed, "termination_result_invalid: missing or unreadable result")
+			}
 		}
 	}
+}
+
+// readTerminationResult reads the AgentResult JSON from the pod termination message.
+// Returns (result, true) on success, (zero, false) if the message is missing or invalid.
+func (l *Launcher) readTerminationResult(ctx context.Context, job batchv1.Job, rec watchedJob) (proto.TaskResult, bool) {
+	pods, err := l.clientset.CoreV1().Pods(l.cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-name=" + job.Name,
+	})
+	if err != nil || len(pods.Items) == 0 {
+		return proto.TaskResult{}, false
+	}
+	// Use the most recently created pod.
+	pod := pods.Items[0]
+	for _, p := range pods.Items[1:] {
+		if p.CreationTimestamp.After(pod.CreationTimestamp.Time) {
+			pod = p
+		}
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Terminated == nil || cs.State.Terminated.Message == "" {
+			continue
+		}
+		result, err := taskruntime.ReadAgentResult([]byte(cs.State.Terminated.Message))
+		if err != nil {
+			slog.Warn("k8s: termination message parse failed", "job", job.Name, "err", err)
+			return proto.TaskResult{}, false
+		}
+		if result.TaskID == "" {
+			result.TaskID = rec.TaskID
+		}
+		if result.Attempt == 0 {
+			result.Attempt = rec.Attempt
+		}
+		return result, true
+	}
+	return proto.TaskResult{}, false
 }
 
 func (l *Launcher) watchJob(name string, task *proto.Task) {
@@ -256,6 +285,8 @@ func (l *Launcher) watchJob(name string, task *proto.Task) {
 	l.watched[name] = watchedJob{
 		TaskID:    task.ID,
 		WorkerID:  task.WorkerID,
+		RunID:     task.RunID,
+		StepName:  task.StepName,
 		Attempt:   attempt,
 		StartedAt: time.Now().UTC(),
 	}
@@ -275,6 +306,23 @@ func (l *Launcher) ActiveTaskIDs() []string {
 		taskIDs = append(taskIDs, rec.TaskID)
 	}
 	return taskIDs
+}
+
+// ActiveJobs returns recoverable metadata for every watched Job.
+func (l *Launcher) ActiveJobs() []JobHandle {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	handles := make([]JobHandle, 0, len(l.watched))
+	for runtimeKey, rec := range l.watched {
+		handles = append(handles, JobHandle{
+			RuntimeKey: runtimeKey,
+			TaskID:     rec.TaskID,
+			RunID:      rec.RunID,
+			StepName:   rec.StepName,
+			Attempt:    rec.Attempt,
+		})
+	}
+	return handles
 }
 
 // RecoverJobs rebuilds the in-memory watch set after a worker restart.
@@ -304,10 +352,24 @@ func (l *Launcher) RecoverJobs(ctx context.Context) {
 		if startedAt.IsZero() {
 			startedAt = time.Now().UTC()
 		}
+		attempt, _ := strconv.Atoi(job.Annotations[k8smeta.AnnotationAttempt])
+		if attempt < 1 {
+			attempt = 1
+		}
+		runID := job.Annotations[k8smeta.AnnotationRunID]
+		if runID == "" {
+			runID = job.Labels[k8smeta.LabelRunID]
+		}
+		stepName := job.Annotations[k8smeta.AnnotationStepName]
+		if stepName == "" {
+			stepName = job.Labels[k8smeta.LabelStepName]
+		}
 		l.watched[job.Name] = watchedJob{
 			TaskID:    taskID,
 			WorkerID:  l.cfg.WorkerID,
-			Attempt:   1,
+			RunID:     runID,
+			StepName:  stepName,
+			Attempt:   attempt,
 			StartedAt: startedAt,
 		}
 	}
@@ -322,7 +384,7 @@ func (l *Launcher) reportWatchedJob(ctx context.Context, report func(context.Con
 		Error:     msg,
 		StartedAt: rec.StartedAt,
 		EndedAt:   now,
-		Attempts:  rec.Attempt,
+		Attempt:   rec.Attempt,
 	}); err == nil || strings.Contains(err.Error(), "not found in queue") {
 		l.unwatchJob(name)
 	}
@@ -381,24 +443,6 @@ func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
 	return nil
 }
 
-func (l *Launcher) buildAgentArgs(_ *proto.Task, taskB64 string) []string {
-	args := []string{
-		agentSubcmd,
-		agentExecSubcmd,
-		"--master=" + l.cfg.MasterURL,
-		"--task=" + taskB64,
-		"--output-dir=/piper-outputs",
-		"--input-dir=/piper-inputs",
-	}
-	if l.cfg.Token != "" {
-		args = append(args, "--token="+l.cfg.Token)
-	}
-	if l.cfg.StorageURL != "" {
-		args = append(args, "--storage-url="+l.cfg.StorageURL)
-	}
-	return args
-}
-
 func (l *Launcher) jobLabels(task *proto.Task) map[string]string {
 	labels := map[string]string{
 		k8smeta.LabelManagedBy: k8smeta.ManagedByPiper,
@@ -411,7 +455,7 @@ func (l *Launcher) jobLabels(task *proto.Task) map[string]string {
 	return labels
 }
 
-func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) *batchv1.Job {
+func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, extraEnv ...[]string) *batchv1.Job {
 	backoffLimit := int32(0) // piper queue manages retries
 	var ttl *int32
 	if l.cfg.TTLAfterFinished != nil && *l.cfg.TTLAfterFinished > 0 {
@@ -424,7 +468,10 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 			Name:      jobName(task),
 			Namespace: l.cfg.Namespace,
 			Annotations: map[string]string{
-				k8smeta.AnnotationTaskID: task.ID,
+				k8smeta.AnnotationTaskID:   task.ID,
+				k8smeta.AnnotationAttempt:  strconv.Itoa(max(task.Attempt, 1)),
+				k8smeta.AnnotationRunID:    task.RunID,
+				k8smeta.AnnotationStepName: task.StepName,
 			},
 			Labels: l.jobLabels(task),
 		},
@@ -461,7 +508,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string) 
 							ImagePullPolicy: corev1.PullIfNotPresent,
 							Command:         []string{agentBinaryDst},
 							Args:            agentArgs,
-							Env:             buildEnvVars(step.Env),
+							Env:             buildEnvVars(step.Env, extraEnv...),
 							Resources:       buildResourceRequirements(step.Resources),
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "piper-tools", MountPath: "/piper-tools"},
@@ -505,18 +552,30 @@ func decodeTaskStep(task *proto.Task) pipeline.Step {
 	return step
 }
 
-func buildEnvVars(env map[string]string) []corev1.EnvVar {
-	if len(env) == 0 {
+func buildEnvVars(env map[string]string, extra ...[]string) []corev1.EnvVar {
+	merged := make(map[string]string, len(env))
+	for key, value := range env {
+		merged[key] = value
+	}
+	for _, values := range extra {
+		for _, entry := range values {
+			key, value, ok := strings.Cut(entry, "=")
+			if ok && key != "" {
+				merged[key] = value
+			}
+		}
+	}
+	if len(merged) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(env))
-	for k := range env {
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	out := make([]corev1.EnvVar, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, corev1.EnvVar{Name: k, Value: env[k]})
+		out = append(out, corev1.EnvVar{Name: k, Value: merged[k]})
 	}
 	return out
 }

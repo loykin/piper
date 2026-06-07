@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -18,17 +19,29 @@ type AgentRPC interface {
 type AgentBackend struct {
 	router     *iagent.Router
 	rpc        AgentRPC
-	runAgents  sync.Map // run id -> pipelineRunAgent
-	taskAgents sync.Map // task id -> agent id
+	taskAgents sync.Map // task id -> pipelineTaskAgent
+
+	runMu     sync.Mutex
+	runAgents map[string]*pipelineRunAgent // run id -> fixed agent for the whole run
 }
 
 type pipelineRunAgent struct {
 	AgentID   string
 	Namespace string
+	Committed bool
+	Pending   int
+}
+
+type pipelineTaskAgent struct {
+	AgentID string
 }
 
 func NewAgentBackend(router *iagent.Router, rpc AgentRPC) *AgentBackend {
-	return &AgentBackend{router: router, rpc: rpc}
+	return &AgentBackend{
+		router:    router,
+		rpc:       rpc,
+		runAgents: make(map[string]*pipelineRunAgent),
+	}
 }
 
 func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
@@ -39,18 +52,49 @@ func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 	if err != nil {
 		return err
 	}
-	agentInfo, err := b.router.Select(iagent.WorkloadPipeline, placement)
-	if err != nil {
-		return err
+	b.runMu.Lock()
+	runAgent, bound := b.runAgents[task.RunID]
+	if !bound {
+		agentInfo, selectErr := b.router.Reserve(iagent.WorkloadPipeline, placement)
+		if selectErr != nil {
+			b.runMu.Unlock()
+			return selectErr
+		}
+		runAgent = &pipelineRunAgent{
+			AgentID:   agentInfo.ID,
+			Namespace: placement.Namespace,
+		}
+		b.runAgents[task.RunID] = runAgent
+	} else if reserveErr := b.router.ReserveAgent(runAgent.AgentID, iagent.WorkloadPipeline); reserveErr != nil {
+		b.runMu.Unlock()
+		return &DispatchError{Retryable: true, Err: reserveErr}
 	}
+	runAgent.Pending++
+	b.runMu.Unlock()
+
 	taskCopy := *task
-	taskCopy.WorkerID = agentInfo.ID
-	b.taskAgents.Store(task.ID, agentInfo.ID)
-	if err := b.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodPipelineDispatch, &taskCopy, nil); err != nil {
+	taskCopy.WorkerID = runAgent.AgentID
+	b.taskAgents.Store(task.ID, pipelineTaskAgent{AgentID: runAgent.AgentID})
+	if err := b.rpc.SendRPC(ctx, runAgent.AgentID, iagent.MethodPipelineDispatch, &taskCopy, nil); err != nil {
 		b.taskAgents.Delete(task.ID)
+		b.router.Release(runAgent.AgentID)
+		b.runMu.Lock()
+		runAgent.Pending--
+		if !runAgent.Committed && runAgent.Pending == 0 && b.runAgents[task.RunID] == runAgent {
+			delete(b.runAgents, task.RunID)
+		}
+		b.runMu.Unlock()
+		// Worker capacity refusal: BusyErrorMarker is embedded in the error string
+		// because gRPC serialises the error to a plain string on the wire.
+		if strings.Contains(err.Error(), iagent.BusyErrorMarker) {
+			return &DispatchError{Retryable: true, Err: err}
+		}
 		return fmt.Errorf("pipeline agent dispatch: %w", err)
 	}
-	b.runAgents.Store(task.RunID, pipelineRunAgent{AgentID: agentInfo.ID, Namespace: placement.Namespace})
+	b.runMu.Lock()
+	runAgent.Pending--
+	runAgent.Committed = true
+	b.runMu.Unlock()
 	return nil
 }
 
@@ -59,28 +103,40 @@ func (b *AgentBackend) OwnerForTask(taskID string) string {
 	if !ok {
 		return ""
 	}
-	return owner.(string)
+	return owner.(pipelineTaskAgent).AgentID
 }
 
 func (b *AgentBackend) ReleaseTask(taskID string) {
-	b.taskAgents.Delete(taskID)
+	owner, ok := b.taskAgents.LoadAndDelete(taskID)
+	if !ok {
+		return
+	}
+	b.router.Release(owner.(pipelineTaskAgent).AgentID)
+}
+
+func (b *AgentBackend) ReleaseRun(runID string) {
+	b.runMu.Lock()
+	delete(b.runAgents, runID)
+	b.runMu.Unlock()
 }
 
 func (b *AgentBackend) CancelRun(ctx context.Context, runID string) error {
 	if b == nil || b.rpc == nil {
 		return fmt.Errorf("pipeline agent backend is not configured")
 	}
-	agentIDAny, ok := b.runAgents.Load(runID)
+	b.runMu.Lock()
+	runAgent, ok := b.runAgents[runID]
+	b.runMu.Unlock()
 	if !ok {
 		return nil
 	}
-	runAgent := agentIDAny.(pipelineRunAgent)
 	if err := b.rpc.SendRPC(ctx, runAgent.AgentID, iagent.MethodPipelineCancelRun, map[string]any{
 		"run_id":    runID,
 		"namespace": runAgent.Namespace,
 	}, nil); err != nil {
 		return fmt.Errorf("pipeline agent cancel: %w", err)
 	}
+	b.ReleaseRun(runID)
 	return nil
 }
 
@@ -93,17 +149,58 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 		return iagent.Placement{}, fmt.Errorf("unmarshal pipeline: %w", err)
 	}
 	placement := iagent.Placement{
-		WorkerID:    pl.Spec.Placement.Worker,
-		ClusterName: pl.Spec.Placement.Cluster,
-		Namespace:   pl.Spec.Placement.Namespace,
-		Labels:      pl.Spec.Placement.Labels,
+		WorkerID:         pl.Spec.Placement.Worker,
+		ClusterName:      pl.Spec.Placement.Cluster,
+		Namespace:        pl.Spec.Placement.Namespace,
+		Labels:           pl.Spec.Placement.Labels,
+		RequireContainer: pipelineRequiresContainer(&pl),
 	}
-	if placement.WorkerID == "" && placement.ClusterName == "" && len(placement.Labels) == 0 && task.Label != "" {
-		placement.Labels = map[string]string{"label": task.Label}
+	if placement.WorkerID == "" && placement.ClusterName == "" && len(placement.Labels) == 0 {
+		label, err := pipelineRunnerLabel(&pl)
+		if err != nil {
+			return iagent.Placement{}, err
+		}
+		if label != "" {
+			placement.Labels = map[string]string{"label": label}
+		}
 	}
 	return placement, nil
+}
+
+func pipelineRequiresContainer(pl *pipeline.Pipeline) bool {
+	if pl.Spec.Defaults.Image != "" {
+		return true
+	}
+	for _, step := range pl.Spec.Steps {
+		if step.Runner.Image != "" || step.Run.Image != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func pipelineRunnerLabel(pl *pipeline.Pipeline) (string, error) {
+	var label string
+	for _, step := range pl.Spec.Steps {
+		if step.Runner.Label == "" {
+			continue
+		}
+		if label == "" {
+			label = step.Runner.Label
+			continue
+		}
+		if label != step.Runner.Label {
+			return "", fmt.Errorf(
+				"pipeline requires multiple runner labels (%q and %q); a run must execute on one worker",
+				label,
+				step.Runner.Label,
+			)
+		}
+	}
+	return label, nil
 }
 
 var _ ExecutionBackend = (*AgentBackend)(nil)
 var _ CancelableBackend = (*AgentBackend)(nil)
 var _ TaskOwner = (*AgentBackend)(nil)
+var _ RunOwner = (*AgentBackend)(nil)

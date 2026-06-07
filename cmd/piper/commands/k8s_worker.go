@@ -39,6 +39,7 @@ func newK8sWorkerCmd() *cobra.Command {
 			defaultImage, _ := cmd.Flags().GetString("default-image")
 			agentImagePullPolicy, _ := cmd.Flags().GetString("agent-image-pull-policy")
 			storageURL, _ := cmd.Flags().GetString("storage-url")
+			resultOutboxDir, _ := cmd.Flags().GetString("result-outbox-dir")
 			if id == "" {
 				id = stableWorkerID("k8s", cluster)
 			}
@@ -75,6 +76,7 @@ func newK8sWorkerCmd() *cobra.Command {
 				DefaultImage:         defaultImage,
 				AgentImagePullPolicy: agentImagePullPolicy,
 				StorageURL:           storageURL,
+				ResultOutboxDir:      resultOutboxDir,
 				PodDefaults:          cfg.NotebookK8s.PodDefaults,
 			}).Run(ctx)
 		},
@@ -98,6 +100,7 @@ func newK8sWorkerCmd() *cobra.Command {
 	cmd.Flags().String("storage-class", "", "storage class for notebook PVCs")
 	cmd.Flags().String("storage-size", "", "default notebook PVC size (default 10Gi)")
 	cmd.Flags().String("storage-url", "", "artifact store URL (s3://, file://, http://) for pipeline artifact transfer")
+	cmd.Flags().String("result-outbox-dir", "", "durable directory for unacknowledged pipeline results (default: system temp directory)")
 	_ = cmd.MarkFlagRequired("master")
 	_ = cmd.MarkFlagRequired("agent-addr")
 	_ = cmd.MarkFlagRequired("cluster")

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -128,7 +129,7 @@ func New(cfg Config) (*Piper, error) {
 
 	grpcSrv := grpcagent.NewServer(
 		func(reg grpcagent.Registration) {
-			agentReg.Register(iagent.Info{
+			info := iagent.Info{
 				ID:           reg.ID,
 				Kind:         reg.Kind,
 				Mode:         reg.Mode,
@@ -137,7 +138,17 @@ func New(cfg Config) (*Piper, error) {
 				Capabilities: reg.Capabilities,
 				ClusterName:  reg.ClusterName,
 				Labels:       reg.Labels,
-			})
+			}
+			// Extract runtime and capacity encoded in Labels by grpcagent.Client.
+			if r := reg.Labels["runtime"]; r != "" {
+				info.Runtime = r
+			}
+			if c := reg.Labels["capacity"]; c != "" {
+				if n, err := strconv.Atoi(c); err == nil {
+					info.Capacity = n
+				}
+			}
+			agentReg.Register(info)
 		},
 		agentReg.Remove,
 	)
@@ -149,7 +160,7 @@ func New(cfg Config) (*Piper, error) {
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
-	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q))
+	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv))
 	// On agent (re)connect: sync notebook status so master DB catches up on any
 	// state changes that occurred while the connection was down.
 	grpcSrv.SetConnectHandler(func(agentID string) {
@@ -195,7 +206,9 @@ func New(cfg Config) (*Piper, error) {
 		outputDir:  cfg.OutputDir,
 		storageURL: p.storageURL,
 	}
-	if cfg.K8s.Worker {
+	// AgentBackend routes pipeline tasks to gRPC-connected workers (K8s or baremetal).
+	// Activated when K8s.Worker is true or Pipeline.DispatchMode is "agent".
+	if cfg.K8s.Worker || cfg.Pipeline.DispatchMode == "agent" {
 		p.SetBackend(backend.NewAgentBackend(workloadRouter, p.grpcAgentServer))
 	}
 	q.OnRunSuccess = p.handleRunSuccess
@@ -547,6 +560,14 @@ func (p *Piper) sourceConfig() source.Config {
 		GitUser:    p.cfg.Git.User,
 		GitToken:   p.cfg.Git.Token,
 		StorageURL: p.storageURL,
+	}
+}
+
+// SetDispatchMode switches to agent dispatch mode at runtime.
+// Called by --local server to activate gRPC dispatch for embedded workers.
+func (p *Piper) SetDispatchMode(mode string) {
+	if mode == "agent" {
+		p.SetBackend(backend.NewAgentBackend(p.workloadRouter, p.grpcAgentServer))
 	}
 }
 

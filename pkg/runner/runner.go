@@ -82,23 +82,19 @@ func New(cfg Config) (*Runner, error) {
 	return r, nil
 }
 
-// Run executes a task and reports the result to the master.
-// Returns true if the step succeeded, false if it failed.
-// Callers in K8s agent mode should exit non-zero on false so the K8s Job
-// status reflects the actual step outcome and ReconcileJobs can detect failures.
-func (r *Runner) Run(ctx context.Context, task *proto.Task) bool {
+// Run executes a task and returns the TaskResult.
+// The caller is responsible for reporting the result (HTTP or result file).
+func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 	startedAt := time.Now()
 
 	var step pipeline.Step
 	if err := json.Unmarshal(task.Step, &step); err != nil {
-		r.reportFailed(task, fmt.Errorf("unmarshal step: %w", err), startedAt)
-		return false
+		return r.failedResult(task, fmt.Errorf("unmarshal step: %w", err), startedAt)
 	}
 
 	stepOutputDir := filepath.Join(r.cfg.OutputDir, task.RunID, step.Name)
 	if err := os.MkdirAll(stepOutputDir, 0755); err != nil {
-		r.reportFailed(task, err, startedAt)
-		return false
+		return r.failedResult(task, err, startedAt)
 	}
 
 	// When using a remote store, local dirs are transient staging areas only.
@@ -111,8 +107,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) bool {
 	if r.store != nil && len(step.Inputs) > 0 {
 		if err := r.downloadInputs(ctx, task.RunID, step.Inputs); err != nil {
 			slog.Error("download inputs failed", "task_id", task.ID, "err", err)
-			r.reportFailed(task, err, startedAt)
-			return false
+			return r.failedResult(task, err, startedAt)
 		}
 	}
 
@@ -145,11 +140,22 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) bool {
 	}
 
 	if execErr != nil {
-		r.reportFailed(task, execErr, startedAt)
-		return false
+		return r.failedResult(task, execErr, startedAt)
 	}
-	r.reportDone(task, startedAt)
-	return true
+	return r.doneResult(task, startedAt)
+}
+
+// Report posts the TaskResult to the master via HTTP.
+// Used by callers that need the http report-mode (migration path).
+// No-op when MasterURL is not configured.
+func (r *Runner) Report(result proto.TaskResult) {
+	r.report(result.TaskID, result.Status, taskResult{
+		WorkerID:  result.WorkerID,
+		StartedAt: result.StartedAt,
+		EndedAt:   result.EndedAt,
+		Error:     result.Error,
+		Attempts:  result.Attempt,
+	})
 }
 
 // ─── Execution ────────────────────────────────────────────────────────────────
@@ -312,19 +318,28 @@ type taskResult struct {
 	Attempts  int       `json:"attempts"`
 }
 
-func (r *Runner) reportDone(task *proto.Task, startedAt time.Time) {
-	r.report(task.ID, proto.TaskStatusDone, taskResult{WorkerID: task.WorkerID, StartedAt: startedAt, EndedAt: time.Now(), Attempts: 1})
-}
-
-func (r *Runner) reportFailed(task *proto.Task, err error, startedAt time.Time) {
-	slog.Error("task failed", "task_id", task.ID, "err", err)
-	r.report(task.ID, proto.TaskStatusFailed, taskResult{
-		Error:     err.Error(),
+func (r *Runner) doneResult(task *proto.Task, startedAt time.Time) proto.TaskResult {
+	return proto.TaskResult{
+		TaskID:    task.ID,
 		WorkerID:  task.WorkerID,
+		Status:    proto.TaskStatusDone,
 		StartedAt: startedAt,
 		EndedAt:   time.Now(),
-		Attempts:  1,
-	})
+		Attempt:   task.Attempt,
+	}
+}
+
+func (r *Runner) failedResult(task *proto.Task, err error, startedAt time.Time) proto.TaskResult {
+	slog.Error("task failed", "task_id", task.ID, "err", err)
+	return proto.TaskResult{
+		TaskID:    task.ID,
+		WorkerID:  task.WorkerID,
+		Status:    proto.TaskStatusFailed,
+		Error:     err.Error(),
+		StartedAt: startedAt,
+		EndedAt:   time.Now(),
+		Attempt:   task.Attempt,
+	}
 }
 
 func (r *Runner) report(taskID, status string, result taskResult) {

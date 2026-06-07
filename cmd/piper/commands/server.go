@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	piper "github.com/piper/piper"
-	"github.com/piper/piper/pkg/source"
 	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
 	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
@@ -29,10 +28,6 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 				return err
 			}
 			defer func() { _ = p.Close() }()
-
-			if p.Config().K8s.Worker {
-				slog.Info("k8s pipeline worker dispatch enabled")
-			}
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
@@ -53,34 +48,33 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 				return p.Serve(ctx, piper.ServeOption{Addr: addr, AgentAddr: agentAddr})
 			}
 
-			// Embedded local worker: same pipeline worker, just pointed at localhost.
-			// Worker registration may fail on first attempt (server not yet listening) —
-			// the heartbeat loop handles re-registration automatically.
-			masterURL := localMasterURL(addr)
-			srcCfg := source.Config{
-				GitUser:    viper.GetString("source.git.user"),
-				GitToken:   viper.GetString("source.git.token"),
-				StorageURL: resolveStorageURLFromViper(),
-			}
-			wCfg := workerConfigFromSource(worker.Config{
-				MasterURL:   masterURL,
-				Label:       "local",
-				Token:       p.Config().Server.Token,
-				Concurrency: localConcurrency,
-			}, srcCfg)
-			w, err := worker.New(wCfg)
-			if err != nil {
-				return fmt.Errorf("embedded worker: %w", err)
-			}
-			slog.Info("embedded local worker enabled", "master", masterURL, "concurrency", localConcurrency)
+			// --local mode: embedded gRPC workers handle all workloads.
+			// Activate agent dispatch so pipeline tasks are pushed via gRPC.
+			p.SetDispatchMode("agent")
 
+			// Embedded local pipeline worker: connects to the local gRPC agent server.
 			hostname, _ := os.Hostname()
-
 			localAgentAddr := p.Config().Server.AgentAddr
 			if localAgentAddr == "" {
 				localAgentAddr = ":9090"
 			}
 			localAgentConnAddr := localAgentConnURL(localAgentAddr)
+
+			wCfg := worker.Config{
+				AgentAddr:   localAgentConnAddr,
+				ID:          worker.NewID("local"),
+				Label:       "local",
+				Concurrency: localConcurrency,
+				MasterURL:   localMasterURL(addr),
+				Token:       p.Config().Server.Token,
+				StorageURL:  resolveStorageURLFromViper(),
+				OutputDir:   viper.GetString("worker.output_dir"),
+			}
+			w, err := worker.New(wCfg)
+			if err != nil {
+				return fmt.Errorf("embedded worker: %w", err)
+			}
+			slog.Info("embedded local worker enabled", "agent_addr", localAgentConnAddr, "concurrency", localConcurrency)
 
 			sw := servingworker.New(servingworker.Config{
 				AgentAddr: localAgentConnAddr,

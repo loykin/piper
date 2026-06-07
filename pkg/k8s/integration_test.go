@@ -19,6 +19,7 @@ import (
 	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/taskruntime"
 )
 
 const testKubeconfig = "/Users/loykin/.kube/config"
@@ -30,12 +31,10 @@ func newTestLauncher(t *testing.T) *Launcher {
 	}
 
 	l, err := New(Config{
-		Kubeconfig:   testKubeconfig,
-		InCluster:    false,
-		AgentImage:   "piper/agent:latest",
-		Namespace:    "default",
-		MasterURL:    "",           // Test: run without master, skip reporting
-		DefaultImage: "registry:2", // Use an image already pulled in K8s
+		Kubeconfig: testKubeconfig,
+		InCluster:  false,
+		AgentImage: "piper/agent:latest",
+		Namespace:  "default",
 	})
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
@@ -155,7 +154,6 @@ func TestIntegration_DispatchJob(t *testing.T) {
 	// ── Launcher ─────────────────────────────────────────────────────────────
 	l := newTestLauncher(t)
 	l.cfg.AgentImage = agentImage
-	l.cfg.MasterURL = masterURL // address agent Pods report results to
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -182,8 +180,17 @@ func TestIntegration_DispatchJob(t *testing.T) {
 		Pipeline: plJSON,
 	}
 
-	if err := l.Dispatch(ctx, task); err != nil {
-		t.Fatalf("Dispatch failed: %v", err)
+	args, err := taskruntime.BuildAgentExec(task, taskruntime.AgentExecConfig{
+		MasterURL:  masterURL,
+		OutputDir:  "/piper-outputs",
+		InputDir:   "/piper-inputs",
+		ReportMode: taskruntime.ReportModeHTTP,
+	})
+	if err != nil {
+		t.Fatalf("build agent args: %v", err)
+	}
+	if _, err := l.CreateJob(ctx, task, "", "alpine:3.20", args, nil); err != nil {
+		t.Fatalf("CreateJob failed: %v", err)
 	}
 	jobID := jobName(task)
 	t.Logf("job created: %s", jobID)

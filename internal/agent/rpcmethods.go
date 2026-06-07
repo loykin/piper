@@ -18,6 +18,7 @@ const (
 	MethodPipelineCancelRun  = "pipeline.cancel_run"
 	MethodPipelineLeaseRenew = "pipeline.lease_renew"
 	MethodPipelineTaskResult = "pipeline.task_result"
+	MethodPipelineResultAck  = "pipeline.task_result_ack"
 
 	MethodFSListFiles = "fs.list_files"
 )

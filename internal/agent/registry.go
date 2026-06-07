@@ -109,6 +109,9 @@ func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 		if !labelsMatch(a.Labels, p.Labels) {
 			continue
 		}
+		if p.RequireContainer && a.Runtime != RuntimeDocker && a.Runtime != RuntimeK8s {
+			continue
+		}
 		out = append(out, *cloneInfo(*a))
 	}
 	return out

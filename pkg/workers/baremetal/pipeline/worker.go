@@ -1,337 +1,343 @@
-// Package worker is a long-running process that polls the piper master and executes tasks.
-// Execution logic is delegated to pkg/runner.
+// Package pipelineworker implements a bare-metal pipeline worker that connects
+// to the master via gRPC and executes steps as isolated subprocesses using
+// piper agent exec.
 package pipelineworker
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/piper/piper/pkg/event"
+	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/runner"
+	"github.com/piper/piper/pkg/taskruntime"
+	"github.com/piper/piper/pkg/taskruntime/baremetal"
+	dockerdriver "github.com/piper/piper/pkg/taskruntime/docker"
+)
+
+// RuntimeType selects how pipeline steps are executed.
+type RuntimeType string
+
+const (
+	RuntimeBaremetal RuntimeType = "baremetal"
+	RuntimeDocker    RuntimeType = "docker"
 )
 
 // Config holds Worker configuration.
 type Config struct {
-	MasterURL           string
-	Label               string
-	Token               string
-	Version             string
-	Capabilities        []string
-	PollInterval        time.Duration
-	ShutdownGracePeriod time.Duration
-	Concurrency         int
-	OutputDir           string
-	GitUser             string
-	GitToken            string
-	// StorageURL selects the artifact store backend.
-	// Supported schemes: s3://, file://, http://, https://
+	AgentAddr   string // gRPC address of master agent server, e.g. "master:9090"
+	ID          string // stable worker identity (UUID)
+	Label       string
+	Hostname    string
+	Concurrency int
+	// Runtime selects the execution environment: "baremetal" (default) or "docker".
+	Runtime RuntimeType
+	// Artifact store configuration passed through to piper agent exec.
+	MasterURL  string
+	Token      string
 	StorageURL string
+	OutputDir  string
+	// MetaDir is the directory for baremetal runtime metadata sidecar files.
+	MetaDir     string
+	RemoteStore bool
+	// Docker-specific config (only used when Runtime == "docker").
+	DefaultImage  string
+	DockerNetwork string
 }
 
-// Worker polls the master and executes tasks.
-type Worker struct {
-	cfg    Config
-	id     string // unique worker ID (UUID)
-	runner *runner.Runner
-	poller *http.Client
-
-	mu       sync.Mutex
-	inFlight int
-	wg       sync.WaitGroup
-	cancels  map[string]trackedCancel
-}
-
-type trackedCancel struct {
-	taskID string
-	runID  string
+// trackedTask holds state for an in-flight step execution.
+type trackedTask struct {
+	handle taskruntime.Handle
 	cancel context.CancelFunc
 }
 
+// Worker manages pipeline workloads via gRPC.
+type Worker struct {
+	cfg    Config
+	client *grpcagent.Client
+	driver taskruntime.Driver
+	outbox *taskruntime.ResultOutbox
+
+	mu       sync.Mutex
+	active   map[string]*trackedTask // runtimeKey → trackedTask
+	inFlight int
+}
+
+// New creates a new Worker.
 func New(cfg Config) (*Worker, error) {
-	if cfg.PollInterval == 0 {
-		cfg.PollInterval = 3 * time.Second
-	}
-	if cfg.Concurrency < 0 {
-		return nil, fmt.Errorf("worker: concurrency must be >= 0, got %d", cfg.Concurrency)
-	}
-	if cfg.Concurrency == 0 {
+	if cfg.Concurrency <= 0 {
 		cfg.Concurrency = 4
 	}
-	if cfg.ShutdownGracePeriod == 0 {
-		cfg.ShutdownGracePeriod = 30 * time.Second
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = "./piper-outputs"
+	}
+	hostname := cfg.Hostname
+	if hostname == "" {
+		hostname, _ = os.Hostname()
 	}
 
-	r, err := runner.New(runner.Config{
-		MasterURL:  cfg.MasterURL,
-		Token:      cfg.Token,
-		OutputDir:  cfg.OutputDir,
-		GitUser:    cfg.GitUser,
-		GitToken:   cfg.GitToken,
-		StorageURL: cfg.StorageURL,
+	labels := map[string]string{}
+	if cfg.Label != "" {
+		labels["label"] = cfg.Label
+	}
+
+	runtime := string(cfg.Runtime)
+	if runtime == "" {
+		runtime = string(RuntimeBaremetal)
+	}
+	client := grpcagent.NewClient(grpcagent.ClientConfig{
+		AgentAddr:    cfg.AgentAddr,
+		AgentID:      cfg.ID,
+		Kind:         iagent.KindBareMetal,
+		Hostname:     hostname,
+		Capabilities: []string{iagent.CapabilityPipeline},
+		Labels:       labels,
+		Runtime:      runtime,
+		Capacity:     cfg.Concurrency,
 	})
+
+	var driver taskruntime.Driver
+	switch cfg.Runtime {
+	case RuntimeDocker:
+		d, err := dockerdriver.New(dockerdriver.Config{
+			WorkerID:     cfg.ID,
+			DefaultImage: cfg.DefaultImage,
+			ResultDir:    filepath.Join(cfg.OutputDir, ".results"),
+			OutputDir:    cfg.OutputDir,
+			Network:      cfg.DockerNetwork,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("docker driver: %w", err)
+		}
+		driver = d
+	default: // RuntimeBaremetal
+		d, err := baremetal.New(baremetal.Config{
+			WorkerID:    cfg.ID,
+			MetaDir:     cfg.MetaDir,
+			RemoteStore: cfg.RemoteStore,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("baremetal driver: %w", err)
+		}
+		driver = d
+	}
+
+	w := &Worker{
+		cfg:    cfg,
+		client: client,
+		driver: driver,
+		active: make(map[string]*trackedTask),
+	}
+	closeDriver := func() {
+		if closer, ok := driver.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+	}
+	outbox, err := taskruntime.NewResultOutbox(
+		filepath.Join(cfg.OutputDir, ".result-outbox", cfg.ID),
+		func(result proto.TaskResult) error {
+			return client.SendPush(iagent.MethodPipelineTaskResult, result)
+		},
+	)
 	if err != nil {
+		closeDriver()
+		return nil, err
+	}
+	w.outbox = outbox
+
+	d := client.Dispatcher()
+	if err := grpcagent.RegisterJSON(d, iagent.MethodPipelineDispatch, func(ctx context.Context, task proto.Task) (any, error) {
+		return nil, w.dispatch(ctx, &task)
+	}); err != nil {
+		closeDriver()
+		return nil, err
+	}
+	if err := grpcagent.RegisterJSON(d, iagent.MethodPipelineCancelRun, func(_ context.Context, req cancelRunRequest) (any, error) {
+		w.cancelRun(req.RunID)
+		return nil, nil
+	}); err != nil {
+		closeDriver()
+		return nil, err
+	}
+	if err := grpcagent.RegisterJSON(d, iagent.MethodPipelineResultAck, func(_ context.Context, ack taskruntime.ResultAck) (any, error) {
+		return nil, w.outbox.Ack(ack)
+	}); err != nil {
+		closeDriver()
 		return nil, err
 	}
 
-	hostname, _ := os.Hostname()
-	if hostname == "" {
-		hostname = "unknown"
-	}
-
-	return &Worker{
-		cfg:     cfg,
-		id:      uuid.New().String(),
-		runner:  r,
-		poller:  &http.Client{Timeout: 10 * time.Second},
-		cancels: make(map[string]trackedCancel),
-	}, nil
+	return w, nil
 }
 
+type cancelRunRequest struct {
+	RunID string `json:"run_id"`
+}
+
+// Run connects to the master and serves until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
-	// Register with master
-	if err := w.register(ctx); err != nil {
-		slog.Warn("worker registration failed, continuing without registration", "err", err)
+	// Recover any jobs that survived a previous worker restart.
+	if handles, err := w.driver.Recover(ctx); err != nil {
+		slog.Warn("pipeline worker: recovery failed", "err", err)
+	} else {
+		for _, h := range handles {
+			taskCtx, cancel := context.WithCancel(ctx)
+			w.mu.Lock()
+			w.active[h.RuntimeKey] = &trackedTask{handle: h, cancel: cancel}
+			w.inFlight++
+			w.mu.Unlock()
+			go w.observe(taskCtx, h)
+		}
+		if len(handles) > 0 {
+			slog.Info("pipeline worker: recovered jobs", "count", len(handles))
+		}
 	}
 
-	slog.Info("worker started",
-		"id", w.id,
-		"master", w.cfg.MasterURL,
-		"label", w.cfg.Label,
-		"concurrency", w.cfg.Concurrency,
-		"poll_interval", w.cfg.PollInterval,
-	)
+	// Drivers that need a background reconcile loop (e.g. K8s) implement Observable.
+	if obs, ok := w.driver.(taskruntime.Observable); ok {
+		go obs.Observe(ctx)
+	}
 
-	// heartbeat goroutine
-	go w.heartbeatLoop(ctx)
-	go w.watchCancelEvents(ctx)
+	go w.leaseLoop(ctx)
+	go w.outbox.Run(ctx)
 
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("worker shutting down", "id", w.id)
-			return w.waitForDrain()
-		default:
-		}
+	err := w.client.Run(ctx)
+	w.shutdown()
+	return err
+}
 
-		if !w.available() {
-			w.sleep(ctx)
-			continue
-		}
-
-		task, err := poll(ctx, w.poller, w.cfg, w.id)
-		if err != nil {
-			slog.Warn("poll error", "err", err)
-			w.sleep(ctx)
-			continue
-		}
-		if task == nil {
-			w.sleep(ctx)
-			continue
-		}
-
-		// Register cancel before launching the goroutine so that a run.canceled
-		// SSE event arriving between poll() and goroutine start is not dropped.
-		taskCtx, cancel := context.WithCancel(context.Background())
-		w.trackCancel(task.ID, task.RunID, cancel)
-
-		w.mu.Lock()
-		w.inFlight++
+// dispatch is called by the gRPC dispatcher when the master sends a pipeline.dispatch RPC.
+func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
+	w.mu.Lock()
+	if w.inFlight >= w.cfg.Concurrency {
 		w.mu.Unlock()
-		w.wg.Add(1)
-
-		go func(t *proto.Task, ctx context.Context, c context.CancelFunc) {
-			defer func() {
-				w.untrackCancel(t.ID)
-				c()
-				w.mu.Lock()
-				w.inFlight--
-				w.mu.Unlock()
-				w.wg.Done()
-			}()
-			w.runner.Run(ctx, t)
-		}(task, taskCtx, cancel)
-	}
-}
-
-func (w *Worker) trackCancel(taskID, runID string, cancel context.CancelFunc) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.cancels[taskID] = trackedCancel{taskID: taskID, runID: runID, cancel: cancel}
-}
-
-func (w *Worker) untrackCancel(taskID string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	delete(w.cancels, taskID)
-}
-
-func (w *Worker) cancelInFlight() {
-	w.mu.Lock()
-	cancels := make([]context.CancelFunc, 0, len(w.cancels))
-	for _, tracked := range w.cancels {
-		cancels = append(cancels, tracked.cancel)
+		return &iagent.BusyError{Reason: "worker at capacity"}
 	}
 	w.mu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
-	}
-}
 
-func (w *Worker) waitForDrain() error {
-	done := make(chan struct{})
-	go func() {
-		w.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-time.After(w.cfg.ShutdownGracePeriod):
-		slog.Warn("worker shutdown grace period exceeded; canceling in-flight tasks", "id", w.id, "grace_period", w.cfg.ShutdownGracePeriod)
-		w.cancelInFlight()
-		<-done
-		return nil
-	}
-}
+	runtimeKey := taskruntime.RuntimeKey(w.cfg.ID, task.RunID, task.StepName, task.Attempt)
 
-func (w *Worker) cancelRun(runID string) {
+	// ExecSpec is environment-agnostic. Each Driver resolves paths and builds
+	// agent exec args internally based on its own execution environment.
+	spec := taskruntime.ExecSpec{
+		RuntimeKey:    runtimeKey,
+		HostOutputDir: w.cfg.OutputDir,
+		MasterURL:     w.cfg.MasterURL,
+		Token:         w.cfg.Token,
+		StorageURL:    w.cfg.StorageURL,
+		Env: []string{
+			"PIPER_GIT_USER=" + os.Getenv("PIPER_GIT_USER"),
+			"PIPER_GIT_TOKEN=" + os.Getenv("PIPER_GIT_TOKEN"),
+		},
+	}
+
+	handle, err := w.driver.Start(ctx, task, spec)
+	if err != nil {
+		return fmt.Errorf("start job: %w", err)
+	}
+
+	taskCtx, cancel := context.WithCancel(context.Background())
 	w.mu.Lock()
-	cancels := make([]context.CancelFunc, 0)
-	for _, tracked := range w.cancels {
-		if tracked.runID == runID {
-			cancels = append(cancels, tracked.cancel)
-		}
-	}
+	w.active[runtimeKey] = &trackedTask{handle: handle, cancel: cancel}
+	w.inFlight++
 	w.mu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
-	}
-}
 
-func (w *Worker) watchCancelEvents(ctx context.Context) {
-	if w.cfg.MasterURL == "" {
-		return
-	}
-	for {
-		if err := w.consumeCancelEvents(ctx); err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			slog.Warn("cancel event stream failed", "err", err)
-		}
-		w.sleep(ctx)
-		if ctx.Err() != nil {
-			return
-		}
-	}
-}
-
-func (w *Worker) consumeCancelEvents(ctx context.Context) error {
-	url := strings.TrimRight(w.cfg.MasterURL, "/") + "/events"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	if w.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+w.cfg.Token)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("events: unexpected status %d", resp.StatusCode)
-	}
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	eventType := ""
-	data := ""
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			w.handleCancelEvent(eventType, data)
-			eventType = ""
-			data = ""
-			continue
-		}
-		if strings.HasPrefix(line, "event:") {
-			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			if data != "" {
-				data += "\n"
-			}
-			data += strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		}
-	}
-	return scanner.Err()
-}
-
-func (w *Worker) handleCancelEvent(eventType, data string) {
-	if eventType != "run.canceled" || data == "" {
-		return
-	}
-	var ev event.Event
-	if err := json.Unmarshal([]byte(data), &ev); err != nil {
-		slog.Warn("cancel event decode failed", "err", err)
-		return
-	}
-	runID, _ := ev.Fields["run_id"].(string)
-	if runID == "" {
-		return
-	}
-	slog.Info("run cancellation received", "run_id", runID)
-	w.cancelRun(runID)
-}
-
-// register registers this worker with the master.
-func (w *Worker) register(ctx context.Context) error {
-	if w.cfg.MasterURL == "" {
-		return nil
-	}
-	hostname, _ := os.Hostname()
-	body := map[string]any{
-		"id":           w.id,
-		"label":        w.cfg.Label,
-		"version":      w.cfg.Version,
-		"capabilities": strings.Join(w.cfg.Capabilities, ","),
-		"concurrency":  w.cfg.Concurrency,
-		"hostname":     hostname,
-	}
-	data, _ := json.Marshal(body)
-	url := fmt.Sprintf("%s/api/workers", w.cfg.MasterURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if w.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+w.cfg.Token)
-	}
-	resp, err := w.poller.Do(req)
-	if err != nil {
-		return err
-	}
-	_ = resp.Body.Close()
+	go w.observe(taskCtx, handle)
+	slog.Info("pipeline step dispatched", "task_id", task.ID, "runtime_key", runtimeKey)
 	return nil
 }
 
-// heartbeatLoop sends a keepalive signal to the master every 10 seconds.
-// On a 404 (unregistered) heartbeat response, it attempts re-registration.
-func (w *Worker) heartbeatLoop(ctx context.Context) {
+// observe waits for a job to finish and pushes the result to the master.
+func (w *Worker) observe(ctx context.Context, handle taskruntime.Handle) {
+	defer func() {
+		w.mu.Lock()
+		delete(w.active, handle.RuntimeKey)
+		w.inFlight--
+		w.mu.Unlock()
+	}()
+
+	exit, err := w.driver.Wait(ctx, handle)
+	if err != nil {
+		// ctx cancelled (worker shutdown or run cancel).
+		return
+	}
+
+	result := w.buildResult(handle, exit)
+	if err := w.outbox.Enqueue(result); err != nil {
+		slog.Error("pipeline worker: persist result failed", "task_id", result.TaskID, "err", err)
+	}
+}
+
+func (w *Worker) buildResult(handle taskruntime.Handle, exit taskruntime.Exit) proto.TaskResult {
+	// Driver pre-parsed the result (e.g. K8s reads termination log via K8s API).
+	if exit.Result != nil {
+		r := *exit.Result
+		r.WorkerID = w.cfg.ID
+		return r
+	}
+
+	if exit.InfraFailure != nil {
+		return proto.TaskResult{
+			TaskID:    handle.TaskID,
+			WorkerID:  w.cfg.ID,
+			Status:    proto.TaskStatusFailed,
+			Error:     exit.InfraFailure.Error(),
+			StartedAt: time.Now(),
+			EndedAt:   time.Now(),
+			Attempt:   handle.Attempt,
+		}
+	}
+
+	// Read the result file written by piper agent exec (baremetal/docker).
+	if exit.ResultPath != "" {
+		if data, err := os.ReadFile(exit.ResultPath); err == nil {
+			if r, err := taskruntime.ReadAgentResult(data); err == nil {
+				r.WorkerID = w.cfg.ID
+				return r
+			}
+		}
+	}
+
+	return proto.TaskResult{
+		TaskID:   handle.TaskID,
+		WorkerID: w.cfg.ID,
+		Status:   proto.TaskStatusFailed,
+		Error:    "result unavailable after job completion",
+		EndedAt:  time.Now(),
+		Attempt:  handle.Attempt,
+	}
+}
+
+// cancelRun stops all active jobs for the given run.
+func (w *Worker) cancelRun(runID string) {
+	w.mu.Lock()
+	var toCancel []string
+	for key, tt := range w.active {
+		if tt.handle.RunID == runID {
+			toCancel = append(toCancel, key)
+			tt.cancel()
+		}
+	}
+	w.mu.Unlock()
+
+	for _, key := range toCancel {
+		w.mu.Lock()
+		tt := w.active[key]
+		w.mu.Unlock()
+		if tt != nil {
+			_ = w.driver.Stop(context.Background(), tt.handle, 10*time.Second)
+		}
+	}
+}
+
+// leaseLoop pushes active task IDs to the master every 10 seconds.
+func (w *Worker) leaseLoop(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -339,57 +345,68 @@ func (w *Worker) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := w.heartbeat(ctx); err != nil {
-				slog.Warn("heartbeat failed, re-registering", "err", err)
-				_ = w.register(ctx)
+			w.mu.Lock()
+			taskIDs := make([]string, 0, len(w.active))
+			for _, tt := range w.active {
+				taskIDs = append(taskIDs, tt.handle.TaskID)
+			}
+			w.mu.Unlock()
+			if len(taskIDs) == 0 {
+				continue
+			}
+			payload := map[string]any{"task_ids": taskIDs}
+			data, _ := json.Marshal(payload)
+			if err := w.client.SendPush(iagent.MethodPipelineLeaseRenew, json.RawMessage(data)); err != nil {
+				slog.Warn("pipeline worker: lease renew failed", "err", err)
 			}
 		}
 	}
 }
 
-func (w *Worker) heartbeat(ctx context.Context) error {
-	if w.cfg.MasterURL == "" {
-		return nil
-	}
-
+// shutdown stops all in-flight jobs gracefully.
+func (w *Worker) shutdown() {
 	w.mu.Lock()
-	inFlight := w.inFlight
-	taskIDs := make([]string, 0, len(w.cancels))
-	for taskID := range w.cancels {
-		taskIDs = append(taskIDs, taskID)
+	handles := make([]taskruntime.Handle, 0, len(w.active))
+	for _, tt := range w.active {
+		tt.cancel()
+		handles = append(handles, tt.handle)
 	}
 	w.mu.Unlock()
 
-	body, _ := json.Marshal(map[string]any{"in_flight": inFlight, "task_ids": taskIDs})
-	url := fmt.Sprintf("%s/api/workers/%s/heartbeat", w.cfg.MasterURL, w.id)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
+	for _, h := range handles {
+		_ = w.driver.Stop(context.Background(), h, 15*time.Second)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if w.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+w.cfg.Token)
+	if closer, ok := w.driver.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
-	resp, err := w.poller.Do(req)
-	if err != nil {
-		return err
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not registered")
-	}
-	return nil
 }
 
-func (w *Worker) available() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.inFlight < w.cfg.Concurrency
+// sanitizeName normalises a string to be a safe process name (lowercase alnum + dash).
+func sanitizeName(s string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(s) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if len(name) > 63 {
+		name = strings.TrimRight(name[:63], "-")
+	}
+	return name
 }
 
-func (w *Worker) sleep(ctx context.Context) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(w.cfg.PollInterval):
+// NewID generates a stable worker ID from prefix and hostname.
+// Multiple workers on one host must configure distinct explicit IDs.
+func NewID(prefix string) string {
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "worker"
 	}
+	if prefix != "" {
+		host = prefix + "-" + host
+	}
+	return sanitizeName(host)
 }

@@ -80,77 +80,6 @@ func TestJobName_includesRetryAttempt(t *testing.T) {
 	}
 }
 
-// ─── buildAgentArgs ───────────────────────────────────────────────────────────
-
-func TestBuildAgentArgs_contains(t *testing.T) {
-	l := &Launcher{cfg: Config{
-		MasterURL: "http://piper:8080",
-		Token:     "secret",
-	}}
-	task := &proto.Task{ID: "run-1:step-a", RunID: "run-1", StepName: "step-a"}
-	args := l.buildAgentArgs(task, "TASKB64")
-
-	contains := func(target string) bool {
-		for _, a := range args {
-			if a == target {
-				return true
-			}
-		}
-		return false
-	}
-
-	checks := []string{
-		agentSubcmd,
-		agentExecSubcmd,
-		"--master=http://piper:8080",
-		"--task=TASKB64",
-		"--token=secret",
-	}
-	for _, c := range checks {
-		if !contains(c) {
-			t.Errorf("args missing %q, got: %v", c, args)
-		}
-	}
-
-	// Launcher must not pass legacy flags — they are redundant when --task is present.
-	for _, banned := range []string{"--task-id=", "--run-id=", "--step-name=", "--step="} {
-		for _, a := range args {
-			if len(a) >= len(banned) && a[:len(banned)] == banned {
-				t.Errorf("legacy flag must not appear in args: %q", a)
-			}
-		}
-	}
-}
-
-func TestBuildAgentArgs_storage(t *testing.T) {
-	storageURL := "s3://piper?endpoint=http://minio:9000&s3ForcePathStyle=true&accessKey=access&secretKey=secret"
-	l := &Launcher{cfg: Config{StorageURL: storageURL}}
-	task := &proto.Task{ID: "r:s", RunID: "r", StepName: "s"}
-	args := l.buildAgentArgs(task, "TASKB64")
-
-	found := false
-	for _, a := range args {
-		if a == "--storage-url="+storageURL {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("--storage-url not in args: %v", args)
-	}
-}
-
-func TestBuildAgentArgs_noToken(t *testing.T) {
-	l := &Launcher{cfg: Config{MasterURL: "http://piper:8080"}}
-	task := &proto.Task{ID: "r:s", RunID: "r", StepName: "s"}
-	args := l.buildAgentArgs(task, "TASKB64")
-
-	for _, a := range args {
-		if a == "--token=" {
-			t.Errorf("empty token should not appear in args")
-		}
-	}
-}
-
 // ─── buildJob ─────────────────────────────────────────────────────────────────
 
 func TestBuildJob_structure(t *testing.T) {
@@ -362,6 +291,7 @@ func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
 				},
 				Annotations: map[string]string{
 					"piper.io/task-id": "run-1:step-1",
+					"piper.io/attempt": "3",
 				},
 			},
 		},
@@ -392,75 +322,12 @@ func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
 	if rec.WorkerID != "Worker 1" {
 		t.Fatalf("worker ID = %q, want Worker 1", rec.WorkerID)
 	}
-}
-
-// ─── Dispatch image resolution logic (unit, without K8s API) ─────────────────
-
-func TestDispatch_noImage(t *testing.T) {
-	// Test image validation logic without a K8s client
-	l := &Launcher{cfg: Config{DefaultImage: ""}}
-
-	step := pipeline.Step{Name: "s", Run: pipeline.Run{Command: []string{"echo"}}}
-	pl := pipeline.Pipeline{}
-
-	task := makeTask("run-1", "s", step, pl)
-
-	// Verify that an error is returned before a nil pointer dereference occurs when clientset is nil
-	// Confirm that Dispatch returns an error when image == ""
-	var pipelineStep pipeline.Step
-	_ = json.Unmarshal(task.Step, &pipelineStep)
-	var pipelinePl pipeline.Pipeline
-	_ = json.Unmarshal(task.Pipeline, &pipelinePl)
-
-	image := pipelineStep.Run.Image
-	if image == "" {
-		image = pipelinePl.Spec.Defaults.Image
-	}
-	if image == "" {
-		image = l.cfg.DefaultImage
-	}
-	if image != "" {
-		t.Errorf("expected empty image, got %q", image)
+	if rec.Attempt != 3 {
+		t.Fatalf("attempt = %d, want 3", rec.Attempt)
 	}
 }
 
-func TestDispatch_imageResolution(t *testing.T) {
-	cases := []struct {
-		stepImage    string
-		defaultImage string
-		plDefault    string
-		want         string
-	}{
-		{"python:3.11", "fallback:1", "pl-default:1", "python:3.11"},
-		{"", "pl-default:1", "pl-default:1", "pl-default:1"},
-		{"", "", "launcher-default:1", "launcher-default:1"},
-	}
-
-	for _, c := range cases {
-		l := &Launcher{cfg: Config{DefaultImage: c.defaultImage}}
-		step := pipeline.Step{Run: pipeline.Run{Image: c.stepImage}}
-		pl := pipeline.Pipeline{Spec: pipeline.Spec{Defaults: pipeline.Defaults{Image: c.plDefault}}}
-		task := makeTask("r", "s", step, pl)
-
-		var s pipeline.Step
-		_ = json.Unmarshal(task.Step, &s)
-		var p pipeline.Pipeline
-		_ = json.Unmarshal(task.Pipeline, &p)
-
-		image := s.Run.Image
-		if image == "" {
-			image = p.Spec.Defaults.Image
-		}
-		if image == "" {
-			image = l.cfg.DefaultImage
-		}
-		if image != c.want {
-			t.Errorf("image resolution: got %q, want %q", image, c.want)
-		}
-	}
-}
-
-func TestDispatchCreatesJobWithFullTaskAgentContract(t *testing.T) {
+func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 	step := pipeline.Step{
 		Name: "train",
 		Run: pipeline.Run{
@@ -479,11 +346,18 @@ func TestDispatchCreatesJobWithFullTaskAgentContract(t *testing.T) {
 		cfg: Config{
 			AgentImage: "loykin/piper:agent",
 			Namespace:  "default",
-			MasterURL:  "http://master:8080",
 		},
 		clientset: fake.NewSimpleClientset(),
 	}
-	if err := l.Dispatch(context.Background(), task); err != nil {
+	preparedArgs := []string{
+		"agent",
+		"exec",
+		"--task=encoded",
+		"--master=http://master:8080",
+		"--report-mode=file",
+		"--result-file=/dev/termination-log",
+	}
+	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", preparedArgs, nil); err != nil {
 		t.Fatal(err)
 	}
 

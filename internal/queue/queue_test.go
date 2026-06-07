@@ -2,10 +2,13 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
@@ -206,7 +209,7 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 		t.Fatalf("first attempt = %#v, want attempt 1", firstAttempt)
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: firstAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: firstAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom", StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if skipped := stepRepo.steps["run-retry:second"]; skipped != nil {
@@ -223,7 +226,7 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 	if secondAttempt.Attempt != 2 {
 		t.Fatalf("retry attempt = %d, want 2", secondAttempt.Attempt)
 	}
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: secondAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom again", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: secondAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom again", StartedAt: now, EndedAt: now, Attempt: 2}); err != nil {
 		t.Fatal(err)
 	}
 	failed := stepRepo.steps["run-retry:first"]
@@ -263,14 +266,14 @@ func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 		t.Fatal("first attempt was not dispatched")
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: firstAttempt.ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: firstAttempt.ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	secondAttempt := q.Next("")
 	if secondAttempt == nil {
 		t.Fatal("retry attempt was not dispatched")
 	}
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: secondAttempt.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: secondAttempt.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 2}); err != nil {
 		t.Fatal(err)
 	}
 	child := q.Next("")
@@ -280,7 +283,7 @@ func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 	if child.Attempt != 1 {
 		t.Fatalf("child attempt = %d, want 1", child.Attempt)
 	}
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: child.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: child.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if runRepo.status["run-retry-success"] != run.StatusSuccess {
@@ -304,15 +307,15 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := &recordingBackend{}
+	taskBackend := &recordingBackend{}
 	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.SetRetryPolicy(2, 0)
-	q.SetBackend(backend)
+	q.SetBackend(taskBackend)
 	q.Add(ctx, pl, dag, "run-backend-retry", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
 	var dispatched []*proto.Task
 	if !waitUntil(2*time.Second, func() bool {
-		dispatched = backend.snapshot()
+		dispatched = taskBackend.snapshot()
 		return len(dispatched) == 1
 	}) {
 		t.Fatalf("dispatches = %d, want 1", len(dispatched))
@@ -322,11 +325,11 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 	}
 
 	now := time.Now()
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: dispatched[0].ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: dispatched[0].ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if !waitUntil(2*time.Second, func() bool {
-		dispatched = backend.snapshot()
+		dispatched = taskBackend.snapshot()
 		return len(dispatched) == 2
 	}) {
 		t.Fatalf("dispatches = %d, want retry dispatch", len(dispatched))
@@ -351,28 +354,28 @@ func TestCancelStopsPendingRetryTimer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := &recordingBackend{}
+	taskBackend := &recordingBackend{}
 	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.SetRetryPolicy(2, 50*time.Millisecond)
-	q.SetBackend(backend)
+	q.SetBackend(taskBackend)
 	q.Add(ctx, pl, dag, "run-retry-cancel", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
 	var dispatched []*proto.Task
 	if !waitUntil(2*time.Second, func() bool {
-		dispatched = backend.snapshot()
+		dispatched = taskBackend.snapshot()
 		return len(dispatched) == 1
 	}) {
 		t.Fatalf("dispatches = %d, want 1", len(dispatched))
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: dispatched[0].ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: dispatched[0].ID, Status: proto.TaskStatusFailed, Error: "temporary", StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := q.Cancel(ctx, "run-retry-cancel"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	if got := len(backend.snapshot()); got != 1 {
+	if got := len(taskBackend.snapshot()); got != 1 {
 		t.Fatalf("dispatches after cancel = %d, want 1", got)
 	}
 }
@@ -455,10 +458,13 @@ func TestCompleteRejectsDifferentWorker(t *testing.T) {
 	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.Add(ctx, pl, dag, "run-owner", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 	task := q.NextForWorker("worker-a", "")
+	if task == nil {
+		t.Fatal("expected task")
+	}
 	now := time.Now()
 	err = q.Complete(ctx, proto.TaskResult{
 		TaskID: task.ID, WorkerID: "worker-b", Status: proto.TaskStatusDone,
-		StartedAt: now, EndedAt: now, Attempts: 1,
+		StartedAt: now, EndedAt: now, Attempt: 1,
 	})
 	if err == nil {
 		t.Fatal("completion from non-owner was accepted")
@@ -483,20 +489,20 @@ func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 	}
 	runRepo := &memoryRunRepo{}
 	stepRepo := &memoryStepRepo{}
-	backend := &cancelRecordingBackend{}
+	taskBackend := &cancelRecordingBackend{}
 	q := NewQueue(context.Background(), runRepo, stepRepo)
-	q.SetBackend(backend)
+	q.SetBackend(taskBackend)
 	q.Add(ctx, pl, dag, "run-cancel", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
 	if !waitUntil(2*time.Second, func() bool {
-		return len(backend.snapshot()) == 1
+		return len(taskBackend.snapshot()) == 1
 	}) {
 		t.Fatal("first task was not dispatched")
 	}
 	if err := q.Cancel(ctx, "run-cancel"); err != nil {
 		t.Fatal(err)
 	}
-	if got := backend.canceledRun(); got != "run-cancel" {
+	if got := taskBackend.canceledRun(); got != "run-cancel" {
 		t.Fatalf("backend canceled run = %q, want run-cancel", got)
 	}
 	if runRepo.status["run-cancel"] != run.StatusCanceled {
@@ -512,8 +518,137 @@ func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 		t.Fatalf("got task after cancel: %#v", task)
 	}
 	now := time.Now()
-	if err := q.Complete(ctx, proto.TaskResult{TaskID: "run-cancel:first", Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempts: 1}); err != nil {
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: "run-cancel:first", Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatalf("late completion after cancel returned error: %v", err)
+	}
+}
+
+func TestCompleteDuplicateResultIsIgnored(t *testing.T) {
+	ctx := context.Background()
+	pl := singleStepPipeline("dup")
+	dag, _ := pipeline.BuildDAG(pl)
+	q := NewQueue(ctx, &memoryRunRepo{}, &memoryStepRepo{})
+	q.Add(ctx, pl, dag, "run-dup", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+	task := q.Next("")
+	if task == nil {
+		t.Fatal("expected task")
+	}
+	now := time.Now()
+	result := proto.TaskResult{TaskID: task.ID, WorkerID: "", Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}
+	if err := q.Complete(ctx, result); err != nil {
+		t.Fatalf("first complete: %v", err)
+	}
+	// second identical result must be silently accepted (idempotent)
+	if err := q.Complete(ctx, result); err != nil {
+		t.Fatalf("duplicate complete returned error: %v", err)
+	}
+}
+
+func TestCompleteStaleAttemptIsIgnored(t *testing.T) {
+	ctx := context.Background()
+	pl := singleStepPipeline("stale")
+	dag, _ := pipeline.BuildDAG(pl)
+	q := NewQueue(ctx, &memoryRunRepo{}, &memoryStepRepo{})
+	q.SetRetryPolicy(2, 0)
+	q.Add(ctx, pl, dag, "run-stale", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+	task := q.Next("")
+	if task == nil {
+		t.Fatal("expected task")
+	}
+	now := time.Now()
+	// fail attempt 1 → queue retries
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: task.ID, Status: proto.TaskStatusFailed, StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
+		t.Fatalf("fail attempt 1: %v", err)
+	}
+	// attempt 2 is now in progress
+	task2 := q.Next("")
+	if task2 == nil {
+		t.Fatal("no retry task available")
+	}
+	// stale result from attempt 1 arriving after attempt 2 started — must be ignored
+	if err := q.Complete(ctx, proto.TaskResult{TaskID: task.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
+		t.Fatalf("stale attempt complete returned error: %v", err)
+	}
+	if s := q.Stats(); s.Running != 1 {
+		t.Fatalf("stats = %+v, want task still running after stale result", s)
+	}
+}
+
+func TestCompleteFutureAttemptIsRejected(t *testing.T) {
+	ctx := context.Background()
+	pl := singleStepPipeline("future")
+	dag, _ := pipeline.BuildDAG(pl)
+	q := NewQueue(ctx, &memoryRunRepo{}, &memoryStepRepo{})
+	q.Add(ctx, pl, dag, "run-future", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+	task := q.Next("")
+	if task == nil {
+		t.Fatal("expected task")
+	}
+	now := time.Now()
+	err := q.Complete(ctx, proto.TaskResult{TaskID: task.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 99})
+	if err == nil {
+		t.Fatal("future attempt was accepted, expected error")
+	}
+}
+
+func TestDispatchRetryableErrorRequeuesWithoutConsumingAttempt(t *testing.T) {
+	ctx := context.Background()
+	pl := singleStepPipeline("busy")
+	dag, _ := pipeline.BuildDAG(pl)
+
+	var dispatches atomic.Int32
+	busyOnce := &busyBackend{busyCount: 1, onDispatch: func() { dispatches.Add(1) }}
+	q := NewQueue(ctx, &memoryRunRepo{}, &memoryStepRepo{})
+	q.SetBackend(busyOnce)
+	q.Add(ctx, pl, dag, "run-busy", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	// wait for both dispatch attempts: first busy, second success
+	if !waitUntil(5*time.Second, func() bool { return dispatches.Load() >= 2 }) {
+		t.Fatalf("expected 2 dispatch attempts, got %d", dispatches.Load())
+	}
+	// task must still be running (attempt count = 1, not 2)
+	if s := q.Stats(); s.Running != 1 {
+		t.Fatalf("stats = %+v, want 1 running task", s)
+	}
+	// the second dispatched task must have Attempt == 1 (not 2)
+	busyOnce.mu.Lock()
+	lastAttempt := busyOnce.lastAttempt
+	busyOnce.mu.Unlock()
+	if lastAttempt != 1 {
+		t.Fatalf("last dispatch attempt = %d, want 1 (busy should not consume attempt)", lastAttempt)
+	}
+}
+
+// busyBackend returns a retryable DispatchError for the first busyCount dispatches.
+type busyBackend struct {
+	mu          sync.Mutex
+	busyCount   int
+	dispatched  int
+	lastAttempt int
+	onDispatch  func()
+}
+
+func (b *busyBackend) Dispatch(_ context.Context, task *proto.Task) error {
+	b.mu.Lock()
+	b.dispatched++
+	b.lastAttempt = task.Attempt
+	busy := b.dispatched <= b.busyCount
+	b.mu.Unlock()
+	if b.onDispatch != nil {
+		b.onDispatch()
+	}
+	if busy {
+		return &backend.DispatchError{Retryable: true, Err: fmt.Errorf("worker busy")}
+	}
+	return nil
+}
+
+func singleStepPipeline(name string) *pipeline.Pipeline {
+	return &pipeline.Pipeline{
+		Metadata: pipeline.Metadata{Name: name},
+		Spec: pipeline.Spec{Steps: []pipeline.Step{
+			{Name: "step", Run: pipeline.Run{Command: []string{"echo", name}}},
+		}},
 	}
 }
 

@@ -30,6 +30,10 @@ type ClientConfig struct {
 	Capabilities []string
 	ClusterName  string
 	Labels       map[string]string
+	// Runtime is the execution environment: "baremetal", "docker", or "k8s".
+	Runtime string
+	// Capacity is the maximum number of concurrent tasks (0 = unlimited).
+	Capacity int
 }
 
 // Client manages the worker-side gRPC tunnel lifecycle:
@@ -137,6 +141,18 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		})
 	}
 
+	// Merge runtime/capacity into Labels so we don't need a proto change.
+	labels := make(map[string]string, len(c.cfg.Labels)+2)
+	for k, v := range c.cfg.Labels {
+		labels[k] = v
+	}
+	if c.cfg.Runtime != "" {
+		labels["runtime"] = c.cfg.Runtime
+	}
+	if c.cfg.Capacity > 0 {
+		labels["capacity"] = fmt.Sprintf("%d", c.cfg.Capacity)
+	}
+
 	// Send Registration as the first message.
 	if err := send(&agentpb.WorkerMessage{
 		Payload: &agentpb.WorkerMessage_Register{
@@ -148,7 +164,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 				Gpus:         c.cfg.GPUs,
 				Capabilities: c.cfg.Capabilities,
 				ClusterName:  c.cfg.ClusterName,
-				Labels:       c.cfg.Labels,
+				Labels:       labels,
 			},
 		},
 	}); err != nil {

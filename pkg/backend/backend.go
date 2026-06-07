@@ -3,6 +3,7 @@ package backend
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/runner"
@@ -31,17 +32,39 @@ type TaskOwner interface {
 	ReleaseTask(taskID string)
 }
 
+// RunOwner releases backend-side placement state once a run is terminal.
+type RunOwner interface {
+	ReleaseRun(runID string)
+}
+
+// DispatchError is returned by ExecutionBackend.Dispatch to distinguish
+// retryable infrastructure failures (e.g. worker busy) from permanent ones.
+// A retryable error puts the task back to ready without consuming a retry attempt.
+type DispatchError struct {
+	Retryable bool
+	Err       error
+}
+
+func (e *DispatchError) Error() string { return e.Err.Error() }
+func (e *DispatchError) Unwrap() error { return e.Err }
+
 // LocalBackend dispatches tasks to an in-process runner.
-//
-// The runner still reports task completion through its configured MasterURL.
-// Direct in-memory reporting belongs to the later task-runtime consolidation.
+// OnComplete is called with the TaskResult after each task finishes.
 type LocalBackend struct {
-	runner *runner.Runner
+	runner     *runner.Runner
+	OnComplete func(ctx context.Context, result proto.TaskResult) error
 }
 
 // Dispatch starts task execution asynchronously.
 func (b *LocalBackend) Dispatch(ctx context.Context, task *proto.Task) error {
-	go b.runner.Run(ctx, task)
+	go func() {
+		result := b.runner.Run(ctx, task)
+		if b.OnComplete != nil {
+			if err := b.OnComplete(context.Background(), result); err != nil {
+				slog.Warn("local backend complete callback failed", "task_id", task.ID, "err", err)
+			}
+		}
+	}()
 	return nil
 }
 

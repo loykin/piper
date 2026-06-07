@@ -12,6 +12,7 @@ import (
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/serving"
+	"github.com/piper/piper/pkg/taskruntime"
 )
 
 type pipelineStatusQueue interface {
@@ -19,7 +20,11 @@ type pipelineStatusQueue interface {
 	RenewLeases(workerID string, taskIDs []string)
 }
 
-func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, pipelineQueue pipelineStatusQueue) func(ctx context.Context, agentID, method string, payload []byte) {
+type pipelineResultAcker interface {
+	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
+}
+
+func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, pipelineQueue pipelineStatusQueue, acker pipelineResultAcker) func(ctx context.Context, agentID, method string, payload []byte) {
 	return func(ctx context.Context, agentID, method string, payload []byte) {
 		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -51,6 +56,15 @@ func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, 
 			result.WorkerID = agentID
 			if err := pipelineQueue.Complete(pushCtx, result); err != nil {
 				slog.Warn("pipeline result push failed", "agent_id", agentID, "task_id", result.TaskID, "err", err)
+				return
+			}
+			if acker != nil {
+				ack := taskruntime.ResultAck{TaskID: result.TaskID, Attempt: result.Attempt}
+				ackCtx, ackCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer ackCancel()
+				if err := acker.SendRPC(ackCtx, agentID, iagent.MethodPipelineResultAck, ack, nil); err != nil {
+					slog.Warn("pipeline result ack failed", "agent_id", agentID, "task_id", result.TaskID, "err", err)
+				}
 			}
 		default:
 			slog.Warn("unknown worker push method", "agent_id", agentID, "method", method)

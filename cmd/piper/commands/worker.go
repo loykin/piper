@@ -5,9 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/piper/piper/pkg/source"
 	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -16,27 +14,33 @@ import (
 func newWorkerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "worker",
-		Short: "start a piper worker (polls master for tasks)",
+		Short: "start a piper pipeline worker (connects to master via gRPC)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Read source config directly from viper (which is fully initialized
-			// by initConfig at this point) rather than from p.SourceConfig(), which
-			// was built before viper loaded the config file.
-			srcCfg := source.Config{
-				GitUser:    viper.GetString("source.git.user"),
-				GitToken:   viper.GetString("source.git.token"),
-				StorageURL: resolveStorageURLFromViper(),
+			id := viper.GetString("worker.id")
+			if id == "" {
+				id = worker.NewID("")
 			}
-			cfg := workerConfigFromSource(worker.Config{
-				MasterURL:           viper.GetString("worker.master"),
-				Label:               viper.GetString("worker.label"),
-				Token:               viper.GetString("worker.token"),
-				Version:             viper.GetString("worker.version"),
-				Capabilities:        viper.GetStringSlice("worker.capabilities"),
-				PollInterval:        viper.GetDuration("worker.poll_interval"),
-				ShutdownGracePeriod: viper.GetDuration("worker.shutdown_grace_period"),
-				OutputDir:           viper.GetString("worker.output_dir"),
-				Concurrency:         viper.GetInt("worker.concurrency"),
-			}, srcCfg)
+
+			runtime := worker.RuntimeType(viper.GetString("worker.runtime"))
+			if runtime == "" {
+				runtime = worker.RuntimeBaremetal
+			}
+
+			cfg := worker.Config{
+				AgentAddr:     viper.GetString("worker.agent_addr"),
+				ID:            id,
+				Label:         viper.GetString("worker.label"),
+				Concurrency:   viper.GetInt("worker.concurrency"),
+				Runtime:       runtime,
+				MasterURL:     viper.GetString("worker.master"),
+				Token:         viper.GetString("worker.token"),
+				StorageURL:    resolveStorageURLFromViper(),
+				OutputDir:     viper.GetString("worker.output_dir"),
+				MetaDir:       viper.GetString("worker.meta_dir"),
+				RemoteStore:   viper.GetString("storage.url") != "" || viper.GetString("s3.bucket") != "",
+				DefaultImage:  viper.GetString("worker.default_image"),
+				DockerNetwork: viper.GetString("worker.docker_network"),
+			}
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
@@ -49,35 +53,29 @@ func newWorkerCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("master", "", "master server URL")
-	cmd.Flags().String("label", "", "worker label (e.g. gpu)")
+	cmd.Flags().String("agent-addr", "", "gRPC address of piper master agent server (e.g. master:9090)")
+	cmd.Flags().String("id", "", "stable worker ID (auto-generated if empty)")
+	cmd.Flags().String("label", "", "worker label for task routing")
+	cmd.Flags().String("master", "", "piper master HTTP URL (for agent exec callbacks)")
 	cmd.Flags().String("token", "", "authentication token")
-	cmd.Flags().String("version", "", "worker version")
-	cmd.Flags().StringSlice("capability", nil, "worker capability; may be repeated")
-	cmd.Flags().Duration("poll-interval", 3*time.Second, "polling interval")
-	cmd.Flags().Duration("shutdown-grace-period", 30*time.Second, "time to wait for in-flight tasks before canceling them")
-	cmd.Flags().String("output-dir", "./piper-outputs", "output directory")
 	cmd.Flags().Int("concurrency", 4, "max parallel tasks")
-	_ = cmd.MarkFlagRequired("master")
+	cmd.Flags().String("runtime", "baremetal", "execution runtime: baremetal or docker")
+	cmd.Flags().String("output-dir", "./piper-outputs", "output directory")
+	cmd.Flags().String("meta-dir", "", "metadata sidecar directory (default: $TMPDIR/piper-meta)")
+	cmd.Flags().String("default-image", "", "fallback container image (docker runtime)")
+	cmd.Flags().String("docker-network", "", "Docker network for step containers")
 
-	mustBindPFlag("worker.master", cmd.Flags().Lookup("master"))
+	mustBindPFlag("worker.agent_addr", cmd.Flags().Lookup("agent-addr"))
+	mustBindPFlag("worker.id", cmd.Flags().Lookup("id"))
 	mustBindPFlag("worker.label", cmd.Flags().Lookup("label"))
+	mustBindPFlag("worker.master", cmd.Flags().Lookup("master"))
 	mustBindPFlag("worker.token", cmd.Flags().Lookup("token"))
-	mustBindPFlag("worker.version", cmd.Flags().Lookup("version"))
-	mustBindPFlag("worker.capabilities", cmd.Flags().Lookup("capability"))
-	mustBindPFlag("worker.poll_interval", cmd.Flags().Lookup("poll-interval"))
-	mustBindPFlag("worker.shutdown_grace_period", cmd.Flags().Lookup("shutdown-grace-period"))
-	mustBindPFlag("worker.output_dir", cmd.Flags().Lookup("output-dir"))
 	mustBindPFlag("worker.concurrency", cmd.Flags().Lookup("concurrency"))
+	mustBindPFlag("worker.runtime", cmd.Flags().Lookup("runtime"))
+	mustBindPFlag("worker.output_dir", cmd.Flags().Lookup("output-dir"))
+	mustBindPFlag("worker.meta_dir", cmd.Flags().Lookup("meta-dir"))
+	mustBindPFlag("worker.default_image", cmd.Flags().Lookup("default-image"))
+	mustBindPFlag("worker.docker_network", cmd.Flags().Lookup("docker-network"))
 
 	return cmd
-}
-
-func workerConfigFromSource(cfg worker.Config, srcCfg source.Config) worker.Config {
-	cfg.GitUser = srcCfg.GitUser
-	cfg.GitToken = srcCfg.GitToken
-	if cfg.StorageURL == "" {
-		cfg.StorageURL = srcCfg.StorageURL
-	}
-	return cfg
 }

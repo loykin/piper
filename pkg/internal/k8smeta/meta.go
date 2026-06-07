@@ -12,6 +12,9 @@ const (
 	LabelStepName     = "piper.io/step-name"
 
 	AnnotationTaskID     = "piper.io/task-id"
+	AnnotationAttempt    = "piper.io/attempt"
+	AnnotationRunID      = "piper.io/run-id"
+	AnnotationStepName   = "piper.io/step-name"
 	AnnotationVolumeID   = "piper.io/volume-id"
 	AnnotationWorkloadID = "piper.io/workload-id"
 

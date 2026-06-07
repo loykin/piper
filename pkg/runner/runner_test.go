@@ -96,7 +96,8 @@ func TestRun_success_echo(t *testing.T) {
 		},
 	})
 
-	r.Run(context.Background(), task)
+	result := r.Run(context.Background(), task)
+	r.Report(result)
 
 	if doneTaskID != "task-1" {
 		t.Errorf("expected done report for task-1, got %q", doneTaskID)
@@ -154,7 +155,8 @@ func TestRun_failed_bad_command(t *testing.T) {
 		Run:  pipeline.Run{Command: []string{"__nonexistent_command__"}},
 	})
 
-	r.Run(context.Background(), task)
+	result := r.Run(context.Background(), task)
+	r.Report(result)
 
 	if failedTaskID != "task-1" {
 		t.Errorf("expected failed report for task-1, got %q", failedTaskID)
@@ -180,7 +182,8 @@ func TestRun_failed_no_command(t *testing.T) {
 
 	// No command
 	task := makeTask(t, pipeline.Step{Name: "no-cmd"})
-	r.Run(context.Background(), task)
+	result := r.Run(context.Background(), task)
+	r.Report(result)
 
 	if !failedCalled {
 		t.Error("expected failed report")
@@ -210,7 +213,8 @@ func TestRun_failed_invalid_step_json(t *testing.T) {
 		StepName: "bad",
 		Step:     []byte("not json"),
 	}
-	r.Run(context.Background(), task)
+	result := r.Run(context.Background(), task)
+	r.Report(result)
 
 	if !failedCalled {
 		t.Error("expected failed report for bad step JSON")

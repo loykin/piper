@@ -54,6 +54,9 @@ type Config struct {
 	// Schedule controls cron/once scheduling behavior.
 	Schedule ScheduleConfig `yaml:"schedule" mapstructure:"schedule"`
 
+	// Pipeline controls pipeline dispatch mode.
+	Pipeline PipelineConfig `yaml:"pipeline" mapstructure:"pipeline"`
+
 	// K8s controls whether pipeline execution is delegated to a cluster-local K8s worker.
 	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
 
@@ -121,6 +124,16 @@ type ScheduleConfig struct {
 	MisfirePolicy string `yaml:"misfire_policy" mapstructure:"misfire_policy"`
 	// MisfireGracePeriod is the delay tolerated before a due cron run is considered missed.
 	MisfireGracePeriod time.Duration `yaml:"misfire_grace_period" mapstructure:"misfire_grace_period"`
+}
+
+// PipelineConfig controls pipeline task dispatch behaviour.
+type PipelineConfig struct {
+	// DispatchMode selects how pipeline tasks are delivered to workers.
+	//   "agent"   – tasks are pushed to gRPC-connected workers (baremetal or K8s).
+	//   "polling" – tasks sit in a queue; workers pull via /api/tasks/next.
+	// Default: "polling" for backward compatibility.
+	// Set to "agent" for new installations using gRPC pipeline workers.
+	DispatchMode string `yaml:"dispatch_mode" mapstructure:"dispatch_mode"`
 }
 
 // K8sConfig holds server-side K8s worker dispatch configuration.

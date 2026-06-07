@@ -3,6 +3,8 @@ package k8sworker
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -12,6 +14,7 @@ import (
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/serving"
+	"github.com/piper/piper/pkg/taskruntime"
 	k8snotebook "github.com/piper/piper/pkg/workers/k8s/notebook"
 	k8spipeline "github.com/piper/piper/pkg/workers/k8s/pipeline"
 	k8sserving "github.com/piper/piper/pkg/workers/k8s/serving"
@@ -39,6 +42,7 @@ type Config struct {
 	DefaultImage         string
 	TTLAfterFinished     *int32
 	StorageURL           string
+	ResultOutboxDir      string
 	PodDefaults          corev1.PodTemplateSpec
 }
 
@@ -48,6 +52,8 @@ type Worker struct {
 	notebookObserver *k8snotebook.Worker
 	servingObserver  *k8sserving.Worker
 	pipelineObserver *k8spipeline.Worker
+	resultOutbox     *taskruntime.ResultOutbox
+	initErr          error
 }
 
 func New(cfg Config) *Worker {
@@ -62,7 +68,23 @@ func New(cfg Config) *Worker {
 		Kind:         iagent.KindK8s,
 		ClusterName:  cfg.ClusterName,
 		Capabilities: capabilities,
+		Runtime:      iagent.RuntimeK8s,
 	})
+	outboxDir := cfg.ResultOutboxDir
+	if outboxDir == "" {
+		outboxDir = filepath.Join(os.TempDir(), "piper-result-outbox", cfg.ID)
+	}
+	outbox, err := taskruntime.NewResultOutbox(
+		outboxDir,
+		func(result proto.TaskResult) error {
+			return client.SendPush(iagent.MethodPipelineTaskResult, result)
+		},
+	)
+	if err == nil {
+		_ = grpcagent.RegisterJSON(client.Dispatcher(), iagent.MethodPipelineResultAck, func(_ context.Context, ack taskruntime.ResultAck) (any, error) {
+			return nil, outbox.Ack(ack)
+		})
+	}
 
 	var notebookObserver *k8snotebook.Worker
 	var servingObserver *k8sserving.Worker
@@ -104,7 +126,10 @@ func New(cfg Config) *Worker {
 			TTLAfterFinished:     cfg.TTLAfterFinished,
 			StorageURL:           cfg.StorageURL,
 			ReportResult: func(result proto.TaskResult) error {
-				return client.SendPush(iagent.MethodPipelineTaskResult, result)
+				if outbox == nil {
+					return fmt.Errorf("result outbox unavailable")
+				}
+				return outbox.Enqueue(result)
 			},
 			RenewLeases: func(taskIDs []string) error {
 				return client.SendPush(iagent.MethodPipelineLeaseRenew, map[string]any{"task_ids": taskIDs})
@@ -117,10 +142,15 @@ func New(cfg Config) *Worker {
 		notebookObserver: notebookObserver,
 		servingObserver:  servingObserver,
 		pipelineObserver: pipelineObserver,
+		resultOutbox:     outbox,
+		initErr:          err,
 	}
 }
 
 func (a *Worker) Run(ctx context.Context) error {
+	if a.initErr != nil {
+		return fmt.Errorf("k8s worker result outbox: %w", a.initErr)
+	}
 	if a.cfg.ClusterName == "" {
 		return fmt.Errorf("k8s worker: cluster name is required")
 	}
@@ -132,6 +162,9 @@ func (a *Worker) Run(ctx context.Context) error {
 	}
 	if a.pipelineObserver != nil {
 		go a.pipelineObserver.Observe(ctx)
+	}
+	if a.resultOutbox != nil {
+		go a.resultOutbox.Run(ctx)
 	}
 	return a.client.Run(ctx)
 }

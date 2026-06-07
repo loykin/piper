@@ -2,22 +2,24 @@ package pipelineworker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
-	"github.com/piper/piper/pkg/k8s"
-	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/pkg/taskruntime"
+	k8sdriver "github.com/piper/piper/pkg/taskruntime/k8s"
 	"k8s.io/client-go/kubernetes"
 )
 
 type Dispatcher = *grpcagent.Dispatcher
 
+// Config holds K8s pipeline worker configuration.
 type Config struct {
+	WorkerID             string
 	MasterURL            string
 	Token                string
 	Namespaces           []string
@@ -27,26 +29,52 @@ type Config struct {
 	AgentImagePullPolicy string
 	DefaultImage         string
 	TTLAfterFinished     *int32
-	// StorageURL selects the artifact store backend passed to K8s Job agents.
-	StorageURL   string
-	WorkerID     string
+	StorageURL           string
+	// ReportResult is called with the final TaskResult for each completed step.
+	// Typically enqueues into a ResultOutbox for durable delivery.
 	ReportResult func(proto.TaskResult) error
-	RenewLeases  func([]string) error
+	// RenewLeases pushes active task IDs to the master for lease renewal.
+	RenewLeases func([]string) error
 }
 
+// Worker manages K8s pipeline workloads dispatched via gRPC.
+// It uses K8sDriver to satisfy the taskruntime.Driver interface, making
+// K8s execution share the same lifecycle contract as baremetal/docker.
 type Worker struct {
-	cfg       Config
-	mu        sync.Mutex
-	launchers map[string]*k8s.Launcher
+	cfg        Config
+	driver     taskruntime.Driver
+	observable taskruntime.Observable
+	runStopper taskruntime.RunStopper
+	initErr    error
+
+	mu      sync.Mutex
+	handles map[string]*trackedTask // runtimeKey → task
+}
+
+type trackedTask struct {
+	handle taskruntime.Handle
+	cancel context.CancelFunc
 }
 
 func New(cfg Config) *Worker {
-	w := &Worker{cfg: cfg, launchers: make(map[string]*k8s.Launcher)}
-	w.pipelineLauncher(cfg.Namespace)
-	for _, namespace := range cfg.Namespaces {
-		w.pipelineLauncher(namespace)
+	driver, err := k8sdriver.New(k8sdriver.Config{
+		WorkerID:             cfg.WorkerID,
+		Namespace:            cfg.Namespace,
+		Namespaces:           cfg.Namespaces,
+		AgentImagePullPolicy: cfg.AgentImagePullPolicy,
+		AgentImage:           pipelineWorkerImage(cfg),
+		DefaultImage:         cfg.DefaultImage,
+		TTLAfterFinished:     cfg.TTLAfterFinished,
+		K8sClient:            cfg.Client,
+	})
+	return &Worker{
+		cfg:        cfg,
+		driver:     driver,
+		observable: driver,
+		runStopper: driver,
+		initErr:    err,
+		handles:    make(map[string]*trackedTask),
 	}
-	return w
 }
 
 func Register(dispatcher Dispatcher, cfg Config) *Worker {
@@ -73,106 +101,175 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	if task == nil {
 		return fmt.Errorf("task is required")
 	}
-	namespace, err := pipelineTaskNamespace(task)
+	if a.initErr != nil {
+		return a.initErr
+	}
+
+	spec := taskruntime.ExecSpec{
+		RuntimeKey:    taskruntime.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
+		HostOutputDir: "/piper-outputs", // K8s uses emptyDir; HostOutputDir is not mounted
+		MasterURL:     a.cfg.MasterURL,
+		Token:         a.cfg.Token,
+		StorageURL:    a.cfg.StorageURL,
+	}
+
+	handle, err := a.driver.Start(ctx, task, spec)
 	if err != nil {
 		return err
 	}
-	return a.pipelineLauncher(namespace).Dispatch(ctx, task)
+
+	waitCtx, cancel := context.WithCancel(context.Background())
+	a.mu.Lock()
+	a.handles[handle.RuntimeKey] = &trackedTask{handle: handle, cancel: cancel}
+	a.mu.Unlock()
+
+	go a.observe(waitCtx, handle)
+	return nil
+}
+
+func (a *Worker) observe(ctx context.Context, handle taskruntime.Handle) {
+	defer func() {
+		a.mu.Lock()
+		if tracked := a.handles[handle.RuntimeKey]; tracked != nil {
+			tracked.cancel()
+		}
+		delete(a.handles, handle.RuntimeKey)
+		a.mu.Unlock()
+	}()
+
+	exit, err := a.driver.Wait(ctx, handle)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("k8s pipeline: wait failed", "task_id", handle.TaskID, "err", err)
+		}
+		return
+	}
+
+	if a.cfg.ReportResult == nil {
+		return
+	}
+
+	result := buildResult(handle, exit)
+	if result.WorkerID == "" {
+		result.WorkerID = a.cfg.WorkerID
+	}
+	if err := a.cfg.ReportResult(result); err != nil {
+		slog.Warn("k8s pipeline: report result failed", "task_id", handle.TaskID, "err", err)
+	}
 }
 
 func (a *Worker) cancelPipelineRun(ctx context.Context, req pipelineCancelRunRequest) error {
 	if req.RunID == "" {
-		return fmt.Errorf("run_id is required")
+		return nil
 	}
-	return a.pipelineLauncher(req.Namespace).CancelRun(ctx, req.RunID)
-}
-
-func (a *Worker) pipelineLauncher(namespace string) *k8s.Launcher {
-	namespace = a.pipelineNamespace(namespace)
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if launcher := a.launchers[namespace]; launcher != nil {
-		return launcher
+	for _, tracked := range a.handles {
+		if tracked.handle.RunID == req.RunID {
+			tracked.cancel()
+		}
 	}
-	launcher := k8s.NewWithClient(k8s.Config{
-		AgentImage:           a.pipelineWorkerImage(),
-		Namespace:            namespace,
-		MasterURL:            a.cfg.MasterURL,
-		Token:                a.cfg.Token,
-		StorageURL:           a.cfg.StorageURL,
-		DefaultImage:         a.cfg.DefaultImage,
-		AgentImagePullPolicy: a.cfg.AgentImagePullPolicy,
-		TTLAfterFinished:     a.cfg.TTLAfterFinished,
-		WorkerID:             a.cfg.WorkerID,
-	}, a.cfg.Client)
-	a.launchers[namespace] = launcher
-	return launcher
+	a.mu.Unlock()
+
+	if a.runStopper == nil {
+		return fmt.Errorf("pipeline driver does not support run cancellation")
+	}
+	if err := a.runStopper.StopRun(ctx, req.RunID, req.Namespace); err != nil {
+		return err
+	}
+	return nil
 }
 
+// Observe runs the K8s Job reconcile loop (implements the outer Observe contract).
+// The K8s main worker calls this in a background goroutine.
 func (a *Worker) Observe(ctx context.Context) {
-	if a.cfg.ReportResult == nil && a.cfg.RenewLeases == nil {
+	if a.initErr != nil {
+		slog.Error("k8s pipeline: driver initialization failed", "err", a.initErr)
+		return
+	}
+	// Recover any jobs from before worker restart.
+	handles, err := a.driver.Recover(ctx)
+	if err != nil {
+		slog.Warn("k8s pipeline: recover failed", "err", err)
+	}
+	for _, h := range handles {
+		waitCtx, cancel := context.WithCancel(ctx)
+		a.mu.Lock()
+		a.handles[h.RuntimeKey] = &trackedTask{handle: h, cancel: cancel}
+		a.mu.Unlock()
+		go a.observe(waitCtx, h)
+	}
+
+	// Renew leases on recovered + active tasks.
+	go a.leaseLoop(ctx)
+
+	// Drive the K8s reconcile loop (signals Wait channels).
+	if a.observable != nil {
+		a.observable.Observe(ctx)
+	}
+}
+
+func (a *Worker) leaseLoop(ctx context.Context) {
+	if a.cfg.RenewLeases == nil {
 		return
 	}
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		a.observeOnce(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-		}
-	}
-}
-
-func (a *Worker) observeOnce(ctx context.Context) {
-	a.mu.Lock()
-	launchers := make([]*k8s.Launcher, 0, len(a.launchers))
-	for _, launcher := range a.launchers {
-		launchers = append(launchers, launcher)
-	}
-	a.mu.Unlock()
-	for _, launcher := range launchers {
-		launcher.RecoverJobs(ctx)
-		if a.cfg.RenewLeases != nil {
-			taskIDs := launcher.ActiveTaskIDs()
-			if len(taskIDs) > 0 {
-				_ = a.cfg.RenewLeases(taskIDs)
+			a.mu.Lock()
+			ids := make([]string, 0, len(a.handles))
+			for _, tracked := range a.handles {
+				ids = append(ids, tracked.handle.TaskID)
+			}
+			a.mu.Unlock()
+			if len(ids) > 0 {
+				_ = a.cfg.RenewLeases(ids)
 			}
 		}
-		if a.cfg.ReportResult != nil {
-			launcher.ReconcileJobs(ctx, func(_ context.Context, result proto.TaskResult) error {
-				result.WorkerID = a.cfg.WorkerID
-				return a.cfg.ReportResult(result)
-			})
+	}
+}
+
+// buildResult constructs a TaskResult from a Driver Exit.
+func buildResult(handle taskruntime.Handle, exit taskruntime.Exit) proto.TaskResult {
+	if exit.Result != nil {
+		return *exit.Result
+	}
+	if exit.InfraFailure != nil {
+		return proto.TaskResult{
+			TaskID:  handle.TaskID,
+			Status:  proto.TaskStatusFailed,
+			Error:   exit.InfraFailure.Error(),
+			EndedAt: time.Now(),
+			Attempt: handle.Attempt,
 		}
 	}
+	return proto.TaskResult{
+		TaskID:  handle.TaskID,
+		Status:  proto.TaskStatusFailed,
+		Error:   "k8s job result unavailable",
+		EndedAt: time.Now(),
+		Attempt: handle.Attempt,
+	}
 }
 
-func (a *Worker) pipelineNamespace(namespace string) string {
-	if namespace != "" {
-		return namespace
+// ActiveTaskIDs returns task IDs currently tracked by this worker.
+func (a *Worker) ActiveTaskIDs() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ids := make([]string, 0, len(a.handles))
+	for _, tracked := range a.handles {
+		ids = append(ids, tracked.handle.TaskID)
 	}
-	if a.cfg.Namespace != "" {
-		return a.cfg.Namespace
-	}
-	if len(a.cfg.Namespaces) > 0 && a.cfg.Namespaces[0] != "" {
-		return a.cfg.Namespaces[0]
-	}
-	return "default"
+	return ids
 }
 
-func pipelineTaskNamespace(task *proto.Task) (string, error) {
-	var pl pipeline.Pipeline
-	if err := json.Unmarshal(task.Pipeline, &pl); err != nil {
-		return "", fmt.Errorf("unmarshal pipeline: %w", err)
-	}
-	return pl.Spec.Placement.Namespace, nil
-}
-
-func (a *Worker) pipelineWorkerImage() string {
-	if a.cfg.WorkerImage != "" {
-		return a.cfg.WorkerImage
+// pipelineWorkerImage resolves the worker image for the given step (unused by K8sDriver directly).
+func pipelineWorkerImage(cfg Config) string {
+	if cfg.WorkerImage != "" {
+		return cfg.WorkerImage
 	}
 	return "piper/piper:latest"
 }

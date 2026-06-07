@@ -349,11 +349,12 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	// Workers and K8s pods reach the store via HTTP using the master URL.
 	p.registerStoreRoutes(r)
 
-	// Task completion routes must always be registered so that piper agent exec
-	// inside K8s Job pods can report results back regardless of backend mode.
+	// Task completion routes: /api/tasks/:id/done|failed
+	// Retained for external callers and backward compatibility.
+	// K8s and baremetal workers now use gRPC push (pipeline.task_result) instead.
 	worker.NewHandler(worker.HandlerDeps{Queue: p.queue}).RegisterCompletionRoutes(r.Group("/api"))
 
-	// Worker polling domain (mounted only when no active backend is configured)
+	// HTTP poll routes: mounted only in polling dispatch mode (migration/backward compat).
 	if p.backend == nil {
 		worker.NewHandler(worker.HandlerDeps{
 			Registry: p.workerRegistry(),

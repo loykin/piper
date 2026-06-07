@@ -10,6 +10,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -296,7 +297,9 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 
 	r, ok := q.runs[runID]
 	if !ok {
-		if rec, getErr := q.runRepo.Get(ctx, runID); getErr == nil && rec != nil && rec.Status == run.StatusCanceled {
+		// Run was removed from the in-memory queue (completed, failed, or canceled).
+		// Treat any late result as idempotent rather than an error.
+		if rec, getErr := q.runRepo.Get(ctx, runID); getErr == nil && rec != nil {
 			return nil
 		}
 		return fmt.Errorf("run %s not found in queue", runID)
@@ -320,17 +323,34 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	if result.WorkerID != "" && ownerID != "" && result.WorkerID != ownerID {
 		return fmt.Errorf("task %s owned by worker %q, result from %q rejected", result.TaskID, ownerID, result.WorkerID)
 	}
+	resultAttempt := result.ReportedAttempt()
+
+	// Idempotency: ignore duplicate result for an already-terminal step.
+	switch entry.status {
+	case taskDone, taskFailed, taskSkipped, taskCanceled:
+		return nil
+	}
+
+	// Stale result: arrived late from a previous attempt.
+	if entry.attempts > 0 && resultAttempt < entry.attempts {
+		slog.Warn("stale task result ignored", "task_id", result.TaskID, "result_attempt", resultAttempt, "current_attempt", entry.attempts)
+		return nil
+	}
+
+	// Future attempt: should never happen in normal flow.
+	if resultAttempt > entry.attempts {
+		return fmt.Errorf("task %s: result attempt %d exceeds current attempt %d", result.TaskID, resultAttempt, entry.attempts)
+	}
+
 	if owner, ok := q.backend.(backend.TaskOwner); ok {
 		owner.ReleaseTask(result.TaskID)
 	}
 
-	endedAt := result.EndedAt
 	if entry.attempts == 0 {
-		entry.attempts = result.Attempts
-		if entry.attempts < 1 {
-			entry.attempts = 1
-		}
+		entry.attempts = resultAttempt
 	}
+
+	endedAt := result.EndedAt
 	q.emit("step.reported", map[string]any{"run_id": runID, "step": stepName, "task_id": result.TaskID, "status": result.Status})
 
 	if result.Status == string(taskDone) {
@@ -404,6 +424,9 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		}
 		pl := r.pl
 		delete(q.runs, runID)
+		if owner, ok := q.backend.(backend.RunOwner); ok {
+			owner.ReleaseRun(runID)
+		}
 		q.emit("run.completed", map[string]any{"run_id": runID, "status": runStatus})
 
 		if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
@@ -548,6 +571,13 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	dispatchCtx := q.serverCtx
 	go func() {
 		if err := b.Dispatch(dispatchCtx, task); err != nil {
+			var de *backend.DispatchError
+			if errors.As(err, &de) && de.Retryable {
+				q.mu.Lock()
+				q.requeueBusyLocked(task.RunID, task.StepName)
+				q.mu.Unlock()
+				return
+			}
 			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
 			now := time.Now()
 			_ = q.Complete(dispatchCtx, proto.TaskResult{
@@ -556,9 +586,42 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 				Error:     err.Error(),
 				StartedAt: now,
 				EndedAt:   now,
+				Attempt:   task.Attempt,
 			})
 		}
 	}()
+}
+
+// requeueBusyLocked undoes startTaskLocked and puts the task back to ready
+// without consuming a retry attempt. Called when dispatch returns a retryable error
+// (e.g. worker busy). Re-dispatches after a short fixed delay.
+func (q *Queue) requeueBusyLocked(runID, stepName string) {
+	r := q.runs[runID]
+	if r == nil {
+		return
+	}
+	entry := r.tasks[stepName]
+	if entry == nil || entry.status != taskRunning {
+		return
+	}
+	entry.attempts--
+	if entry.attempts < 0 {
+		entry.attempts = 0
+	}
+	entry.task.Attempt = entry.attempts
+	entry.status = taskReady
+	entry.assignedWorkerID = ""
+	entry.startedAt = nil
+	entry.leaseAt = nil
+	slog.Info("task requeued after busy dispatch", "task_id", entry.task.ID)
+	time.AfterFunc(2*time.Second, func() {
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		if entry.status != taskReady {
+			return
+		}
+		q.dispatchIfNeeded(context.Background(), entry)
+	})
 }
 
 func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
@@ -681,6 +744,9 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 			}
 			q.emit("run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
 			delete(q.runs, runID)
+			if owner, ok := q.backend.(backend.RunOwner); ok {
+				owner.ReleaseRun(runID)
+			}
 		}
 	}
 }

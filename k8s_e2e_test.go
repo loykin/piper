@@ -74,7 +74,8 @@ metadata:
   name: k8s-e2e-smoke
 spec:
   defaults:
-    image: alpine:3.20
+    driver:
+      image: alpine:3.20
   steps:
     - name: smoke
       run:

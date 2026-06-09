@@ -82,13 +82,14 @@ metadata:
 
 spec:
   # Optional: default driver settings applied to all steps.
-  # Use placement to pin the whole run to one worker or K8s cluster.
+  # Use placement to pin the whole run to one worker.
   defaults:
     driver:
       image: alpine:3.20          # default container image for K8s/Docker mode
       placement:
-        worker: ""                # bare-metal worker ID/hostname
-        cluster: ""               # K8s worker cluster name
+        worker: ""                # worker ID/hostname (bare-metal or k8s-worker ID)
+        label: ""                 # route to any worker registered with this label
+        runtime: ""               # baremetal | docker | k8s
       k8s:
         namespace: ""             # K8s namespace for worker-created Jobs
 
@@ -169,9 +170,9 @@ In-process mode works with either backend.
 | | Local | Bare-metal Worker | Kubernetes Jobs | K8s Worker |
 |---|---|---|---|---|
 | **Runs on** | single process | separate worker processes | K8s Jobs (one Pod per step) | K8s Jobs via cluster worker |
-| **Task delivery** | direct call | HTTP polling `/api/tasks/next` | K8s Job created per step | worker RPC over WebSocket tunnel |
+| **Task delivery** | direct call | gRPC push (agent dispatch) | K8s Job created per step | gRPC push over outbound tunnel |
 | **Artifact storage** | local filesystem | shared filesystem or S3 | S3 required | S3 required |
-| **Cancellation** | context cancel | SSE event | `kubectl delete job` | worker RPC |
+| **Cancellation** | context cancel | gRPC RPC | `kubectl delete job` | gRPC RPC |
 | **Multi-cluster** | — | — | single cluster only | yes (one worker per cluster) |
 | **Best for** | development, libraries | on-prem GPU clusters | single-cluster cloud | multi-cluster, isolated networks |
 
@@ -186,18 +187,21 @@ result, _ := p.Run(ctx, yamlBytes)
 
 ### 2. Bare-metal Worker
 
-Server and workers run separately. Workers poll the master for tasks.
+Server and workers run separately. Workers connect to the master via gRPC and receive tasks by push.
 
 ```bash
-# Terminal 1: server
-piper server
+# Terminal 1: server (start gRPC agent server on :9090)
+piper server --agent-addr :9090
 
-# Terminal 2: worker (use labels to route specific steps)
-piper worker --master=http://localhost:8080 --label=gpu --concurrency=4
+# Terminal 2: worker (connect to gRPC agent server)
+piper worker --agent-addr localhost:9090 --master http://localhost:8080 --label gpu --concurrency 4
 ```
 
-Workers register with the master on startup and send a heartbeat every 10 seconds.
-Active workers can be listed via `GET /api/workers`.
+- `--agent-addr`: gRPC address of the master's agent server (required)
+- `--master`: piper HTTP URL, used by each step subprocess for artifact upload/reporting
+- `--label`: label for routing (e.g. `gpu`, `cpu`, `large-mem`)
+
+Workers register with the master on connect. Active workers can be listed via `GET /api/agents`.
 
 To pin an entire pipeline run to one bare-metal worker, set `spec.defaults.driver.placement.worker`.
 To route all steps to workers with a specific label, set `spec.defaults.driver.placement.label`.
@@ -323,15 +327,15 @@ spec:
 For **multi-cluster**, deploy one `piper k8s-worker` per cluster with a different `--cluster` name.
 Pipeline placement is run-level: one pipeline run executes on one selected worker or cluster.
 
-## Worker Registration API
+## Agent API
+
+Workers register automatically over gRPC when they connect to the master's agent server.
 
 ```
-POST /api/workers                    register a worker
-POST /api/workers/{id}/heartbeat     keep-alive (every 10s)
-GET  /api/workers                    list active workers
+GET  /api/agents                     list connected agents (workers)
 ```
 
-Workers handle this automatically — no manual calls needed.
+The legacy HTTP polling endpoints (`/api/workers`, `/api/tasks/next`) are still available for backward compatibility but are not used by the current gRPC-based workers.
 
 ## Model Serving
 
@@ -420,9 +424,9 @@ driver:
   image: my-bentoml-service:latest
 ```
 
-### Serving Worker (bare-metal local mode)
+### Serving Worker (bare-metal)
 
-`mode: local` deploys the serving process on a **serving worker** — a separate process that runs on the bare-metal node where the model should be served.
+Deploys the serving process on a **serving worker** — a separate process running on the node where the model should be served.
 
 **Requirements**
 - The runtime binary (`tritonserver`, `python`, etc.) must be installed and in `PATH` on the worker node.
@@ -430,14 +434,11 @@ driver:
 **Setup**
 
 ```bash
-# 1. Start the piper server
-piper server --addr :8080
+# 1. Start the piper server with gRPC agent server
+piper server --addr :8080 --agent-addr :9090
 
 # 2. Start a serving worker on the inference node
-piper serving-worker \
-  --master http://<server>:8080 \
-  --addr :7700 \
-  --advertise-addr http://<this-node>:7700   # omit if same machine as master
+piper serving-worker --agent-addr <server>:9090
 ```
 
 **Multi-node**: run `piper serving-worker` on each inference node. To pin a deployment to a specific node, set `driver.placement.worker` in the ModelService YAML:
@@ -449,23 +450,8 @@ spec:
     port: 8000
   driver:
     placement:
-      worker: gpu-node-01     # hostname of the target serving worker
+      worker: gpu-node-01     # serving worker ID (default: stable serving-<hostname>)
       runtime: baremetal
-```
-
-If `serving.worker: true` is set, Piper uses the unified worker router. A bare-metal
-serving worker is selected by `runtime.worker`; a K8s worker is selected by cluster
-placement/config and receives the request over the WebSocket tunnel.
-
-**TLS**
-
-```bash
-piper serving-worker \
-  --master https://master:8080 \
-  --addr :7700 \
-  --tls-cert /etc/ssl/worker.crt \
-  --tls-key  /etc/ssl/worker.key \
-  --advertise-addr https://<this-node>:7700
 ```
 
 ---
@@ -526,14 +512,12 @@ JupyterLab is launched as a subprocess on a dedicated **notebook worker** node.
 # Install JupyterLab (one-time, on each worker node)
 pip install jupyterlab
 
-# Start piper server
-piper server --addr :8080
+# Start piper server with gRPC agent server
+piper server --addr :8080 --agent-addr :9090
 
 # Start notebook worker on each node
 piper notebook-worker \
-  --master http://<server>:8080 \
-  --addr :7701 \
-  --advertise-addr http://<this-node>:7701 \
+  --agent-addr <server>:9090 \
   --gpus 0,1    # GPU device indices available on this node (optional)
 ```
 
@@ -623,17 +607,6 @@ spec:
     docker:                 # Docker-specific (runtime=docker)
       cpus: "4"
       mem_limit: "8g"
-```
-
-### TLS (bare-metal worker)
-
-```bash
-piper notebook-worker \
-  --master https://master:8080 \
-  --addr :7701 \
-  --tls-cert /etc/ssl/worker.crt \
-  --tls-key  /etc/ssl/worker.key \
-  --advertise-addr https://<this-node>:7701
 ```
 
 ---
@@ -747,9 +720,9 @@ piper server                                     start server (API + UI)
 piper server --local                             start server with embedded worker/serving/notebook workers
 piper run <file.yaml>                            run a pipeline locally
 piper parse <file.yaml>                          validate YAML without running
-piper worker --master=<url>                      start a pipeline worker (bare-metal)
-piper serving-worker --master=<url>              start a serving worker (bare-metal ModelService)
-piper notebook-worker --master=<url>             start a notebook worker (bare-metal JupyterLab)
+piper worker --agent-addr=<grpc-addr> --master=<url>   start a pipeline worker (bare-metal)
+piper serving-worker --agent-addr=<grpc-addr>          start a serving worker (bare-metal ModelService)
+piper notebook-worker --agent-addr=<grpc-addr>         start a notebook worker (bare-metal JupyterLab)
 piper k8s-worker --master=<url> --cluster=<name> start a cluster-local K8s worker (pipelines + notebooks + serving)
 piper k8s-worker --master=<url> --cluster=<name> --enable pipeline  start K8s worker for pipeline only
 piper agent exec --master=<url> ...              execute a step inside a K8s Pod (called automatically)

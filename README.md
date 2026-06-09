@@ -167,14 +167,15 @@ In-process mode works with either backend.
 
 ## Execution Modes
 
-| | Local | Bare-metal Worker | Kubernetes Jobs | K8s Worker |
-|---|---|---|---|---|
-| **Runs on** | single process | separate worker processes | K8s Jobs (one Pod per step) | K8s Jobs via cluster worker |
-| **Task delivery** | direct call | gRPC push (agent dispatch) | K8s Job created per step | gRPC push over outbound tunnel |
-| **Artifact storage** | local filesystem | shared filesystem or S3 | S3 required | S3 required |
-| **Cancellation** | context cancel | gRPC RPC | `kubectl delete job` | gRPC RPC |
-| **Multi-cluster** | — | — | single cluster only | yes (one worker per cluster) |
-| **Best for** | development, libraries | on-prem GPU clusters | single-cluster cloud | multi-cluster, isolated networks |
+| | Local | Bare-metal Worker | K8s Worker |
+|---|---|---|---|
+| **Step runs as** | goroutine in server | subprocess or Docker container | K8s Job (one Pod per step) |
+| **Task delivery** | direct call | gRPC push | gRPC push (outbound tunnel) |
+| **Artifact storage** | local filesystem | local or S3 | S3 required |
+| **Cancellation** | context cancel | SIGTERM / docker stop | K8s Job deletion |
+| **Server needs kubeconfig** | — | — | no — worker runs inside cluster |
+| **Multi-cluster** | — | — | yes (one k8s-worker per cluster) |
+| **Best for** | development, libraries | on-prem GPU servers | Kubernetes environments |
 
 ### 1. Local (in-process)
 
@@ -207,63 +208,42 @@ To pin an entire pipeline run to one bare-metal worker, set `spec.defaults.drive
 To route all steps to workers with a specific label, set `spec.defaults.driver.placement.label`.
 Individual steps can override placement via `step.driver.placement`.
 
-### 3. Kubernetes Jobs (worker)
+### 3. K8s Worker
 
-Each step runs in its own Pod. An `initContainer` copies the `piper` binary into the step container at runtime — no changes to user images required. A cluster-local `piper k8s-worker` owns Kubernetes API access and connects outbound to the piper server.
+A `piper k8s-worker` runs **inside the cluster** and connects outbound to the piper master's gRPC agent server. The master never needs kubeconfig access or inbound cluster access — making this the right choice for isolated networks, firewall-restricted environments, or multi-cluster setups.
+
+```
+piper-server (:9090 gRPC) ←──── outbound gRPC ────  piper k8s-worker (in-cluster)
+                                                              │
+                                                       K8s API server
+                                                  (Jobs / StatefulSets / PVCs)
+```
+
+Each pipeline step runs as a K8s Job. An `initContainer` copies the `piper` binary into the step container — no changes to user images required:
 
 ```
 initContainer (piper image)  →  cp /piper /piper-tools/piper
 step container (user image)  →  /piper-tools/piper agent exec --task=<encoded-task> ...
 ```
 
-```yaml
-# .piper.yaml
-k8s:
-  worker: true
-```
-
-```bash
-piper server --config .piper.yaml
-piper k8s-worker --master=http://piper-server:8080 --cluster=prod-a --pipeline-worker-image=piper/piper:latest --default-image=alpine:3.20
-```
-
-> **vs Argo Workflows**: Argo is a Kubernetes operator that manages workflows as CRDs.
-> Piper is an application that uses K8s only as a compute backend — the DAG, retry logic,
-> and state live in the Piper server, not in K8s. Piper runs identically in local and bare-metal
-> modes without any K8s dependency.
-
-### 4. K8s Worker
-
-A lightweight `piper k8s-worker` process runs **inside the cluster** and connects to the piper master
-over an outbound WebSocket tunnel. The master never needs inbound access to the cluster — which makes
-this the right choice for isolated networks, firewall-restricted environments, or multi-cluster setups.
-
-```
-piper-server  ←──── WebSocket tunnel ────  piper k8s-worker (in-cluster)
-                                                    │
-                                             K8s API server
-                                        (Jobs / StatefulSets / PVCs)
-```
+> **vs Argo Workflows**: Argo manages workflows as K8s CRDs. Piper uses K8s only as a compute backend — DAG, retry, and state live in the Piper server. Piper runs identically in local and bare-metal modes with no K8s dependency.
 
 **Enable on the server side:**
 
 ```yaml
 # .piper.yaml
+pipeline:
+  dispatch_mode: agent  # enable gRPC agent dispatch
+
 k8s:
-  worker: true          # pipeline steps routed to worker
+  worker: true          # pipeline steps routed to k8s-worker
 
 notebook_k8s:
-  worker: true          # notebook servers routed to worker
+  worker: true          # notebook servers routed to k8s-worker
 
 serving:
-  worker: true          # model services routed to worker
+  worker: true          # model services routed to k8s-worker
 ```
-
-When `worker: true` is enabled, the server still uses the same workload router for
-bare-metal and K8s targets. Bare-metal workers keep their existing direct HTTP
-transport; K8s workers use outbound WebSocket RPC. The user-facing placement model is
-the same: choose a worker or cluster, and Piper selects a worker with the required
-capability.
 
 **Deploy the worker in the cluster:**
 
@@ -472,12 +452,12 @@ spec:
 ### Model Serving API
 
 ```
-GET    /services                     list services
-POST   /services                     deploy a ModelService (body: {"yaml": "..."})
-GET    /services/{name}              service status
-DELETE /services/{name}              stop and delete
-POST   /services/{name}/restart      restart with latest artifact
-POST   /services/predict/{name}[/…]  proxy inference request to the runtime
+GET    /serving                      list services
+POST   /serving                      deploy a ModelService (body: {"yaml": "..."})
+GET    /serving/{name}               service status
+DELETE /serving/{name}               stop and delete
+POST   /serving/{name}/restart       restart with latest artifact
+POST   /serving/predict/*path        proxy inference request to the runtime
 ```
 
 ### Library Usage
@@ -486,7 +466,7 @@ POST   /services/predict/{name}[/…]  proxy inference request to the runtime
 // Deploy a service
 svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
 
-// Inference proxy is automatically mounted at /services/predict/{name}
+// Inference proxy is automatically mounted at /serving/predict/*path
 // — just send requests to the piper server
 
 // Stop a service
@@ -634,16 +614,15 @@ result, err := p.Run(ctx, yamlBytes)
 // Start as HTTP server (UI + API)
 err = p.Serve(ctx, piper.ServeOption{})
 
+// Start with gRPC agent server for bare-metal/K8s workers
+err = p.Serve(ctx, piper.ServeOption{AgentAddr: ":9090"})
+
 // Mount into an existing router (API only)
 mux.Handle("/piper/", http.StripPrefix("/piper", p.Handler(nil)))
 
 // Mount UI separately (opt-in)
 import "github.com/piper/piper/pkg/ui"
 mux.Handle("/piper/ui/", http.StripPrefix("/piper/ui", ui.Handler()))
-
-// Enable Kubernetes mode
-launcher, _ := k8s.New(k8s.Config{...})
-p.SetBackend(launcher)
 
 // Deploy a ModelService
 svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
@@ -654,10 +633,14 @@ svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
 ```yaml
 server:
   addr: ":8080"
+  agent_addr: ":9090"   # gRPC agent server for workers (required for worker modes)
   tls:
     enabled: false
     cert_file: ""
     key_file: ""
+
+pipeline:
+  dispatch_mode: agent  # "agent" (gRPC push) or "polling" (legacy HTTP pull)
 
 run:
   output_dir: ./piper-outputs

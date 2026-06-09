@@ -1,24 +1,36 @@
 // Worker example — run a gRPC pipeline worker
 //
-// Start the worker while examples/bare-metal/server is running.
-// The worker connects to the master gRPC agent server and waits for tasks.
+// This binary serves dual roles:
+//  1. Worker mode (default): connects to master gRPC, receives and dispatches tasks.
+//  2. Agent exec mode: invoked as a subprocess by the baremetal driver for each step.
+//
+// The baremetal driver calls os.Executable() + "agent exec --task=...", so both modes
+// must live in the same binary — exactly like the full piper CLI.
 //
 //	go run ./examples/bare-metal/worker
-//	go run ./examples/bare-metal/worker --agent-addr=remote:9090 --master=http://remote:8080 --label=gpu
+//	go run ./examples/bare-metal/worker --agent-addr=remote:9090 --master=http://remote:8080
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	worker "github.com/piper/piper/pkg/pipeline/worker"
+	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
 func main() {
+	// Dispatch to agent exec handler when invoked by the baremetal driver.
+	if len(os.Args) >= 3 && os.Args[1] == "agent" && os.Args[2] == "exec" {
+		runAgentExec(os.Args[3:])
+		return
+	}
+
 	agentAddr := flag.String("agent-addr", "localhost:9090", "gRPC address of piper master agent server")
 	master := flag.String("master", "http://localhost:8080", "piper server URL (for agent exec callbacks)")
 	label := flag.String("label", "", "worker label (e.g. gpu, cpu, large-mem)")
@@ -47,5 +59,47 @@ func main() {
 
 	if err := w.Run(ctx); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// runAgentExec parses agent exec flags and runs the step.
+// Called when this binary is invoked as "<worker> agent exec --task=...".
+func runAgentExec(args []string) {
+	fs := flag.NewFlagSet("agent exec", flag.ExitOnError)
+	master := fs.String("master", "", "piper server URL")
+	token := fs.String("token", "", "auth token")
+	taskB64 := fs.String("task", "", "base64-encoded proto.Task JSON")
+	outputDir := fs.String("output-dir", "/piper-outputs", "local output directory")
+	inputDir := fs.String("input-dir", "/piper-inputs", "local input directory")
+	storageURL := fs.String("storage-url", "", "artifact store URL")
+	resultFile := fs.String("result-file", "", "path to write AgentResult JSON")
+	reportMode := fs.String("report-mode", string(agent.ReportModeFile), "result delivery mode")
+	if err := fs.Parse(args); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "agent exec: parse flags: %v\n", err)
+		os.Exit(1)
+	}
+
+	task, err := agent.TaskFromAgentInput(*taskB64, "", "", "", "", fs.Args())
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "agent exec: decode task: %v\n", err)
+		os.Exit(1)
+	}
+
+	r, err := agent.New(agent.Config{
+		MasterURL:  *master,
+		Token:      *token,
+		OutputDir:  *outputDir,
+		InputDir:   *inputDir,
+		StorageURL: *storageURL,
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "agent exec: init runner: %v\n", err)
+		os.Exit(1)
+	}
+
+	result := r.Run(context.Background(), task)
+	if err := agent.DeliverResult(result, agent.ReportMode(*reportMode), *resultFile, r); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "agent exec: deliver result: %v\n", err)
+		os.Exit(1)
 	}
 }

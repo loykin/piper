@@ -101,6 +101,9 @@ func New(cfg Config) (*Worker, error) {
 	if cfg.Store.OutputDir == "" {
 		cfg.Store.OutputDir = "./piper-outputs"
 	}
+	if cfg.Agent.ID == "" {
+		cfg.Agent.ID = NewID("")
+	}
 	hostname := cfg.Agent.Hostname
 	if hostname == "" {
 		hostname, _ = os.Hostname()

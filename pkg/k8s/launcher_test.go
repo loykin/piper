@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -175,19 +176,24 @@ func TestBuildJob_stepRuntimeOptions(t *testing.T) {
 	l := &Launcher{cfg: Config{AgentImage: "piper/agent:latest"}}
 	step := pipeline.Step{
 		Name: "train",
-		Env:  map[string]string{"MASTER_ADDR": "trainer-0", "WORLD_SIZE": "4"},
-		Resources: pipeline.Resources{
-			CPU:    "2",
-			Memory: "4Gi",
-			GPU:    "1",
-		},
-		Runner: pipeline.RunnerSelector{
-			NodeSelector: map[string]string{"accelerator": "nvidia-a100"},
-			Tolerations: []pipeline.Toleration{{
-				Key:      "nvidia.com/gpu",
-				Operator: "Exists",
-				Effect:   "NoSchedule",
-			}},
+		Options: manifest.SpecOptions{Env: []manifest.EnvVar{
+			{Name: "MASTER_ADDR", Value: "trainer-0"},
+			{Name: "WORLD_SIZE", Value: "4"},
+		}},
+		Driver: manifest.DriverSpec{
+			Resources: manifest.ResourceSpec{CPU: "2", Memory: "4Gi", GPU: "1"},
+			K8s: &manifest.DriverK8sSpec{
+				PodTemplate: func() corev1.PodTemplateSpec {
+					var tpl corev1.PodTemplateSpec
+					tpl.Spec.NodeSelector = map[string]string{"accelerator": "nvidia-a100"}
+					tpl.Spec.Tolerations = []corev1.Toleration{{
+						Key:      "nvidia.com/gpu",
+						Operator: "Exists",
+						Effect:   "NoSchedule",
+					}}
+					return tpl
+				}(),
+			},
 		},
 	}
 	task := makeTask("run-1", "train", step, pipeline.Pipeline{})
@@ -329,13 +335,11 @@ func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
 
 func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 	step := pipeline.Step{
-		Name: "train",
-		Run: pipeline.Run{
-			Image:   "python:3.11",
-			Command: []string{"sh", "-c", "echo train"},
-		},
+		Name:   "train",
+		Run:    pipeline.Run{Command: []string{"sh", "-c", "echo train"}},
+		Driver: manifest.DriverSpec{Image: "python:3.11"},
 	}
-	pl := pipeline.Pipeline{Metadata: pipeline.Metadata{Name: "pipe"}}
+	pl := pipeline.Pipeline{Metadata: manifest.ObjectMeta{Name: "pipe"}}
 	task := makeTask("run-1", "train", step, pl)
 	task.WorkDir = "/work"
 	task.OutputDir = "/out"

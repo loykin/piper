@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/piper/piper/internal/event"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/backend"
-	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
 )
 
@@ -130,6 +130,7 @@ func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DA
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	pl = pl.ApplyDefaults()
 	pipelineJSON, _ := json.Marshal(pl)
 
 	r := &runEntry{
@@ -156,8 +157,13 @@ func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DA
 			WorkDir:   workDir,
 			OutputDir: outputDir,
 			CreatedAt: time.Now(),
-			Label:     s.Runner.Label,
-			WorkerID:  pl.Spec.Placement.Worker,
+			Label:     s.Driver.Placement.Label,
+			WorkerID: func() string {
+				if pl.Spec.Defaults != nil {
+					return pl.Spec.Defaults.Driver.Placement.Worker
+				}
+				return ""
+			}(),
 			Vars:      vars,
 			RunParams: runParams,
 		}
@@ -185,6 +191,7 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	pl = pl.ApplyDefaults()
 	recoveredByName := make(map[string]RecoveredStep, len(recovered))
 	for _, rs := range recovered {
 		recoveredByName[rs.Name] = rs
@@ -211,8 +218,13 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 			WorkDir:   workDir,
 			OutputDir: outputDir,
 			CreatedAt: time.Now(),
-			Label:     s.Runner.Label,
-			WorkerID:  pl.Spec.Placement.Worker,
+			Label:     s.Driver.Placement.Label,
+			WorkerID: func() string {
+				if pl.Spec.Defaults != nil {
+					return pl.Spec.Defaults.Driver.Placement.Worker
+				}
+				return ""
+			}(),
 			Vars:      vars,
 			RunParams: runParams,
 		}

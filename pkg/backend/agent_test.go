@@ -7,8 +7,9 @@ import (
 	"testing"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 )
 
 type recordingPipelineAgentRPC struct {
@@ -41,13 +42,13 @@ func TestAgentBackendDispatchUsesPipelinePlacement(t *testing.T) {
 	reg.Register(iagent.Info{
 		ID:           "agent-1",
 		Kind:         iagent.KindK8s,
-		ClusterName:  "gpu-a",
+		Labels:       map[string]string{"label": "gpu"},
 		Capabilities: []string{iagent.CapabilityPipeline},
 	})
 	rpc := &recordingPipelineAgentRPC{}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
 	pl := pipeline.Pipeline{}
-	pl.Spec.Placement.Cluster = "gpu-a"
+	pl.Spec.Defaults = &pipeline.PipelineDefaults{Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Label: "gpu"}}}
 	pipelineJSON, _ := json.Marshal(pl)
 	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
 
@@ -89,7 +90,7 @@ func TestAgentBackendCancelCarriesPipelineNamespace(t *testing.T) {
 	rpc := &recordingPipelineAgentRPC{}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
 	pl := pipeline.Pipeline{}
-	pl.Spec.Placement.Namespace = "runs"
+	pl.Spec.Defaults = &pipeline.PipelineDefaults{Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{}, K8s: &manifest.DriverK8sSpec{Namespace: "runs"}}}
 	pipelineJSON, _ := json.Marshal(pl)
 	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
 
@@ -214,8 +215,8 @@ func TestAgentBackendReleasesUncommittedRunBindingAfterBusy(t *testing.T) {
 func TestTaskPlacementRejectsMultipleRunnerLabels(t *testing.T) {
 	pl := pipeline.Pipeline{}
 	pl.Spec.Steps = []pipeline.Step{
-		{Name: "cpu", Runner: pipeline.RunnerSelector{Label: "cpu"}},
-		{Name: "gpu", Runner: pipeline.RunnerSelector{Label: "gpu"}},
+		{Name: "cpu", Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Label: "cpu"}}},
+		{Name: "gpu", Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Label: "gpu"}}},
 	}
 	pipelineJSON, _ := json.Marshal(pl)
 

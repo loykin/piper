@@ -19,7 +19,7 @@ func runPrepare(ctx context.Context, step *pipeline.Step, cfg ExecConfig, workDi
 		cmd.Dir = workDir
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		cmd.Env = append(os.Environ(), append(stepEnv(step.Env), cfg.Env()...)...)
+		cmd.Env = append(os.Environ(), append(stepEnv(step.Options.Env), cfg.Env()...)...)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("step %q: prepare[%d] failed: %w", step.Name, i, err)
 		}

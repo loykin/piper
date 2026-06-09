@@ -114,7 +114,7 @@ func TestServingAgentDriverDeploy(t *testing.T) {
 	spec := serving.ModelService{}
 	spec.Metadata.Name = "demo"
 	spec.Spec.Model.FromURI = "s3://models/demo"
-	spec.Spec.Runtime.Worker = "agent-1"
+	spec.Spec.Driver.Placement.Worker = "agent-1"
 
 	svc, err := driver.Deploy(context.Background(), spec, artifact.Resolved{S3URI: "s3://models/demo"}, "metadata:\n  name: demo\n")
 	if err != nil {

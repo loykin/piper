@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/piper/piper/pkg/blobstore"
+	"github.com/piper/piper/pkg/storage"
 )
 
 // StorageSettingsView exposes the editable storage configuration together with
@@ -162,13 +162,13 @@ func (p *Piper) storageBackendName() string {
 		return ""
 	}
 	switch p.store.(type) {
-	case *blobstore.LocalStore:
+	case *storage.LocalStore:
 		return "file"
-	case *blobstore.HTTPStore:
+	case *storage.HTTPStore:
 		return "http"
-	case *blobstore.S3Store:
+	case *storage.S3Store:
 		return "s3"
-	case *blobstore.CloudStore:
+	case *storage.CloudStore:
 		return "cloud"
 	default:
 		return ""

@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
+	worker "github.com/piper/piper/pkg/pipeline/worker"
 )
 
 // TestWorkerConfig_defaults verifies that concurrency defaults are applied.

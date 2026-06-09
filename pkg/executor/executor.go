@@ -7,8 +7,9 @@ import (
 	"sort"
 	"time"
 
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/source"
 )
 
@@ -62,18 +63,16 @@ func (c ExecConfig) Env() []string {
 	return env
 }
 
-func stepEnv(env map[string]string) []string {
+func stepEnv(env []manifest.EnvVar) []string {
 	if len(env) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, k+"="+env[k])
+	vars := make([]manifest.EnvVar, len(env))
+	copy(vars, env)
+	sort.Slice(vars, func(i, j int) bool { return vars[i].Name < vars[j].Name })
+	out := make([]string, 0, len(vars))
+	for _, e := range vars {
+		out = append(out, e.Name+"="+e.Value)
 	}
 	return out
 }

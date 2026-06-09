@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/robfig/cron/v3"
 )

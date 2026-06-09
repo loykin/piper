@@ -3,7 +3,6 @@ kind: Pipeline
 
 metadata:
   name: iris-experiment
-  description: "End-to-end ML example: train an iris classifier, record metrics, save model"
 
 spec:
   steps:
@@ -24,9 +23,11 @@ spec:
           path: model.pkl
         - name: metrics
           path: metrics.json
-      env:
-        # Papermill progress bars pollute logs; turn them off
-        PAPERMILL_PROGRESS_BAR: "false"
+      options:
+        env:
+          # Papermill progress bars pollute logs; turn them off
+          - name: PAPERMILL_PROGRESS_BAR
+            value: "false"
 
     # ── Step 2: evaluate ────────────────────────────────────────────────────────
     # Reads metrics.json from the train step and prints a summary.

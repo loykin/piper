@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
+	servingworker "github.com/piper/piper/pkg/serving/worker"
 )
 
 func newServingWorkerCmd() *cobra.Command {

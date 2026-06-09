@@ -3,7 +3,6 @@ kind: Pipeline
 
 metadata:
   name: iris-retraining
-  description: "Periodic iris classifier retraining with S3 artifact storage and auto-deploy"
 
 spec:
   # After every successful run, automatically redeploy the iris-predictor service
@@ -48,11 +47,15 @@ spec:
         n_estimators: 100
         test_size: 0.2
         random_state: 42
-      env:
-        # Pass params into the script via environment (train.py reads these)
-        N_ESTIMATORS: "100"
-        TEST_SIZE: "0.2"
-        RANDOM_STATE: "42"
+      options:
+        env:
+          # Pass params into the script via environment (train.py reads these)
+          - name: N_ESTIMATORS
+            value: "100"
+          - name: TEST_SIZE
+            value: "0.2"
+          - name: RANDOM_STATE
+            value: "42"
       outputs:
         - name: model
           path: model.pkl

@@ -9,8 +9,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 )
 
 func TestPipelineDispatchCreatesJob(t *testing.T) {
@@ -25,8 +26,12 @@ func TestPipelineDispatchCreatesJob(t *testing.T) {
 		},
 	})
 	pl := pipeline.Pipeline{}
-	pl.Spec.Defaults.Image = "python:3.12"
-	pl.Spec.Placement.Namespace = "run-placement"
+	pl.Spec.Defaults = &pipeline.PipelineDefaults{
+		Driver: manifest.DriverSpec{
+			Image: "python:3.12",
+			K8s:   &manifest.DriverK8sSpec{Namespace: "run-placement"},
+		},
+	}
 	step := pipeline.Step{Name: "train"}
 	step.Run.Command = []string{"python", "train.py"}
 	stepJSON, _ := json.Marshal(step)

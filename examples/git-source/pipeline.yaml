@@ -20,7 +20,6 @@ kind: Pipeline
 
 metadata:
   name: git-source-example
-  description: "Fetch and run a Python script from a GitHub repository"
 
 spec:
   steps:

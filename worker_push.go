@@ -9,10 +9,10 @@ import (
 	"time"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/proto"
+	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
 	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/taskruntime"
 )
 
 type pipelineStatusQueue interface {
@@ -59,7 +59,7 @@ func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, 
 				return
 			}
 			if acker != nil {
-				ack := taskruntime.ResultAck{TaskID: result.TaskID, Attempt: result.Attempt}
+				ack := pdriver.ResultAck{TaskID: result.TaskID, Attempt: result.Attempt}
 				ackCtx, ackCancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer ackCancel()
 				if err := acker.SendRPC(ackCtx, agentID, iagent.MethodPipelineResultAck, ack, nil); err != nil {

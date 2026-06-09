@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/piper/piper/pkg/logstore"
-	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/internal/logstore"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"

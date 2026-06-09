@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 )
 
 type AgentRPC interface {
@@ -148,14 +148,23 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 	if err := json.Unmarshal(task.Pipeline, &pl); err != nil {
 		return iagent.Placement{}, fmt.Errorf("unmarshal pipeline: %w", err)
 	}
+	var defaults pipeline.PipelineDefaults
+	if pl.Spec.Defaults != nil {
+		defaults = *pl.Spec.Defaults
+	}
+	var ns string
+	if defaults.Driver.K8s != nil {
+		ns = defaults.Driver.K8s.Namespace
+	}
 	placement := iagent.Placement{
-		WorkerID:         pl.Spec.Placement.Worker,
-		ClusterName:      pl.Spec.Placement.Cluster,
-		Namespace:        pl.Spec.Placement.Namespace,
-		Labels:           pl.Spec.Placement.Labels,
+		WorkerID:         defaults.Driver.Placement.Worker,
+		Namespace:        ns,
 		RequireContainer: pipelineRequiresContainer(&pl),
 	}
-	if placement.WorkerID == "" && placement.ClusterName == "" && len(placement.Labels) == 0 {
+	if label := defaults.Driver.Placement.Label; label != "" {
+		placement.Labels = map[string]string{"label": label}
+	}
+	if placement.WorkerID == "" && len(placement.Labels) == 0 {
 		label, err := pipelineRunnerLabel(&pl)
 		if err != nil {
 			return iagent.Placement{}, err
@@ -168,11 +177,11 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 }
 
 func pipelineRequiresContainer(pl *pipeline.Pipeline) bool {
-	if pl.Spec.Defaults.Image != "" {
+	if pl.Spec.Defaults != nil && pl.Spec.Defaults.Driver.Image != "" {
 		return true
 	}
 	for _, step := range pl.Spec.Steps {
-		if step.Runner.Image != "" || step.Run.Image != "" {
+		if step.Driver.Image != "" {
 			return true
 		}
 	}
@@ -182,18 +191,18 @@ func pipelineRequiresContainer(pl *pipeline.Pipeline) bool {
 func pipelineRunnerLabel(pl *pipeline.Pipeline) (string, error) {
 	var label string
 	for _, step := range pl.Spec.Steps {
-		if step.Runner.Label == "" {
+		if step.Driver.Placement.Label == "" {
 			continue
 		}
 		if label == "" {
-			label = step.Runner.Label
+			label = step.Driver.Placement.Label
 			continue
 		}
-		if label != step.Runner.Label {
+		if label != step.Driver.Placement.Label {
 			return "", fmt.Errorf(
 				"pipeline requires multiple runner labels (%q and %q); a run must execute on one worker",
 				label,
-				step.Runner.Label,
+				step.Driver.Placement.Label,
 			)
 		}
 	}

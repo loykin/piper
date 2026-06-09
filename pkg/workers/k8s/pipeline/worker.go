@@ -10,9 +10,9 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
-	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/taskruntime"
-	k8sdriver "github.com/piper/piper/pkg/taskruntime/k8s"
+	"github.com/piper/piper/internal/proto"
+	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
+	k8sdriver "github.com/piper/piper/pkg/pipeline/worker/driver/k8s"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -50,13 +50,13 @@ type Config struct {
 }
 
 // Worker manages K8s pipeline workloads dispatched via gRPC.
-// It uses K8sDriver to satisfy the taskruntime.Driver interface, making
+// It uses K8sDriver to satisfy the pdriver.Driver interface, making
 // K8s execution share the same lifecycle contract as baremetal/docker.
 type Worker struct {
 	cfg        Config
-	driver     taskruntime.Driver
-	observable taskruntime.Observable
-	runStopper taskruntime.RunStopper
+	driver     pdriver.Driver
+	observable pdriver.Observable
+	runStopper pdriver.RunStopper
 	initErr    error
 
 	mu      sync.Mutex
@@ -64,7 +64,7 @@ type Worker struct {
 }
 
 type trackedTask struct {
-	handle taskruntime.Handle
+	handle pdriver.Handle
 	cancel context.CancelFunc
 }
 
@@ -118,17 +118,17 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	}
 
 	// Resolve image and namespace here (worker layer), not inside the driver.
-	image, err := taskruntime.ResolveImage(task, a.cfg.K8s.DefaultImage)
+	image, err := pdriver.ResolveImage(task, a.cfg.K8s.DefaultImage)
 	if err != nil {
 		return err
 	}
-	namespace := taskruntime.ResolveNamespace(task, a.cfg.K8s.Namespace)
+	namespace := pdriver.ResolveNamespace(task, a.cfg.K8s.Namespace)
 	if len(a.cfg.K8s.Namespaces) > 0 && !slices.Contains(a.cfg.K8s.Namespaces, namespace) {
 		return fmt.Errorf("k8s pipeline worker: namespace %q is not in the allowed list", namespace)
 	}
 
-	spec := taskruntime.ExecSpec{
-		RuntimeKey: taskruntime.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
+	spec := pdriver.ExecSpec{
+		RuntimeKey: pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
 		Image:      image,
 		Namespace:  namespace,
 		MasterURL:  a.cfg.Store.MasterURL,
@@ -150,7 +150,7 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	return nil
 }
 
-func (a *Worker) observe(ctx context.Context, handle taskruntime.Handle) {
+func (a *Worker) observe(ctx context.Context, handle pdriver.Handle) {
 	defer func() {
 		a.mu.Lock()
 		if tracked := a.handles[handle.RuntimeKey]; tracked != nil {
@@ -256,7 +256,7 @@ func (a *Worker) leaseLoop(ctx context.Context) {
 }
 
 // buildResult constructs a TaskResult from a Driver Exit.
-func buildResult(handle taskruntime.Handle, exit taskruntime.Exit) proto.TaskResult {
+func buildResult(handle pdriver.Handle, exit pdriver.Exit) proto.TaskResult {
 	if exit.Result != nil {
 		return *exit.Result
 	}

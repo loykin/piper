@@ -10,9 +10,9 @@ import (
 	"syscall"
 
 	piper "github.com/piper/piper"
-	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
-	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
-	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
+	notebookworker "github.com/piper/piper/pkg/notebook/worker"
+	worker "github.com/piper/piper/pkg/pipeline/worker"
+	servingworker "github.com/piper/piper/pkg/serving/worker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -68,7 +69,7 @@ func TestAgentDriverProvisionVolume(t *testing.T) {
 
 func TestAgentDriverStartUsesVolumeAgent(t *testing.T) {
 	driver, rpc := newAgentNotebookDriver()
-	spec := notebook.NotebookServerSpec{}
+	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
 
 	nb, err := driver.Start(context.Background(), spec, &notebook.NotebookVolume{ID: "vol-1", WorkerID: "agent-1", WorkDir: notebook.ContainerWorkDir}, "metadata:\n  name: demo\n")
@@ -91,7 +92,7 @@ func TestAgentDriverStartFallsBackFromStaleVolumeAgent(t *testing.T) {
 	reg.Register(iagent.Info{ID: "agent-2", Kind: iagent.KindBareMetal, Capabilities: []string{iagent.CapabilityNotebook}})
 	rpc := &recordingAgentRPC{}
 	driver := NewAgentDriver(iagent.NewRouter(reg), rpc)
-	spec := notebook.NotebookServerSpec{}
+	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
 	vol := &notebook.NotebookVolume{ID: "vol-1", WorkerID: "old-agent", WorkDir: "/work/vol-1"}
 
@@ -114,9 +115,9 @@ func TestAgentDriverStartDoesNotFallbackForExplicitPlacement(t *testing.T) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{ID: "agent-2", Kind: iagent.KindBareMetal, Capabilities: []string{iagent.CapabilityNotebook}})
 	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{})
-	spec := notebook.NotebookServerSpec{}
+	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
-	spec.Spec.Placement = &notebook.NotebookPlacement{Worker: "old-agent"}
+	spec.Spec.Driver.Placement = manifest.PlacementSpec{Worker: "old-agent"}
 
 	if _, err := driver.Start(context.Background(), spec, &notebook.NotebookVolume{ID: "vol-1", WorkDir: "/work/vol-1"}, "metadata:\n  name: demo\n"); err == nil {
 		t.Fatal("expected explicit stale placement to fail")
@@ -202,7 +203,7 @@ func TestAgentDriverStartNoAgent(t *testing.T) {
 	// When no notebook agent is available, Start should return an error.
 	reg := iagent.NewRegistry()
 	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{})
-	spec := notebook.NotebookServerSpec{}
+	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
 	vol := &notebook.NotebookVolume{ID: "vol-1", WorkerID: "nonexistent"}
 

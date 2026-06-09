@@ -28,9 +28,9 @@ import (
 
 	piper "github.com/piper/piper"
 	"github.com/piper/piper/pkg/notebook"
+	notebookworker "github.com/piper/piper/pkg/notebook/worker"
 	"github.com/piper/piper/pkg/pipeline"
-	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
-	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
+	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"gopkg.in/yaml.v3"
 )
 
@@ -526,7 +526,7 @@ func TestExampleNotebookServerYAMLs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var spec notebook.NotebookServerSpec
+			var spec notebook.Notebook
 			if err := yaml.Unmarshal(data, &spec); err != nil {
 				t.Fatalf("yaml.Unmarshal: %v", err)
 			}

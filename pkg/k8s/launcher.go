@@ -25,10 +25,11 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/internal/k8smeta"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/taskruntime"
+	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
 // Config is the Kubernetes Job primitive configuration.
@@ -256,7 +257,7 @@ func (l *Launcher) readTerminationResult(ctx context.Context, job batchv1.Job, r
 		if cs.State.Terminated == nil || cs.State.Terminated.Message == "" {
 			continue
 		}
-		result, err := taskruntime.ReadAgentResult([]byte(cs.State.Terminated.Message))
+		result, err := agent.ReadAgentResult([]byte(cs.State.Terminated.Message))
 		if err != nil {
 			slog.Warn("k8s: termination message parse failed", "job", job.Name, "err", err)
 			return proto.TaskResult{}, false
@@ -478,67 +479,7 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, 
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: ttl,
 			BackoffLimit:            &backoffLimit,
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels:      step.Runner.PodLabels,
-					Annotations: step.Runner.PodAnnotations,
-				},
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					SchedulerName: step.Runner.SchedulerName,
-					NodeSelector:  step.Runner.NodeSelector,
-					Tolerations:   buildTolerations(step.Runner.Tolerations),
-					// initContainer: copy the piper CLI binary into the emptyDir
-					InitContainers: []corev1.Container{
-						{
-							Name:            "agent-init",
-							Image:           l.cfg.AgentImage,
-							ImagePullPolicy: l.pullPolicy(),
-							Command:         []string{"cp", agentBinarySrc, agentBinaryDst},
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "piper-tools", MountPath: "/piper-tools"},
-							},
-						},
-					},
-					// step container: run piper agent as the entrypoint using the original image
-					Containers: []corev1.Container{
-						{
-							Name:            "step",
-							Image:           image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Command:         []string{agentBinaryDst},
-							Args:            agentArgs,
-							Env:             buildEnvVars(step.Env, extraEnv...),
-							Resources:       buildResourceRequirements(step.Resources),
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "piper-tools", MountPath: "/piper-tools"},
-								{Name: "piper-outputs", MountPath: "/piper-outputs"},
-								{Name: "piper-inputs", MountPath: "/piper-inputs"},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "piper-tools",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "piper-outputs",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-						{
-							Name: "piper-inputs",
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-					},
-				},
-			},
+			Template:                l.buildStepPodTemplate(step, image, agentArgs, extraEnv...),
 		},
 	}
 }
@@ -552,10 +493,10 @@ func decodeTaskStep(task *proto.Task) pipeline.Step {
 	return step
 }
 
-func buildEnvVars(env map[string]string, extra ...[]string) []corev1.EnvVar {
+func buildEnvVars(env []manifest.EnvVar, extra ...[]string) []corev1.EnvVar {
 	merged := make(map[string]string, len(env))
-	for key, value := range env {
-		merged[key] = value
+	for _, e := range env {
+		merged[e.Name] = e.Value
 	}
 	for _, values := range extra {
 		for _, entry := range values {
@@ -580,7 +521,7 @@ func buildEnvVars(env map[string]string, extra ...[]string) []corev1.EnvVar {
 	return out
 }
 
-func buildResourceRequirements(resources pipeline.Resources) corev1.ResourceRequirements {
+func buildResourceRequirements(resources manifest.ResourceSpec) corev1.ResourceRequirements {
 	reqs := corev1.ResourceList{}
 	limits := corev1.ResourceList{}
 	if resources.CPU != "" {
@@ -602,21 +543,55 @@ func buildResourceRequirements(resources pipeline.Resources) corev1.ResourceRequ
 	return corev1.ResourceRequirements{Requests: reqs, Limits: limits}
 }
 
-func buildTolerations(tolerations []pipeline.Toleration) []corev1.Toleration {
-	if len(tolerations) == 0 {
-		return nil
+// buildStepPodTemplate constructs the pod template for a pipeline step Job.
+// It starts from step.Driver.K8s.PodTemplate (if set) so all user-defined pod
+// fields (nodeSelector, tolerations, labels, schedulerName, etc.) are preserved,
+// then overlays piper-required init container, step container, and volumes.
+func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentArgs []string, extraEnv ...[]string) corev1.PodTemplateSpec {
+	// Stage 1: start from the user-provided pod template (may be zero-value).
+	var tpl corev1.PodTemplateSpec
+	if step.Driver.K8s != nil {
+		tpl = *step.Driver.K8s.PodTemplate.DeepCopy()
 	}
-	out := make([]corev1.Toleration, 0, len(tolerations))
-	for _, tol := range tolerations {
-		out = append(out, corev1.Toleration{
-			Key:               tol.Key,
-			Operator:          corev1.TolerationOperator(tol.Operator),
-			Value:             tol.Value,
-			Effect:            corev1.TaintEffect(tol.Effect),
-			TolerationSeconds: tol.TolerationSeconds,
-		})
-	}
-	return out
+	tpl.Spec.RestartPolicy = corev1.RestartPolicyNever
+
+	// Stage 2: piper-required init container (copy agent binary).
+	tpl.Spec.InitContainers = append([]corev1.Container{
+		{
+			Name:            "agent-init",
+			Image:           l.cfg.AgentImage,
+			ImagePullPolicy: l.pullPolicy(),
+			Command:         []string{"cp", agentBinarySrc, agentBinaryDst},
+			VolumeMounts:    []corev1.VolumeMount{{Name: "piper-tools", MountPath: "/piper-tools"}},
+		},
+	}, tpl.Spec.InitContainers...)
+
+	// Stage 3: step container (prepend; user may add sidecars in PodTemplate).
+	tpl.Spec.Containers = append([]corev1.Container{
+		{
+			Name:            "step",
+			Image:           image,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Command:         []string{agentBinaryDst},
+			Args:            agentArgs,
+			Env:             buildEnvVars(step.Options.Env, extraEnv...),
+			Resources:       buildResourceRequirements(step.Driver.Resources),
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "piper-tools", MountPath: "/piper-tools"},
+				{Name: "piper-outputs", MountPath: "/piper-outputs"},
+				{Name: "piper-inputs", MountPath: "/piper-inputs"},
+			},
+		},
+	}, tpl.Spec.Containers...)
+
+	// Stage 4: piper-required volumes (append; user volumes preserved).
+	tpl.Spec.Volumes = append(tpl.Spec.Volumes,
+		corev1.Volume{Name: "piper-tools", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		corev1.Volume{Name: "piper-outputs", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		corev1.Volume{Name: "piper-inputs", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	)
+
+	return tpl
 }
 
 // jobName generates the K8s Job name.

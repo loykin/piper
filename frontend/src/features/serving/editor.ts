@@ -158,23 +158,35 @@ export function buildYAML(f: FormState): string {
   const cmdLines = f.command.split('\n').filter(Boolean).map(c => `      - ${JSON.stringify(c)}`).join('\n')
   const isK8s = f.runtimeMode === 'k8s'
 
-  let k8sSection = ''
+  // driver block
+  const driverLines: string[] = [`  driver:`]
+  if (f.image) driverLines.push(`    image: ${JSON.stringify(f.image)}`)
+
+  // placement
   if (isK8s) {
-    const resources: string[] = []
-    if (f.k8sCPU)    resources.push(`      cpu: ${JSON.stringify(f.k8sCPU)}`)
-    if (f.k8sMemory) resources.push(`      memory: ${JSON.stringify(f.k8sMemory)}`)
-    if (f.k8sGPU)    resources.push(`      gpu: ${JSON.stringify(f.k8sGPU)}`)
-    k8sSection = `  k8s:
-    namespace: ${JSON.stringify(f.k8sNamespace || 'default')}
-    replicas: ${f.k8sReplicas || '1'}
-    image_pull_policy: ${JSON.stringify(f.k8sImagePullPolicy || 'Always')}${
-      resources.length ? `\n    resources:\n${resources.join('\n')}` : ''
-    }
-`
+    driverLines.push(`    placement:`, `      runtime: k8s`)
+  } else if (f.worker) {
+    driverLines.push(`    placement:`, `      worker: ${JSON.stringify(f.worker)}`)
   }
 
-  const imageField = isK8s && f.image ? `    image: ${JSON.stringify(f.image)}\n` : ''
-  const workerLine = !isK8s && f.worker ? `    worker: ${JSON.stringify(f.worker)}\n` : ''
+  // resources (top-level in driver, applies to all runtimes)
+  const hasResources = f.k8sCPU || f.k8sMemory || f.k8sGPU
+  if (hasResources) {
+    driverLines.push(`    resources:`)
+    if (f.k8sCPU)    driverLines.push(`      cpu: ${JSON.stringify(f.k8sCPU)}`)
+    if (f.k8sMemory) driverLines.push(`      memory: ${JSON.stringify(f.k8sMemory)}`)
+    if (f.k8sGPU)    driverLines.push(`      gpu: ${JSON.stringify(f.k8sGPU)}`)
+  }
+
+  // k8s-specific settings
+  if (isK8s) {
+    driverLines.push(
+      `    k8s:`,
+      `      namespace: ${JSON.stringify(f.k8sNamespace || 'default')}`,
+      `      replicas: ${f.k8sReplicas || '1'}`,
+      `      image_pull_policy: ${JSON.stringify(f.k8sImagePullPolicy || 'Always')}`,
+    )
+  }
 
   return `apiVersion: piper/v1
 kind: ModelService
@@ -187,11 +199,11 @@ spec:
       step: ${JSON.stringify(f.step || 'train')}
       artifact: ${JSON.stringify(f.artifact || 'model')}
       run: ${JSON.stringify(f.run || 'latest')}
-  runtime:
-    mode: ${JSON.stringify(f.runtimeMode)}
-${imageField}    command:
+  run:
+    command:
 ${cmdLines || '      - "python"\n      - "serve.py"'}
     port: ${f.port || '8000'}
     health_path: ${JSON.stringify(f.healthPath || '/')}
-${workerLine}${k8sSection}`
+${driverLines.join('\n')}
+`
 }

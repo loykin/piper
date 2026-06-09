@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/piper/piper/internal/event"
 	"github.com/piper/piper/pkg/artifact"
-	"github.com/piper/piper/pkg/event"
 )
 
 // Manager handles the lifecycle of ModelService deployments.

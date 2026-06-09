@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/piper/piper/internal/testutil"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
 )
 
@@ -94,12 +95,76 @@ func TestCommandExecutor_capturesEnv(t *testing.T) {
 	}
 }
 
+// TestCommandExecutor_processGPUs verifies that driver.process.gpus flows into
+// CUDA_VISIBLE_DEVICES for baremetal step execution. No real GPU is required —
+// the test only checks that the environment variable is injected correctly.
+func TestCommandExecutor_processGPUs(t *testing.T) {
+	var buf bytes.Buffer
+	step := &pipeline.Step{
+		Name: "gpu-step",
+		Driver: manifest.DriverSpec{
+			Process: &manifest.DriverProcessSpec{GPUs: "0,1"},
+		},
+		Run: pipeline.Run{Command: []string{"sh", "-c", `printf "%s" "$CUDA_VISIBLE_DEVICES"`}},
+	}
+	c := cfg(t)
+	c.GPUs = func() string {
+		if step.Driver.Process != nil {
+			return step.Driver.Process.GPUs
+		}
+		return ""
+	}()
+	c.Stdout = &buf
+
+	ex := &CommandExecutor{}
+	if err := ex.Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "0,1" {
+		t.Errorf("CUDA_VISIBLE_DEVICES = %q, want 0,1", got)
+	}
+}
+
+// TestCommandExecutor_resourcesGPUNotInjectedAsCUDA verifies that driver.resources.gpu
+// (a scheduler quantity hint like "1") is NOT injected as CUDA_VISIBLE_DEVICES.
+// Only driver.process.gpus should set the device selector.
+func TestCommandExecutor_resourcesGPUNotInjectedAsCUDA(t *testing.T) {
+	var buf bytes.Buffer
+	step := &pipeline.Step{
+		Name: "k8s-step",
+		Driver: manifest.DriverSpec{
+			Resources: manifest.ResourceSpec{GPU: "1"}, // K8s resource request, not a device ID
+		},
+		Run: pipeline.Run{Command: []string{"sh", "-c", `printf "%s" "${CUDA_VISIBLE_DEVICES:-unset}"`}},
+	}
+	c := cfg(t)
+	// GPUs is empty because driver.resources.gpu is a count, not a device selector
+	c.GPUs = func() string {
+		if step.Driver.Process != nil {
+			return step.Driver.Process.GPUs
+		}
+		return ""
+	}()
+	c.Stdout = &buf
+
+	ex := &CommandExecutor{}
+	if err := ex.Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "unset" {
+		t.Errorf("CUDA_VISIBLE_DEVICES should not be set from resources.gpu, got %q", got)
+	}
+}
+
 func TestCommandExecutor_stepEnv(t *testing.T) {
 	var buf bytes.Buffer
 	step := &pipeline.Step{
 		Name: "env",
-		Env:  map[string]string{"MASTER_ADDR": "trainer-0", "WORLD_SIZE": "4"},
-		Run:  pipeline.Run{Command: []string{"sh", "-c", "printf '%s:%s' \"$MASTER_ADDR\" \"$WORLD_SIZE\""}},
+		Options: manifest.SpecOptions{Env: []manifest.EnvVar{
+			{Name: "MASTER_ADDR", Value: "trainer-0"},
+			{Name: "WORLD_SIZE", Value: "4"},
+		}},
+		Run: pipeline.Run{Command: []string{"sh", "-c", "printf '%s:%s' \"$MASTER_ADDR\" \"$WORLD_SIZE\""}},
 	}
 	c := cfg(t)
 	c.Stdout = &buf

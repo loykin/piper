@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/taskruntime"
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/pipeline/worker/driver"
 )
 
 type recordingPipelineStatusQueue struct {
@@ -24,13 +24,13 @@ func (q *recordingPipelineStatusQueue) RenewLeases(string, []string) {}
 type recordingPipelineResultAcker struct {
 	agentID string
 	method  string
-	ack     taskruntime.ResultAck
+	ack     driver.ResultAck
 }
 
 func (a *recordingPipelineResultAcker) SendRPC(_ context.Context, agentID, method string, payload any, _ any) error {
 	a.agentID = agentID
 	a.method = method
-	a.ack = payload.(taskruntime.ResultAck)
+	a.ack = payload.(driver.ResultAck)
 	return nil
 }
 

@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
+	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

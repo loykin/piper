@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/piper/piper/pkg/artifact"
-	"github.com/piper/piper/pkg/blobstore"
+	"github.com/piper/piper/pkg/storage"
 )
 
 // ── resolveModelURI ───────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ func TestResolveModelURI_s3K8sTarget(t *testing.T) {
 
 func TestResolveModelURI_s3LocalDownload(t *testing.T) {
 	ctx := context.Background()
-	ms := blobstore.NewMemStore()
+	ms := storage.NewMemStore()
 	_ = ms.Put(ctx, "model/weights.bin", strings.NewReader("weights"), int64(len("weights")))
 
 	modelDir := t.TempDir()
@@ -67,7 +67,7 @@ func TestResolveModelURI_s3LocalDownload(t *testing.T) {
 
 func TestResolveModelURI_s3MissingKey(t *testing.T) {
 	ctx := context.Background()
-	ms := blobstore.NewMemStore()
+	ms := storage.NewMemStore()
 	p := &Piper{
 		cfg:   Config{OutputDir: t.TempDir()},
 		store: ms,

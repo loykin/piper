@@ -3,7 +3,6 @@ kind: Pipeline
 
 metadata:
   name: simple-test
-  description: "Simple pipeline for local testing"
 
 spec:
   steps:

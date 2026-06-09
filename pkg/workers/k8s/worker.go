@@ -11,13 +11,13 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/proto"
+	k8snotebook "github.com/piper/piper/pkg/notebook/worker/driver/k8s"
+	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
 	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/taskruntime"
-	k8snotebook "github.com/piper/piper/pkg/workers/k8s/notebook"
+	k8sserving "github.com/piper/piper/pkg/serving/worker/driver/k8s"
 	k8spipeline "github.com/piper/piper/pkg/workers/k8s/pipeline"
-	k8sserving "github.com/piper/piper/pkg/workers/k8s/serving"
 )
 
 // AgentConfig configures the gRPC connection to the master agent server
@@ -40,6 +40,11 @@ type MasterConfig struct {
 type K8sConfig struct {
 	Client     kubernetes.Interface
 	Namespaces []string // namespaces this worker may manage across all workload types
+
+	// EnabledDomains lists which workload domains this worker handles.
+	// Accepted values: "pipeline", "notebook", "serving".
+	// Empty means all domains are enabled (default behavior).
+	EnabledDomains []string
 
 	// Namespace routing per workload type (defaults to first Namespaces entry or "default").
 	NotebookNamespace string
@@ -76,14 +81,36 @@ type Worker struct {
 	notebookObserver *k8snotebook.Worker
 	servingObserver  *k8sserving.Worker
 	pipelineObserver *k8spipeline.Worker
-	resultOutbox     *taskruntime.ResultOutbox
+	resultOutbox     *pdriver.ResultOutbox
 	initErr          error
+}
+
+// domainEnabled reports whether the given domain is enabled.
+// An empty EnabledDomains list means all domains are enabled.
+func domainEnabled(cfg K8sConfig, domain string) bool {
+	if len(cfg.EnabledDomains) == 0 {
+		return true
+	}
+	for _, d := range cfg.EnabledDomains {
+		if d == domain {
+			return true
+		}
+	}
+	return false
 }
 
 func New(cfg Config) *Worker {
 	capabilities := []string{iagent.CapabilityK8s}
 	if cfg.K8s.Client != nil {
-		capabilities = append(capabilities, iagent.CapabilityNotebook, iagent.CapabilityServing, iagent.CapabilityPipeline)
+		if domainEnabled(cfg.K8s, iagent.CapabilityNotebook) {
+			capabilities = append(capabilities, iagent.CapabilityNotebook)
+		}
+		if domainEnabled(cfg.K8s, iagent.CapabilityServing) {
+			capabilities = append(capabilities, iagent.CapabilityServing)
+		}
+		if domainEnabled(cfg.K8s, iagent.CapabilityPipeline) {
+			capabilities = append(capabilities, iagent.CapabilityPipeline)
+		}
 	}
 
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
@@ -94,75 +121,86 @@ func New(cfg Config) *Worker {
 		Capabilities: capabilities,
 		Runtime:      iagent.RuntimeK8s,
 	})
-	outboxDir := cfg.ResultOutboxDir
-	if outboxDir == "" {
-		outboxDir = filepath.Join(os.TempDir(), "piper-result-outbox", cfg.Agent.ID)
-	}
-	outbox, err := taskruntime.NewResultOutbox(
-		outboxDir,
-		func(result proto.TaskResult) error {
-			return client.SendPush(iagent.MethodPipelineTaskResult, result)
-		},
-	)
-	if err == nil {
-		_ = grpcagent.RegisterJSON(client.Dispatcher(), iagent.MethodPipelineResultAck, func(_ context.Context, ack taskruntime.ResultAck) (any, error) {
-			return nil, outbox.Ack(ack)
-		})
+
+	var outbox *pdriver.ResultOutbox
+	var initErr error
+	if cfg.K8s.Client != nil && domainEnabled(cfg.K8s, iagent.CapabilityPipeline) {
+		outboxDir := cfg.ResultOutboxDir
+		if outboxDir == "" {
+			outboxDir = filepath.Join(os.TempDir(), "piper-result-outbox", cfg.Agent.ID)
+		}
+		outbox, initErr = pdriver.NewResultOutbox(
+			outboxDir,
+			func(result proto.TaskResult) error {
+				return client.SendPush(iagent.MethodPipelineTaskResult, result)
+			},
+		)
+		if initErr == nil {
+			_ = grpcagent.RegisterJSON(client.Dispatcher(), iagent.MethodPipelineResultAck, func(_ context.Context, ack pdriver.ResultAck) (any, error) {
+				return nil, outbox.Ack(ack)
+			})
+		}
 	}
 
 	var notebookObserver *k8snotebook.Worker
 	var servingObserver *k8sserving.Worker
 	var pipelineObserver *k8spipeline.Worker
 	if cfg.K8s.Client != nil {
-		notebookObserver = k8snotebook.Register(client.Dispatcher(), k8snotebook.Config{
-			WorkerID:     cfg.Agent.ID,
-			ClusterName:  cfg.Agent.ClusterName,
-			Namespaces:   cfg.K8s.Namespaces,
-			Client:       cfg.K8s.Client,
-			Namespace:    cfg.K8s.NotebookNamespace,
-			Image:        cfg.K8s.NotebookImage,
-			StorageClass: cfg.K8s.StorageClass,
-			StorageSize:  cfg.K8s.StorageSize,
-			PodDefaults:  cfg.K8s.PodDefaults,
-			ReportStatus: func(update notebook.WorkerStatusUpdate) error {
-				return client.SendPush(iagent.MethodNotebookStatusUpdate, update)
-			},
-		})
-		servingObserver = k8sserving.Register(client.Dispatcher(), k8sserving.Config{
-			ClusterName: cfg.Agent.ClusterName,
-			Namespaces:  cfg.K8s.Namespaces,
-			Client:      cfg.K8s.Client,
-			Namespace:   cfg.K8s.ServingNamespace,
-			ReportStatus: func(update serving.WorkerStatusUpdate) error {
-				return client.SendPush(iagent.MethodServingStatusUpdate, update)
-			},
-		})
-		pipelineObserver = k8spipeline.Register(client.Dispatcher(), k8spipeline.Config{
-			WorkerID: cfg.Agent.ID,
-			Store: k8spipeline.StoreConfig{
-				MasterURL:  cfg.Master.URL,
-				Token:      cfg.Master.Token,
-				StorageURL: cfg.StorageURL,
-			},
-			K8s: k8spipeline.K8sConfig{
-				Client:               cfg.K8s.Client,
-				Namespace:            cfg.K8s.PipelineNamespace,
-				Namespaces:           cfg.K8s.Namespaces,
-				AgentImage:           cfg.K8s.PipelineWorkerImage,
-				AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
-				DefaultImage:         cfg.K8s.DefaultImage,
-				TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
-			},
-			ReportResult: func(result proto.TaskResult) error {
-				if outbox == nil {
-					return fmt.Errorf("result outbox unavailable")
-				}
-				return outbox.Enqueue(result)
-			},
-			RenewLeases: func(taskIDs []string) error {
-				return client.SendPush(iagent.MethodPipelineLeaseRenew, map[string]any{"task_ids": taskIDs})
-			},
-		})
+		if domainEnabled(cfg.K8s, iagent.CapabilityNotebook) {
+			notebookObserver = k8snotebook.Register(client.Dispatcher(), k8snotebook.Config{
+				WorkerID:     cfg.Agent.ID,
+				ClusterName:  cfg.Agent.ClusterName,
+				Namespaces:   cfg.K8s.Namespaces,
+				Client:       cfg.K8s.Client,
+				Namespace:    cfg.K8s.NotebookNamespace,
+				Image:        cfg.K8s.NotebookImage,
+				StorageClass: cfg.K8s.StorageClass,
+				StorageSize:  cfg.K8s.StorageSize,
+				PodDefaults:  cfg.K8s.PodDefaults,
+				ReportStatus: func(update notebook.WorkerStatusUpdate) error {
+					return client.SendPush(iagent.MethodNotebookStatusUpdate, update)
+				},
+			})
+		}
+		if domainEnabled(cfg.K8s, iagent.CapabilityServing) {
+			servingObserver = k8sserving.Register(client.Dispatcher(), k8sserving.Config{
+				ClusterName: cfg.Agent.ClusterName,
+				Namespaces:  cfg.K8s.Namespaces,
+				Client:      cfg.K8s.Client,
+				Namespace:   cfg.K8s.ServingNamespace,
+				ReportStatus: func(update serving.WorkerStatusUpdate) error {
+					return client.SendPush(iagent.MethodServingStatusUpdate, update)
+				},
+			})
+		}
+		if domainEnabled(cfg.K8s, iagent.CapabilityPipeline) {
+			pipelineObserver = k8spipeline.Register(client.Dispatcher(), k8spipeline.Config{
+				WorkerID: cfg.Agent.ID,
+				Store: k8spipeline.StoreConfig{
+					MasterURL:  cfg.Master.URL,
+					Token:      cfg.Master.Token,
+					StorageURL: cfg.StorageURL,
+				},
+				K8s: k8spipeline.K8sConfig{
+					Client:               cfg.K8s.Client,
+					Namespace:            cfg.K8s.PipelineNamespace,
+					Namespaces:           cfg.K8s.Namespaces,
+					AgentImage:           cfg.K8s.PipelineWorkerImage,
+					AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
+					DefaultImage:         cfg.K8s.DefaultImage,
+					TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
+				},
+				ReportResult: func(result proto.TaskResult) error {
+					if outbox == nil {
+						return fmt.Errorf("result outbox unavailable")
+					}
+					return outbox.Enqueue(result)
+				},
+				RenewLeases: func(taskIDs []string) error {
+					return client.SendPush(iagent.MethodPipelineLeaseRenew, map[string]any{"task_ids": taskIDs})
+				},
+			})
+		}
 	}
 
 	return &Worker{
@@ -171,7 +209,7 @@ func New(cfg Config) *Worker {
 		servingObserver:  servingObserver,
 		pipelineObserver: pipelineObserver,
 		resultOutbox:     outbox,
-		initErr:          err,
+		initErr:          initErr,
 	}
 }
 

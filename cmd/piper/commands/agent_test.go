@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/runner"
+	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
 func TestAgentExecReportsToDummyMaster(t *testing.T) {
@@ -48,7 +48,7 @@ func TestAgentExecReportsToDummyMaster(t *testing.T) {
 		StepName: "agent-step",
 		Step:     stepJSON,
 	}
-	taskB64, err := runner.EncodeTask(task)
+	taskB64, err := agent.EncodeTask(task)
 	if err != nil {
 		t.Fatal(err)
 	}

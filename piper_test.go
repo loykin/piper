@@ -16,12 +16,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/pkg/blobstore"
-	"github.com/piper/piper/pkg/logstore"
+	"github.com/piper/piper/internal/logstore"
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/schedule"
+	"github.com/piper/piper/pkg/storage"
 )
 
 type noopBackend struct{}
@@ -43,8 +44,8 @@ func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: outputDir})
 
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "local-path-test"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{{
+		Metadata: manifest.ObjectMeta{Name: "local-path-test"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{{
 			Name: "train",
 			Run: pipeline.Run{
 				Command: []string{"sh", "-c", "echo artifact > $PIPER_OUTPUT_DIR/result.txt"},
@@ -240,7 +241,7 @@ func TestStorageSettingsOverrideLoadsOnStartup(t *testing.T) {
 
 func TestStorageObjectManagement(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
-	ls, ok := p.store.(*blobstore.LocalStore)
+	ls, ok := p.store.(*storage.LocalStore)
 	if !ok {
 		t.Fatal("expected local store for test")
 	}
@@ -313,7 +314,7 @@ func TestStorageObjectUpload(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "report.txt") {
 		t.Fatalf("upload response = %s", rec.Body.String())
 	}
-	ls, ok := p.store.(*blobstore.LocalStore)
+	ls, ok := p.store.(*storage.LocalStore)
 	if !ok {
 		t.Fatal("expected local store")
 	}
@@ -358,8 +359,8 @@ func TestWorkerRoutesOnlyMountedInPollingMode(t *testing.T) {
 func TestStartRunPersistsExperiment(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "train"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{{
+		Metadata: manifest.ObjectMeta{Name: "train"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{{
 			Name: "step",
 			Run:  pipeline.Run{Command: []string{"true"}},
 		}}},

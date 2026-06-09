@@ -1,5 +1,4 @@
 // notebooks feature — YAML builder utilities
-// Extracted from NotebookCreatePage
 
 export interface K8sFormState {
   name: string
@@ -40,23 +39,44 @@ export const DEFAULT_WORKER: WorkerFormState = {
 }
 
 export function buildK8sYAML(f: K8sFormState, workerID?: string): string {
-  const lines: string[] = [`metadata:`, `  name: ${JSON.stringify(f.name || 'my-notebook')}`, `spec:`, `  k8s:`]
-  if (f.image)       lines.push(`    image: "${f.image}"`)
-  if (f.storageSize) lines.push(`    storage_size: "${f.storageSize}"`)
+  const lines: string[] = [
+    `apiVersion: piper/v1`,
+    `kind: Notebook`,
+    `metadata:`,
+    `  name: ${JSON.stringify(f.name || 'my-notebook')}`,
+    `spec:`,
+  ]
+
+  // volume (domain — PVC size)
+  if (f.storageSize) lines.push(`  volume:`, `    size: "${f.storageSize}"`)
+
   appendPrepareSteps(lines, f.prepare, f.prepareBackend)
 
+  // driver block
+  lines.push(`  driver:`)
+  if (f.image) lines.push(`    image: "${f.image}"`)
+  if (workerID) lines.push(`    placement:`, `      worker: ${JSON.stringify(workerID)}`)
+
+  // K8s-specific: resources via pod_template
   const hasCpu = !!f.cpu, hasMem = !!f.memory, hasGpu = !!f.gpu
   if (hasCpu || hasMem || hasGpu) {
-    lines.push(`    pod_template:`, `      spec:`, `        containers:`, `          - name: notebook`, `            resources:`)
+    lines.push(
+      `    k8s:`,
+      `      pod_template:`,
+      `        spec:`,
+      `          containers:`,
+      `            - name: notebook`,
+      `              resources:`,
+    )
     const requests: string[] = []
     const limits: string[] = []
-    if (hasCpu) requests.push(`                cpu: "${f.cpu}"`)
-    if (hasMem) { requests.push(`                memory: "${f.memory}"`); limits.push(`                memory: "${f.memory}"`) }
-    if (hasGpu) limits.push(`                nvidia.com/gpu: "${f.gpu}"`)
-    if (requests.length) { lines.push(`              requests:`); lines.push(...requests) }
-    if (limits.length)   { lines.push(`              limits:`);   lines.push(...limits) }
+    if (hasCpu) requests.push(`                  cpu: "${f.cpu}"`)
+    if (hasMem) { requests.push(`                  memory: "${f.memory}"`); limits.push(`                  memory: "${f.memory}"`) }
+    if (hasGpu) limits.push(`                  nvidia.com/gpu: "${f.gpu}"`)
+    if (requests.length) { lines.push(`                requests:`); lines.push(...requests) }
+    if (limits.length)   { lines.push(`                limits:`);   lines.push(...limits) }
   }
-  if (workerID) lines.push(`  placement:`, `    worker: ${JSON.stringify(workerID)}`)
+
   return lines.join('\n') + '\n'
 }
 
@@ -69,14 +89,27 @@ export function buildWorkerYAMLWithBackend(
   workerID: string | undefined,
   backend: 'process' | 'docker' | 'k8s',
 ): string {
-  const lines: string[] = [`metadata:`, `  name: ${JSON.stringify(f.name || 'my-notebook')}`, `spec:`]
-  if (f.env || f.gpus) {
-    lines.push(`  process:`)
-    if (f.env)  lines.push(`    env: ${JSON.stringify(f.env)}`)
-    if (f.gpus) lines.push(`    gpus: ${JSON.stringify(f.gpus)}`)
-  }
+  const lines: string[] = [
+    `apiVersion: piper/v1`,
+    `kind: Notebook`,
+    `metadata:`,
+    `  name: ${JSON.stringify(f.name || 'my-notebook')}`,
+    `spec:`,
+  ]
+
   appendPrepareSteps(lines, f.prepare, backend)
-  if (workerID) lines.push(`  placement:`, `    worker: ${JSON.stringify(workerID)}`)
+
+  // driver block
+  lines.push(`  driver:`)
+  if (workerID) lines.push(`    placement:`, `      worker: ${JSON.stringify(workerID)}`)
+
+  // process-specific GPU/env settings
+  if (f.env || f.gpus) {
+    lines.push(`    process:`)
+    if (f.env)  lines.push(`      env: ${JSON.stringify(f.env)}`)
+    if (f.gpus) lines.push(`      gpus: ${JSON.stringify(f.gpus)}`)
+  }
+
   return lines.join('\n') + '\n'
 }
 

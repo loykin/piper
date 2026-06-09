@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/runner"
-	"github.com/piper/piper/pkg/taskruntime"
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/pipeline/worker/agent"
 	"github.com/spf13/cobra"
 )
 
@@ -63,7 +61,7 @@ func newAgentExecCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
 	cmd.Flags().StringVar(&f.storageURL, "storage-url", "", "artifact store URL (s3://, file://, http://)")
 	cmd.Flags().StringVar(&f.resultFile, "result-file", "", "path to write AgentResult JSON (required for report-mode=file)")
-	cmd.Flags().StringVar(&f.reportMode, "report-mode", string(taskruntime.ReportModeHTTP), "result delivery mode: http (migration) or file")
+	cmd.Flags().StringVar(&f.reportMode, "report-mode", string(agent.ReportModeHTTP), "result delivery mode: http (migration) or file")
 
 	return cmd
 }
@@ -79,12 +77,12 @@ func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error
 		gitToken = os.Getenv("PIPER_GIT_TOKEN")
 	}
 
-	task, err := runner.TaskFromAgentInput(f.taskB64, f.taskID, f.runID, f.stepName, f.stepB64, cmdArgs)
+	task, err := agent.TaskFromAgentInput(f.taskB64, f.taskID, f.runID, f.stepName, f.stepB64, cmdArgs)
 	if err != nil {
 		return err
 	}
 
-	r, err := runner.New(runner.Config{
+	r, err := agent.New(agent.Config{
 		MasterURL:  f.master,
 		Token:      f.token,
 		OutputDir:  f.outputDir,
@@ -99,7 +97,7 @@ func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error
 
 	result := r.Run(ctx, task)
 
-	if err := deliverResult(result, taskruntime.ReportMode(f.reportMode), f.resultFile, r); err != nil {
+	if err := deliverResult(result, agent.ReportMode(f.reportMode), f.resultFile, r); err != nil {
 		return fmt.Errorf("deliver result: %w", err)
 	}
 
@@ -110,52 +108,12 @@ func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error
 }
 
 // deliverResult sends the TaskResult according to the configured report mode.
-func deliverResult(result proto.TaskResult, mode taskruntime.ReportMode, resultFile string, r *runner.Runner) error {
-	switch mode {
-	case taskruntime.ReportModeFile:
-		if resultFile == "" {
-			return fmt.Errorf("--result-file is required for report-mode=file")
-		}
-		return writeResultFile(resultFile, result)
-	default: // ReportModeHTTP and legacy zero value
-		r.Report(result)
-		return nil
-	}
-}
-
-// writeResultFile atomically writes an AgentResult JSON to path.
-// For /dev/termination-log (K8s) the result is truncated to fit the 4096-byte
-// limit before writing, and atomic rename is skipped (char device).
-func writeResultFile(path string, result proto.TaskResult) error {
-	if path == "/dev/termination-log" {
+// For /dev/termination-log, the result is first truncated to fit the 4096-byte K8s limit.
+func deliverResult(result proto.TaskResult, mode agent.ReportMode, resultFile string, r *agent.Runner) error {
+	if resultFile == "/dev/termination-log" {
 		result = truncateForTerminationLog(result)
-		data, err := taskruntime.WriteAgentResult(result)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(path, data, 0644)
 	}
-	data, err := taskruntime.WriteAgentResult(result)
-	if err != nil {
-		return err
-	}
-	// Atomic write via rename for regular files.
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".result-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp result file: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("write result file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return agent.DeliverResult(result, mode, resultFile, r)
 }
 
 // truncateForTerminationLog trims an AgentResult JSON to fit within
@@ -169,7 +127,7 @@ func truncateForTerminationLog(result proto.TaskResult) proto.TaskResult {
 	if len(result.Error) > maxError {
 		result.Error = result.Error[:maxError] + "... [truncated]"
 	}
-	data, err := json.Marshal(taskruntime.AgentResult{Version: 1, Result: result})
+	data, err := json.Marshal(agent.AgentResult{Version: 1, Result: result})
 	if err != nil || len(data) <= softLimit {
 		return result
 	}
@@ -180,7 +138,7 @@ func truncateForTerminationLog(result proto.TaskResult) proto.TaskResult {
 			break
 		}
 		result.Error = result.Error[:cut] + "... [truncated]"
-		data, err = json.Marshal(taskruntime.AgentResult{Version: 1, Result: result})
+		data, err = json.Marshal(agent.AgentResult{Version: 1, Result: result})
 		if err != nil {
 			break
 		}

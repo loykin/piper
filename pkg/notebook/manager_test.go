@@ -225,7 +225,7 @@ func (d *fakeDriver) ProvisionVolume(_ context.Context, vol *NotebookVolume, _ s
 	return d.provisionErr
 }
 
-func (d *fakeDriver) Start(_ context.Context, _ NotebookServerSpec, _ *NotebookVolume, _ string) (*NotebookServer, error) {
+func (d *fakeDriver) Start(_ context.Context, _ Notebook, _ *NotebookVolume, _ string) (*NotebookServer, error) {
 	select {
 	case d.startDone <- struct{}{}:
 	default:
@@ -285,7 +285,7 @@ func TestManager_Create_HappyPath(t *testing.T) {
 	drv.startResult = &NotebookServer{WorkerID: "w-1", Token: "tok-abc", WorkDir: "/work/vol1"}
 
 	m := New(repo, vols, drv)
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-create"
 
 	nb, err := m.Create(context.Background(), spec, "")
@@ -332,7 +332,7 @@ func TestManager_Create_DuplicateName(t *testing.T) {
 	drv := newFakeDriver()
 	m := New(repo, vols, drv)
 
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "dup"
 
 	if _, err := m.Create(context.Background(), spec, ""); err != nil {
@@ -345,7 +345,7 @@ func TestManager_Create_DuplicateName(t *testing.T) {
 
 func TestManager_Create_EmptyName(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	_, err := m.Create(context.Background(), NotebookServerSpec{}, "")
+	_, err := m.Create(context.Background(), Notebook{}, "")
 	if err == nil {
 		t.Fatal("Create() with empty name expected error")
 	}
@@ -357,7 +357,7 @@ func TestManager_Create_InvalidPrepareSpec(t *testing.T) {
 	drv := newFakeDriver()
 	m := New(repo, vols, drv)
 
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-prepare-invalid"
 	spec.Spec.Prepare = &NotebookPrepareSpec{
 		Steps: []NotebookPrepareStep{
@@ -378,7 +378,7 @@ func TestManager_Create_ProvisionFails(t *testing.T) {
 	drv.provisionErr = errors.New("disk full")
 
 	m := New(repo, vols, drv)
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-prov-fail"
 
 	nb, err := m.Create(context.Background(), spec, "")
@@ -408,7 +408,7 @@ func TestManager_Create_StartFails(t *testing.T) {
 	drv.startErr = errors.New("no worker available")
 
 	m := New(repo, vols, drv)
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-start-fail"
 
 	nb, err := m.Create(context.Background(), spec, "")
@@ -444,7 +444,7 @@ func TestManager_CreateWithVolume_HappyPath(t *testing.T) {
 	vol := &NotebookVolume{ID: "vol-existing", Label: "old-nb", WorkDir: "/data/old-nb", Status: VolumeStatusReleased}
 	_ = vols.Create(ctx, vol)
 
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-attach"
 
 	nb, err := m.CreateWithVolume(ctx, spec, "vol-existing", "")
@@ -473,7 +473,7 @@ func TestManager_CreateWithVolume_HappyPath(t *testing.T) {
 
 func TestManager_CreateWithVolume_VolumeNotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-no-vol"
 	_, err := m.CreateWithVolume(context.Background(), spec, "missing-vol", "")
 	if err == nil {
@@ -490,7 +490,7 @@ func TestManager_CreateWithVolume_VolumeNotReleased(t *testing.T) {
 	vol := &NotebookVolume{ID: "vol-bound", Label: "nb", Status: VolumeStatusBound}
 	_ = vols.Create(ctx, vol)
 
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-reuse"
 	_, err := m.CreateWithVolume(ctx, spec, "vol-bound", "")
 	if err == nil {
@@ -510,7 +510,7 @@ func TestManager_CreateWithVolume_StartFails(t *testing.T) {
 	vol := &NotebookVolume{ID: "vol-sfail", Label: "sfail", Status: VolumeStatusReleased}
 	_ = vols.Create(ctx, vol)
 
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = "nb-sfail"
 	nb, err := m.CreateWithVolume(ctx, spec, "vol-sfail", "")
 	if err != nil {
@@ -574,8 +574,12 @@ func TestManager_Stop_DriverFailureRestoresObservedStatus(t *testing.T) {
 	if err := m.Stop(ctx, "nb-offline"); !errors.Is(err, ErrAgentUnavailable) {
 		t.Fatalf("Stop() error = %v, want ErrAgentUnavailable", err)
 	}
-	if got := repo.get("nb-offline").Status; got != StatusRunning {
-		t.Fatalf("status = %q, want last observed status %q", got, StatusRunning)
+	nb := repo.get("nb-offline")
+	if nb == nil {
+		t.Fatal("notebook not found")
+	}
+	if nb.Status != StatusRunning {
+		t.Fatalf("status = %q, want last observed status %q", nb.Status, StatusRunning)
 	}
 }
 
@@ -816,8 +820,12 @@ func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
 	if err == nil {
 		t.Fatal("UpdateStatus() accepted update from non-owner")
 	}
-	if got := repo.get("nb-owned").Status; got != StatusRunning {
-		t.Fatalf("status = %q, want unchanged %q", got, StatusRunning)
+	nbOwned := repo.get("nb-owned")
+	if nbOwned == nil {
+		t.Fatal("notebook not found")
+	}
+	if nbOwned.Status != StatusRunning {
+		t.Fatalf("status = %q, want unchanged %q", nbOwned.Status, StatusRunning)
 	}
 }
 
@@ -837,6 +845,9 @@ func TestManagerUpdateStatusClearsRuntimeFieldsWhenStopped(t *testing.T) {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 	nb := repo.get("nb-stale-runtime")
+	if nb == nil {
+		t.Fatal("notebook not found")
+	}
 	if nb.Endpoint != "" || nb.PID != 0 || nb.Token != "" {
 		t.Fatalf("runtime fields not cleared: endpoint=%q pid=%d token=%q", nb.Endpoint, nb.PID, nb.Token)
 	}

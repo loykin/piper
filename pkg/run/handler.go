@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/pkg/logstore"
-	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/internal/logstore"
+	"github.com/piper/piper/internal/proto"
 )
 
 // LogQuerier abstracts log storage for the run handler.

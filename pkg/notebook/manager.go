@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	"github.com/piper/piper/pkg/event"
+	"github.com/piper/piper/internal/event"
 )
 
 // Manager handles the lifecycle of NotebookServer instances.
@@ -33,7 +33,7 @@ func (m *Manager) SetEventPublisher(p event.Publisher) {
 // Create provisions new storage and launches a new notebook server asynchronously.
 // Returns immediately with status=provisioning; background goroutine handles
 // volume allocation and server start. Worker callback sets final status.
-func (m *Manager) Create(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error) {
+func (m *Manager) Create(ctx context.Context, spec Notebook, yamlStr string) (*NotebookServer, error) {
 	name := spec.Metadata.Name
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
@@ -75,7 +75,7 @@ func (m *Manager) Create(ctx context.Context, spec NotebookServerSpec, yamlStr s
 
 // provisionAndStart handles the async two-phase startup: volume provisioning then server start.
 // Status transitions: provisioning → starting → (running or failed via worker callback).
-func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, spec NotebookServerSpec, yamlStr string) {
+func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, spec Notebook, yamlStr string) {
 	name := spec.Metadata.Name
 
 	// Phase 1: provision storage
@@ -132,7 +132,7 @@ func (m *Manager) provisionAndStart(ctx context.Context, vol *NotebookVolume, sp
 
 // CreateWithVolume launches a new notebook server backed by an existing released volume.
 // Returns immediately with status=starting; background goroutine handles server start.
-func (m *Manager) CreateWithVolume(ctx context.Context, spec NotebookServerSpec, volumeID string, yamlStr string) (*NotebookServer, error) {
+func (m *Manager) CreateWithVolume(ctx context.Context, spec Notebook, volumeID string, yamlStr string) (*NotebookServer, error) {
 	name := spec.Metadata.Name
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
@@ -253,7 +253,7 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 		vol = &NotebookVolume{ID: nb.VolumeID, WorkDir: nb.WorkDir}
 	}
 
-	spec := NotebookServerSpec{}
+	spec := Notebook{}
 	spec.Metadata.Name = nb.Name
 	if nb.YAML != "" {
 		_ = parseYAML(nb.YAML, &spec)

@@ -16,22 +16,24 @@ metadata:
 spec:
   steps:
   - name: preprocess
-    runner:
-      label: cpu        # Run on CPU worker
+    driver:
+      placement:
+        label: cpu        # Run on CPU worker
     run:
       type: command
       command: ["sh", "-c", "echo 'preprocessing on CPU worker'"]
 
   - name: train
-    runner:
-      label: gpu        # Run on GPU worker
+    driver:
+      placement:
+        label: gpu        # Run on GPU worker
     run:
       type: command
       command: ["sh", "-c", "echo 'training on GPU worker'"]
     depends_on: [preprocess]
 
   - name: report
-    # No label → any worker can run this
+    # No driver → any worker can run this
     run:
       type: command
       command: ["sh", "-c", "echo 'generating report'"]

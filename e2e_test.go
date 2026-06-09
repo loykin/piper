@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -24,8 +25,8 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/piper/piper/internal/testutil"
-	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
-	servingworker "github.com/piper/piper/pkg/workers/baremetal/serving"
+	worker "github.com/piper/piper/pkg/pipeline/worker"
+	servingworker "github.com/piper/piper/pkg/serving/worker"
 )
 
 const e2eBucket = "piper-e2e"
@@ -91,6 +92,7 @@ func startE2EWorker(t *testing.T, agentAddr, masterURL string, extra ...func(*wo
 	cfg := worker.Config{
 		Agent: worker.AgentConfig{
 			Addr:        agentAddr,
+			ID:          worker.NewID("e2e"),
 			Concurrency: 2,
 		},
 		Store: worker.StoreConfig{
@@ -814,4 +816,46 @@ spec:
 	// handleRunSuccess fires asynchronously; poll until service.RunID reflects
 	// the second run.
 	waitServiceRunID(t, srv.URL, serviceName, secondRunID, 60*time.Second)
+}
+
+// TestE2E_ProcessGPUsFlowsToCUDA verifies the full path of driver.process.gpus
+// through the baremetal worker to CUDA_VISIBLE_DEVICES inside the step process.
+// No real GPU hardware is needed — the test only checks env var injection.
+func TestE2E_ProcessGPUsFlowsToCUDA(t *testing.T) {
+	outputDir := t.TempDir()
+	p, srv := newE2EServerWithDir(t, outputDir)
+	// Share outputDir with worker so artifact files are accessible locally.
+	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL, func(cfg *worker.Config) {
+		cfg.Store.OutputDir = outputDir
+	})
+
+	// The step writes $CUDA_VISIBLE_DEVICES to a file in $PIPER_OUTPUT_DIR.
+	// driver.process.gpus should inject "mock-0,mock-1" as CUDA_VISIBLE_DEVICES.
+	yaml := `
+metadata:
+  name: e2e-gpu-env
+spec:
+  steps:
+    - name: check-cuda
+      driver:
+        process:
+          gpus: "mock-0,mock-1"
+      run:
+        command: ["sh", "-c", "printf '%s' \"$CUDA_VISIBLE_DEVICES\" > $PIPER_OUTPUT_DIR/cuda.txt"]
+      outputs:
+        - name: cuda
+          path: cuda.txt
+`
+	runID := postRun(t, srv.URL, yaml)
+	waitRunStatus(t, srv.URL, runID, "success", 20*time.Second)
+
+	// Read the artifact file that the step wrote.
+	cudaFile := outputDir + "/" + runID + "/check-cuda/cuda.txt"
+	data, err := os.ReadFile(cudaFile)
+	if err != nil {
+		t.Fatalf("could not read cuda.txt: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "mock-0,mock-1" {
+		t.Errorf("CUDA_VISIBLE_DEVICES = %q, want mock-0,mock-1", got)
+	}
 }

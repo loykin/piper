@@ -19,7 +19,7 @@ func steps(defs ...any) []Step {
 }
 
 func pipeline1(ss []Step) *Pipeline {
-	return &Pipeline{Spec: Spec{Steps: ss}}
+	return &Pipeline{Spec: PipelineSpec{Steps: ss}}
 }
 
 func TestBuildDAG_linear(t *testing.T) {

@@ -24,7 +24,7 @@ type Driver interface {
 	// Process: starts JupyterLab on the worker host.
 	// Docker: starts a managed notebook container on the worker host.
 	// K8s: creates or updates StatefulSet/Service resources in the worker cluster.
-	Start(ctx context.Context, spec NotebookServerSpec, vol *NotebookVolume, yamlStr string) (*NotebookServer, error)
+	Start(ctx context.Context, spec Notebook, vol *NotebookVolume, yamlStr string) (*NotebookServer, error)
 
 	// Stop terminates the server without touching storage.
 	// Process/Docker: stops the runtime instance. K8s: scales the StatefulSet down.

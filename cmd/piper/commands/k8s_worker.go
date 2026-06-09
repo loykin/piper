@@ -27,6 +27,7 @@ func newK8sWorkerCmd() *cobra.Command {
 			id, _ := cmd.Flags().GetString("id")
 			cluster, _ := cmd.Flags().GetString("cluster")
 			namespacesStr, _ := cmd.Flags().GetString("namespaces")
+			enableStr, _ := cmd.Flags().GetString("enable")
 			kubeconfig, _ := cmd.Flags().GetString("kubeconfig")
 			inCluster, _ := cmd.Flags().GetBool("in-cluster")
 			notebookNamespace, _ := cmd.Flags().GetString("notebook-namespace")
@@ -47,6 +48,12 @@ func newK8sWorkerCmd() *cobra.Command {
 			for _, ns := range strings.Split(namespacesStr, ",") {
 				if trimmed := strings.TrimSpace(ns); trimmed != "" {
 					namespaces = append(namespaces, trimmed)
+				}
+			}
+			var enabledDomains []string
+			for _, d := range strings.Split(enableStr, ",") {
+				if trimmed := strings.TrimSpace(d); trimmed != "" {
+					enabledDomains = append(enabledDomains, trimmed)
 				}
 			}
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -71,6 +78,7 @@ func newK8sWorkerCmd() *cobra.Command {
 				K8s: k8sworker.K8sConfig{
 					Client:               k8sClient,
 					Namespaces:           namespaces,
+					EnabledDomains:       enabledDomains,
 					NotebookNamespace:    notebookNamespace,
 					ServingNamespace:     servingNamespace,
 					PipelineNamespace:    pipelineNamespace,
@@ -94,6 +102,7 @@ func newK8sWorkerCmd() *cobra.Command {
 	cmd.Flags().String("id", "", "worker ID (default: stable k8s-<cluster>)")
 	cmd.Flags().String("cluster", "", "cluster name reported to master (required)")
 	cmd.Flags().String("namespaces", "", "comma-separated namespaces this worker may manage")
+	cmd.Flags().String("enable", "pipeline,notebook,serving", "comma-separated list of domains to enable: pipeline, notebook, serving")
 	cmd.Flags().String("kubeconfig", "", "kubeconfig path for out-of-cluster execution")
 	cmd.Flags().Bool("in-cluster", true, "use in-cluster Kubernetes credentials")
 	cmd.Flags().String("notebook-namespace", "", "namespace for notebook StatefulSets/PVCs (default: first namespace or default)")

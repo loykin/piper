@@ -81,15 +81,16 @@ metadata:
   name: my-pipeline
 
 spec:
-  # Optional: pin the whole run to one worker or K8s cluster.
-  # Step-level placement is intentionally unsupported.
-  placement:
-    worker: ""                 # bare-metal worker ID/hostname
-    cluster: ""                # K8s worker cluster name
-    namespace: ""              # K8s namespace for worker-created Jobs
-
+  # Optional: default driver settings applied to all steps.
+  # Use placement to pin the whole run to one worker or K8s cluster.
   defaults:
-    image: alpine:3.20        # default container image for K8s mode
+    driver:
+      image: alpine:3.20          # default container image for K8s/Docker mode
+      placement:
+        worker: ""                # bare-metal worker ID/hostname
+        cluster: ""               # K8s worker cluster name
+      k8s:
+        namespace: ""             # K8s namespace for worker-created Jobs
 
   steps:
   - name: extract
@@ -102,20 +103,34 @@ spec:
 
   - name: transform
     depends_on: [extract]
-    runner:
-      label: gpu              # only run on workers with this label
-      node_selector:          # K8s only: schedule on specific nodes
-        accelerator: nvidia-tesla-a100
-      pod_labels:             # K8s only: labels added to the step Pod
-        team: ml
-      scheduler_name: ""      # K8s only: custom scheduler (optional)
+    options:
+      env:
+        - name: PYTHONPATH
+          value: /app
+      timeout: 600
+    driver:
+      image: python:3.12-slim     # container image for this step (K8s/Docker mode)
+      placement:
+        label: gpu                # route to workers with this label
+      resources:
+        cpu: "4"
+        memory: "16Gi"
+        gpu: "1"
+      k8s:                        # K8s-specific settings (optional)
+        pod_template:
+          spec:
+            nodeSelector:
+              accelerator: nvidia-tesla-a100
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
     run:
       type: command
-      image: python:3.12-slim # override container image for this step (K8s mode)
       command: ["python3", "train.py"]
     inputs:
       - name: raw
-        from: extract/raw     # artifact from the extract step
+        from: extract/raw         # artifact from the extract step
 
   - name: report
     depends_on: [transform]
@@ -184,9 +199,9 @@ piper worker --master=http://localhost:8080 --label=gpu --concurrency=4
 Workers register with the master on startup and send a heartbeat every 10 seconds.
 Active workers can be listed via `GET /api/workers`.
 
-To pin an entire pipeline run to one bare-metal worker, set `spec.placement.worker`.
-The worker can be addressed by worker ID or hostname. `runner.label` is still supported
-for compatibility, but `spec.placement` is the preferred run-level placement model.
+To pin an entire pipeline run to one bare-metal worker, set `spec.defaults.driver.placement.worker`.
+To route all steps to workers with a specific label, set `spec.defaults.driver.placement.label`.
+Individual steps can override placement via `step.driver.placement`.
 
 ### 3. Kubernetes Jobs (worker)
 
@@ -253,6 +268,7 @@ piper k8s-worker \
   --master  http://piper-server:8080 \
   --cluster my-cluster \
   --in-cluster \
+  --enable  pipeline,notebook,serving \    # default: all three; omit to enable all
   --pipeline-namespace  piper-jobs \
   --notebook-namespace  piper-notebooks \
   --serving-namespace   piper-serving \
@@ -260,10 +276,7 @@ piper k8s-worker \
   --pipeline-worker-image piper/piper:latest \
   --storage-class       standard \
   --storage-size        20Gi \
-  --s3-endpoint         minio:9000 \
-  --s3-access-key       <key> \
-  --s3-secret-key       <secret> \
-  --s3-bucket           piper-artifacts
+  --storage-url         "s3://piper-artifacts?endpoint=minio:9000&access_key=<key>&secret_key=<secret>"
 ```
 
 Or as a Kubernetes Deployment (recommended):
@@ -343,22 +356,28 @@ spec:
       artifact: model         # outputs[].name
       run: latest             # latest | <run-id>
 
-  # Runtime: any server covered by image + command
-  runtime:
-    image: nvcr.io/nvidia/tritonserver:24.01-py3
+  # run: what to execute (command + port)
+  run:
     command: ["tritonserver", "--model-repository=$(PIPER_MODEL_DIR)"]
     port: 8000
-    mode: local               # local | k8s
+    health_path: /v2/health/ready   # optional readiness check path
 
-  # K8s mode only
-  k8s:
-    namespace: default
-    replicas: 1
-    image_pull_policy: IfNotPresent   # Always | IfNotPresent | Never (default: Always)
+  # driver: where and how to run it
+  driver:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
+    placement:
+      runtime: k8s              # baremetal | docker | k8s
+      worker: ""                # pin to a specific worker (optional)
     resources:
       cpu: "2"
       memory: "8Gi"
       gpu: "1"
+    k8s:                        # K8s-specific (runtime=k8s only)
+      namespace: default
+      replicas: 1
+      image_pull_policy: IfNotPresent
+    process:                    # baremetal-specific (runtime=baremetal only)
+      gpus: "0"                 # CUDA_VISIBLE_DEVICES
 ```
 
 ### Injected Environment Variables
@@ -372,29 +391,33 @@ spec:
 
 ```yaml
 # Triton
-runtime:
-  image: nvcr.io/nvidia/tritonserver:24.01-py3
+run:
   command: ["tritonserver", "--model-repository=$(PIPER_MODEL_DIR)"]
   port: 8000
+driver:
+  image: nvcr.io/nvidia/tritonserver:24.01-py3
 
 # vLLM
-runtime:
-  image: vllm/vllm-openai:latest
+run:
   command: ["python", "-m", "vllm.entrypoints.openai.api_server",
             "--model", "$(PIPER_MODEL_DIR)", "--port", "8000"]
   port: 8000
+driver:
+  image: vllm/vllm-openai:latest
 
 # TorchServe
-runtime:
-  image: pytorch/torchserve:latest
+run:
   command: ["torchserve", "--start", "--model-store", "$(PIPER_MODEL_DIR)", "--foreground"]
   port: 8080
+driver:
+  image: pytorch/torchserve:latest
 
 # BentoML
-runtime:
-  image: my-bentoml-service:latest
+run:
   command: ["bentoml", "serve", "$(PIPER_MODEL_DIR)", "--port", "3000"]
   port: 3000
+driver:
+  image: my-bentoml-service:latest
 ```
 
 ### Serving Worker (bare-metal local mode)
@@ -417,15 +440,17 @@ piper serving-worker \
   --advertise-addr http://<this-node>:7700   # omit if same machine as master
 ```
 
-**Multi-node**: run `piper serving-worker` on each inference node. To pin a deployment to a specific node, set `runtime.worker` in the ModelService YAML:
+**Multi-node**: run `piper serving-worker` on each inference node. To pin a deployment to a specific node, set `driver.placement.worker` in the ModelService YAML:
 
 ```yaml
 spec:
-  runtime:
-    mode: local
-    worker: gpu-node-01   # hostname of the target serving worker
+  run:
     command: [...]
     port: 8000
+  driver:
+    placement:
+      worker: gpu-node-01     # hostname of the target serving worker
+      runtime: baremetal
 ```
 
 If `serving.worker: true` is set, Piper uses the unified worker router. A bare-metal
@@ -567,16 +592,37 @@ Then deploy `piper k8s-worker` as described in the [K8s Worker](#4-k8s-worker) s
 
 ```yaml
 apiVersion: piper/v1
-kind: NotebookServer
+kind: Notebook
 metadata:
   name: my-notebook
 spec:
-  runtime:
-    port: 8888
-    work_dir: ./notebooks
-    gpus: "0"            # GPU device index (bare-metal mode); omit for CPU-only
-    worker: gpu-node-01  # pin to a specific worker node (optional)
-  storage_size: 20Gi     # PVC size (K8s modes only)
+  volume:
+    size: 20Gi              # PVC size (K8s mode only)
+
+  options:
+    env:
+      - name: JUPYTER_TOKEN
+        value: ""
+
+  driver:
+    image: jupyter/scipy-notebook:latest
+    placement:
+      runtime: k8s          # baremetal | docker | k8s
+      worker: gpu-node-01   # pin to a specific worker (optional)
+    resources:
+      cpu: "2"
+      memory: "8Gi"
+      gpu: "1"
+    k8s:                    # K8s-specific (runtime=k8s)
+      pod_template:
+        spec:
+          nodeSelector:
+            accelerator: nvidia
+    process:                # baremetal-specific (runtime=baremetal)
+      gpus: "0"             # CUDA_VISIBLE_DEVICES
+    docker:                 # Docker-specific (runtime=docker)
+      cpus: "4"
+      mem_limit: "8g"
 ```
 
 ### TLS (bare-metal worker)
@@ -705,6 +751,7 @@ piper worker --master=<url>                      start a pipeline worker (bare-m
 piper serving-worker --master=<url>              start a serving worker (bare-metal ModelService)
 piper notebook-worker --master=<url>             start a notebook worker (bare-metal JupyterLab)
 piper k8s-worker --master=<url> --cluster=<name> start a cluster-local K8s worker (pipelines + notebooks + serving)
+piper k8s-worker --master=<url> --cluster=<name> --enable pipeline  start K8s worker for pipeline only
 piper agent exec --master=<url> ...              execute a step inside a K8s Pod (called automatically)
 ```
 
@@ -764,28 +811,48 @@ make test-docker-notebook-e2e
 ## Project Layout
 
 ```
-cmd/piper/             CLI entry point and cobra commands
-piper.go, config.go    library entry point, import "github.com/piper/piper"
-pkg/pipeline/          YAML parsing, DAG, local runner
-pkg/runner/            shared execution logic (S3 download, exec, upload, report)
-pkg/dispatch/notebook/ master-side notebook dispatch drivers (worker, K8s, RPC)
-pkg/dispatch/serving/  master-side serving dispatch drivers (worker, K8s, RPC)
-pkg/workers/baremetal/pipeline/  bare-metal pipeline worker (poll, register, heartbeat)
-pkg/workers/baremetal/notebook/  bare-metal notebook worker
-pkg/workers/baremetal/serving/   bare-metal serving worker
-pkg/workers/k8s/                 cluster-local K8s worker coordinator (registration, tunnel, RPC)
-pkg/workers/k8s/pipeline/        K8s pipeline worker implementation
-pkg/workers/k8s/notebook/        K8s notebook worker implementation
-pkg/workers/k8s/serving/         K8s serving worker implementation
-pkg/k8s/               Kubernetes Job launcher (direct API, ExecutionBackend implementation)
-pkg/executor/          step executors (command, python, notebook)
-pkg/serving/           ModelService lifecycle (deploy, stop, restart, proxy)
-pkg/notebook/          NotebookServer lifecycle (create, stop, restart, delete)
-internal/agent/        server-side registry, routing, and RPC target model
-internal/tunnel/    WebSocket reverse tunnel hub (server-side)
-internal/store/     state persistence (SQLite / PostgreSQL)
-pkg/ui/             embedded React SPA
-examples/           usage examples
+cmd/piper/                      CLI entry point and cobra commands
+piper.go, config.go             library entry point, import "github.com/piper/piper"
+
+pkg/manifest/                   shared YAML types: TypeMeta, ObjectMeta, DriverSpec, SpecOptions
+pkg/pipeline/                   Pipeline spec, DAG, parser, local runner
+pkg/pipeline/worker/            standalone pipeline worker (baremetal/docker runtime)
+pkg/pipeline/worker/driver/     Driver interface, ExecSpec, ResultOutbox, paths
+pkg/pipeline/worker/driver/baremetal/  subprocess driver
+pkg/pipeline/worker/driver/docker/     Docker container driver
+pkg/pipeline/worker/driver/k8s/        K8s Job driver
+pkg/pipeline/worker/agent/      agent exec (step entrypoint), runner, task encoding
+
+pkg/notebook/                   Notebook spec and lifecycle
+pkg/notebook/worker/            bare-metal notebook worker
+pkg/notebook/worker/driver/k8s/ K8s StatefulSet notebook worker
+
+pkg/serving/                    ModelService spec and lifecycle
+pkg/serving/worker/             bare-metal serving worker
+pkg/serving/worker/driver/k8s/  K8s Deployment serving worker
+
+pkg/template/                   PipelineTemplate (submit → S3 snapshot → deploy/run)
+pkg/storage/                    artifact store (S3, local, HTTP, memory)
+pkg/dispatch/notebook/          master-side notebook dispatch
+pkg/dispatch/serving/           master-side serving dispatch
+pkg/workers/k8s/                cluster-local K8s unified worker (pipeline + notebook + serving)
+pkg/workers/k8s/pipeline/       K8s pipeline dispatch (embedded in k8s unified worker)
+pkg/k8s/                        Kubernetes Job launcher primitives
+pkg/executor/                   step executors (command, python, notebook)
+
+internal/proto/                 Task, TaskResult wire types
+internal/event/                 in-process pub/sub event bus
+internal/logstore/              log and metric storage
+internal/agent/                 server-side worker registry, routing, RPC model
+internal/grpcagent/             gRPC bidirectional streaming transport
+internal/queue/                 DAG task queue (retry, lease, idempotency)
+internal/store/                 state persistence (SQLite / PostgreSQL)
+internal/tunnel/                WebSocket reverse tunnel hub
+
+pkg/run/                        Run and Step records (public API)
+pkg/schedule/                   cron/once scheduled pipeline execution
+pkg/ui/                         embedded React SPA
+examples/                       usage examples
 ```
 
 ## Examples

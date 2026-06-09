@@ -20,22 +20,22 @@ import (
 	"github.com/google/uuid"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/event"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/logstore"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/internal/queue"
 	"github.com/piper/piper/pkg/artifact"
 	"github.com/piper/piper/pkg/backend"
-	"github.com/piper/piper/pkg/blobstore"
 	notebookdispatch "github.com/piper/piper/pkg/dispatch/notebook"
 	servingdispatch "github.com/piper/piper/pkg/dispatch/serving"
-	"github.com/piper/piper/pkg/event"
 	"github.com/piper/piper/pkg/executor"
-	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/source"
+	"github.com/piper/piper/pkg/storage"
 
 	storemod "github.com/piper/piper/internal/store"
 	iworker "github.com/piper/piper/internal/worker"
@@ -65,7 +65,7 @@ type Piper struct {
 	agentRegistry   *iagent.Registry
 	workloadRouter  *iagent.Router
 	grpcAgentServer *grpcagent.Server
-	store           blobstore.Store   // nil when no artifact store configured
+	store           storage.Store     // nil when no artifact store configured
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
 	resolver        artifact.Resolver // central artifact resolver
@@ -193,7 +193,7 @@ func New(cfg Config) (*Piper, error) {
 		if token == "" {
 			token = cfg.Server.Token
 		}
-		if st, err := blobstore.Open(storageURL, token); err != nil {
+		if st, err := storage.Open(storageURL, token); err != nil {
 			slog.Warn("artifact store unavailable", "url", storageURL, "err", err)
 			p.storageErr = err
 		} else {
@@ -404,10 +404,14 @@ func openStore(cfg Config) (*storemod.Repos, error) {
 	return storemod.Open(dbPath)
 }
 
+// BuiltinVars holds system-injected variables propagated to every pipeline step.
+// Exported here so external callers do not need to import internal/proto.
+type BuiltinVars = proto.BuiltinVars
+
 // RunOptions holds optional parameters for local pipeline execution.
 type RunOptions struct {
-	Vars   proto.BuiltinVars // system-injected builtin variables (e.g. ScheduledAt)
-	Params map[string]any    // run-level params; override step-level YAML params at runtime
+	Vars   BuiltinVars    // system-injected builtin variables (e.g. ScheduledAt)
+	Params map[string]any // run-level params; override step-level YAML params at runtime
 }
 
 // RunFile takes a YAML file path and runs the pipeline locally
@@ -477,7 +481,12 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 			Stdout:    stdoutW,
 			Stderr:    stderrW,
 			Vars:      opts.Vars,
-			GPUs:      step.Resources.GPU,
+			GPUs: func() string {
+				if step.Driver.Process != nil {
+					return step.Driver.Process.GPUs
+				}
+				return ""
+			}(),
 		})
 	}
 
@@ -497,7 +506,7 @@ type StartRunOptions struct {
 	ScheduleID string
 	Experiment string
 	Params     map[string]any
-	Vars       proto.BuiltinVars
+	Vars       BuiltinVars
 	YAML       string // raw YAML, persisted to DB
 }
 
@@ -680,7 +689,7 @@ func (p *Piper) resolveModelURI(ctx context.Context, serviceName, uri string, ta
 			return artifact.Resolved{}, fmt.Errorf("invalid s3 URI %q: missing key", uri)
 		}
 		prefix := without[slash+1:]
-		if err := blobstore.DownloadDir(ctx, p.store, prefix, dir); err != nil {
+		if err := storage.DownloadDir(ctx, p.store, prefix, dir); err != nil {
 			return artifact.Resolved{}, fmt.Errorf("download s3 model: %w", err)
 		}
 		return artifact.Resolved{LocalPath: dir}, nil

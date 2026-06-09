@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/piper/piper/pkg/blobstore"
+	"github.com/piper/piper/pkg/storage"
 )
 
 type artifactFile struct {
@@ -95,7 +95,7 @@ func listArtifactsLocal(outputDir, runID string) ([]stepArtifacts, error) {
 }
 
 // listArtifactsStore lists objects under prefix runID/ from a blobstore.
-func listArtifactsStore(ctx context.Context, st blobstore.Store, runID string) ([]stepArtifacts, error) {
+func listArtifactsStore(ctx context.Context, st storage.Store, runID string) ([]stepArtifacts, error) {
 	prefix := runID + "/"
 	objs, err := st.List(ctx, prefix)
 	if err != nil {
@@ -141,7 +141,7 @@ func listArtifactsStore(ctx context.Context, st blobstore.Store, runID string) (
 
 // deleteArtifacts removes all artifact files for a run.
 // Uses the blobstore if configured; falls back to local filesystem.
-func deleteArtifacts(ctx context.Context, st blobstore.Store, outputDir, runID string) error {
+func deleteArtifacts(ctx context.Context, st storage.Store, outputDir, runID string) error {
 	if st != nil {
 		// List all keys under runID/ and delete them.
 		objs, err := st.List(ctx, runID+"/")
@@ -165,11 +165,11 @@ func deleteArtifacts(ctx context.Context, st blobstore.Store, outputDir, runID s
 }
 
 // downloadArtifactStore streams an artifact from the store to an http.ResponseWriter.
-func downloadArtifactStore(w http.ResponseWriter, r *http.Request, st blobstore.Store, runID, step, rest string) {
+func downloadArtifactStore(w http.ResponseWriter, r *http.Request, st storage.Store, runID, step, rest string) {
 	key := fmt.Sprintf("%s/%s/%s", runID, step, rest)
 	filename := filepath.Base(rest)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-	if err := blobstore.ServeHTTP(r.Context(), st, key, w); err != nil {
+	if err := storage.ServeHTTP(r.Context(), st, key, w); err != nil {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 	}
 }

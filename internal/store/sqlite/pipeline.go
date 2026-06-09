@@ -4,17 +4,17 @@ import (
 	"context"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/piper/piper/pkg/pipelinetemplate"
+	"github.com/piper/piper/pkg/template"
 )
 
 type pipelineRepo struct{ db *sqlx.DB }
 
-// NewPipelineRepo creates a SQLite-backed pipelinetemplate.Repository.
-func NewPipelineRepo(db *sqlx.DB) pipelinetemplate.Repository {
+// NewPipelineRepo creates a SQLite-backed template.Repository.
+func NewPipelineRepo(db *sqlx.DB) template.Repository {
 	return &pipelineRepo{db: db}
 }
 
-func (r *pipelineRepo) Create(ctx context.Context, t *pipelinetemplate.Template) error {
+func (r *pipelineRepo) Create(ctx context.Context, t *template.Template) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO pipelines (id, name, yaml, snapshot_id, volume_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
@@ -23,8 +23,8 @@ func (r *pipelineRepo) Create(ctx context.Context, t *pipelinetemplate.Template)
 	return err
 }
 
-func (r *pipelineRepo) Get(ctx context.Context, id string) (*pipelinetemplate.Template, error) {
-	var t pipelinetemplate.Template
+func (r *pipelineRepo) Get(ctx context.Context, id string) (*template.Template, error) {
+	var t template.Template
 	err := r.db.GetContext(ctx, &t,
 		`SELECT id, name, yaml, snapshot_id, volume_id, created_at FROM pipelines WHERE id=?`, id)
 	if err != nil {
@@ -33,13 +33,13 @@ func (r *pipelineRepo) Get(ctx context.Context, id string) (*pipelinetemplate.Te
 	return &t, nil
 }
 
-func (r *pipelineRepo) List(ctx context.Context, f pipelinetemplate.Filter) ([]*pipelinetemplate.Template, error) {
+func (r *pipelineRepo) List(ctx context.Context, f template.Filter) ([]*template.Template, error) {
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 50
 	}
 
-	var rows []*pipelinetemplate.Template
+	var rows []*template.Template
 	var err error
 	if f.Name != "" {
 		err = r.db.SelectContext(ctx, &rows,

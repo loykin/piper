@@ -3,7 +3,6 @@ kind: Pipeline
 
 metadata:
   name: notebook-template-flow
-  description: Notebook workspace snapshot, notebook execution, and Python artifact handoff
 
 spec:
   steps:
@@ -17,9 +16,12 @@ spec:
           - vendor/tinyrecord
         prepare:
           - [python3, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
-      env:
-        PYTHONPATH: ".deps:."
-        PAPERMILL_PROGRESS_BAR: "false"
+      options:
+        env:
+          - name: PYTHONPATH
+            value: ".deps:."
+          - name: PAPERMILL_PROGRESS_BAR
+            value: "false"
       params:
         multiplier: 3
       outputs:
@@ -38,8 +40,10 @@ spec:
         prepare:
           - [python3, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
         command: [sh, -c, 'python3 "$PIPER_SCRIPT_PATH"']
-      env:
-        PYTHONPATH: ".deps:."
+      options:
+        env:
+          - name: PYTHONPATH
+            value: ".deps:."
       inputs:
         - name: features
           from: build-features/features

@@ -10,15 +10,15 @@ import (
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 
+	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/store/postgres"
 	"github.com/piper/piper/internal/store/sqlite"
 	"github.com/piper/piper/internal/worker"
-	"github.com/piper/piper/pkg/logstore"
 	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/pipelinetemplate"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
+	"github.com/piper/piper/pkg/template"
 )
 
 // Repos holds all repository implementations for the selected driver.
@@ -31,7 +31,7 @@ type Repos struct {
 	Serving          serving.Repository
 	Notebook         notebook.Repository
 	NotebookVolume   notebook.VolumeRepository
-	PipelineTemplate pipelinetemplate.Repository
+	PipelineTemplate template.Repository
 	Log              logstore.LogStore
 	Metric           logstore.MetricStore
 

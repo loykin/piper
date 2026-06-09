@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/piper/piper/pkg/logstore"
+	"github.com/piper/piper/internal/logstore"
 )
 
 // storeLogWriter implements io.Writer,

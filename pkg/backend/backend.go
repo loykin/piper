@@ -5,8 +5,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/piper/piper/pkg/proto"
-	"github.com/piper/piper/pkg/runner"
+	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
 // ExecutionBackend sends a runnable task to an execution environment.
@@ -48,17 +48,17 @@ type DispatchError struct {
 func (e *DispatchError) Error() string { return e.Err.Error() }
 func (e *DispatchError) Unwrap() error { return e.Err }
 
-// LocalBackend dispatches tasks to an in-process runner.
+// LocalBackend dispatches tasks to an in-process agent.
 // OnComplete is called with the TaskResult after each task finishes.
 type LocalBackend struct {
-	runner     *runner.Runner
+	agent      *agent.Runner
 	OnComplete func(ctx context.Context, result proto.TaskResult) error
 }
 
 // Dispatch starts task execution asynchronously.
 func (b *LocalBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 	go func() {
-		result := b.runner.Run(ctx, task)
+		result := b.agent.Run(ctx, task)
 		if b.OnComplete != nil {
 			if err := b.OnComplete(context.Background(), result); err != nil {
 				slog.Warn("local backend complete callback failed", "task_id", task.ID, "err", err)

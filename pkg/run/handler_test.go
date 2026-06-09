@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/pkg/proto"
+	"github.com/piper/piper/internal/proto"
 )
 
 type capturingRunRepo struct {

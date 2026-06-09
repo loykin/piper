@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/piper/piper/pkg/blobstore"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/storage"
 )
 
 type S3Fetcher struct {
@@ -32,7 +32,7 @@ func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string)
 	if run.Path == "" {
 		return "", fmt.Errorf("s3 source: path is required")
 	}
-	st, err := blobstore.Open(f.cfg.StorageURL, "")
+	st, err := storage.Open(f.cfg.StorageURL, "")
 	if err != nil {
 		return "", fmt.Errorf("s3 source: open store: %w", err)
 	}
@@ -74,7 +74,7 @@ func (f *S3Fetcher) fetchSnapshot(ctx context.Context, run pipeline.Run, destDir
 		return "", fmt.Errorf("s3 source: path or notebook is required")
 	}
 
-	st, err := blobstore.Open(f.cfg.StorageURL, "")
+	st, err := storage.Open(f.cfg.StorageURL, "")
 	if err != nil {
 		return "", fmt.Errorf("s3 source: open store: %w", err)
 	}
@@ -85,7 +85,7 @@ func (f *S3Fetcher) fetchSnapshot(ctx context.Context, run pipeline.Run, destDir
 	}
 	slog.Info("s3 source fetch snapshot", "prefix", prefix, "entry", entry, "dest", destDir)
 
-	if err := blobstore.DownloadDir(ctx, st, prefix, destDir); err != nil {
+	if err := storage.DownloadDir(ctx, st, prefix, destDir); err != nil {
 		return "", fmt.Errorf("s3 source: download snapshot %s: %w", prefix, err)
 	}
 

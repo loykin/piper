@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/backend"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/proto"
 	"github.com/piper/piper/pkg/run"
 )
 
@@ -100,12 +101,12 @@ func (b *cancelRecordingBackend) canceledRun() string {
 func TestNextStrictLabelMatching(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "labels"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "labels"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{
 				Name:   "gpu-step",
 				Run:    pipeline.Run{Command: []string{"echo", "gpu"}},
-				Runner: pipeline.RunnerSelector{Label: "gpu"},
+				Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Label: "gpu"}},
 			},
 		}},
 	}
@@ -134,9 +135,11 @@ func TestNextStrictLabelMatching(t *testing.T) {
 func TestNextForWorkerHonorsPipelinePlacementWorker(t *testing.T) {
 	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "p"},
-		Spec: pipeline.Spec{
-			Placement: pipeline.Placement{Worker: "worker-a"},
+		Metadata: manifest.ObjectMeta{Name: "p"},
+		Spec: pipeline.PipelineSpec{
+			Defaults: &pipeline.PipelineDefaults{
+				Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Worker: "worker-a"}},
+			},
 			Steps: []pipeline.Step{{
 				Name: "s1",
 				Run:  pipeline.Run{Command: []string{"echo", "ok"}},
@@ -164,8 +167,8 @@ func TestNextForWorkerHonorsPipelinePlacementWorker(t *testing.T) {
 func TestNextUnlabeledTaskMatchesAnyWorker(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "labels"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "labels"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "any-step", Run: pipeline.Run{Command: []string{"echo", "any"}}},
 		}},
 	}
@@ -188,8 +191,8 @@ func TestNextUnlabeledTaskMatchesAnyWorker(t *testing.T) {
 func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "retry"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "retry"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"false"}}},
 			{Name: "second", Run: pipeline.Run{Command: []string{"echo", "second"}}, DependsOn: []string{"first"}},
 		}},
@@ -245,8 +248,8 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "retry-success"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "retry-success"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"sometimes"}}},
 			{Name: "second", Run: pipeline.Run{Command: []string{"echo", "second"}}, DependsOn: []string{"first"}},
 		}},
@@ -298,8 +301,8 @@ func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "backend-retry"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "backend-retry"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"false"}}},
 		}},
 	}
@@ -345,8 +348,8 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 func TestCancelStopsPendingRetryTimer(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "retry-cancel"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "retry-cancel"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"false"}}},
 		}},
 	}
@@ -383,8 +386,8 @@ func TestCancelStopsPendingRetryTimer(t *testing.T) {
 func TestCleanupUsesRunningStartTimeNotQueueAddedAt(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "cleanup"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "cleanup"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"sleep", "60"}}},
 		}},
 	}
@@ -419,8 +422,8 @@ func TestCleanupUsesRunningStartTimeNotQueueAddedAt(t *testing.T) {
 func TestRenewLeasesPreventsRunningTaskExpiry(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "lease"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "lease"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"sleep", "60"}}},
 		}},
 	}
@@ -446,8 +449,8 @@ func TestRenewLeasesPreventsRunningTaskExpiry(t *testing.T) {
 func TestCompleteRejectsDifferentWorker(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "owner"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "owner"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"true"}}},
 		}},
 	}
@@ -477,8 +480,8 @@ func TestCompleteRejectsDifferentWorker(t *testing.T) {
 func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: "cancel"},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: "cancel"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "first", Run: pipeline.Run{Command: []string{"sleep", "60"}}},
 			{Name: "second", Run: pipeline.Run{Command: []string{"echo", "second"}}, DependsOn: []string{"first"}},
 		}},
@@ -645,8 +648,8 @@ func (b *busyBackend) Dispatch(_ context.Context, task *proto.Task) error {
 
 func singleStepPipeline(name string) *pipeline.Pipeline {
 	return &pipeline.Pipeline{
-		Metadata: pipeline.Metadata{Name: name},
-		Spec: pipeline.Spec{Steps: []pipeline.Step{
+		Metadata: manifest.ObjectMeta{Name: name},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
 			{Name: "step", Run: pipeline.Run{Command: []string{"echo", name}}},
 		}},
 	}

@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	notebookworker "github.com/piper/piper/pkg/workers/baremetal/notebook"
+	notebookworker "github.com/piper/piper/pkg/notebook/worker"
 )
 
 func newNotebookWorkerCmd() *cobra.Command {

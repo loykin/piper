@@ -32,8 +32,8 @@ type RPCSender interface {
 type HandlerDeps struct {
 	Notebooks        Repository
 	Volumes          VolumeRepository
-	Create           func(ctx context.Context, spec NotebookServerSpec, yamlStr string) (*NotebookServer, error)
-	CreateWithVolume func(ctx context.Context, spec NotebookServerSpec, volumeID, yamlStr string) (*NotebookServer, error)
+	Create           func(ctx context.Context, spec Notebook, yamlStr string) (*NotebookServer, error)
+	CreateWithVolume func(ctx context.Context, spec Notebook, volumeID, yamlStr string) (*NotebookServer, error)
 	Stop             func(ctx context.Context, name string) error
 	Restart          func(ctx context.Context, name string) error
 	Delete           func(ctx context.Context, name string) error
@@ -97,7 +97,7 @@ func (h *Handler) createNotebook(c *gin.Context) {
 		return
 	}
 
-	var spec NotebookServerSpec
+	var spec Notebook
 	if err := yaml.Unmarshal([]byte(req.YAML), &spec); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid YAML: " + err.Error()})
 		return

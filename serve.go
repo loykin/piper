@@ -15,17 +15,16 @@ import (
 	"github.com/gin-gonic/gin"
 
 	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/pkg/blobstore"
-	"github.com/piper/piper/pkg/event"
+	"github.com/piper/piper/internal/event"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipelinetemplate"
-	"github.com/piper/piper/pkg/proto"
+	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
+	"github.com/piper/piper/pkg/storage"
+	"github.com/piper/piper/pkg/template"
 	"github.com/piper/piper/pkg/ui"
-	worker "github.com/piper/piper/pkg/workers/baremetal/pipeline"
 )
 
 const maxRequestBodyBytes int64 = 1 << 20
@@ -238,7 +237,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		rc, filename, err := p.OpenStorageObject(c.Request.Context(), key)
 		if err != nil {
 			status := http.StatusInternalServerError
-			if err == blobstore.ErrNotFound {
+			if err == storage.ErrNotFound {
 				status = http.StatusNotFound
 			} else if p.store == nil {
 				status = http.StatusServiceUnavailable
@@ -274,7 +273,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		Steps:   p.repos.Step,
 		Logs:    p.logs,
 		Metrics: p.metrics,
-		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error) {
+		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, experiment)
 		},
 		CancelRun: p.CancelRun,
@@ -330,7 +329,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	}).RegisterRoutes(r.Group(""))
 
 	// Pipeline template domain
-	pipelinetemplate.NewHandler(pipelinetemplate.HandlerDeps{
+	template.NewHandler(template.HandlerDeps{
 		Templates: p.repos.PipelineTemplate,
 		Volumes:   p.repos.NotebookVolume,
 		Schedules: p.repos.Schedule,
@@ -338,7 +337,7 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},
-		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error) {
+		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, experiment)
 		},
 		OwnerID: p.ownerIDFromRequest,
@@ -433,7 +432,7 @@ func (rw *responseRecorder) Write(b []byte) (int, error) {
 // registerStoreRoutes mounts /store/* routes when using the built-in LocalStore.
 // K8s pods and remote workers can upload/download artifacts over HTTP without MinIO.
 func (p *Piper) registerStoreRoutes(r *gin.Engine) {
-	ls, ok := p.store.(*blobstore.LocalStore)
+	ls, ok := p.store.(*storage.LocalStore)
 	if !ok {
 		return // external store (S3, HTTP) — no need for built-in server routes
 	}
@@ -465,7 +464,7 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 		}
 		rc, err := ls.Get(c.Request.Context(), key)
 		if err != nil {
-			if err == blobstore.ErrNotFound {
+			if err == storage.ErrNotFound {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 				return
 			}
@@ -549,7 +548,7 @@ func genScheduleID() string {
 
 // startRunFromAPI handles creating a run from the HTTP API, including
 // future-scheduled runs and immediate dispatch.
-func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error) {
+func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 	pl, err := p.Parse([]byte(yaml))
 	if err != nil {
 		return "", fmt.Errorf("parse: %w", err)
@@ -591,7 +590,7 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 }
 
 // StartRun is the exported entry point for creating a run from the HTTP API.
-func (p *Piper) StartRun(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars) (string, error) {
+func (p *Piper) StartRun(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars) (string, error) {
 	return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, "")
 }
 

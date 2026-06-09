@@ -20,7 +20,7 @@ metadata:
 spec:
   steps:
   - name: extract
-    runner:
+    driver:
       image: python:3.12-slim    # This step runs with the Python image
     run:
       type: command
@@ -39,7 +39,7 @@ spec:
         path: data.json
 
   - name: transform
-    runner:
+    driver:
       image: alpine:3.20         # This step runs with Alpine
     run:
       type: command

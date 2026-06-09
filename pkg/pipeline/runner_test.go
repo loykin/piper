@@ -8,7 +8,7 @@ import (
 )
 
 func makeRunner(steps []Step, execFn StepExecutorFunc) *Runner {
-	p := &Pipeline{Spec: Spec{Steps: steps}}
+	p := &Pipeline{Spec: PipelineSpec{Steps: steps}}
 	dag, _ := BuildDAG(p)
 	cfg := RunnerConfig{MaxRetries: 0, RetryDelay: 0, Concurrency: 0}
 	return NewRunner(p, dag, cfg, execFn)
@@ -63,7 +63,7 @@ func TestRunner_stepFail_skipsDownstream(t *testing.T) {
 func TestRunner_retry(t *testing.T) {
 	calls := 0
 	ss := []Step{{Name: "a", DependsOn: []string{}}}
-	p := &Pipeline{Spec: Spec{Steps: ss}}
+	p := &Pipeline{Spec: PipelineSpec{Steps: ss}}
 	dag, _ := BuildDAG(p)
 	cfg := RunnerConfig{MaxRetries: 2, RetryDelay: time.Millisecond, Concurrency: 0}
 	r := NewRunner(p, dag, cfg, func(_ context.Context, s *Step) error {
@@ -88,7 +88,7 @@ func TestRunner_retry(t *testing.T) {
 
 func TestRunner_retryExhausted(t *testing.T) {
 	ss := []Step{{Name: "a", DependsOn: []string{}}}
-	p := &Pipeline{Spec: Spec{Steps: ss}}
+	p := &Pipeline{Spec: PipelineSpec{Steps: ss}}
 	dag, _ := BuildDAG(p)
 	cfg := RunnerConfig{MaxRetries: 1, RetryDelay: time.Millisecond, Concurrency: 0}
 	r := NewRunner(p, dag, cfg, func(_ context.Context, s *Step) error {
@@ -176,7 +176,7 @@ func TestRunner_startsDownstreamAfterCompletionSignal(t *testing.T) {
 func TestRunner_contextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ss := []Step{{Name: "a", DependsOn: []string{}}}
-	p := &Pipeline{Spec: Spec{Steps: ss}}
+	p := &Pipeline{Spec: PipelineSpec{Steps: ss}}
 	dag, _ := BuildDAG(p)
 	cfg := RunnerConfig{MaxRetries: 0, RetryDelay: 0}
 	r := NewRunner(p, dag, cfg, func(ctx context.Context, s *Step) error {

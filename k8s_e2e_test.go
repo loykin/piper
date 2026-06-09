@@ -258,10 +258,11 @@ metadata:
 spec:
   model:
     from_uri: s3://piper-artifacts/e2e-model
-  runtime:
-    image: alpine:3.20
+  run:
     command: ["sh", "-c", "sleep 3600"]
     port: 8080
+  driver:
+    image: alpine:3.20
 `)
 	if out := kubectl(t, "-n", ns, "get", "deploy,svc", "worker-serving", "--no-headers"); !strings.Contains(out, "worker-serving") {
 		dumpK8sE2EDebug(t, ns)
@@ -269,7 +270,7 @@ spec:
 	}
 
 	const nbName = "worker-notebook"
-	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbName, nbImage)
+	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbName, nbImage)
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 8*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
@@ -748,7 +749,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
 	const nbName = "e2e-notebook"
-	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbName, nbImage)
+	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbName, nbImage)
 
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	t.Logf("notebook %s created, waiting for running...", nbName)
@@ -885,7 +886,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
-	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  k8s:\n    image: %s\n    storage_size: 1Gi\n", nbImage)
+	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbImage)
 	k8sE2EPostNotebook(t, serverURL, nb1YAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-1", "running", 8*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
@@ -909,7 +910,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	t.Logf("first notebook deleted, volume %s released", volID)
 
 	// Second notebook reuses the same PVC.
-	nb2YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-2\nspec:\n  k8s:\n    image: %s\n", nbImage)
+	nb2YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-2\nspec:\n  driver:\n    image: %s\n", nbImage)
 	k8sE2EPostNotebook(t, serverURL, nb2YAML, volID)
 	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-2", "running", 5*time.Minute) {
 		dumpK8sE2EDebug(t, ns)

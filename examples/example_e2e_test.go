@@ -198,6 +198,7 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 		"--agent-addr="+agentAddr,
 		"--master="+baseURL,
 		"--concurrency=4",
+		"--meta-dir="+filepath.Join(tmpDir, "piper-meta"),
 	)
 	workerCmd.Dir = tmpDir
 	workerCmd.Env = append(os.Environ(), "HOME="+tmpDir)
@@ -363,6 +364,9 @@ func TestExampleArtifacts(t *testing.T) {
 			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
 			StorageURL: serverURL + "/store",
 		},
+		Baremetal: worker.BaremetalConfig{
+			MetaDir: filepath.Join(tmpDir, "piper-meta"),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -449,6 +453,9 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 			MasterURL:  serverURL,
 			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
 			StorageURL: serverURL + "/store",
+		},
+		Baremetal: worker.BaremetalConfig{
+			MetaDir: filepath.Join(tmpDir, "piper-meta"),
 		},
 	})
 	if err != nil {

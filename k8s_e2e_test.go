@@ -234,7 +234,7 @@ spec:
     driver:
       image: alpine:3.20
       placement:
-        worker: agent-e2e
+        worker: k8s-agent-e2e
       k8s:
         namespace: %[1]s
   steps:

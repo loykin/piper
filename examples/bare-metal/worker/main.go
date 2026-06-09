@@ -35,6 +35,7 @@ func main() {
 	master := flag.String("master", "http://localhost:8080", "piper server URL (for agent exec callbacks)")
 	label := flag.String("label", "", "worker label (e.g. gpu, cpu, large-mem)")
 	concurrency := flag.Int("concurrency", 4, "max parallel tasks")
+	metaDir := flag.String("meta-dir", "", "metadata directory for job state (default: $TMPDIR/piper-meta)")
 	flag.Parse()
 
 	w, err := worker.New(worker.Config{
@@ -46,6 +47,9 @@ func main() {
 		Store: worker.StoreConfig{
 			MasterURL: *master,
 			OutputDir: os.TempDir() + "/piper-worker-outputs",
+		},
+		Baremetal: worker.BaremetalConfig{
+			MetaDir: *metaDir,
 		},
 	})
 	if err != nil {

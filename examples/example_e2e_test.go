@@ -82,6 +82,8 @@ func waitReady(t *testing.T, url string, timeout time.Duration) {
 	t.Fatalf("server at %s did not become ready within %s", url, timeout)
 }
 
+// waitAgentRegistered polls until an agent with the given id appears in /api/agents.
+// When id is empty, it waits for at least one agent of any id.
 func waitAgentRegistered(t *testing.T, serverURL, id string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -93,6 +95,9 @@ func waitAgentRegistered(t *testing.T, serverURL, id string, timeout time.Durati
 			}
 			_ = json.NewDecoder(resp.Body).Decode(&agents)
 			resp.Body.Close()
+			if id == "" && len(agents) > 0 {
+				return
+			}
 			for _, agent := range agents {
 				if agent.ID == id {
 					return
@@ -101,7 +106,11 @@ func waitAgentRegistered(t *testing.T, serverURL, id string, timeout time.Durati
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("agent %q did not register within %s", id, timeout)
+	if id == "" {
+		t.Fatalf("no agent registered within %s", timeout)
+	} else {
+		t.Fatalf("agent %q did not register within %s", id, timeout)
+	}
 }
 
 // submitPipeline posts a pipeline YAML to baseURL/runs and returns the run ID.
@@ -165,10 +174,15 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	workerBin := buildBinary(t, "./examples/bare-metal/worker")
 
 	port := freePort(t)
+	agentPort := freePort(t)
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
 	tmpDir := t.TempDir()
 
-	serverCmd := exec.CommandContext(ctx, serverBin, fmt.Sprintf("--addr=:%d", port))
+	serverCmd := exec.CommandContext(ctx, serverBin,
+		fmt.Sprintf("--addr=:%d", port),
+		"--agent-addr="+agentAddr,
+	)
 	serverCmd.Dir = tmpDir
 	serverCmd.Env = append(os.Environ(), "HOME="+tmpDir)
 	serverCmd.Stdout = os.Stdout
@@ -181,6 +195,7 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	waitReady(t, baseURL+"/runs", 15*time.Second)
 
 	workerCmd := exec.CommandContext(ctx, workerBin,
+		"--agent-addr="+agentAddr,
 		"--master="+baseURL,
 		"--concurrency=4",
 	)
@@ -193,8 +208,7 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	}
 	t.Cleanup(func() { _ = workerCmd.Process.Kill() })
 
-	// Allow worker registration to complete.
-	time.Sleep(500 * time.Millisecond)
+	waitAgentRegistered(t, baseURL, "", 15*time.Second)
 	return baseURL
 }
 
@@ -318,11 +332,15 @@ func TestExampleArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	agentPort := freePort(t)
+	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
+
 	p, err := piper.New(piper.Config{
 		DB:        db,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
+		Pipeline:  piper.PipelineConfig{DispatchMode: "agent"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -332,20 +350,25 @@ func TestExampleArtifacts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
+	go func() { _ = p.Serve(ctx, piper.ServeOption{AgentAddr: agentAddr}) }()
 	waitReady(t, serverURL+"/runs", 10*time.Second)
 
 	w, err := worker.New(worker.Config{
-		MasterURL:   serverURL,
-		OutputDir:   filepath.Join(tmpDir, "worker-outputs"),
-		StorageURL:  serverURL + "/store",
-		Concurrency: 4,
+		Agent: worker.AgentConfig{
+			Addr:        agentAddr,
+			Concurrency: 4,
+		},
+		Store: worker.StoreConfig{
+			MasterURL:  serverURL,
+			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
+			StorageURL: serverURL + "/store",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() { _ = w.Run(ctx) }()
-	time.Sleep(300 * time.Millisecond)
+	waitAgentRegistered(t, serverURL, "", 10*time.Second)
 
 	runID := submitPipeline(t, serverURL, string(data))
 	t.Logf("submitted run %s", runID)
@@ -387,11 +410,15 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	storeDir := filepath.Join(tmpDir, "store")
+	agentPort := freePort(t)
+	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
+
 	p, err := piper.New(piper.Config{
 		DB:        db,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
+		Pipeline:  piper.PipelineConfig{DispatchMode: "agent"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -410,19 +437,25 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
+	go func() { _ = p.Serve(ctx, piper.ServeOption{AgentAddr: agentAddr}) }()
 	waitReady(t, serverURL+"/api/pipelines", 10*time.Second)
 
 	w, err := worker.New(worker.Config{
-		MasterURL:   serverURL,
-		OutputDir:   filepath.Join(tmpDir, "worker-outputs"),
-		StorageURL:  serverURL + "/store",
-		Concurrency: 2,
+		Agent: worker.AgentConfig{
+			Addr:        agentAddr,
+			Concurrency: 2,
+		},
+		Store: worker.StoreConfig{
+			MasterURL:  serverURL,
+			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
+			StorageURL: serverURL + "/store",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() { _ = w.Run(ctx) }()
+	waitAgentRegistered(t, serverURL, "", 10*time.Second)
 
 	templateID := submitPipelineTemplate(t, serverURL, string(pipelineYAML), volumeID)
 	runID := runPipelineTemplate(t, serverURL, templateID)

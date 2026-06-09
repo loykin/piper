@@ -1,21 +1,20 @@
 // Server mode example — run as master server
 //
-// Runs piper as an HTTP server.
-// Workers register with this server and poll for tasks to execute.
+// Runs piper as an HTTP server with a gRPC agent server for worker dispatch.
 //
 //	# Start the server
 //	go run ./examples/bare-metal/server
 //
 //	# Start a worker in another terminal
-//	go run ./examples/bare-metal/worker
+//	go run ./examples/bare-metal/worker --agent-addr=:9090
 //
 //	# Submit a pipeline run
 //	curl -X POST http://localhost:8080/runs \
 //	  -H 'Content-Type: application/json' \
 //	  -d '{"yaml": "apiVersion: piper/v1\nkind: Pipeline\n..."}'
 //
-//	# List active workers
-//	curl http://localhost:8080/api/workers
+//	# List active agents
+//	curl http://localhost:8080/api/agents
 package main
 
 import (
@@ -31,7 +30,8 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", ":8080", "HTTP listen address")
+	agentAddr := flag.String("agent-addr", ":9090", "gRPC agent server address")
 	flag.Parse()
 
 	p, err := piper.New(piper.Config{
@@ -39,6 +39,9 @@ func main() {
 		OutputDir: "./piper-outputs",
 		Server: piper.ServerConfig{
 			Addr: *addr,
+		},
+		Pipeline: piper.PipelineConfig{
+			DispatchMode: "agent",
 		},
 	})
 	if err != nil {
@@ -49,10 +52,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	log.Printf("piper server starting on %s", *addr)
+	log.Printf("piper server starting on %s (gRPC agent: %s)", *addr, *agentAddr)
 	fmt.Printf("LISTEN_ADDR=%s\n", *addr)
 
-	if err := p.Serve(ctx, piper.ServeOption{}); err != nil {
+	if err := p.Serve(ctx, piper.ServeOption{AgentAddr: *agentAddr}); err != nil {
 		log.Fatal(err)
 	}
 }

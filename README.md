@@ -169,11 +169,12 @@ In-process mode works with either backend.
 
 | | Local | Bare-metal Worker | K8s Worker |
 |---|---|---|---|
-| **Step runs as** | goroutine in server | subprocess or Docker container | K8s Job (one Pod per step) |
-| **Task delivery** | direct call | gRPC push | gRPC push (outbound tunnel) |
-| **Artifact storage** | local filesystem | local or S3 | S3 required |
+| **Step runs as** | goroutine in server process | subprocess or Docker container | K8s Job (one Pod per step) |
+| **Task delivery** | in-process (no queue, no gRPC) | gRPC push (worker → server outbound) | gRPC push (worker → server outbound) |
+| **Worker location** | — | any machine | inside the K8s cluster |
+| **Server needs kubeconfig** | — | no | no — worker owns cluster access |
+| **Artifact storage** | local or S3 | local or S3 | S3 required (no shared filesystem) |
 | **Cancellation** | context cancel | SIGTERM / docker stop | K8s Job deletion |
-| **Server needs kubeconfig** | — | — | no — worker runs inside cluster |
 | **Multi-cluster** | — | — | yes (one k8s-worker per cluster) |
 | **Best for** | development, libraries | on-prem GPU servers | Kubernetes environments |
 

@@ -48,6 +48,8 @@ server:
     enabled: false
     cert_file: ""
     key_file: ""
+pipeline:
+  dispatch_mode: agent
 k8s:
   worker: true
 retention:
@@ -208,6 +210,9 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 				KeyFile:  "/certs/tls.key",
 			},
 		},
+		Pipeline: pipelineSection{
+			DispatchMode: "agent",
+		},
 		K8s: k8sSection{
 			Worker: true,
 		},
@@ -294,6 +299,9 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 	}
 	if cfg.Server.TLS.CertFile != "/certs/tls.crt" {
 		t.Errorf("TLS.CertFile = %q, want /certs/tls.crt", cfg.Server.TLS.CertFile)
+	}
+	if cfg.Pipeline.DispatchMode != "agent" {
+		t.Errorf("Pipeline.DispatchMode = %q, want agent", cfg.Pipeline.DispatchMode)
 	}
 	if !cfg.K8s.Worker {
 		t.Error("K8s.Worker = false, want true")

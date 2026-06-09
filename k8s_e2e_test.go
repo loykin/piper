@@ -229,11 +229,13 @@ func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
 metadata:
   name: k8s-worker-e2e
 spec:
-  placement:
-    cluster: agent-e2e
-    namespace: %[1]s
   defaults:
-    image: alpine:3.20
+    driver:
+      image: alpine:3.20
+      placement:
+        worker: agent-e2e
+      k8s:
+        namespace: %[1]s
   steps:
     - name: smoke
       run:

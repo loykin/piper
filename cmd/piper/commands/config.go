@@ -20,6 +20,7 @@ type configFile struct {
 	Source         sourceSection         `yaml:"source"          mapstructure:"source"`
 	Storage        storageSection        `yaml:"storage"         mapstructure:"storage"`
 	Server         serverSection         `yaml:"server"          mapstructure:"server"`
+	Pipeline       pipelineSection       `yaml:"pipeline"        mapstructure:"pipeline"`
 	K8s            k8sSection            `yaml:"k8s"             mapstructure:"k8s"`
 	Retention      retentionSection      `yaml:"retention"       mapstructure:"retention"`
 	Schedule       scheduleSection       `yaml:"schedule"        mapstructure:"schedule"`
@@ -28,6 +29,10 @@ type configFile struct {
 	DB             dbSection             `yaml:"db"              mapstructure:"db"`
 	NotebookWorker notebookWorkerSection `yaml:"notebook_worker" mapstructure:"notebook_worker"`
 	NotebookK8s    notebookK8sSection    `yaml:"notebook_k8s"    mapstructure:"notebook_k8s"`
+}
+
+type pipelineSection struct {
+	DispatchMode string `yaml:"dispatch_mode" mapstructure:"dispatch_mode"`
 }
 
 type storageSection struct {
@@ -205,6 +210,9 @@ func (c *configFile) toConfig() piper.Config {
 		Serving: piper.ServingConfig{
 			ModelDir: c.Serving.ModelDir,
 			Worker:   c.Serving.Worker,
+		},
+		Pipeline: piper.PipelineConfig{
+			DispatchMode: c.Pipeline.DispatchMode,
 		},
 		K8s: piper.K8sConfig{
 			Worker: c.K8s.Worker,

@@ -104,9 +104,7 @@ source:
     use_ssl: false
 pipeline:
   dispatch_mode: agent
-worker:
-  agent_addr: %q
-`, s3Endpoint, bucket, agentAddr))
+`, s3Endpoint, bucket))
 
 	// ── Server subprocess ─────────────────────────────────────────────────────
 	// Pass --addr and --agent-addr explicitly: server.addr in the config file is

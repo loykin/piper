@@ -384,8 +384,10 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 metadata:
   name: e2e-baremetal-worker
 spec:
-  placement:
-    worker: %s
+  defaults:
+    driver:
+      placement:
+        worker: %s
   steps:
     - name: hello
       run:
@@ -401,10 +403,12 @@ metadata:
 spec:
   model:
     from_uri: file:///tmp/model
-  runtime:
-    worker: serving-agent
+  run:
     command: ["sleep", "60"]
     port: 18080
+  driver:
+    placement:
+      worker: serving-agent
 `)
 	t.Cleanup(func() { _ = p.StopService(context.Background(), "baremetal-worker-service") })
 	svc := getE2EService(t, srv.URL, "baremetal-worker-service")
@@ -781,7 +785,7 @@ spec:
 	// we bootstrap it with from_uri so the first POST /serving succeeds without
 	// needing a pre-existing run. Subsequent auto-deploys will use from_artifact.
 	serviceYAML := fmt.Sprintf(`
-apiVersion: v1
+apiVersion: piper/v1
 kind: ModelService
 metadata:
   name: %s
@@ -792,7 +796,7 @@ spec:
       step: %s
       artifact: %s
       run: "latest"
-  runtime:
+  run:
     command: ["sleep", "60"]
     port: 18080
 `, serviceName, pipelineName, stepName, artifactName)

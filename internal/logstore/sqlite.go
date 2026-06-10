@@ -3,7 +3,7 @@ package logstore
 import (
 	"database/sql"
 
-	"github.com/piper/piper/pkg/secret"
+	"github.com/piper/piper/internal/redact"
 )
 
 // SQLiteLogStore implements LogStore using the existing logs table.
@@ -29,7 +29,7 @@ func (s *SQLiteLogStore) AppendMetrics(metrics []*Metric) error {
 	defer func() { _ = stmt.Close() }()
 
 	for _, m := range metrics {
-		if _, err := stmt.Exec(m.RunID, m.StepName, secret.RedactString(m.Key), m.Value, m.Ts); err != nil {
+		if _, err := stmt.Exec(m.RunID, m.StepName, redact.String(m.Key), m.Value, m.Ts); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -86,7 +86,7 @@ func (s *SQLiteLogStore) Append(lines []*Line) error {
 	defer func() { _ = stmt.Close() }()
 
 	for _, l := range lines {
-		l.Line = secret.RedactString(l.Line)
+		l.Line = redact.String(l.Line)
 		if _, err := stmt.Exec(l.RunID, l.StepName, l.Ts, l.Stream, l.Line); err != nil {
 			_ = tx.Rollback()
 			return err

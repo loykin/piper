@@ -20,7 +20,7 @@ import (
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/storage"
 )
@@ -53,7 +53,7 @@ func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 		}}},
 	}
 
-	res, err := p.runPipelineInProcess(context.Background(), pl, "run-local", RunOptions{})
+	res, err := p.RunPipeline(context.Background(), pl)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +61,16 @@ func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 		t.Fatalf("pipeline failed: %+v", res.Steps["train"])
 	}
 
-	expected := filepath.Join(outputDir, "run-local", "train", "result.txt")
-	if _, err := os.Stat(expected); err != nil {
-		t.Fatalf("expected artifact at %s: %v", expected, err)
+	// artifact must be under outputDir/<runID>/train/result.txt
+	matches, err := filepath.Glob(filepath.Join(outputDir, "*/train/result.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("expected artifact under %s/*/train/result.txt but found none", outputDir)
 	}
 
+	// old flat layout must not exist
 	oldLayout := filepath.Join(outputDir, "train", "result.txt")
 	if _, err := os.Stat(oldLayout); !os.IsNotExist(err) {
 		t.Fatalf("old artifact layout should not exist at %s", oldLayout)

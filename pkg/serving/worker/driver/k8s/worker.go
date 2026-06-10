@@ -16,9 +16,9 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/process"
 	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/workload"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -91,7 +91,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	if svc.Spec.Driver.K8s == nil || svc.Spec.Driver.K8s.Image == "" {
 		return servingDeployResponse{}, fmt.Errorf("spec.driver.k8s.image is required")
 	}
-	command := workload.ExpandArgs(rt.Command, map[string]string{
+	command := process.ExpandArgs(rt.Command, map[string]string{
 		"PIPER_MODEL_DIR":    req.S3URI,
 		"PIPER_SERVICE_NAME": svc.Metadata.Name,
 	})
@@ -117,7 +117,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	if replicas == 0 {
 		replicas = 1
 	}
-	name := workload.SafeName(svc.Metadata.Name)
+	name := k8smeta.SafeName(svc.Metadata.Name)
 	labels := a.k8sLabels("serving", svc.Metadata.Name)
 
 	res := svc.Spec.Driver.Resources
@@ -227,7 +227,7 @@ func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error 
 	if req.Name == "" {
 		return fmt.Errorf("name is required")
 	}
-	name := workload.SafeName(req.Name)
+	name := k8smeta.SafeName(req.Name)
 	ns := req.Namespace
 	if ns == "" {
 		ns = a.servingNamespace()
@@ -253,7 +253,7 @@ func (a *Worker) syncStatus(ctx context.Context, req serving.WorkerSyncStatusReq
 			ns = a.servingNamespace()
 		}
 		a.rememberNamespace(ns)
-		deployment, err := a.cfg.Client.AppsV1().Deployments(ns).Get(ctx, workload.SafeName(target.Name), metav1.GetOptions{})
+		deployment, err := a.cfg.Client.AppsV1().Deployments(ns).Get(ctx, k8smeta.SafeName(target.Name), metav1.GetOptions{})
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
 				statuses[target.Name] = serving.StatusStopped

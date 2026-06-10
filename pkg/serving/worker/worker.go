@@ -14,8 +14,8 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/process"
 	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/workload"
 )
 
 // Config holds configuration for a serving worker agent.
@@ -39,7 +39,7 @@ type serviceRecord struct {
 type Worker struct {
 	cfg        Config
 	client     *grpcagent.Client
-	supervisor *workload.ProcessSupervisor
+	supervisor *process.ProcessSupervisor
 	mu         sync.Mutex
 	services   map[string]*serviceRecord // only active (not-yet-exited) services
 	nextGen    uint64
@@ -59,7 +59,7 @@ func New(cfg Config) *Worker {
 	w := &Worker{
 		cfg:        cfg,
 		client:     client,
-		supervisor: workload.NewProcessSupervisor(),
+		supervisor: process.NewProcessSupervisor(),
 		services:   make(map[string]*serviceRecord),
 	}
 
@@ -118,7 +118,7 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	if svc.Spec.Driver.Process != nil {
 		gpus = svc.Spec.Driver.Process.GPUs
 	}
-	spec := workload.ProcessSpec{
+	spec := process.ProcessSpec{
 		Name:       name,
 		Command:    rt.Command,
 		Env:        map[string]string{"PIPER_MODEL_DIR": modelDir, "PIPER_SERVICE_NAME": name},
@@ -156,7 +156,7 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		healthPath = "/"
 	}
 	go func() {
-		if err := workload.WaitReady(context.Background(), endpoint+healthPath, 30*time.Second); err != nil {
+		if err := process.WaitReady(context.Background(), endpoint+healthPath, 30*time.Second); err != nil {
 			slog.Warn("serving health check timed out", "name", name, "endpoint", endpoint)
 			// Keep the service tracked while stopping. The exit override makes the
 			// OnExit callback report "failed" instead of the stop signal result.

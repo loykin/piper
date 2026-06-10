@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/pipeline/run"
 )
 
 // TestStatusConsistency verifies that status string literals are aligned across

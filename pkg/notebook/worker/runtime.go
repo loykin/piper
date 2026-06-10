@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/piper/piper/internal/process"
 	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/workload"
 )
 
 const (
@@ -64,7 +64,7 @@ type StartedNotebook struct {
 }
 
 type processRuntime struct {
-	supervisor *workload.ProcessSupervisor
+	supervisor *process.ProcessSupervisor
 	pidDir     string
 }
 
@@ -74,7 +74,7 @@ func newProcessRuntime(notebooksRoot string) *processRuntime {
 	}
 	absRoot, _ := filepath.Abs(notebooksRoot)
 	return &processRuntime{
-		supervisor: workload.NewProcessSupervisor(),
+		supervisor: process.NewProcessSupervisor(),
 		pidDir:     filepath.Join(absRoot, ".piper", "processes"),
 	}
 }
@@ -122,7 +122,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		command = []string{"sh", "-lc", script}
 	}
 
-	pid, endpoint, err := r.supervisor.Start(workload.ProcessSpec{
+	pid, endpoint, err := r.supervisor.Start(process.ProcessSpec{
 		Name:    req.Name,
 		Command: command,
 		Dir:     req.WorkDir,
@@ -142,7 +142,7 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 }
 
 func (r *processRuntime) RecoverTarget(name string, port int, onExit func(status string)) (bool, error) {
-	_, running, err := r.supervisor.Recover(workload.ProcessSpec{
+	_, running, err := r.supervisor.Recover(process.ProcessSpec{
 		Name:    name,
 		Port:    port,
 		PIDFile: r.pidFile(name),

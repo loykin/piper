@@ -18,25 +18,22 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/google/uuid"
-
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/artifact"
 	"github.com/piper/piper/internal/event"
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logstore"
+	"github.com/piper/piper/internal/pipelinedispatch"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/internal/queue"
-	"github.com/piper/piper/pkg/artifact"
-	"github.com/piper/piper/pkg/backend"
-	notebookdispatch "github.com/piper/piper/pkg/dispatch/notebook"
-	servingdispatch "github.com/piper/piper/pkg/dispatch/serving"
-	"github.com/piper/piper/pkg/executor"
+	"github.com/piper/piper/internal/srcfetch"
 	"github.com/piper/piper/pkg/notebook"
+	notebookdispatch "github.com/piper/piper/pkg/notebook/dispatch"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/pipeline/run"
 	worker "github.com/piper/piper/pkg/pipeline/worker"
-	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/source"
+	servingdispatch "github.com/piper/piper/pkg/serving/dispatch"
 	"github.com/piper/piper/pkg/storage"
 
 	storemod "github.com/piper/piper/internal/store"
@@ -71,7 +68,7 @@ type Piper struct {
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
 	resolver        artifact.Resolver // central artifact resolver
-	backend         backend.ExecutionBackend
+	backend         pipelinedispatch.ExecutionBackend
 	events          *event.Hub
 
 	stopCtx context.CancelFunc // cancels ctx on Close
@@ -211,7 +208,7 @@ func New(cfg Config) (*Piper, error) {
 	// AgentBackend routes pipeline tasks to gRPC-connected workers (K8s or baremetal).
 	// Activated when K8s.Worker is true or Pipeline.DispatchMode is "agent".
 	if cfg.K8s.Worker || cfg.Pipeline.DispatchMode == "agent" {
-		p.SetBackend(backend.NewAgentBackend(workloadRouter, p.grpcAgentServer))
+		p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer))
 	}
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
@@ -657,66 +654,6 @@ func (p *Piper) buildRunResult(ctx context.Context, runID, _ string) (*pipeline.
 	return result, nil
 }
 
-// runPipelineInProcess runs a pipeline entirely within the current process,
-// bypassing queue, gRPC, and artifact transfer. Used only for scheduler-internal
-// recovery where an embedded worker is already running.
-func (p *Piper) runPipelineInProcess(ctx context.Context, pl *pipeline.Pipeline, runID string, opts RunOptions) (*pipeline.RunResult, error) {
-	dag, err := pipeline.BuildDAG(pl)
-	if err != nil {
-		return nil, err
-	}
-
-	captureLogs := runID != ""
-	if runID == "" {
-		runID = uuid.NewString()
-	}
-
-	srcCfg := p.sourceConfig()
-	outputDir := filepath.Join(p.cfg.OutputDir, runID)
-
-	execFn := func(ctx context.Context, step *pipeline.Step) error {
-		stepOutputDir := filepath.Join(outputDir, step.Name)
-		if err := os.MkdirAll(stepOutputDir, 0755); err != nil {
-			return err
-		}
-
-		var stdoutW, stderrW io.Writer = os.Stdout, os.Stderr
-		if captureLogs {
-			stdoutW = &storeLogWriter{logs: p.logs, runID: runID, stepName: step.Name, stream: "stdout", tee: os.Stdout}
-			stderrW = &storeLogWriter{logs: p.logs, runID: runID, stepName: step.Name, stream: "stderr", tee: os.Stderr}
-		}
-
-		exec := executor.New(step)
-		return exec.Execute(ctx, step, executor.ExecConfig{
-			WorkDir:   ".",
-			InputDir:  outputDir,
-			OutputDir: stepOutputDir,
-			RunID:     runID,
-			StepName:  step.Name,
-			Params:    proto.MergeParams(step.Params, opts.Params),
-			SourceCfg: srcCfg,
-			Stdout:    stdoutW,
-			Stderr:    stderrW,
-			Vars:      opts.Vars,
-			GPUs: func() string {
-				if step.Driver.Process != nil {
-					return step.Driver.Process.GPUs
-				}
-				return ""
-			}(),
-		})
-	}
-
-	runnerCfg := pipeline.RunnerConfig{
-		MaxRetries:  p.cfg.MaxRetries,
-		RetryDelay:  p.cfg.RetryDelay,
-		Concurrency: p.cfg.Concurrency,
-	}
-
-	runner := pipeline.NewRunner(pl, dag, runnerCfg, execFn)
-	return runner.Run(ctx), nil
-}
-
 // StartRunOptions holds parameters for enqueuing a new distributed run.
 type StartRunOptions struct {
 	OwnerID    string
@@ -781,8 +718,8 @@ func (p *Piper) ParseFile(path string) (*pipeline.Pipeline, error) {
 	return pipeline.ParseFile(path)
 }
 
-func (p *Piper) sourceConfig() source.Config {
-	return source.Config{
+func (p *Piper) sourceConfig() srcfetch.Config {
+	return srcfetch.Config{
 		GitUser:    p.cfg.Git.User,
 		GitToken:   p.cfg.Git.Token,
 		StorageURL: p.storageURL,
@@ -793,14 +730,14 @@ func (p *Piper) sourceConfig() source.Config {
 // Called by --local server to activate gRPC dispatch for embedded workers.
 func (p *Piper) SetDispatchMode(mode string) {
 	if mode == "agent" {
-		p.SetBackend(backend.NewAgentBackend(p.workloadRouter, p.grpcAgentServer))
+		p.SetBackend(pipelinedispatch.NewAgentBackend(p.workloadRouter, p.grpcAgentServer))
 	}
 }
 
 // SetBackend registers an external execution environment such as a K8s Job launcher.
 // When set, Dispatch is called immediately whenever a task becomes ready.
 // Setting nil reverts to worker polling mode.
-func (p *Piper) SetBackend(b backend.ExecutionBackend) {
+func (p *Piper) SetBackend(b pipelinedispatch.ExecutionBackend) {
 	p.backend = b
 	p.queue.SetBackend(b)
 	if b != nil {
@@ -1037,7 +974,7 @@ func (r *piperArtifactResolver) artifactURI(artKey string) (string, error) {
 	}
 }
 
-func (p *Piper) SourceConfig() source.Config {
+func (p *Piper) SourceConfig() srcfetch.Config {
 	return p.sourceConfig()
 }
 

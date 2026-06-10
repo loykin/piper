@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/pipeline/run"
 )
 
 func init() {
@@ -204,8 +204,7 @@ func TestPatchSchedule_Disable(t *testing.T) {
 	repo.schedules["sch-1"] = &Schedule{ID: "sch-1", Enabled: true}
 	router := newTestRouter(repo)
 
-	enabled := false
-	rec := doJSON(router, http.MethodPatch, "/schedules/sch-1", map[string]any{"enabled": enabled})
+	rec := doJSON(router, http.MethodPatch, "/schedules/sch-1", map[string]any{"enabled": false})
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)

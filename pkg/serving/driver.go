@@ -3,7 +3,7 @@ package serving
 import (
 	"context"
 
-	"github.com/piper/piper/pkg/artifact"
+	"github.com/piper/piper/internal/artifact"
 )
 
 // Driver abstracts the backend that actually runs serving processes.

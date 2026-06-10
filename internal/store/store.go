@@ -15,7 +15,7 @@ import (
 	"github.com/piper/piper/internal/store/sqlite"
 	"github.com/piper/piper/internal/worker"
 	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/template"

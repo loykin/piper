@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/piper/piper/internal/pipelinedispatch"
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/pipeline/run"
 )
 
 type memoryRunRepo struct {
@@ -641,7 +641,7 @@ func (b *busyBackend) Dispatch(_ context.Context, task *proto.Task) error {
 		b.onDispatch()
 	}
 	if busy {
-		return &backend.DispatchError{Retryable: true, Err: fmt.Errorf("worker busy")}
+		return &pipelinedispatch.DispatchError{Retryable: true, Err: fmt.Errorf("worker busy")}
 	}
 	return nil
 }

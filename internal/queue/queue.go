@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/piper/piper/internal/event"
+	"github.com/piper/piper/internal/pipelinedispatch"
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/backend"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/run"
+	"github.com/piper/piper/pkg/pipeline/run"
 )
 
 type taskStatus string
@@ -64,9 +64,9 @@ type Queue struct {
 	runs         map[string]*runEntry // runID → entry
 	runRepo      run.Repository
 	stepRepo     run.StepRepository
-	backend      backend.ExecutionBackend // nil means polling mode
-	serverCtx    context.Context          // cancelled on server shutdown; used for backend dispatch
-	maxAttempts  int                      // total attempts, including the first try
+	backend      pipelinedispatch.ExecutionBackend // nil means polling mode
+	serverCtx    context.Context                   // cancelled on server shutdown; used for backend dispatch
+	maxAttempts  int                               // total attempts, including the first try
 	retryDelay   time.Duration
 	OnRunSuccess func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
 	events       event.Publisher
@@ -93,7 +93,7 @@ func (q *Queue) SetEventPublisher(p event.Publisher) {
 }
 
 // SetBackend registers an external execution environment such as a K8s Job launcher.
-func (q *Queue) SetBackend(b backend.ExecutionBackend) {
+func (q *Queue) SetBackend(b pipelinedispatch.ExecutionBackend) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.backend = b
@@ -325,7 +325,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		ownerID = entry.task.WorkerID
 	}
 	if ownerID == "" {
-		if owner, ok := q.backend.(backend.TaskOwner); ok {
+		if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
 			ownerID = owner.OwnerForTask(result.TaskID)
 		}
 	}
@@ -354,7 +354,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		return fmt.Errorf("task %s: result attempt %d exceeds current attempt %d", result.TaskID, resultAttempt, entry.attempts)
 	}
 
-	if owner, ok := q.backend.(backend.TaskOwner); ok {
+	if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
 		owner.ReleaseTask(result.TaskID)
 	}
 
@@ -436,7 +436,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		}
 		pl := r.pl
 		delete(q.runs, runID)
-		if owner, ok := q.backend.(backend.RunOwner); ok {
+		if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
 			owner.ReleaseRun(runID)
 		}
 		q.emit("run.completed", map[string]any{"run_id": runID, "status": runStatus})
@@ -482,7 +482,7 @@ func (q *Queue) Cancel(ctx context.Context, runID string) error {
 	}
 	q.mu.Unlock()
 
-	if cb, ok := b.(backend.CancelableBackend); ok {
+	if cb, ok := b.(pipelinedispatch.CancelableBackend); ok {
 		if err := cb.CancelRun(ctx, runID); err != nil {
 			return err
 		}
@@ -583,7 +583,7 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	dispatchCtx := q.serverCtx
 	go func() {
 		if err := b.Dispatch(dispatchCtx, task); err != nil {
-			var de *backend.DispatchError
+			var de *pipelinedispatch.DispatchError
 			if errors.As(err, &de) && de.Retryable {
 				q.mu.Lock()
 				q.requeueBusyLocked(task.RunID, task.StepName)
@@ -756,7 +756,7 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 			}
 			q.emit("run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
 			delete(q.runs, runID)
-			if owner, ok := q.backend.(backend.RunOwner); ok {
+			if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
 				owner.ReleaseRun(runID)
 			}
 		}

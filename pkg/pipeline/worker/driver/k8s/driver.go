@@ -13,9 +13,9 @@ import (
 
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/internal/k8smeta"
-	k8slauncher "github.com/piper/piper/pkg/k8s"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 	"github.com/piper/piper/pkg/pipeline/worker/driver"
+	k8slauncher "github.com/piper/piper/pkg/pipeline/worker/driver/k8slauncher"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )

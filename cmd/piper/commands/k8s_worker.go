@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	k8sworker "github.com/piper/piper/pkg/workers/k8s"
+	k8sworker "github.com/piper/piper/internal/k8sworker"
 )
 
 func newK8sWorkerCmd() *cobra.Command {

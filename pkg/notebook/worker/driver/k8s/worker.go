@@ -20,7 +20,6 @@ import (
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/workload"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -411,7 +410,7 @@ func (a *Worker) k8sLabels(kind, id string) map[string]string {
 }
 
 func notebookWorkloadName(name string) string {
-	return "piper-nb-" + workload.SafeName(name)
+	return "piper-nb-" + k8smeta.SafeName(name)
 }
 
 func notebookPVCName(volumeID string) string {

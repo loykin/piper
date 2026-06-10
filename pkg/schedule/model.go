@@ -3,7 +3,7 @@ package schedule
 import (
 	"time"
 
-	"github.com/piper/piper/pkg/secret"
+	"github.com/piper/piper/internal/redact"
 )
 
 type Schedule struct {
@@ -27,7 +27,7 @@ func (s *Schedule) Redact() *Schedule {
 		return nil
 	}
 	cp := *s
-	cp.PipelineYAML = secret.RedactString(cp.PipelineYAML)
-	cp.ParamsJSON = secret.RedactString(cp.ParamsJSON)
+	cp.PipelineYAML = redact.String(cp.PipelineYAML)
+	cp.ParamsJSON = redact.String(cp.ParamsJSON)
 	return &cp
 }

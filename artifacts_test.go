@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/pkg/artifact"
+	"github.com/piper/piper/internal/artifact"
 	"github.com/piper/piper/pkg/storage"
 )
 

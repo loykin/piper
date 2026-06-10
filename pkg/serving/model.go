@@ -3,7 +3,7 @@ package serving
 import (
 	"time"
 
-	"github.com/piper/piper/pkg/secret"
+	"github.com/piper/piper/internal/redact"
 )
 
 const (
@@ -36,7 +36,7 @@ func (s *Service) Redact() *Service {
 		return nil
 	}
 	cp := *s
-	cp.YAML = secret.RedactString(cp.YAML)
+	cp.YAML = redact.String(cp.YAML)
 	return &cp
 }
 

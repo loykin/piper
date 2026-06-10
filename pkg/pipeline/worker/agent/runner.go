@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/executor"
+	"github.com/piper/piper/internal/srcfetch"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/source"
+	"github.com/piper/piper/pkg/pipeline/executor"
 	"github.com/piper/piper/pkg/storage"
 )
 
@@ -183,7 +183,7 @@ func (r *Runner) execute(
 		Stderr:    stderrW,
 		Vars:      task.Vars,
 		GPUs:      stepGPUs(step),
-		SourceCfg: source.Config{
+		SourceCfg: srcfetch.Config{
 			GitToken:   r.cfg.GitToken,
 			GitUser:    r.cfg.GitUser,
 			StorageURL: r.cfg.StorageURL,

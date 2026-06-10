@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/internal/redact"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/run"
-	"github.com/piper/piper/pkg/secret"
+	"github.com/piper/piper/pkg/pipeline/run"
 )
 
 // ScheduleFilter is the list filter returned by ScheduleHooks.BeforeListSchedules.
@@ -314,8 +314,8 @@ func (h *Handler) listScheduleRuns(c *gin.Context) {
 		return
 	}
 	for _, r := range runs {
-		r.PipelineYAML = secret.RedactString(r.PipelineYAML)
-		r.ParamsJSON = secret.RedactString(r.ParamsJSON)
+		r.PipelineYAML = redact.String(r.PipelineYAML)
+		r.ParamsJSON = redact.String(r.ParamsJSON)
 	}
 	c.JSON(http.StatusOK, runs)
 }

@@ -276,6 +276,9 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, experiment)
 		},
+		StartSweep: func(ctx context.Context, req run.SweepRequest, ownerID string) (run.SweepResponse, error) {
+			return p.startSweep(ctx, req, ownerID)
+		},
 		CancelRun: p.CancelRun,
 		RerunRun:  p.RerunRun,
 		RetryStep: p.RetryStep,

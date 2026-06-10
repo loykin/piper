@@ -708,6 +708,38 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 	return runID, nil
 }
 
+// startSweep submits multiple runs from one YAML with different params.
+// On partial failure it cancels already-submitted runs (best-effort).
+func (p *Piper) startSweep(ctx context.Context, req run.SweepRequest, ownerID string) (run.SweepResponse, error) {
+	pl, err := pipeline.Parse([]byte(req.YAML))
+	if err != nil {
+		return run.SweepResponse{}, fmt.Errorf("parse pipeline: %w", err)
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		return run.SweepResponse{}, fmt.Errorf("build dag: %w", err)
+	}
+
+	runIDs := make([]string, 0, len(req.Runs))
+	for i, trial := range req.Runs {
+		runID, err := p.startRun(ctx, pl, dag, StartRunOptions{
+			OwnerID:    ownerID,
+			Experiment: req.Experiment,
+			Params:     trial.Params,
+			YAML:       req.YAML,
+		})
+		if err != nil {
+			now := time.Now().UTC()
+			for _, id := range runIDs {
+				_ = p.repos.Run.UpdateStatus(ctx, id, run.StatusCanceled, &now)
+			}
+			return run.SweepResponse{}, fmt.Errorf("trial %d: %w", i, err)
+		}
+		runIDs = append(runIDs, runID)
+	}
+	return run.SweepResponse{Experiment: req.Experiment, RunIDs: runIDs}, nil
+}
+
 // Parse parses YAML only (for validation without execution)
 func (p *Piper) Parse(yamlBytes []byte) (*pipeline.Pipeline, error) {
 	return pipeline.Parse(yamlBytes)

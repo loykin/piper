@@ -139,10 +139,45 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 		}
 	}
 
+	// Report .metrics.json if present and step succeeded
+	if execErr == nil {
+		r.reportFinalMetrics(ctx, task.RunID, step.Name, stepOutputDir)
+	}
+
 	if execErr != nil {
 		return r.failedResult(task, execErr, startedAt)
 	}
 	return r.doneResult(task, startedAt)
+}
+
+// reportFinalMetrics reads .metrics.json from the step output dir and POSTs it to master.
+func (r *Runner) reportFinalMetrics(ctx context.Context, runID, stepName, outputDir string) {
+	if r.cfg.MasterURL == "" {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(outputDir, ".metrics.json"))
+	if err != nil {
+		return // file not present — normal
+	}
+	var vals map[string]float64
+	if err := json.Unmarshal(data, &vals); err != nil || len(vals) == 0 {
+		slog.Warn("metrics.json parse failed or empty", "run_id", runID, "step", stepName, "err", err)
+		return
+	}
+	payload, _ := json.Marshal(vals)
+	url := fmt.Sprintf("%s/runs/%s/steps/%s/final-metrics", r.cfg.MasterURL, runID, stepName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	r.setAuth(req)
+	resp, err := r.client.Do(req)
+	if err != nil {
+		slog.Warn("final metrics report failed", "run_id", runID, "step", stepName, "err", err)
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // Report posts the TaskResult to the master via HTTP.

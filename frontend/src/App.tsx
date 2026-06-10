@@ -16,9 +16,11 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical } from 'lucide-react'
 
-const RunDetailPage       = lazy(() => import('@/pages/RunDetailPage'))
+const RunDetailPage         = lazy(() => import('@/pages/RunDetailPage'))
+const ExperimentsPage       = lazy(() => import('@/pages/ExperimentsPage'))
+const ExperimentDetailPage  = lazy(() => import('@/pages/ExperimentDetailPage'))
 const WorkflowsPage       = lazy(() => import('@/pages/WorkflowsPage'))
 const WorkflowCreatePage  = lazy(() => import('@/pages/WorkflowCreatePage'))
 const HistoryPage         = lazy(() => import('@/pages/HistoryPage'))
@@ -39,9 +41,10 @@ const navGroups = [
   {
     label: 'Pipelines',
     items: [
-      { id: 'pipelines', label: 'Templates',  icon: GitBranch,     to: '/pipelines' },
-      { id: 'schedules', label: 'Schedules',  icon: CalendarClock, to: '/schedules' },
-      { id: 'history',   label: 'History',    icon: History,       to: '/history' },
+      { id: 'pipelines',    label: 'Templates',    icon: GitBranch,     to: '/pipelines' },
+      { id: 'schedules',    label: 'Schedules',    icon: CalendarClock, to: '/schedules' },
+      { id: 'history',      label: 'History',      icon: History,       to: '/history' },
+      { id: 'experiments',  label: 'Experiments',  icon: FlaskConical,  to: '/experiments' },
     ],
   },
   {
@@ -137,6 +140,8 @@ export default function App() {
                   <Route path="/pipelines" element={<PipelinesListPage />} />
                   <Route path="/pipelines/editor" element={<PipelineEditorPage />} />
                   <Route path="/history" element={<HistoryPage />} />
+                  <Route path="/experiments" element={<ExperimentsPage />} />
+                  <Route path="/experiments/:name" element={<ExperimentDetailPage />} />
                   <Route path="/serving" element={<ServingPage />} />
                   <Route path="/serving/history" element={<ServingHistoryPage />} />
                   <Route path="/serving/:name" element={<ServingDetailPage />} />

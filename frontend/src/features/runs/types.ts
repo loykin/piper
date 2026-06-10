@@ -4,12 +4,14 @@ export interface Run {
   id: string
   schedule_id?: string
   owner_id?: string
+  experiment?: string
   pipeline_name: string
   status: 'scheduled' | 'running' | 'success' | 'failed' | 'canceled'
   started_at: string
   ended_at?: string
   scheduled_at?: string
   pipeline_yaml: string
+  params_json?: string
   steps?: Step[]
 }
 
@@ -59,4 +61,26 @@ export interface StepArtifacts {
 export interface RunFilter {
   status?: string
   pipeline?: string
+  experiment?: string
+  metric_step?: string
+  metric_key?: string
+  metric_order?: string
 }
+
+export interface SweepTrial {
+  params: Record<string, unknown>
+}
+
+export interface SweepRequest {
+  yaml: string
+  experiment: string
+  runs: SweepTrial[]
+}
+
+export interface SweepResponse {
+  experiment: string
+  run_ids: string[]
+}
+
+// step_name → { key → value }
+export type RunMetrics = Record<string, Record<string, number>>

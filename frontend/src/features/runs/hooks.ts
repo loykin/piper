@@ -2,13 +2,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import * as api from './api'
-import type { LogLine, RunFilter } from './types'
+import type { LogLine, RunFilter, SweepRequest } from './types'
 
 export const runKeys = {
   all: ['runs'] as const,
   list: (filter?: RunFilter) => ['runs', 'list', filter] as const,
   one: (id: string) => ['runs', id] as const,
   steps: (id: string) => ['runs', id, 'steps'] as const,
+  metrics: (id: string) => ['runs', id, 'metrics'] as const,
   artifacts: (runId: string, stepId: string) => ['runs', runId, 'artifacts', stepId] as const,
 }
 
@@ -73,6 +74,21 @@ export function useRerunRun() {
   return useMutation({
     mutationFn: ({ id, failedOnly }: { id: string; failedOnly?: boolean }) =>
       api.rerunRun(id, failedOnly),
+    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all }),
+  })
+}
+
+export function useRunMetrics(runId: string) {
+  return useQuery({
+    queryKey: runKeys.metrics(runId),
+    queryFn: () => api.getRunMetrics(runId),
+  })
+}
+
+export function useCreateSweep() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (req: SweepRequest) => api.createSweep(req),
     onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all }),
   })
 }

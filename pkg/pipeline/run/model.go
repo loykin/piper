@@ -55,4 +55,9 @@ type RunFilter struct {
 	PipelineName string
 	ScheduleID   string
 	Status       string
+	// MetricStep/MetricKey/MetricOrder enable metric-sorted listing.
+	// Order is "asc" or "desc" (default "desc").
+	MetricStep  string
+	MetricKey   string
+	MetricOrder string
 }

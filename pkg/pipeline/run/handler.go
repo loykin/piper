@@ -38,18 +38,19 @@ type RunHooks interface {
 
 // HandlerDeps holds all dependencies required by the run handler.
 type HandlerDeps struct {
-	Runs      Repository
-	Steps     StepRepository
-	Logs      LogQuerier
-	Metrics   logstore.MetricStore
-	StartRun  func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
-	CancelRun func(ctx context.Context, runID string) error
-	RerunRun  func(ctx context.Context, runID string, failedOnly bool) (string, error)
-	RetryStep func(ctx context.Context, runID, stepName string) (string, error)
-	DeleteRun func(ctx context.Context, runID string) error
-	Artifacts ArtifactProvider
-	Hooks     RunHooks
-	OwnerID   func(r *http.Request) string
+	Runs       Repository
+	Steps      StepRepository
+	Logs       LogQuerier
+	Metrics    logstore.MetricStore
+	StartRun   func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
+	StartSweep func(ctx context.Context, req SweepRequest, ownerID string) (SweepResponse, error)
+	CancelRun  func(ctx context.Context, runID string) error
+	RerunRun   func(ctx context.Context, runID string, failedOnly bool) (string, error)
+	RetryStep  func(ctx context.Context, runID, stepName string) (string, error)
+	DeleteRun  func(ctx context.Context, runID string) error
+	Artifacts  ArtifactProvider
+	Hooks      RunHooks
+	OwnerID    func(r *http.Request) string
 }
 
 // ArtifactProvider is the domain interface for artifact listing and download.
@@ -81,6 +82,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/runs", h.listRuns)
 	rg.POST("/runs", h.createRun)
+	rg.POST("/runs/sweep", h.createSweep)
 	rg.GET("/runs/:id", h.getRun)
 	rg.POST("/runs/:id/cancel", h.cancelRun)
 	rg.POST("/runs/:id/rerun", h.rerunRun)
@@ -90,6 +92,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/runs/:id/steps/:step/logs", h.getLogs)
 	rg.GET("/runs/:id/steps/:step/logs/stream", h.streamLogs)
 	rg.POST("/runs/:id/steps/:step/logs", h.ingestLogs)
+	rg.POST("/runs/:id/steps/:step/final-metrics", h.ingestFinalMetrics)
 	rg.GET("/runs/:id/metrics", h.getMetrics)
 	rg.GET("/runs/:id/artifacts", h.listArtifacts)
 	rg.GET("/runs/:id/artifacts/*path", h.downloadArtifact)
@@ -103,6 +106,9 @@ func (h *Handler) listRuns(c *gin.Context) {
 	}
 	filter.Status = c.Query("status")
 	filter.Experiment = c.Query("experiment")
+	filter.MetricStep = c.Query("metric_step")
+	filter.MetricKey = c.Query("metric_key")
+	filter.MetricOrder = c.Query("metric_order")
 	if pipelineName := c.Query("pipeline_name"); pipelineName != "" {
 		if filter.PipelineName != "" && filter.PipelineName != pipelineName {
 			c.JSON(http.StatusOK, []any{})
@@ -168,6 +174,43 @@ func (h *Handler) createRun(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"run_id": runID})
+}
+
+// POST /runs/sweep
+func (h *Handler) createSweep(c *gin.Context) {
+	var req SweepRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Experiment == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "experiment is required"})
+		return
+	}
+	if len(req.Runs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "runs must not be empty"})
+		return
+	}
+	if h.deps.Hooks != nil {
+		if err := h.deps.Hooks.BeforeCreateRun(c.Request.Context(), c.Request, req.YAML); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	if h.deps.StartSweep == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "StartSweep not configured"})
+		return
+	}
+	ownerID := ""
+	if h.deps.OwnerID != nil {
+		ownerID = h.deps.OwnerID(c.Request)
+	}
+	resp, err := h.deps.StartSweep(c.Request.Context(), req, ownerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // GET /runs/:id
@@ -421,6 +464,38 @@ func (h *Handler) ingestLogs(c *gin.Context) {
 		if err := h.deps.Metrics.AppendMetrics(metrics); err != nil {
 			slog.Warn("append metrics failed", "run_id", ref.RunID, "step", ref.StepName, "err", err)
 		}
+	}
+	c.Status(http.StatusOK)
+}
+
+// POST /runs/:id/steps/:step/final-metrics — ingest .metrics.json from worker
+func (h *Handler) ingestFinalMetrics(c *gin.Context) {
+	if h.deps.Metrics == nil {
+		c.Status(http.StatusOK)
+		return
+	}
+	runID := c.Param("id")
+	stepName := c.Param("step")
+
+	var vals map[string]float64
+	if err := c.ShouldBindJSON(&vals); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	now := time.Now().UTC()
+	metrics := make([]*logstore.Metric, 0, len(vals))
+	for k, v := range vals {
+		metrics = append(metrics, &logstore.Metric{
+			RunID:    runID,
+			StepName: stepName,
+			Key:      k,
+			Value:    v,
+			Ts:       now,
+		})
+	}
+	if err := h.deps.Metrics.AppendMetrics(metrics); err != nil {
+		slog.Warn("final metrics ingest failed", "run_id", runID, "step", stepName, "err", err)
 	}
 	c.Status(http.StatusOK)
 }

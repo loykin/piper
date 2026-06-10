@@ -2,9 +2,10 @@
 export type {
   Run, Step, LogLine, CreateRunOptions,
   ArtifactFile, ArtifactEntry, StepArtifacts, RunFilter,
+  SweepRequest, SweepResponse, RunMetrics,
 } from './types'
 
-import type { Run, Step, LogLine, CreateRunOptions, StepArtifacts, RunFilter } from './types'
+import type { Run, Step, LogLine, CreateRunOptions, StepArtifacts, RunFilter, SweepRequest, SweepResponse, RunMetrics } from './types'
 
 const BASE = ''
 
@@ -12,11 +13,41 @@ export async function listRuns(filter?: RunFilter): Promise<Run[]> {
   const params = new URLSearchParams()
   if (filter?.status) params.set('status', filter.status)
   if (filter?.pipeline) params.set('pipeline_name', filter.pipeline)
+  if (filter?.experiment) params.set('experiment', filter.experiment)
+  if (filter?.metric_step) params.set('metric_step', filter.metric_step)
+  if (filter?.metric_key) params.set('metric_key', filter.metric_key)
+  if (filter?.metric_order) params.set('metric_order', filter.metric_order)
   const qs = params.toString()
   const res = await fetch(`${BASE}/runs${qs ? `?${qs}` : ''}`)
   if (!res.ok) throw new Error(`listRuns: ${res.status}`)
   const data: unknown = await res.json()
   return Array.isArray(data) ? (data as Run[]) : []
+}
+
+export async function createSweep(req: SweepRequest): Promise<SweepResponse> {
+  const res = await fetch(`${BASE}/runs/sweep`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error ?? res.statusText)
+  }
+  return res.json()
+}
+
+export async function getRunMetrics(runID: string): Promise<RunMetrics> {
+  const res = await fetch(`${BASE}/runs/${runID}/metrics`)
+  if (!res.ok) return {}
+  const raw: unknown = await res.json()
+  if (!Array.isArray(raw)) return {}
+  const out: RunMetrics = {}
+  for (const m of raw as Array<{ step_name: string; key: string; value: number }>) {
+    if (!out[m.step_name]) out[m.step_name] = {}
+    out[m.step_name][m.key] = m.value
+  }
+  return out
 }
 
 export async function getRun(id: string): Promise<{ run: Run; steps: Step[] }> {

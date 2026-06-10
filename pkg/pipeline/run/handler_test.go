@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/proto"
 )
 
@@ -44,6 +45,170 @@ func (r emptyStepRepo) List(context.Context, string) ([]*Step, error) {
 	return []*Step{}, nil
 }
 func (r emptyStepRepo) DeleteByRun(context.Context, string) error { return nil }
+
+// ── metric filter ─────────────────────────────────────────────────────────────
+
+func TestListRunsMetricFilterPassedToRepo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &capturingRunRepo{}
+	router := gin.New()
+	NewHandler(HandlerDeps{Runs: repo, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group(""))
+
+	req := httptest.NewRequest(http.MethodGet, "/runs?experiment=sweep-1&metric_step=train&metric_key=accuracy&metric_order=asc", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if repo.filter.MetricStep != "train" {
+		t.Errorf("MetricStep = %q, want train", repo.filter.MetricStep)
+	}
+	if repo.filter.MetricKey != "accuracy" {
+		t.Errorf("MetricKey = %q, want accuracy", repo.filter.MetricKey)
+	}
+	if repo.filter.MetricOrder != "asc" {
+		t.Errorf("MetricOrder = %q, want asc", repo.filter.MetricOrder)
+	}
+}
+
+// ── sweep ─────────────────────────────────────────────────────────────────────
+
+func TestCreateSweep_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &capturingRunRepo{}
+	var gotReq SweepRequest
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:  repo,
+		Steps: emptyStepRepo{},
+		StartSweep: func(_ context.Context, req SweepRequest, _ string) (SweepResponse, error) {
+			gotReq = req
+			return SweepResponse{Experiment: req.Experiment, RunIDs: []string{"r1", "r2"}}, nil
+		},
+	}).RegisterRoutes(router.Group(""))
+
+	body := `{"yaml":"metadata:\n  name: train\n","experiment":"lr-sweep","runs":[{"params":{"lr":0.01}},{"params":{"lr":0.1}}]}`
+	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if gotReq.Experiment != "lr-sweep" {
+		t.Errorf("experiment = %q, want lr-sweep", gotReq.Experiment)
+	}
+	if len(gotReq.Runs) != 2 {
+		t.Errorf("trials = %d, want 2", len(gotReq.Runs))
+	}
+	if rec.Body.String() != `{"experiment":"lr-sweep","run_ids":["r1","r2"]}` {
+		t.Errorf("unexpected body: %s", rec.Body.String())
+	}
+}
+
+func TestCreateSweep_MissingExperiment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group(""))
+
+	body := `{"yaml":"...","runs":[{"params":{"lr":0.01}}]}`
+	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestCreateSweep_EmptyRuns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group(""))
+
+	body := `{"yaml":"...","experiment":"lr-sweep","runs":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// ── final-metrics ─────────────────────────────────────────────────────────────
+
+type captureMetricStore struct {
+	appended []*logstore.Metric
+}
+
+func (s *captureMetricStore) AppendMetrics(m []*logstore.Metric) error {
+	s.appended = append(s.appended, m...)
+	return nil
+}
+func (s *captureMetricStore) QueryMetrics(_, _ string) ([]*logstore.Metric, error) {
+	return nil, nil
+}
+
+func TestIngestFinalMetrics_Success(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &captureMetricStore{}
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:    &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusRunning}},
+		Steps:   emptyStepRepo{},
+		Metrics: store,
+	}).RegisterRoutes(router.Group(""))
+
+	body := `{"accuracy":0.94,"val_loss":0.23}`
+	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/steps/train/final-metrics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if len(store.appended) != 2 {
+		t.Fatalf("appended %d metrics, want 2", len(store.appended))
+	}
+	byKey := make(map[string]float64)
+	for _, m := range store.appended {
+		if m.RunID != "run-1" || m.StepName != "train" {
+			t.Errorf("unexpected run/step: %s/%s", m.RunID, m.StepName)
+		}
+		byKey[m.Key] = m.Value
+	}
+	if byKey["accuracy"] != 0.94 {
+		t.Errorf("accuracy = %v, want 0.94", byKey["accuracy"])
+	}
+	if byKey["val_loss"] != 0.23 {
+		t.Errorf("val_loss = %v, want 0.23", byKey["val_loss"])
+	}
+}
+
+func TestIngestFinalMetrics_InvalidJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:    &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusRunning}},
+		Steps:   emptyStepRepo{},
+		Metrics: &captureMetricStore{},
+	}).RegisterRoutes(router.Group(""))
+
+	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/steps/train/final-metrics", strings.NewReader(`not json`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
 
 func TestListRunsPipelineNameQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)

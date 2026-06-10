@@ -36,33 +36,55 @@ func (r *runRepo) Get(ctx context.Context, id string) (*run.Run, error) {
 }
 
 func (r *runRepo) List(ctx context.Context, filter run.RunFilter) ([]*run.Run, error) {
-	query := `SELECT id, schedule_id, owner_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json FROM runs`
+	metricSort := filter.MetricStep != "" && filter.MetricKey != ""
+	var query string
 	var args []any
 	var where []string
-	if filter.OwnerID != "" {
-		where = append(where, "owner_id=?")
-		args = append(args, filter.OwnerID)
-	}
-	if filter.Experiment != "" {
-		where = append(where, "experiment=?")
+
+	if metricSort {
+		query = `SELECT r.id, r.schedule_id, r.owner_id, r.experiment, r.pipeline_name, r.status, r.started_at, r.ended_at, r.scheduled_at, r.pipeline_yaml, r.params_json
+FROM runs r
+LEFT JOIN (SELECT run_id, MAX(value) AS mv FROM run_metrics WHERE step_name=? AND key=? GROUP BY run_id) m ON m.run_id=r.id`
+		args = append(args, filter.MetricStep, filter.MetricKey)
+		where = append(where, "r.experiment=?")
 		args = append(args, filter.Experiment)
+	} else {
+		query = `SELECT id, schedule_id, owner_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json FROM runs`
+		if filter.OwnerID != "" {
+			where = append(where, "owner_id=?")
+			args = append(args, filter.OwnerID)
+		}
+		if filter.Experiment != "" {
+			where = append(where, "experiment=?")
+			args = append(args, filter.Experiment)
+		}
+		if filter.PipelineName != "" {
+			where = append(where, "pipeline_name=?")
+			args = append(args, filter.PipelineName)
+		}
+		if filter.ScheduleID != "" {
+			where = append(where, "schedule_id=?")
+			args = append(args, filter.ScheduleID)
+		}
+		if filter.Status != "" {
+			where = append(where, "status=?")
+			args = append(args, filter.Status)
+		}
 	}
-	if filter.PipelineName != "" {
-		where = append(where, "pipeline_name=?")
-		args = append(args, filter.PipelineName)
-	}
-	if filter.ScheduleID != "" {
-		where = append(where, "schedule_id=?")
-		args = append(args, filter.ScheduleID)
-	}
-	if filter.Status != "" {
-		where = append(where, "status=?")
-		args = append(args, filter.Status)
-	}
+
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY started_at DESC"
+	if metricSort {
+		order := "DESC"
+		if filter.MetricOrder == "asc" {
+			order = "ASC"
+		}
+		query += " ORDER BY m.mv " + order + " NULLS LAST"
+	} else {
+		query += " ORDER BY started_at DESC"
+	}
+
 	query = r.db.Rebind(query)
 	var out []*run.Run
 	err := r.db.SelectContext(ctx, &out, query, args...)

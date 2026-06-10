@@ -279,6 +279,99 @@ func TestRun_logs_final_line_without_newline(t *testing.T) {
 	}
 }
 
+// ─── .metrics.json reporting ─────────────────────────────────────────────────
+
+func TestRun_reports_final_metrics_on_success(t *testing.T) {
+	var receivedPath string
+	var receivedBody []byte
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "final-metrics") {
+			receivedPath = r.URL.Path
+			receivedBody, _ = io.ReadAll(r.Body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	outDir := t.TempDir()
+	r, err := agent.New(agent.Config{MasterURL: srv.URL, OutputDir: outDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	task := makeTaskWithRunID(t, pipeline.Step{
+		Name: "train",
+		Run: pipeline.Run{
+			// write .metrics.json as part of the command
+			Command: []string{"sh", "-c", `echo '{"accuracy":0.94,"val_loss":0.23}' > "$PIPER_OUTPUT_DIR/.metrics.json"`},
+		},
+	}, "run-metrics-test")
+
+	r.Run(context.Background(), task)
+
+	if !strings.Contains(receivedPath, "final-metrics") {
+		t.Fatalf("final-metrics endpoint not called; last path = %q", receivedPath)
+	}
+	if !strings.Contains(string(receivedBody), "accuracy") {
+		t.Errorf("body missing accuracy: %s", receivedBody)
+	}
+	if !strings.Contains(string(receivedBody), "val_loss") {
+		t.Errorf("body missing val_loss: %s", receivedBody)
+	}
+}
+
+func TestRun_no_metrics_file_no_final_metrics_call(t *testing.T) {
+	finalMetricsCalled := false
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "final-metrics") {
+			finalMetricsCalled = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r, err := agent.New(agent.Config{MasterURL: srv.URL, OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	task := makeTask(t, pipeline.Step{
+		Name: "no-metrics",
+		Run:  pipeline.Run{Command: []string{"echo", "done"}},
+	})
+
+	r.Run(context.Background(), task)
+
+	if finalMetricsCalled {
+		t.Error("final-metrics should not be called when .metrics.json is absent")
+	}
+}
+
+func TestRun_failed_step_does_not_report_metrics(t *testing.T) {
+	finalMetricsCalled := false
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "final-metrics") {
+			finalMetricsCalled = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r, err := agent.New(agent.Config{MasterURL: srv.URL, OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Command fails — metrics must not be reported
+	task := makeTask(t, pipeline.Step{
+		Name: "fail-step",
+		Run:  pipeline.Run{Command: []string{"sh", "-c", "exit 1"}},
+	})
+
+	r.Run(context.Background(), task)
+
+	if finalMetricsCalled {
+		t.Error("final-metrics must not be called when step fails")
+	}
+}
+
 // ─── Run: skip reporting when MasterURL is absent ─────────────────────────────
 
 func TestRun_no_master_no_panic(t *testing.T) {

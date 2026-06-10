@@ -337,7 +337,7 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 	step := pipeline.Step{
 		Name:   "train",
 		Run:    pipeline.Run{Command: []string{"sh", "-c", "echo train"}},
-		Driver: manifest.DriverSpec{Image: "python:3.11"},
+		Driver: manifest.DriverSpec{K8s: &manifest.DriverK8sSpec{Image: "python:3.11"}},
 	}
 	pl := pipeline.Pipeline{Metadata: manifest.ObjectMeta{Name: "pipe"}}
 	task := makeTask("run-1", "train", step, pl)

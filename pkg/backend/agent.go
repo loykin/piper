@@ -9,6 +9,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
 )
 
@@ -177,15 +178,20 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 }
 
 func pipelineRequiresContainer(pl *pipeline.Pipeline) bool {
-	if pl.Spec.Defaults != nil && pl.Spec.Defaults.Driver.Image != "" {
+	if pl.Spec.Defaults != nil && driverHasContainerImage(pl.Spec.Defaults.Driver) {
 		return true
 	}
 	for _, step := range pl.Spec.Steps {
-		if step.Driver.Image != "" {
+		if driverHasContainerImage(step.Driver) {
 			return true
 		}
 	}
 	return false
+}
+
+func driverHasContainerImage(driver manifest.DriverSpec) bool {
+	return driver.Docker != nil && driver.Docker.Image != "" ||
+		driver.K8s != nil && driver.K8s.Image != ""
 }
 
 func pipelineRunnerLabel(pl *pipeline.Pipeline) (string, error) {

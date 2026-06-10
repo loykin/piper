@@ -47,6 +47,52 @@ func TestParse_invalidYAML(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeSpecificImages(t *testing.T) {
+	p, err := Parse([]byte(`
+metadata:
+  name: runtime-images
+spec:
+  defaults:
+    driver:
+      docker:
+        image: docker:latest
+      k8s:
+        image: k8s:latest
+  steps:
+    - name: run
+      run:
+        command: [echo, ok]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver := p.Spec.Defaults.Driver
+	if driver.Docker == nil || driver.Docker.Image != "docker:latest" {
+		t.Fatalf("docker image not parsed: %#v", driver.Docker)
+	}
+	if driver.K8s == nil || driver.K8s.Image != "k8s:latest" {
+		t.Fatalf("k8s image not parsed: %#v", driver.K8s)
+	}
+}
+
+func TestParseRejectsLegacyCommonImage(t *testing.T) {
+	_, err := Parse([]byte(`
+metadata:
+  name: legacy-image
+spec:
+  defaults:
+    driver:
+      image: alpine:3.20
+  steps:
+    - name: run
+      run:
+        command: [echo, ok]
+`))
+	if err == nil {
+		t.Fatal("expected driver.image to be rejected")
+	}
+}
+
 func TestParse_missingName(t *testing.T) {
 	yaml := `
 metadata:

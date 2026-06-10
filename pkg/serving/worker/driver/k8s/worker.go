@@ -88,8 +88,8 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 		return servingDeployResponse{}, fmt.Errorf("metadata.name is required")
 	}
 	rt := svc.Spec.Run
-	if svc.Spec.Driver.Image == "" {
-		return servingDeployResponse{}, fmt.Errorf("spec.driver.image is required")
+	if svc.Spec.Driver.K8s == nil || svc.Spec.Driver.K8s.Image == "" {
+		return servingDeployResponse{}, fmt.Errorf("spec.driver.k8s.image is required")
 	}
 	command := workload.ExpandArgs(rt.Command, map[string]string{
 		"PIPER_MODEL_DIR":    req.S3URI,
@@ -158,7 +158,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:            "serving",
-						Image:           svc.Spec.Driver.Image,
+						Image:           svc.Spec.Driver.K8s.Image,
 						ImagePullPolicy: pullPolicy,
 						Command:         []string{command[0]},
 						Args:            command[1:],

@@ -53,7 +53,7 @@ func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 		}}},
 	}
 
-	res, err := p.runPipelineWithRunID(context.Background(), pl, "run-local", RunOptions{})
+	res, err := p.runPipelineInProcess(context.Background(), pl, "run-local", RunOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

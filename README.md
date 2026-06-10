@@ -85,12 +85,14 @@ spec:
   # Use placement to pin the whole run to one worker.
   defaults:
     driver:
-      image: alpine:3.20          # default container image for K8s/Docker mode
       placement:
         worker: ""                # worker ID/hostname (bare-metal or k8s-worker ID)
         label: ""                 # route to any worker registered with this label
         runtime: ""               # baremetal | docker | k8s
+      docker:
+        image: alpine:3.20        # default image for Docker runtime
       k8s:
+        image: alpine:3.20        # default image for K8s runtime
         namespace: ""             # K8s namespace for worker-created Jobs
 
   steps:
@@ -110,14 +112,15 @@ spec:
           value: /app
       timeout: 600
     driver:
-      image: python:3.12-slim     # container image for this step (K8s/Docker mode)
       placement:
         label: gpu                # route to workers with this label
+        runtime: k8s
       resources:
         cpu: "4"
         memory: "16Gi"
         gpu: "1"
-      k8s:                        # K8s-specific settings (optional)
+      k8s:
+        image: python:3.12-slim   # image for this step (overrides defaults.driver.k8s.image)
         pod_template:
           spec:
             nodeSelector:
@@ -349,7 +352,6 @@ spec:
 
   # driver: where and how to run it
   driver:
-    image: nvcr.io/nvidia/tritonserver:24.01-py3
     placement:
       runtime: k8s              # baremetal | docker | k8s
       worker: ""                # pin to a specific worker (optional)
@@ -357,11 +359,12 @@ spec:
       cpu: "2"
       memory: "8Gi"
       gpu: "1"
-    k8s:                        # K8s-specific (runtime=k8s only)
+    k8s:                        # K8s runtime settings
+      image: nvcr.io/nvidia/tritonserver:24.01-py3
       namespace: default
       replicas: 1
       image_pull_policy: IfNotPresent
-    process:                    # baremetal-specific (runtime=baremetal only)
+    process:                    # baremetal runtime settings
       gpus: "0"                 # CUDA_VISIBLE_DEVICES
 ```
 
@@ -375,34 +378,46 @@ spec:
 ### Runtime Examples
 
 ```yaml
-# Triton
+# Triton (K8s)
 run:
   command: ["tritonserver", "--model-repository=$(PIPER_MODEL_DIR)"]
   port: 8000
 driver:
-  image: nvcr.io/nvidia/tritonserver:24.01-py3
+  placement:
+    runtime: k8s
+  k8s:
+    image: nvcr.io/nvidia/tritonserver:24.01-py3
 
-# vLLM
+# vLLM (K8s)
 run:
   command: ["python", "-m", "vllm.entrypoints.openai.api_server",
             "--model", "$(PIPER_MODEL_DIR)", "--port", "8000"]
   port: 8000
 driver:
-  image: vllm/vllm-openai:latest
+  placement:
+    runtime: k8s
+  k8s:
+    image: vllm/vllm-openai:latest
 
-# TorchServe
+# TorchServe (Docker)
 run:
   command: ["torchserve", "--start", "--model-store", "$(PIPER_MODEL_DIR)", "--foreground"]
   port: 8080
 driver:
-  image: pytorch/torchserve:latest
+  placement:
+    runtime: docker
+  docker:
+    image: pytorch/torchserve:latest
 
-# BentoML
+# BentoML (Docker)
 run:
   command: ["bentoml", "serve", "$(PIPER_MODEL_DIR)", "--port", "3000"]
   port: 3000
 driver:
-  image: my-bentoml-service:latest
+  placement:
+    runtime: docker
+  docker:
+    image: my-bentoml-service:latest
 ```
 
 ### Serving Worker (bare-metal)
@@ -570,7 +585,6 @@ spec:
         value: ""
 
   driver:
-    image: jupyter/scipy-notebook:latest
     placement:
       runtime: k8s          # baremetal | docker | k8s
       worker: gpu-node-01   # pin to a specific worker (optional)
@@ -579,6 +593,7 @@ spec:
       memory: "8Gi"
       gpu: "1"
     k8s:                    # K8s-specific (runtime=k8s)
+      image: jupyter/scipy-notebook:latest
       pod_template:
         spec:
           nodeSelector:

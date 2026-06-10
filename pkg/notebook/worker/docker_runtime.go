@@ -325,8 +325,8 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 	ds := req.Spec.Spec.Driver.Docker // per-notebook overrides (may be nil)
 
 	image := r.cfg.Image
-	if req.Spec.Spec.Driver.Image != "" {
-		image = req.Spec.Spec.Driver.Image
+	if ds != nil && ds.Image != "" {
+		image = ds.Image
 	}
 	if image == "" {
 		return dockerclient.ContainerCreateOptions{}, fmt.Errorf("docker image is required")

@@ -261,7 +261,7 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	// Image must be resolved here (in the worker layer) for container runtimes.
 	// Baremetal subprocesses run the host binary directly — no image needed.
 	if w.cfg.Runtime == RuntimeDocker {
-		image, err := pdriver.ResolveImage(task, w.cfg.Docker.DefaultImage)
+		image, err := pdriver.ResolveImage(task, string(RuntimeDocker), w.cfg.Docker.DefaultImage)
 		if err != nil {
 			return err
 		}

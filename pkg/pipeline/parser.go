@@ -28,3 +28,8 @@ func Parse(data []byte) (*Pipeline, error) {
 	}
 	return &p, nil
 }
+
+// Marshal serialises a Pipeline back to YAML bytes.
+func Marshal(pl *Pipeline) ([]byte, error) {
+	return yaml.Marshal(pl)
+}

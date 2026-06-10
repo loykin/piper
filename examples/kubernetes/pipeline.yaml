@@ -21,7 +21,8 @@ spec:
   steps:
   - name: extract
     driver:
-      image: python:3.12-slim    # This step runs with the Python image
+      k8s:
+        image: python:3.12-slim  # This step runs with the Python image
     run:
       type: command
       command:
@@ -40,7 +41,8 @@ spec:
 
   - name: transform
     driver:
-      image: alpine:3.20         # This step runs with Alpine
+      k8s:
+        image: alpine:3.20       # This step runs with Alpine
     run:
       type: command
       command:

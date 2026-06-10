@@ -122,9 +122,6 @@ func (p *Pipeline) ApplyDefaults() *Pipeline {
 
 // mergeDriverSpec returns a DriverSpec where base fields fill in zero values of override.
 func mergeDriverSpec(base, override manifest.DriverSpec) manifest.DriverSpec {
-	if override.Image == "" {
-		override.Image = base.Image
-	}
 	if override.Resources.CPU == "" {
 		override.Resources.CPU = base.Resources.CPU
 	}
@@ -143,14 +140,52 @@ func mergeDriverSpec(base, override manifest.DriverSpec) manifest.DriverSpec {
 	if override.Placement.Runtime == "" {
 		override.Placement.Runtime = base.Placement.Runtime
 	}
-	if override.K8s == nil && base.K8s != nil {
-		override.K8s = base.K8s
-	}
-	if override.Docker == nil && base.Docker != nil {
-		override.Docker = base.Docker
-	}
+	override.K8s = mergeK8sDriverSpec(base.K8s, override.K8s)
+	override.Docker = mergeDockerDriverSpec(base.Docker, override.Docker)
 	if override.Process == nil && base.Process != nil {
 		override.Process = base.Process
 	}
 	return override
+}
+
+func mergeK8sDriverSpec(base, override *manifest.DriverK8sSpec) *manifest.DriverK8sSpec {
+	if base == nil {
+		return override
+	}
+	if override == nil {
+		out := *base
+		return &out
+	}
+	out := *override
+	if out.Image == "" {
+		out.Image = base.Image
+	}
+	if out.Namespace == "" {
+		out.Namespace = base.Namespace
+	}
+	if out.Replicas == 0 {
+		out.Replicas = base.Replicas
+	}
+	if out.ImagePullPolicy == "" {
+		out.ImagePullPolicy = base.ImagePullPolicy
+	}
+	if len(out.PodTemplate.Spec.Containers) == 0 {
+		out.PodTemplate = *base.PodTemplate.DeepCopy()
+	}
+	return &out
+}
+
+func mergeDockerDriverSpec(base, override *manifest.DriverDockerSpec) *manifest.DriverDockerSpec {
+	if base == nil {
+		return override
+	}
+	if override == nil {
+		out := *base
+		return &out
+	}
+	out := *override
+	if out.Image == "" {
+		out.Image = base.Image
+	}
+	return &out
 }

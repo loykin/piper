@@ -28,8 +28,10 @@ func TestPipelineDispatchCreatesJob(t *testing.T) {
 	pl := pipeline.Pipeline{}
 	pl.Spec.Defaults = &pipeline.PipelineDefaults{
 		Driver: manifest.DriverSpec{
-			Image: "python:3.12",
-			K8s:   &manifest.DriverK8sSpec{Namespace: "run-placement"},
+			K8s: &manifest.DriverK8sSpec{
+				Image:     "python:3.12",
+				Namespace: "run-placement",
+			},
 		},
 	}
 	step := pipeline.Step{Name: "train"}

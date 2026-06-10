@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/piper/piper/pkg/executor"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
+	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"github.com/piper/piper/pkg/run"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/source"
@@ -414,35 +416,251 @@ type RunOptions struct {
 	Params map[string]any // run-level params; override step-level YAML params at runtime
 }
 
-// RunFile takes a YAML file path and runs the pipeline locally
+// RunFile runs a pipeline YAML file through the full dispatch stack
+// (queue → gRPC → embedded worker → executor), matching the production code path.
 func (p *Piper) RunFile(ctx context.Context, path string) (*pipeline.RunResult, error) {
-	pl, err := pipeline.ParseFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return p.RunPipeline(ctx, pl)
+	return p.Run(ctx, data)
 }
 
-// Run takes YAML bytes and runs the pipeline locally
+// Run runs a pipeline YAML through the full dispatch stack
+// (queue → gRPC → embedded worker → executor), matching the production code path.
 func (p *Piper) Run(ctx context.Context, yamlBytes []byte) (*pipeline.RunResult, error) {
-	pl, err := pipeline.Parse(yamlBytes)
+	return p.runWithEmbeddedWorker(ctx, yamlBytes, RunOptions{})
+}
+
+// RunPipeline runs a parsed Pipeline through the full dispatch stack.
+func (p *Piper) RunPipeline(ctx context.Context, pl *pipeline.Pipeline) (*pipeline.RunResult, error) {
+	return p.RunPipelineOpts(ctx, pl, RunOptions{})
+}
+
+// RunPipelineOpts runs a parsed Pipeline with options through the full dispatch stack.
+func (p *Piper) RunPipelineOpts(ctx context.Context, pl *pipeline.Pipeline, opts RunOptions) (*pipeline.RunResult, error) {
+	data, err := pipeline.Marshal(pl)
 	if err != nil {
 		return nil, err
 	}
-	return p.RunPipeline(ctx, pl)
+	return p.runWithEmbeddedWorker(ctx, data, opts)
 }
 
-// RunPipeline directly executes a parsed Pipeline struct
-func (p *Piper) RunPipeline(ctx context.Context, pl *pipeline.Pipeline) (*pipeline.RunResult, error) {
-	return p.runPipelineWithRunID(ctx, pl, "", RunOptions{})
+// runWithEmbeddedWorker runs a pipeline through the full production stack:
+// queue → gRPC → embedded worker → executor.
+// This ensures p.Run() validates the same code path as a deployed worker.
+func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opts RunOptions) (*pipeline.RunResult, error) {
+	httpPort, err := randomFreePort()
+	if err != nil {
+		return nil, fmt.Errorf("run: allocate HTTP port: %w", err)
+	}
+	agentPort, err := randomFreePort()
+	if err != nil {
+		return nil, fmt.Errorf("run: allocate gRPC port: %w", err)
+	}
+
+	httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
+	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
+	masterURL := "http://" + httpAddr
+
+	p.SetDispatchMode("agent")
+
+	events, unsub := p.events.Subscribe()
+	defer unsub()
+
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+
+	go func() { _ = p.Serve(runCtx, ServeOption{Addr: httpAddr, AgentAddr: agentAddr}) }()
+
+	if err := waitForHTTPReady(ctx, masterURL+"/health", 10*time.Second); err != nil {
+		return nil, fmt.Errorf("run: server not ready: %w", err)
+	}
+
+	outputDir := p.cfg.OutputDir
+	if outputDir == "" {
+		outputDir = "./piper-outputs"
+	}
+	concurrency := p.cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 4
+	}
+
+	metaDir, err := os.MkdirTemp("", "piper-run-meta-*")
+	if err != nil {
+		return nil, fmt.Errorf("run: create meta dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(metaDir) }()
+
+	w, err := worker.New(worker.Config{
+		Agent: worker.AgentConfig{
+			Addr:        agentAddr,
+			ID:          worker.NewID("run"),
+			Concurrency: concurrency,
+		},
+		Store: worker.StoreConfig{
+			MasterURL:  masterURL,
+			OutputDir:  outputDir,
+			StorageURL: p.storageURL,
+		},
+		Baremetal: worker.BaremetalConfig{
+			MetaDir: metaDir,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run: embedded worker: %w", err)
+	}
+	go func() { _ = w.Run(runCtx) }()
+
+	if err := waitForPipelineAgent(ctx, masterURL, 10*time.Second); err != nil {
+		return nil, fmt.Errorf("run: worker did not register: %w", err)
+	}
+
+	runID, err := p.startRunFromAPI(ctx, string(yamlBytes), "", opts.Params, opts.Vars, "")
+	if err != nil {
+		return nil, err
+	}
+
+	status, err := waitForRunCompleted(ctx, events, runID)
+	if err != nil {
+		return nil, fmt.Errorf("run: wait for completion: %w", err)
+	}
+
+	return p.buildRunResult(ctx, runID, status)
 }
 
-// RunPipelineOpts executes a parsed Pipeline with optional run options (e.g. Vars.ScheduledAt, Params).
-func (p *Piper) RunPipelineOpts(ctx context.Context, pl *pipeline.Pipeline, opts RunOptions) (*pipeline.RunResult, error) {
-	return p.runPipelineWithRunID(ctx, pl, "", opts)
+// randomFreePort asks the OS for an available TCP port.
+func randomFreePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port, nil
 }
 
-func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline, runID string, opts RunOptions) (*pipeline.RunResult, error) {
+// waitForHTTPReady polls url until it returns 2xx or timeout.
+func waitForHTTPReady(ctx context.Context, url string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode < 300 {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("not ready within %s", timeout)
+}
+
+// waitForPipelineAgent polls GET /api/agents until at least one pipeline-capable agent appears.
+func waitForPipelineAgent(ctx context.Context, masterURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, masterURL+"/api/agents", nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			var agents []struct {
+				Capabilities []string `json:"capabilities"`
+			}
+			if json.NewDecoder(resp.Body).Decode(&agents) == nil {
+				for _, a := range agents {
+					for _, capa := range a.Capabilities {
+						if capa == "pipeline" {
+							_ = resp.Body.Close()
+							return nil
+						}
+					}
+				}
+			}
+			_ = resp.Body.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("no pipeline agent registered within %s", timeout)
+}
+
+// waitForRunCompleted waits for run.completed event with the given run ID and returns its status.
+func waitForRunCompleted(ctx context.Context, events <-chan event.Event, runID string) (string, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case e, ok := <-events:
+			if !ok {
+				return "", fmt.Errorf("event channel closed")
+			}
+			if e.Type != "run.completed" {
+				continue
+			}
+			if id, _ := e.Fields["run_id"].(string); id != runID {
+				continue
+			}
+			status, _ := e.Fields["status"].(string)
+			return status, nil
+		}
+	}
+}
+
+// buildRunResult reads the run and step records from the DB and constructs a RunResult.
+func (p *Piper) buildRunResult(ctx context.Context, runID, _ string) (*pipeline.RunResult, error) {
+	r, err := p.repos.Run.Get(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("get run: %w", err)
+	}
+	steps, err := p.repos.Step.List(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list steps: %w", err)
+	}
+
+	result := &pipeline.RunResult{
+		PipelineName: r.PipelineName,
+		StartedAt:    r.StartedAt,
+	}
+	if r.EndedAt != nil {
+		result.EndedAt = *r.EndedAt
+	}
+	result.Steps = make(map[string]*pipeline.StepResult, len(steps))
+	for _, s := range steps {
+		sr := &pipeline.StepResult{
+			StepName: s.StepName,
+			Status:   pipeline.StepStatus(s.Status),
+			Attempts: s.Attempts,
+			ErrMsg:   s.Error,
+		}
+		if s.StartedAt != nil {
+			sr.StartedAt = *s.StartedAt
+		}
+		if s.EndedAt != nil {
+			sr.EndedAt = *s.EndedAt
+		}
+		result.Steps[s.StepName] = sr
+	}
+	return result, nil
+}
+
+// runPipelineInProcess runs a pipeline entirely within the current process,
+// bypassing queue, gRPC, and artifact transfer. Used only for scheduler-internal
+// recovery where an embedded worker is already running.
+func (p *Piper) runPipelineInProcess(ctx context.Context, pl *pipeline.Pipeline, runID string, opts RunOptions) (*pipeline.RunResult, error) {
 	dag, err := pipeline.BuildDAG(pl)
 	if err != nil {
 		return nil, err
@@ -462,7 +680,6 @@ func (p *Piper) runPipelineWithRunID(ctx context.Context, pl *pipeline.Pipeline,
 			return err
 		}
 
-		// Capture logs: persist to store
 		var stdoutW, stderrW io.Writer = os.Stdout, os.Stderr
 		if captureLogs {
 			stdoutW = &storeLogWriter{logs: p.logs, runID: runID, stepName: step.Name, stream: "stdout", tee: os.Stdout}

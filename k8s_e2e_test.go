@@ -75,7 +75,8 @@ metadata:
 spec:
   defaults:
     driver:
-      image: alpine:3.20
+      k8s:
+        image: alpine:3.20
   steps:
     - name: smoke
       run:
@@ -232,10 +233,10 @@ metadata:
 spec:
   defaults:
     driver:
-      image: alpine:3.20
       placement:
         worker: k8s-agent-e2e
       k8s:
+        image: alpine:3.20
         namespace: %[1]s
   steps:
     - name: smoke
@@ -262,7 +263,8 @@ spec:
     command: ["sh", "-c", "sleep 3600"]
     port: 8080
   driver:
-    image: alpine:3.20
+    k8s:
+      image: alpine:3.20
 `)
 	if out := kubectl(t, "-n", ns, "get", "deploy,svc", "worker-serving", "--no-headers"); !strings.Contains(out, "worker-serving") {
 		dumpK8sE2EDebug(t, ns)

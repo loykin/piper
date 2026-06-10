@@ -118,7 +118,7 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	}
 
 	// Resolve image and namespace here (worker layer), not inside the driver.
-	image, err := pdriver.ResolveImage(task, a.cfg.K8s.DefaultImage)
+	image, err := pdriver.ResolveImage(task, "k8s", a.cfg.K8s.DefaultImage)
 	if err != nil {
 		return err
 	}

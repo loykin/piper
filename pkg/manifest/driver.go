@@ -9,7 +9,6 @@ import (
 // DriverSpec describes where and how to run a workload.
 // "What to run" (command, port, etc.) belongs in each domain's Run block.
 type DriverSpec struct {
-	Image     string             `yaml:"image,omitempty"     json:"image,omitempty"`
 	Resources ResourceSpec       `yaml:"resources,omitempty" json:"resources,omitempty"`
 	Placement PlacementSpec      `yaml:"placement,omitempty" json:"placement,omitempty"`
 	K8s       *DriverK8sSpec     `yaml:"k8s,omitempty"       json:"k8s,omitempty"`
@@ -45,6 +44,7 @@ type PlacementSpec struct {
 // PodTemplate uses a custom UnmarshalYAML because yaml.v3 is incompatible with
 // corev1 json tags and resource.Quantity — we round-trip through sigs.k8s.io/yaml.
 type DriverK8sSpec struct {
+	Image           string                 `yaml:"image,omitempty"            json:"image,omitempty"`
 	Namespace       string                 `yaml:"namespace,omitempty"        json:"namespace,omitempty"`
 	Replicas        int                    `yaml:"replicas,omitempty"         json:"replicas,omitempty"`
 	ImagePullPolicy string                 `yaml:"image_pull_policy,omitempty" json:"image_pull_policy,omitempty"`
@@ -52,6 +52,7 @@ type DriverK8sSpec struct {
 }
 
 type driverK8sAlias struct {
+	Image           string    `yaml:"image,omitempty"`
 	Namespace       string    `yaml:"namespace,omitempty"`
 	Replicas        int       `yaml:"replicas,omitempty"`
 	ImagePullPolicy string    `yaml:"image_pull_policy,omitempty"`
@@ -63,6 +64,7 @@ func (s *DriverK8sSpec) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&a); err != nil {
 		return err
 	}
+	s.Image = a.Image
 	s.Namespace = a.Namespace
 	s.Replicas = a.Replicas
 	s.ImagePullPolicy = a.ImagePullPolicy
@@ -80,6 +82,7 @@ func (s *DriverK8sSpec) UnmarshalYAML(value *yaml.Node) error {
 
 // DriverDockerSpec holds Docker-specific driver settings.
 type DriverDockerSpec struct {
+	Image       string            `yaml:"image,omitempty"        json:"image,omitempty"`
 	CPUs        string            `yaml:"cpus,omitempty"         json:"cpus,omitempty"`
 	MemLimit    string            `yaml:"mem_limit,omitempty"    json:"mem_limit,omitempty"`
 	ShmSize     string            `yaml:"shm_size,omitempty"     json:"shm_size,omitempty"`

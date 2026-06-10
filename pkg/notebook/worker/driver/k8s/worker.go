@@ -152,9 +152,13 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 
 	// ── Stage 3: apply piper-required fields (always last) ───────────────────
 
-	// Resolve image: spec.driver.image > notebook container image in merged template
+	// Resolve image: spec.driver.k8s.image > notebook container image in merged template
 	// > cfg.Image > hardcoded default.
-	image := resolveImage(a.cfg.Image, spec.Spec.Driver.Image, podTemplate)
+	var driverImage string
+	if spec.Spec.Driver.K8s != nil {
+		driverImage = spec.Spec.Driver.K8s.Image
+	}
+	image := resolveImage(a.cfg.Image, driverImage, podTemplate)
 
 	// Piper selector labels must be present; merged template labels are preserved.
 	if podTemplate.Labels == nil {

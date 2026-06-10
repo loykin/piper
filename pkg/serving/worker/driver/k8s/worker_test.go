@@ -30,7 +30,8 @@ spec:
     command: ["python", "serve.py"]
     port: 8000
   driver:
-    image: model:latest
+    k8s:
+      image: model:latest
     resources:
       cpu: "1"
 `,
@@ -84,7 +85,8 @@ spec:
     command: ["python", "serve.py"]
     port: 8000
   driver:
-    image: new
+    k8s:
+      image: new
 `,
 	}); err != nil {
 		t.Fatalf("deployServing returned error: %v", err)

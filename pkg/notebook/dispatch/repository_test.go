@@ -58,6 +58,18 @@ func (r *fakeRepo) SetStatus(_ context.Context, name, status string) error {
 	return nil
 }
 
+func (r *fakeRepo) GetByVolumeID(_ context.Context, volumeID string) (*notebook.NotebookServer, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, nb := range r.servers {
+		if nb.VolumeID == volumeID {
+			cp := *nb
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *fakeRepo) List(_ context.Context) ([]*notebook.NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

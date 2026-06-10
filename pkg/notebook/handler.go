@@ -2,11 +2,10 @@ package notebook
 
 import (
 	"context"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -195,10 +194,8 @@ func (h *Handler) listVolumes(c *gin.Context) {
 }
 
 // GET /notebook-volumes/:id/files — list files inside the volume's work_dir.
-// Query param ext: comma-separated extensions to filter (e.g. ".py,.ipynb").
-// When the volume has a worker_id and an RPCSender is configured, the request is
-// forwarded to the owning worker agent via gRPC (fs.list_files). Otherwise it
-// falls back to a local filesystem walk (works for single-node bare-metal setups).
+// Query params: ext (comma-separated extensions), path (subpath within volume).
+// Routes through gRPC when the volume has a remote worker; falls back to local walk.
 func (h *Handler) listVolumeFiles(c *gin.Context) {
 	id := c.Param("id")
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
@@ -207,6 +204,7 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 		return
 	}
 	if vol.WorkDir == "" {
+		c.Header("X-Piper-Files-Truncated", "false")
 		c.JSON(http.StatusOK, []string{})
 		return
 	}
@@ -221,65 +219,89 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 		}
 	}
 
+	// Look up the active notebook for this volume (provides Jupyter token for K8s).
+	var nbName, nbToken string
+	if h.deps.Notebooks != nil {
+		if nb, lookupErr := h.deps.Notebooks.GetByVolumeID(c.Request.Context(), vol.ID); lookupErr == nil && nb != nil {
+			nbName = nb.Name
+			nbToken = nb.Token
+		}
+	}
+
 	// Route through gRPC when the volume is owned by a specific remote worker.
 	if vol.WorkerID != "" && h.deps.RPCSender != nil {
 		req := FSListFilesRequest{
-			WorkDir:  vol.WorkDir,
 			VolumeID: vol.ID,
+			WorkDir:  vol.WorkDir,
+			Notebook: nbName,
+			Token:    nbToken,
+			Path:     c.Query("path"),
 			Ext:      extList,
 			MaxFiles: 500,
 		}
 		var resp FSListFilesResponse
 		if err := h.deps.RPCSender.SendRPC(c.Request.Context(), vol.WorkerID, iagent.MethodFSListFiles, req, &resp); err != nil {
-			c.JSON(http.StatusOK, []string{})
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":     "worker unavailable",
+				"code":      "worker_offline",
+				"retryable": true,
+			})
+			c.Header("Retry-After", "2")
 			return
 		}
-		if resp.Files == nil {
-			resp.Files = []string{}
-		}
-		c.JSON(http.StatusOK, resp.Files)
+		h.writeFilesResponse(c, &resp)
 		return
 	}
 
-	// Local filesystem walk — works for single-node bare-metal where master and
-	// worker share the same filesystem.
-	allowedExts := make(map[string]bool, len(extList))
-	for _, e := range extList {
-		allowedExts[e] = true
+	// Local filesystem walk — single-node bare-metal where master and worker share filesystem.
+	walkRoot := vol.WorkDir
+	subPath := c.Query("path")
+	if subPath != "" {
+		// Check raw input before path.Clean removes .. elements.
+		if strings.Contains(subPath, "..") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+			return
+		}
+		walkRoot = filepath.Join(vol.WorkDir, filepath.FromSlash(path.Clean("/"+subPath)))
+	}
+	files, truncated := WalkFiles(walkRoot, extList, 500)
+	if subPath != "" {
+		prefix := path.Clean(subPath)
+		for i, f := range files {
+			files[i] = prefix + "/" + f
+		}
+	}
+	h.writeFilesResponse(c, ReadyResponse(files, truncated))
+}
+
+func (h *Handler) writeFilesResponse(c *gin.Context, resp *FSListFilesResponse) {
+	if resp.Truncated {
+		c.Header("X-Piper-Files-Truncated", "true")
+	} else {
+		c.Header("X-Piper-Files-Truncated", "false")
 	}
 
-	const maxFiles = 500
-	root := vol.WorkDir
-	var files []string
-
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			if os.IsPermission(err) {
-				return filepath.SkipDir
-			}
-			return nil
+	switch resp.State {
+	case FSAccessTransitioning:
+		c.Header("Retry-After", "2")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":     resp.Message,
+			"code":      "volume_transitioning",
+			"retryable": true,
+		})
+	case FSAccessUnavailable:
+		c.JSON(http.StatusConflict, gin.H{
+			"error":     resp.Message,
+			"code":      "volume_unavailable",
+			"retryable": false,
+		})
+	default:
+		files := resp.Files
+		if files == nil {
+			files = []string{}
 		}
-		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if len(allowedExts) > 0 && !allowedExts[filepath.Ext(d.Name())] {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		files = append(files, rel)
-		if len(files) >= maxFiles {
-			return fs.SkipAll
-		}
-		return nil
-	})
-
-	if files == nil {
-		files = []string{}
+		c.JSON(http.StatusOK, files)
 	}
-	c.JSON(http.StatusOK, files)
 }
 
 // DELETE /notebook-volumes/:id — permanently delete a released volume.

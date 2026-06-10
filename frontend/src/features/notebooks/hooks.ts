@@ -77,6 +77,9 @@ export function useVolumeFiles(volumeId: string, ext?: string) {
     queryKey: notebookKeys.volumeFiles(volumeId),
     queryFn: () => api.listVolumeFiles(volumeId, ext),
     enabled: !!volumeId,
+    refetchInterval: (query) => {
+      return query.state.data?.state === 'transitioning' ? 2000 : false
+    },
   })
 }
 

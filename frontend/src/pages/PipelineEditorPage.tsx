@@ -351,6 +351,7 @@ export default function PipelineEditorPage() {
   const [pipelineName, setPipelineName] = useState(editorName)
   const [volumes, setVolumes] = useState<NotebookVolume[]>([])
   const [volumeFiles, setVolumeFiles] = useState<string[]>([])
+  const [volumeFilesStatus, setVolumeFilesStatus] = useState<'ready' | 'transitioning' | 'unavailable' | null>(null)
   const [tasks, setTasks] = useState<PipelineStepDraft[]>(initialDraft.steps)
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => buildPositions(initialDraft.steps))
   const [selectedId, setSelectedId] = useState<string>(initialDraft.steps[0]?.id ?? '')
@@ -383,8 +384,29 @@ export default function PipelineEditorPage() {
   }, [fileBrowserOpen, artifactBrowseKey])
 
   useEffect(() => {
-    if (editorSourceKind !== 'notebook-volume' || !editorVolumeId) { setVolumeFiles([]); return }
-    listVolumeFiles(editorVolumeId).then(setVolumeFiles).catch(() => setVolumeFiles([]))
+    if (editorSourceKind !== 'notebook-volume' || !editorVolumeId) {
+      setVolumeFiles([])
+      setVolumeFilesStatus(null)
+      return
+    }
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    function fetchFiles() {
+      listVolumeFiles(editorVolumeId!).then(result => {
+        if (result.state === 'transitioning') {
+          setVolumeFilesStatus('transitioning')
+          // Keep existing files during transition — do not clear to empty.
+          retryTimer = setTimeout(fetchFiles, result.retryAfterMs || 2000)
+        } else {
+          setVolumeFiles(result.files)
+          setVolumeFilesStatus(result.state)
+        }
+      }).catch(() => {
+        setVolumeFiles([])
+        setVolumeFilesStatus('unavailable')
+      })
+    }
+    fetchFiles()
+    return () => { if (retryTimer != null) clearTimeout(retryTimer) }
   }, [editorSourceKind, editorVolumeId])
 
   useEffect(() => {
@@ -706,6 +728,12 @@ export default function PipelineEditorPage() {
               <span className="font-mono text-xs">{editorRoot || editorSourceKind}</span>
             )}
           </div>
+          {canBrowse && volumeFilesStatus === 'transitioning' && (
+            <span className="text-xs text-muted-foreground animate-pulse">Loading files…</span>
+          )}
+          {canBrowse && volumeFilesStatus === 'unavailable' && (
+            <span className="text-xs text-destructive">Volume unavailable</span>
+          )}
         </div>
 
         <Tabs value={activeTab} onValueChange={value => setActiveTab(value as ActiveTab)}>

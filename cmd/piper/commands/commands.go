@@ -40,5 +40,6 @@ func Commands(factory PiperFactory) []*cobra.Command {
 		newK8sWorkerCmd(),
 		newServingWorkerCmd(),
 		newNotebookWorkerCmd(),
+		newInternalCmd(),
 	}
 }

@@ -62,6 +62,16 @@ func (r *notebookRepo) List(ctx context.Context) ([]*notebook.NotebookServer, er
 	return out, err
 }
 
+func (r *notebookRepo) GetByVolumeID(ctx context.Context, volumeID string) (*notebook.NotebookServer, error) {
+	var nb notebook.NotebookServer
+	err := r.db.GetContext(ctx, &nb,
+		`SELECT `+notebookCols+` FROM notebook_servers WHERE volume_id=? ORDER BY updated_at DESC LIMIT 1`, volumeID)
+	if err != nil {
+		return nil, err
+	}
+	return &nb, nil
+}
+
 func (r *notebookRepo) Delete(ctx context.Context, name string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM notebook_servers WHERE name=?`, name)
 	return err

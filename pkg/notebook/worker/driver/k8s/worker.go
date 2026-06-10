@@ -69,10 +69,8 @@ func (a *Worker) register(dispatcher Dispatcher) {
 	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodFSListFiles, a.listFiles)
 }
 
-// listFiles returns an empty list for K8s volumes.
-// TODO: exec into the running notebook pod to list files when available.
-func (a *Worker) listFiles(_ context.Context, _ notebook.FSListFilesRequest) (*notebook.FSListFilesResponse, error) {
-	return &notebook.FSListFilesResponse{Files: []string{}}, nil
+func (a *Worker) listFiles(ctx context.Context, req notebook.FSListFilesRequest) (*notebook.FSListFilesResponse, error) {
+	return a.listFilesK8s(ctx, req)
 }
 
 func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.WorkerProvisionVolumeRequest) (*notebook.WorkerProvisionVolumeResponse, error) {
@@ -213,12 +211,14 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 		})
 	}
 
+	ann := k8smeta.WorkloadAnnotations(spec.Metadata.Name)
+	ann[k8smeta.AnnotationVolumeID] = req.VolumeID
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Namespace:   ns,
 			Labels:      labels,
-			Annotations: k8smeta.WorkloadAnnotations(spec.Metadata.Name),
+			Annotations: ann,
 		},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: &replicas,
@@ -226,22 +226,33 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 			Template: podTemplate,
 		},
 	}
-	if _, err := a.cfg.Client.AppsV1().StatefulSets(ns).Create(ctx, sts, metav1.CreateOptions{}); err != nil {
-		if !k8serrors.IsAlreadyExists(err) {
-			return nil, err
-		}
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			existing, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
-			if err != nil {
+
+	// Drain viewer and scale up StatefulSet inside the same volume lock so
+	// no browse request can create a viewer between drain and scale-up.
+	if err := a.drainViewerAndRun(ctx, req.VolumeID, func(ctx context.Context) error {
+		_, err := a.cfg.Client.AppsV1().StatefulSets(ns).Create(ctx, sts, metav1.CreateOptions{})
+		if err != nil {
+			if !k8serrors.IsAlreadyExists(err) {
 				return err
 			}
-			existing.Spec.Replicas = sts.Spec.Replicas
-			existing.Spec.Template = sts.Spec.Template
-			_, err = a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{})
-			return err
-		}); err != nil {
-			return nil, err
+			return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				existing, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
+				if err != nil {
+					return err
+				}
+				existing.Spec.Replicas = sts.Spec.Replicas
+				existing.Spec.Template = sts.Spec.Template
+				if existing.Annotations == nil {
+					existing.Annotations = make(map[string]string)
+				}
+				existing.Annotations[k8smeta.AnnotationVolumeID] = req.VolumeID
+				_, err = a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{})
+				return err
+			})
 		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("start notebook: %w", err)
 	}
 
 	svc := &corev1.Service{
@@ -324,6 +335,28 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSync
 
 // Observe reports Kubernetes-observed notebook state. It is independent of the
 // master connection: failed pushes are recovered by the generic reconnect sync.
+// drainViewerAndRun acquires the volume lock, removes any existing viewer Pod/Service,
+// then runs fn while holding the lock. StatefulSet scale-up must be performed inside fn
+// to guarantee no browse request creates a viewer between drain and notebook start.
+func (a *Worker) drainViewerAndRun(ctx context.Context, volumeID string, fn func(ctx context.Context) error) error {
+	ns := a.notebookNamespace()
+	lockCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	return volumeLock(lockCtx, a.cfg.Client, ns, a.cfg.WorkerID, volumeID, func(ctx context.Context) error {
+		mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.Image)
+		if mgr.ViewerExists(ctx, volumeID) {
+			if err := mgr.Stop(ctx, volumeID); err != nil {
+				return err
+			}
+			if err := mgr.WaitForDeletion(ctx, volumeID); err != nil {
+				return err
+			}
+		}
+		return fn(ctx)
+	})
+}
+
 func (a *Worker) Observe(ctx context.Context) {
 	if a.cfg.Client == nil || a.cfg.ReportStatus == nil {
 		return
@@ -342,15 +375,29 @@ func (a *Worker) Observe(ctx context.Context) {
 }
 
 func (a *Worker) observeOnce(ctx context.Context) {
+	ns := a.notebookNamespace()
 	selector := k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=notebook"
-	items, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).List(ctx, metav1.ListOptions{
+	items, err := a.cfg.Client.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {
 		return
 	}
+
+	// Collect StatefulSets with desired replicas > 0 and their volume IDs.
+	activeVolumeIDs := make(map[string]bool)
 	for i := range items.Items {
 		sts := &items.Items[i]
+		desired := int32(0)
+		if sts.Spec.Replicas != nil {
+			desired = *sts.Spec.Replicas
+		}
+		if desired > 0 {
+			if vid := sts.Annotations[k8smeta.AnnotationVolumeID]; vid != "" {
+				activeVolumeIDs[vid] = true
+			}
+		}
+
 		name := sts.Annotations[k8smeta.AnnotationWorkloadID]
 		if name == "" {
 			continue
@@ -361,6 +408,19 @@ func (a *Worker) observeOnce(ctx context.Context) {
 		}
 		_ = a.cfg.ReportStatus(notebook.WorkerStatusUpdate{Name: name, Status: status})
 	}
+
+	// Remove viewer pods that conflict with active notebooks.
+	if len(activeVolumeIDs) > 0 {
+		mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.Image)
+		for volumeID := range activeVolumeIDs {
+			if mgr.ViewerExists(ctx, volumeID) {
+				_ = mgr.Stop(ctx, volumeID)
+			}
+		}
+	}
+
+	// Run viewer idle/orphan cleanup.
+	newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.Image).Reconcile(ctx)
 }
 
 func (a *Worker) statusChanged(name, status string) bool {

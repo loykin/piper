@@ -133,7 +133,7 @@ func TestCommandExecutor_resourcesGPUNotInjectedAsCUDA(t *testing.T) {
 	step := &pipeline.Step{
 		Name: "k8s-step",
 		Driver: manifest.DriverSpec{
-			Resources: manifest.ResourceSpec{GPU: "1"}, // K8s resource request, not a device ID
+			K8s: &manifest.DriverK8sSpec{Resources: manifest.ResourceSpec{GPU: "1"}}, // K8s resource request, not a device ID
 		},
 		Run: pipeline.Run{Command: []string{"sh", "-c", `printf "%s" "${CUDA_VISIBLE_DEVICES:-unset}"`}},
 	}

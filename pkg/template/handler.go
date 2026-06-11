@@ -336,8 +336,10 @@ func (h *Handler) uploadSnapshot(ctx context.Context, snapshotID, workDir string
 	return nil
 }
 
-// rewriteLocalSources rewrites `source: local` (or empty) step sources to `source: s3`
-// and records the snapshot prefix so the worker can download the full snapshot directory.
+// rewriteLocalSources rewrites source-backed `source: local` (or empty) steps to
+// `source: s3` and records the snapshot prefix so the worker can download the
+// full snapshot directory. Pure command steps have no source entry point and
+// must remain source-less.
 // Entry point paths (path/notebook) remain relative — the worker resolves them within the snapshot.
 // It also sets metadata.name = templateName so that runs triggered from a template record
 // pipeline_name = template.name, not the YAML metadata.
@@ -351,6 +353,9 @@ func rewriteLocalSources(yamlText, snapshotID, templateName string) string {
 
 	for i, step := range pl.Spec.Steps {
 		if step.Run.Source != "" && step.Run.Source != "local" {
+			continue
+		}
+		if step.Run.Path == "" && step.Run.Notebook == "" {
 			continue
 		}
 		pl.Spec.Steps[i].Run.Source = "s3"

@@ -18,6 +18,7 @@ import (
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/process"
 	"github.com/piper/piper/pkg/internal/k8smeta"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/serving"
 	"k8s.io/client-go/kubernetes"
 )
@@ -120,7 +121,10 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	name := k8smeta.SafeName(svc.Metadata.Name)
 	labels := a.k8sLabels("serving", svc.Metadata.Name)
 
-	res := svc.Spec.Driver.Resources
+	var res manifest.ResourceSpec
+	if svc.Spec.Driver.K8s != nil {
+		res = svc.Spec.Driver.K8s.Resources
+	}
 	resReqs := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{},
 		Limits:   corev1.ResourceList{},

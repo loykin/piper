@@ -14,16 +14,19 @@ interface IconButtonProps {
 export function IconButton({ icon, label, onClick, disabled, className, variant = 'ghost' }: IconButtonProps) {
   return (
     <Tooltip>
-      <TooltipTrigger>
-        <Button
+      <TooltipTrigger
+        render={
+          <Button
+          aria-label={label}
           variant={variant}
           size="icon-sm"
           disabled={disabled}
           onClick={onClick}
           className={className}
-        >
-          {icon}
-        </Button>
+          />
+        }
+      >
+        {icon}
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>

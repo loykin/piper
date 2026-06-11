@@ -122,15 +122,6 @@ func (p *Pipeline) ApplyDefaults() *Pipeline {
 
 // mergeDriverSpec returns a DriverSpec where base fields fill in zero values of override.
 func mergeDriverSpec(base, override manifest.DriverSpec) manifest.DriverSpec {
-	if override.Resources.CPU == "" {
-		override.Resources.CPU = base.Resources.CPU
-	}
-	if override.Resources.Memory == "" {
-		override.Resources.Memory = base.Resources.Memory
-	}
-	if override.Resources.GPU == "" {
-		override.Resources.GPU = base.Resources.GPU
-	}
 	if override.Placement.Label == "" {
 		override.Placement.Label = base.Placement.Label
 	}
@@ -168,6 +159,15 @@ func mergeK8sDriverSpec(base, override *manifest.DriverK8sSpec) *manifest.Driver
 	}
 	if out.ImagePullPolicy == "" {
 		out.ImagePullPolicy = base.ImagePullPolicy
+	}
+	if out.Resources.CPU == "" {
+		out.Resources.CPU = base.Resources.CPU
+	}
+	if out.Resources.Memory == "" {
+		out.Resources.Memory = base.Resources.Memory
+	}
+	if out.Resources.GPU == "" {
+		out.Resources.GPU = base.Resources.GPU
 	}
 	if len(out.PodTemplate.Spec.Containers) == 0 {
 		out.PodTemplate = *base.PodTemplate.DeepCopy()

@@ -6,7 +6,20 @@ metadata:
 
 spec:
   steps:
+    - name: prepare-data
+      run:
+        type: command
+        command:
+          - sh
+          - -c
+          - |
+            printf '{"multiplier":3,"values":[1,2,3,4]}\n' > "$PIPER_OUTPUT_DIR/seed.json"
+      outputs:
+        - name: seed
+          path: seed.json
+
     - name: build-features
+      depends_on: [prepare-data]
       run:
         type: notebook
         source: local
@@ -24,12 +37,31 @@ spec:
             value: "false"
       params:
         multiplier: 3
+      inputs:
+        - name: seed
+          from: prepare-data/seed
       outputs:
         - name: features
           path: features.json
 
+    - name: audit-seed
+      depends_on: [prepare-data]
+      run:
+        type: command
+        command:
+          - sh
+          - -c
+          - |
+            python3 -c 'import json, os; seed=json.load(open(os.path.join(os.environ["PIPER_INPUT_DIR"], "seed", "seed.json"))); assert seed == {"multiplier": 3, "values": [1, 2, 3, 4]}; json.dump({"validated": True, "source": "command"}, open(os.path.join(os.environ["PIPER_OUTPUT_DIR"], "audit.json"), "w"))'
+      inputs:
+        - name: seed
+          from: prepare-data/seed
+      outputs:
+        - name: audit
+          path: audit.json
+
     - name: summarize
-      depends_on: [build-features]
+      depends_on: [build-features, audit-seed]
       run:
         type: python
         source: local
@@ -47,6 +79,8 @@ spec:
       inputs:
         - name: features
           from: build-features/features
+        - name: audit
+          from: audit-seed/audit
       outputs:
         - name: summary
           path: summary.json

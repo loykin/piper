@@ -32,8 +32,8 @@ spec:
   driver:
     k8s:
       image: model:latest
-    resources:
-      cpu: "1"
+      resources:
+        cpu: "1"
 `,
 	})
 	if err != nil {

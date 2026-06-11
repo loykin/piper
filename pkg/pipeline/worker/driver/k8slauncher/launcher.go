@@ -521,6 +521,13 @@ func buildEnvVars(env []manifest.EnvVar, extra ...[]string) []corev1.EnvVar {
 	return out
 }
 
+func k8sResources(d manifest.DriverSpec) manifest.ResourceSpec {
+	if d.K8s != nil {
+		return d.K8s.Resources
+	}
+	return manifest.ResourceSpec{}
+}
+
 func buildResourceRequirements(resources manifest.ResourceSpec) corev1.ResourceRequirements {
 	reqs := corev1.ResourceList{}
 	limits := corev1.ResourceList{}
@@ -575,7 +582,7 @@ func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentA
 			Command:         []string{agentBinaryDst},
 			Args:            agentArgs,
 			Env:             buildEnvVars(step.Options.Env, extraEnv...),
-			Resources:       buildResourceRequirements(step.Driver.Resources),
+			Resources:       buildResourceRequirements(k8sResources(step.Driver)),
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "piper-tools", MountPath: "/piper-tools"},
 				{Name: "piper-outputs", MountPath: "/piper-outputs"},

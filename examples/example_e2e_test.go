@@ -165,6 +165,27 @@ func pollRunStatus(t *testing.T, baseURL, runID string, timeout time.Duration) s
 	return ""
 }
 
+func fetchStepLogs(t *testing.T, baseURL, runID, stepName string) string {
+	t.Helper()
+	resp, err := http.Get(fmt.Sprintf("%s/runs/%s/steps/%s/logs", baseURL, runID, stepName))
+	if err != nil {
+		return fmt.Sprintf("fetch logs: %v", err)
+	}
+	defer resp.Body.Close()
+	var lines []struct {
+		Stream string `json:"stream"`
+		Line   string `json:"line"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&lines); err != nil {
+		return fmt.Sprintf("decode logs: %v", err)
+	}
+	var out strings.Builder
+	for _, line := range lines {
+		fmt.Fprintf(&out, "[%s] %s\n", line.Stream, line.Line)
+	}
+	return out.String()
+}
+
 // startBareMetalFixture builds the server and worker binaries, starts them,
 // waits for readiness, and registers t.Cleanup to kill both.
 // Returns the server base URL.
@@ -384,8 +405,9 @@ func TestExampleArtifacts(t *testing.T) {
 }
 
 // TestExampleNotebookPipelineTemplate snapshots a notebook workspace through
-// the PipelineTemplate API, then executes notebook -> Python steps and verifies
-// dependency installation, sibling imports, and artifact handoff.
+// the PipelineTemplate API, then executes a command -> (notebook || command) ->
+// Python DAG and verifies dependency installation, parallel fan-out, join, and
+// artifact handoff.
 func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	pythonEnv := os.Getenv("PIPER_PIPELINE_TEMPLATE_E2E_ENV")
 	if pythonEnv != "" {
@@ -467,7 +489,8 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	templateID := submitPipelineTemplate(t, serverURL, string(pipelineYAML), volumeID)
 	runID := runPipelineTemplate(t, serverURL, templateID)
 	if status := pollRunStatus(t, serverURL, runID, 2*time.Minute); status != "success" {
-		t.Fatalf("run %s: status=%q, want success", runID, status)
+		t.Fatalf("run %s: status=%q, want success\nbuild-features logs:\n%s",
+			runID, status, fetchStepLogs(t, serverURL, runID, "build-features"))
 	}
 
 	summaryPath := filepath.Join(storeDir, runID, "summarize", "summary", "summary.json")
@@ -476,14 +499,15 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 		t.Fatalf("read final artifact: %v", err)
 	}
 	var summary struct {
-		Count  int    `json:"count"`
-		Sum    int    `json:"sum"`
-		Source string `json:"source"`
+		Count       int    `json:"count"`
+		Sum         int    `json:"sum"`
+		Source      string `json:"source"`
+		AuditSource string `json:"audit_source"`
 	}
 	if err := json.Unmarshal(summaryBytes, &summary); err != nil {
 		t.Fatalf("decode final artifact: %v", err)
 	}
-	if summary.Count != 4 || summary.Sum != 30 || summary.Source != "notebook" {
+	if summary.Count != 4 || summary.Sum != 30 || summary.Source != "notebook" || summary.AuditSource != "command" {
 		t.Fatalf("unexpected final artifact: %+v", summary)
 	}
 }

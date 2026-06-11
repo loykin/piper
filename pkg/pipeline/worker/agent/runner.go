@@ -100,12 +100,12 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 	// When using a remote store, local dirs are transient staging areas only.
 	// Registered before the logFile defer so it executes after logFile.Close() (LIFO).
 	if r.cleanWorkdir {
-		defer r.cleanLocalWorkdir(task.RunID, step.Name, step.Inputs)
+		defer r.cleanLocalWorkdir(task.RunID, step.Name)
 	}
 
 	// Download input artifacts from the store
 	if r.store != nil && len(step.Inputs) > 0 {
-		if err := r.downloadInputs(ctx, task.RunID, step.Inputs); err != nil {
+		if err := r.downloadInputs(ctx, task.RunID, step.Name, step.Inputs); err != nil {
 			slog.Error("download inputs failed", "task_id", task.ID, "err", err)
 			return r.failedResult(task, err, startedAt)
 		}
@@ -209,7 +209,7 @@ func (r *Runner) execute(
 	cfg := executor.ExecConfig{
 		WorkDir:   task.WorkDir,
 		SourceDir: filepath.Join(outputDir, "_source"),
-		InputDir:  filepath.Join(r.cfg.InputDir, task.RunID),
+		InputDir:  filepath.Join(r.cfg.InputDir, task.RunID, step.Name),
 		OutputDir: outputDir,
 		RunID:     task.RunID,
 		StepName:  step.Name,
@@ -410,19 +410,17 @@ func (r *Runner) setAuth(req *http.Request) {
 
 // ─── Artifact transfer ────────────────────────────────────────────────────────
 
-// cleanLocalWorkdir removes the step's local output dir and any downloaded input
-// dirs. Called only when using a remote store; local dirs are transient staging areas.
-func (r *Runner) cleanLocalWorkdir(runID, stepName string, inputs []pipeline.Artifact) {
+// cleanLocalWorkdir removes the step's local output and input staging dirs.
+// Called only when using a remote store; local dirs are transient staging areas.
+func (r *Runner) cleanLocalWorkdir(runID, stepName string) {
 	_ = os.RemoveAll(filepath.Join(r.cfg.OutputDir, runID, stepName))
-	for _, art := range inputs {
-		_ = os.RemoveAll(filepath.Join(r.cfg.InputDir, runID, art.Name))
-	}
+	_ = os.RemoveAll(filepath.Join(r.cfg.InputDir, runID, stepName))
 }
 
 // downloadInputs downloads step input artifacts from the store to the local filesystem.
 // Store key: {runID}/{fromStep}/{artifactName}/…
-// Local:     {inputDir}/{runID}/{artifactName}/…
-func (r *Runner) downloadInputs(ctx context.Context, runID string, inputs []pipeline.Artifact) error {
+// Local:     {inputDir}/{runID}/{stepName}/{artifactName}/…
+func (r *Runner) downloadInputs(ctx context.Context, runID, stepName string, inputs []pipeline.Artifact) error {
 	for _, art := range inputs {
 		if art.From == "" {
 			continue
@@ -433,7 +431,7 @@ func (r *Runner) downloadInputs(ctx context.Context, runID string, inputs []pipe
 		}
 		fromStep, fromArtifact := parts[0], parts[1]
 		prefix := fmt.Sprintf("%s/%s/%s", runID, fromStep, fromArtifact)
-		destDir := filepath.Join(r.cfg.InputDir, runID, art.Name)
+		destDir := filepath.Join(r.cfg.InputDir, runID, stepName, art.Name)
 
 		if err := storage.DownloadDir(ctx, r.store, prefix+"/", destDir); err != nil {
 			return fmt.Errorf("download %q: %w", art.Name, err)

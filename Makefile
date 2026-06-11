@@ -1,4 +1,4 @@
-.PHONY: build ui docker test test-notebook-conformance test-e2e test-process-notebook-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto
+.PHONY: build ui docker test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
@@ -38,6 +38,9 @@ test-notebook-conformance:
 # E2E tests (fully hermetic, no external infra required)
 test-e2e:
 	go test -tags=e2e -v -timeout=120s ./...
+
+test-frontend-e2e:
+	cd frontend && pnpm test:e2e
 
 test-process-notebook-e2e:
 	PIPER_NOTEBOOK_PROCESS_E2E=1 \

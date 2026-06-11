@@ -1,3 +1,5 @@
+import { parse as parseYAML } from 'yaml'
+
 export type PipelineTaskType = 'command' | 'python' | 'notebook'
 
 export interface PipelineArtifactDraft {
@@ -77,171 +79,59 @@ export function defaultPipelineDraft(): PipelineDraft {
   return { name: 'my-pipeline', steps: [] }
 }
 
-function trimQuotes(value: string): string {
-  return value.trim().replace(/^['"]|['"]$/g, '')
-}
-
-function parseInlineList(input: string): string[] {
-  return input
-    .split(',')
-    .map(part => trimQuotes(part))
-    .filter(Boolean)
-}
-
-function parseMapBlock(block: string, key: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  const match = block.match(new RegExp(`^\\s*${key}:([\\s\\S]*?)(?=\\n\\s+\\w|\\n\\s*-\\s+name:|$)`, 'm'))
-  if (!match) return out
-  for (const m of match[1].matchAll(/^\s*([A-Za-z0-9_.-]+):\s*(.+)$/gm)) {
-    const k = trimQuotes(m[1])
-    const v = trimQuotes(m[2])
-    if (k) out[k] = v
-  }
-  return out
-}
-
-function parseArtifactsBlock(block: string, key: 'inputs' | 'outputs'): PipelineArtifactDraft[] {
-  const match = block.match(new RegExp(`^\\s*${key}:([\\s\\S]*?)(?=\\n\\s+\\w|\\n\\s*-\\s+name:|$)`, 'm'))
-  if (!match) return []
-  const section = match[1].trim()
-  if (!section) return []
-  const chunks = section.split(/\n(?=\s*-\s+name:)/)
-  const items: PipelineArtifactDraft[] = []
-  for (const chunk of chunks) {
-    const nameMatch = chunk.match(/^\s*-\s+name:\s*(.+)$/m)
-    if (!nameMatch) continue
-    const pathMatch = chunk.match(/^\s+path:\s*(.+)$/m)
-    const fromMatch = chunk.match(/^\s+from:\s*(.+)$/m)
-    items.push({
-      name: trimQuotes(nameMatch[1]),
-      path: trimQuotes(pathMatch?.[1] ?? ''),
-      from: trimQuotes(fromMatch?.[1] ?? ''),
-    })
-  }
-  return items
-}
-
-function parseTaskType(block: string): PipelineTaskType {
-  const typeMatch = block.match(/^\s*type:\s*(.+)$/m)
-  const type = trimQuotes(typeMatch?.[1] ?? 'command')
-  if (type === 'python' || type === 'notebook' || type === 'command') return type
-  return 'command'
-}
-
-function parseSourcePath(block: string, type: PipelineTaskType): string {
-  const notebookMatch = block.match(/^\s*notebook:\s*(.+)$/m)
-  if (type === 'notebook') return trimQuotes(notebookMatch?.[1] ?? '')
-  const pathMatch = block.match(/^\s*path:\s*(.+)$/m)
-  return trimQuotes(pathMatch?.[1] ?? '')
-}
-
-function parseDeps(block: string): string[] {
-  const deps: string[] = []
-  const inlineDeps = block.match(/deps:\s*\[([^\]]*)]/)
-  if (inlineDeps) {
-    deps.push(...parseInlineList(inlineDeps[1]))
-  } else {
-    const depsBlock = block.match(/deps:([\s\S]*?)(?=\n\s+\w|\n\s*-\s+name:|$)/)
-    if (depsBlock) {
-      for (const m of depsBlock[1].matchAll(/^\s*-\s+(.+)$/gm)) {
-        const dep = trimQuotes(m[1])
-        if (dep) deps.push(dep)
-      }
-    }
-  }
-  return deps
-}
-
-function parseCommand(block: string): string[] {
-  const command: string[] = []
-  const inlineCommand = block.match(/command:\s*\[([^\]]*)]/)
-  if (inlineCommand) {
-    command.push(...parseInlineList(inlineCommand[1]))
-  } else {
-    const commandBlock = block.match(/command:([\s\S]*?)(?=\n\s+\w|\n\s*-\s+name:|$)/)
-    if (commandBlock) {
-      for (const m of commandBlock[1].matchAll(/^\s*-\s+(.+)$/gm)) {
-        const arg = trimQuotes(m[1])
-        if (arg) command.push(arg)
-      }
-    }
-  }
-  return command
-}
-
-function parseStepFields(block: string): Omit<PipelineStepDraft, 'id' | 'name'> {
-  const type = parseTaskType(block)
-  const sourcePath = parseSourcePath(block, type)
-  const deps = parseDeps(block)
-  const command = parseCommand(block)
-  const params = Object.entries(parseMapBlock(block, 'params')).map(([key, value]) => ({ key, value }))
-  const env = Object.entries(parseMapBlock(block, 'env')).map(([key, value]) => ({ key, value }))
-  const inputs = parseArtifactsBlock(block, 'inputs')
-  const outputs = parseArtifactsBlock(block, 'outputs')
-
-  const resourcesBlock = parseMapBlock(block, 'resources')
-
-  return {
-    type,
-    sourcePath,
-    deps,
-    dependsOn: [],
-    command: command.length > 0 ? command : (type === 'command' ? [...DEFAULT_STEP_COMMAND] : []),
-    inputs,
-    outputs,
-    params,
-    env,
-    cpu: resourcesBlock.cpu ?? '',
-    memory: resourcesBlock.memory ?? '',
-    gpu: resourcesBlock.gpu ?? '',
-  }
-}
-
 export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
-  const source = yaml || ''
-  const nameMatch = source.match(/^\s*name:\s*(.+)$/m)
-  const name = nameMatch ? trimQuotes(nameMatch[1]) : 'my-pipeline'
-  const steps: PipelineStepDraft[] = []
-  const blocks = source.split(/\n(?=\s*-\s+name:)/)
-
-  for (const block of blocks) {
-    const stepNameMatch = block.match(/^\s*-\s+name:\s*(.+)$/m)
-    if (!stepNameMatch) continue
-    const stepName = trimQuotes(stepNameMatch[1]) || nextStepName(steps.length)
-    const dependsOn: string[] = []
-    const inlineDepends = block.match(/depends_on:\s*\[([^\]]*)]/)
-    if (inlineDepends) {
-      dependsOn.push(...parseInlineList(inlineDepends[1]))
-    } else {
-      const dependsBlock = block.match(/depends_on:([\s\S]*?)(?=\n\s+\w|\n\s*-\s+name:|$)/)
-      if (dependsBlock) {
-        for (const m of dependsBlock[1].matchAll(/^\s*-\s+(.+)$/gm)) {
-          const dep = trimQuotes(m[1])
-          if (dep) dependsOn.push(dep)
+  const document = parseYAML(yaml || '') as {
+    metadata?: { name?: unknown }
+    spec?: { steps?: unknown[] }
+  } | null
+  const rawSteps = Array.isArray(document?.spec?.steps) ? document.spec.steps : []
+  const steps = rawSteps.map((value, index) => {
+    const step = value as Record<string, unknown>
+    const run = (step.run ?? {}) as Record<string, unknown>
+    const rawType = String(run.type ?? (run.notebook ? 'notebook' : 'command'))
+    const type: PipelineTaskType = rawType === 'python' || rawType === 'notebook' ? rawType : 'command'
+    const artifacts = (key: 'inputs' | 'outputs'): PipelineArtifactDraft[] => {
+      const values = Array.isArray(step[key]) ? step[key] : []
+      return values.map(value => {
+        const artifact = value as Record<string, unknown>
+        return {
+          name: String(artifact.name ?? ''),
+          path: String(artifact.path ?? ''),
+          from: String(artifact.from ?? ''),
         }
-      }
+      })
     }
+    const paramsObject = (step.params ?? {}) as Record<string, unknown>
+    const options = (step.options ?? {}) as Record<string, unknown>
+    const envValues = Array.isArray(options.env) ? options.env : []
+    const driver = (step.driver ?? {}) as Record<string, unknown>
+    const k8s = (driver.k8s ?? {}) as Record<string, unknown>
+    const resources = (k8s.resources ?? {}) as Record<string, unknown>
 
-    const parsed = parseStepFields(block)
-    steps.push({
+    return {
       id: nextStepId(),
-      name: stepName,
-      dependsOn,
-      type: parsed.type,
-      sourcePath: parsed.sourcePath,
-      deps: parsed.deps,
-      command: parsed.command,
-      inputs: parsed.inputs,
-      outputs: parsed.outputs,
-      params: parsed.params,
-      env: parsed.env,
-      cpu: parsed.cpu,
-      memory: parsed.memory,
-      gpu: parsed.gpu,
-    })
-  }
+      name: String(step.name ?? nextStepName(index)),
+      type,
+      sourcePath: String(type === 'notebook' ? (run.notebook ?? run.path ?? '') : (run.path ?? '')),
+      deps: Array.isArray(run.deps) ? run.deps.map(String) : [],
+      dependsOn: Array.isArray(step.depends_on) ? step.depends_on.map(String) : [],
+      command: Array.isArray(run.command)
+        ? run.command.map(String)
+        : (type === 'command' ? [...DEFAULT_STEP_COMMAND] : []),
+      inputs: artifacts('inputs'),
+      outputs: artifacts('outputs'),
+      params: Object.entries(paramsObject).map(([key, value]) => ({ key, value: String(value) })),
+      env: envValues.map(value => {
+        const entry = value as Record<string, unknown>
+        return { key: String(entry.name ?? ''), value: String(entry.value ?? '') }
+      }),
+      cpu: String(resources.cpu ?? ''),
+      memory: String(resources.memory ?? ''),
+      gpu: String(resources.gpu ?? ''),
+    }
+  })
 
-  return { name, steps }
+  return { name: String(document?.metadata?.name ?? 'my-pipeline'), steps }
 }
 
 function formatArtifactBlock(key: 'inputs' | 'outputs', items: PipelineArtifactDraft[]): string[] {

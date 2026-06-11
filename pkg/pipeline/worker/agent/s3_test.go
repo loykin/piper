@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
@@ -180,5 +181,59 @@ func TestRun_s3_cleansLocalWorkdirAfterRun(t *testing.T) {
 	stepDir := filepath.Join(outDir, task.RunID, "clean-step")
 	if _, err := os.Stat(stepDir); !os.IsNotExist(err) {
 		t.Errorf("local step dir should be removed after store upload, but still exists: %s", stepDir)
+	}
+}
+
+func TestRun_s3_parallelConsumersUseIsolatedInputDirs(t *testing.T) {
+	srv, store := fakeS3(t)
+	masterSrv := fakeMasterServer(t)
+
+	const runID = "run-parallel-inputs"
+	if err := store.Put(context.Background(),
+		runID+"/prepare/seed/seed.txt",
+		mustReader("shared input\n"),
+		-1,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	outDir := t.TempDir()
+	r, err := agent.New(agent.Config{
+		MasterURL:  masterSrv.URL,
+		OutputDir:  outDir,
+		InputDir:   outDir,
+		StorageURL: fakeS3StorageURL(srv),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeConsumer := func(name, command string) *proto.Task {
+		return makeTaskWithRunID(t, pipeline.Step{
+			Name: name,
+			Run: pipeline.Run{
+				Command: []string{"sh", "-c", command},
+			},
+			Inputs: []pipeline.Artifact{
+				{Name: "seed", From: "prepare/seed"},
+			},
+			Outputs: []pipeline.Artifact{
+				{Name: "result", Path: "result.txt"},
+			},
+		}, runID)
+	}
+
+	slow := makeConsumer("slow", "sleep 1; cat $PIPER_INPUT_DIR/seed/seed.txt > $PIPER_OUTPUT_DIR/result.txt")
+	fast := makeConsumer("fast", "cat $PIPER_INPUT_DIR/seed/seed.txt > $PIPER_OUTPUT_DIR/result.txt")
+
+	results := make(chan proto.TaskResult, 2)
+	go func() { results <- r.Run(context.Background(), slow) }()
+	go func() { results <- r.Run(context.Background(), fast) }()
+
+	for range 2 {
+		result := <-results
+		if result.Status != proto.TaskStatusDone {
+			t.Fatalf("task %s status = %q, error = %s", result.TaskID, result.Status, result.Error)
+		}
 	}
 }

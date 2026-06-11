@@ -9,19 +9,10 @@ import (
 // DriverSpec describes where and how to run a workload.
 // "What to run" (command, port, etc.) belongs in each domain's Run block.
 type DriverSpec struct {
-	Resources ResourceSpec       `yaml:"resources,omitempty" json:"resources,omitempty"`
 	Placement PlacementSpec      `yaml:"placement,omitempty" json:"placement,omitempty"`
 	K8s       *DriverK8sSpec     `yaml:"k8s,omitempty"       json:"k8s,omitempty"`
 	Docker    *DriverDockerSpec  `yaml:"docker,omitempty"    json:"docker,omitempty"`
 	Process   *DriverProcessSpec `yaml:"process,omitempty"  json:"process,omitempty"`
-}
-
-// ResourceSpec is a platform-agnostic resource hint.
-// Each driver translates it to its own format.
-type ResourceSpec struct {
-	CPU    string `yaml:"cpu,omitempty"    json:"cpu,omitempty"`
-	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
-	GPU    string `yaml:"gpu,omitempty"    json:"gpu,omitempty"`
 }
 
 // PlacementSpec controls which worker handles the workload and which runtime to use.
@@ -40,23 +31,33 @@ type PlacementSpec struct {
 	Runtime string `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 }
 
+// ResourceSpec is a Kubernetes resource hint.
+// Translated to container resource requests and limits by K8s drivers.
+type ResourceSpec struct {
+	CPU    string `yaml:"cpu,omitempty"    json:"cpu,omitempty"`
+	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
+	GPU    string `yaml:"gpu,omitempty"    json:"gpu,omitempty"`
+}
+
 // DriverK8sSpec holds Kubernetes-specific driver settings.
 // PodTemplate uses a custom UnmarshalYAML because yaml.v3 is incompatible with
 // corev1 json tags and resource.Quantity — we round-trip through sigs.k8s.io/yaml.
 type DriverK8sSpec struct {
-	Image           string                 `yaml:"image,omitempty"            json:"image,omitempty"`
-	Namespace       string                 `yaml:"namespace,omitempty"        json:"namespace,omitempty"`
-	Replicas        int                    `yaml:"replicas,omitempty"         json:"replicas,omitempty"`
+	Image           string                 `yaml:"image,omitempty"             json:"image,omitempty"`
+	Namespace       string                 `yaml:"namespace,omitempty"         json:"namespace,omitempty"`
+	Replicas        int                    `yaml:"replicas,omitempty"          json:"replicas,omitempty"`
 	ImagePullPolicy string                 `yaml:"image_pull_policy,omitempty" json:"image_pull_policy,omitempty"`
-	PodTemplate     corev1.PodTemplateSpec `yaml:"-"                          json:"pod_template,omitempty"`
+	Resources       ResourceSpec           `yaml:"resources,omitempty"         json:"resources,omitempty"`
+	PodTemplate     corev1.PodTemplateSpec `yaml:"-"                           json:"pod_template,omitempty"`
 }
 
 type driverK8sAlias struct {
-	Image           string    `yaml:"image,omitempty"`
-	Namespace       string    `yaml:"namespace,omitempty"`
-	Replicas        int       `yaml:"replicas,omitempty"`
-	ImagePullPolicy string    `yaml:"image_pull_policy,omitempty"`
-	PodTemplate     yaml.Node `yaml:"pod_template,omitempty"`
+	Image           string       `yaml:"image,omitempty"`
+	Namespace       string       `yaml:"namespace,omitempty"`
+	Replicas        int          `yaml:"replicas,omitempty"`
+	ImagePullPolicy string       `yaml:"image_pull_policy,omitempty"`
+	Resources       ResourceSpec `yaml:"resources,omitempty"`
+	PodTemplate     yaml.Node    `yaml:"pod_template,omitempty"`
 }
 
 func (s *DriverK8sSpec) UnmarshalYAML(value *yaml.Node) error {
@@ -68,6 +69,7 @@ func (s *DriverK8sSpec) UnmarshalYAML(value *yaml.Node) error {
 	s.Namespace = a.Namespace
 	s.Replicas = a.Replicas
 	s.ImagePullPolicy = a.ImagePullPolicy
+	s.Resources = a.Resources
 	if a.PodTemplate.Kind != 0 {
 		raw, err := yaml.Marshal(&a.PodTemplate)
 		if err != nil {

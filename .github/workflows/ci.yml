@@ -121,6 +121,52 @@ jobs:
           PIPER_PIPELINE_TEMPLATE_E2E_ENV=/tmp/piper-pipeline-template-e2e \
             go test -tags=example_e2e -v -timeout=5m ./examples/
 
+  frontend-e2e:
+    name: Frontend E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download Go dependencies
+        run: go mod download
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install pipeline notebook environment
+        run: |
+          python -m venv /tmp/piper-pipeline-template-e2e
+          /tmp/piper-pipeline-template-e2e/bin/pip install --quiet papermill ipykernel setuptools
+
+      - name: Run frontend E2E
+        working-directory: frontend
+        env:
+          PIPER_PIPELINE_TEMPLATE_E2E_ENV: /tmp/piper-pipeline-template-e2e
+        run: pnpm test:e2e
+
   k8s-e2e:
     name: K8s E2E
     runs-on: ubuntu-latest

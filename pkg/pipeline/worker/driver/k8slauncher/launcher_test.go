@@ -181,8 +181,8 @@ func TestBuildJob_stepRuntimeOptions(t *testing.T) {
 			{Name: "WORLD_SIZE", Value: "4"},
 		}},
 		Driver: manifest.DriverSpec{
-			Resources: manifest.ResourceSpec{CPU: "2", Memory: "4Gi", GPU: "1"},
 			K8s: &manifest.DriverK8sSpec{
+				Resources: manifest.ResourceSpec{CPU: "2", Memory: "4Gi", GPU: "1"},
 				PodTemplate: func() corev1.PodTemplateSpec {
 					var tpl corev1.PodTemplateSpec
 					tpl.Spec.NodeSelector = map[string]string{"accelerator": "nvidia-a100"}

@@ -1,8 +1,8 @@
 package agent_test
 
 import (
-	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,11 +11,11 @@ import (
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
-func TestTaskFromAgentInputFullTaskPreservesContract(t *testing.T) {
+func TestTaskCodecPreservesContract(t *testing.T) {
 	scheduledAt := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	step := pipeline.Step{
 		Name:   "train",
-		Run:    pipeline.Run{Command: []string{"echo", "old"}},
+		Run:    pipeline.Run{Command: []string{"echo", "train"}},
 		Params: map[string]any{"lr": "0.1"},
 	}
 	stepJSON, err := json.Marshal(step)
@@ -39,41 +39,17 @@ func TestTaskFromAgentInputFullTaskPreservesContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	task, err := agent.TaskFromAgentInput(encoded, "", "", "", "", []string{"echo", "new"})
+	task, err := agent.DecodeTask(encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.ID != original.ID || task.WorkDir != original.WorkDir || task.Attempt != original.Attempt {
+	if !reflect.DeepEqual(task, original) {
 		t.Fatalf("task contract not preserved: %#v", task)
-	}
-	if task.Vars.ScheduledAt == nil || !task.Vars.ScheduledAt.Equal(scheduledAt) {
-		t.Fatalf("scheduled_at = %v, want %v", task.Vars.ScheduledAt, scheduledAt)
-	}
-	if task.RunParams["lr"] != "0.2" {
-		t.Fatalf("RunParams = %#v, want lr override", task.RunParams)
-	}
-	var decodedStep pipeline.Step
-	if err := json.Unmarshal(task.Step, &decodedStep); err != nil {
-		t.Fatal(err)
-	}
-	if got := decodedStep.Run.Command; len(got) != 2 || got[1] != "old" {
-		t.Fatalf("command = %#v, want original task command [echo old]", got)
 	}
 }
 
-func TestTaskFromAgentInputLegacyStep(t *testing.T) {
-	step := pipeline.Step{Name: "legacy", Run: pipeline.Run{Command: []string{"echo", "legacy"}}}
-	stepJSON, err := json.Marshal(step)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stepB64 := base64.StdEncoding.EncodeToString(stepJSON)
-
-	task, err := agent.TaskFromAgentInput("", "task-1", "run-1", "legacy", stepB64, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if task.ID != "task-1" || task.RunID != "run-1" || task.StepName != "legacy" {
-		t.Fatalf("legacy task = %#v", task)
+func TestDecodeTaskRejectsInvalidInput(t *testing.T) {
+	if _, err := agent.DecodeTask("not-base64"); err == nil {
+		t.Fatal("expected invalid task encoding to fail")
 	}
 }

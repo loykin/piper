@@ -28,10 +28,6 @@ func init() {
 func runEmbeddedAgentExec() int {
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	taskB64 := fs.String("task", "", "")
-	taskID := fs.String("task-id", "", "")
-	runID := fs.String("run-id", "", "")
-	stepName := fs.String("step-name", "", "")
-	stepB64 := fs.String("step", "", "")
 	masterURL := fs.String("master", "", "")
 	token := fs.String("token", "", "")
 	outputDir := fs.String("output-dir", "./piper-outputs", "")
@@ -46,7 +42,12 @@ func runEmbeddedAgentExec() int {
 		return 1
 	}
 
-	task, err := agentpkg.TaskFromAgentInput(*taskB64, *taskID, *runID, *stepName, *stepB64, fs.Args())
+	if len(fs.Args()) != 0 {
+		slog.Error("agent exec: unexpected positional arguments", "args", fs.Args())
+		return 1
+	}
+
+	task, err := agentpkg.DecodeTask(*taskB64)
 	if err != nil {
 		slog.Error("agent exec: decode task", "err", err)
 		return 1

@@ -234,10 +234,6 @@ func waitHTTP(ctx context.Context, url string) error {
 func runAgentExec(args []string) int {
 	var (
 		taskB64    string
-		taskID     string
-		runID      string
-		stepName   string
-		stepB64    string
 		masterURL  string
 		token      string
 		outputDir  string
@@ -248,10 +244,6 @@ func runAgentExec(args []string) int {
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
-	fs.StringVar(&taskID, "task-id", "", "")
-	fs.StringVar(&runID, "run-id", "", "")
-	fs.StringVar(&stepName, "step-name", "", "")
-	fs.StringVar(&stepB64, "step", "", "")
 	fs.StringVar(&masterURL, "master", "", "")
 	fs.StringVar(&token, "token", "", "")
 	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
@@ -263,7 +255,10 @@ func runAgentExec(args []string) int {
 		return 1
 	}
 
-	task, err := agent.TaskFromAgentInput(taskB64, taskID, runID, stepName, stepB64, fs.Args())
+	if len(fs.Args()) != 0 {
+		return 1
+	}
+	task, err := agent.DecodeTask(taskB64)
 	if err != nil {
 		return 1
 	}

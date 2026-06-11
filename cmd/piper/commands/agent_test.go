@@ -58,7 +58,7 @@ func TestAgentExecReportsToDummyMaster(t *testing.T) {
 		taskB64:   taskB64,
 		outputDir: t.TempDir(),
 		inputDir:  t.TempDir(),
-	}, nil); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 

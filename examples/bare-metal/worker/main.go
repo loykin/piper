@@ -83,7 +83,11 @@ func runAgentExec(args []string) {
 		os.Exit(1)
 	}
 
-	task, err := agent.TaskFromAgentInput(*taskB64, "", "", "", "", fs.Args())
+	if len(fs.Args()) != 0 {
+		_, _ = fmt.Fprintf(os.Stderr, "agent exec: unexpected positional arguments: %v\n", fs.Args())
+		os.Exit(1)
+	}
+	task, err := agent.DecodeTask(*taskB64)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: decode task: %v\n", err)
 		os.Exit(1)

@@ -26,10 +26,6 @@ type agentExecFlags struct {
 	master     string
 	token      string
 	taskB64    string
-	taskID     string
-	runID      string
-	stepName   string
-	stepB64    string
 	outputDir  string
 	inputDir   string
 	storageURL string
@@ -43,20 +39,17 @@ func newAgentExecCmd() *cobra.Command {
 	var f agentExecFlags
 
 	cmd := &cobra.Command{
-		Use:   "exec [flags] -- <command...>",
+		Use:   "exec [flags]",
 		Short: "Execute a step and write the result",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentExec(cmd.Context(), f, args)
+			return runAgentExec(cmd.Context(), f)
 		},
 	}
 
 	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL")
 	cmd.Flags().StringVar(&f.token, "token", "", "auth token")
 	cmd.Flags().StringVar(&f.taskB64, "task", "", "base64-encoded proto.Task JSON")
-	cmd.Flags().StringVar(&f.taskID, "task-id", "", "task ID")
-	cmd.Flags().StringVar(&f.runID, "run-id", "", "run ID")
-	cmd.Flags().StringVar(&f.stepName, "step-name", "", "step name")
-	cmd.Flags().StringVar(&f.stepB64, "step", "", "base64-encoded pipeline.Step JSON")
 	cmd.Flags().StringVar(&f.outputDir, "output-dir", "/piper-outputs", "local output directory")
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
 	cmd.Flags().StringVar(&f.storageURL, "storage-url", "", "artifact store URL (s3://, file://, http://)")
@@ -66,7 +59,7 @@ func newAgentExecCmd() *cobra.Command {
 	return cmd
 }
 
-func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error {
+func runAgentExec(ctx context.Context, f agentExecFlags) error {
 	// Git credentials: prefer flags, fall back to environment variables.
 	gitUser := f.gitUser
 	if gitUser == "" {
@@ -77,7 +70,7 @@ func runAgentExec(ctx context.Context, f agentExecFlags, cmdArgs []string) error
 		gitToken = os.Getenv("PIPER_GIT_TOKEN")
 	}
 
-	task, err := agent.TaskFromAgentInput(f.taskB64, f.taskID, f.runID, f.stepName, f.stepB64, cmdArgs)
+	task, err := agent.DecodeTask(f.taskB64)
 	if err != nil {
 		return err
 	}

@@ -462,11 +462,13 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	t.Cleanup(func() { _ = p.Close() })
 
 	const volumeID = "notebook-template-volume"
+	const projectID = "default"
+	projectAPI := serverURL + "/api/projects/" + projectID
 	now := time.Now()
 	if _, err := db.Exec(
-		`INSERT INTO notebook_volumes (id, label, work_dir, status, worker_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		volumeID, "notebook-template", workspace, notebook.VolumeStatusReleased, "", now, now,
+		`INSERT INTO notebook_volumes (project_id, id, label, work_dir, status, worker_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		projectID, volumeID, "notebook-template", workspace, notebook.VolumeStatusReleased, "", now, now,
 	); err != nil {
 		t.Fatalf("register notebook volume: %v", err)
 	}
@@ -474,7 +476,7 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	go func() { _ = p.Serve(ctx, piper.ServeOption{AgentAddr: agentAddr}) }()
-	waitReady(t, serverURL+"/api/pipelines", 10*time.Second)
+	waitReady(t, projectAPI+"/pipelines", 10*time.Second)
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
@@ -496,8 +498,8 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	go func() { _ = w.Run(ctx) }()
 	waitAgentRegistered(t, serverURL, "", 10*time.Second)
 
-	templateID := submitPipelineTemplate(t, serverURL, string(pipelineYAML), volumeID)
-	runID := runPipelineTemplate(t, serverURL, templateID)
+	templateID := submitPipelineTemplate(t, projectAPI, string(pipelineYAML), volumeID)
+	runID := runPipelineTemplate(t, projectAPI, templateID)
 	if status := pollRunStatus(t, serverURL, runID, 2*time.Minute); status != "success" {
 		t.Fatalf("run %s: status=%q, want success\nbuild-features logs:\n%s",
 			runID, status, fetchStepLogs(t, serverURL, runID, "build-features"))
@@ -522,14 +524,14 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	}
 }
 
-func submitPipelineTemplate(t *testing.T, baseURL, yamlText, volumeID string) string {
+func submitPipelineTemplate(t *testing.T, projectAPI, yamlText, volumeID string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{
 		"name":      "notebook-template-flow",
 		"yaml":      yamlText,
 		"volume_id": volumeID,
 	})
-	resp, err := http.Post(baseURL+"/api/pipelines", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(projectAPI+"/pipelines", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /pipelines: %v", err)
 	}
@@ -547,9 +549,9 @@ func submitPipelineTemplate(t *testing.T, baseURL, yamlText, volumeID string) st
 	return result.ID
 }
 
-func runPipelineTemplate(t *testing.T, baseURL, templateID string) string {
+func runPipelineTemplate(t *testing.T, projectAPI, templateID string) string {
 	t.Helper()
-	resp, err := http.Post(baseURL+"/api/pipelines/"+templateID+"/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	resp, err := http.Post(projectAPI+"/pipelines/"+templateID+"/run", "application/json", bytes.NewReader([]byte(`{}`)))
 	if err != nil {
 		t.Fatalf("POST /pipelines/:id/run: %v", err)
 	}

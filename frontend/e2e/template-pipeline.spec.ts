@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test'
 
 const backend = 'http://127.0.0.1:18080'
+const projectID = 'e2e'
+const projectBase = `/api/projects/${projectID}`
+const uiBase = `/ui/projects/${projectID}`
 
 const pipelineYAML = `apiVersion: piper/v1
 kind: Pipeline
@@ -51,7 +54,7 @@ spec:
 `
 
 test('submits and runs a mixed template with dependency files in S3', async ({ page }) => {
-  await page.goto('/ui/pipelines/editor?source=notebook-volume&volume=frontend-e2e-volume&name=frontend-mixed')
+  await page.goto(`${uiBase}/pipelines/editor?source=notebook-volume&volume=frontend-e2e-volume&name=frontend-mixed`)
   await expect(page.getByRole('heading', { name: 'Pipeline Editor' })).toBeVisible()
   await expect(page.getByText('Frontend E2E Workspace')).toBeVisible()
 
@@ -70,9 +73,11 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
   await page.getByRole('button', { name: 'Submit' }).click()
   await expect(page.getByRole('heading', { name: 'Submit Pipeline Template' })).toBeVisible()
   await page.getByRole('button', { name: 'Confirm Submit' }).click()
-  await page.waitForURL(/\/ui\/pipelines\?name=frontend-mixed/)
+  await page.waitForURL(new RegExp(`/ui/projects/${projectID}/pipelines\\?name=frontend-mixed`))
 
-  const templatesResponse = await page.request.get(`${backend}/api/pipelines?name=frontend-mixed`)
+  const templatesResponse = await page.request.get(
+    `${backend}${projectBase}/pipelines?name=frontend-mixed`,
+  )
   expect(templatesResponse.ok()).toBeTruthy()
   const templates = await templatesResponse.json() as Array<{ id: string; snapshot_id: string }>
   expect(templates).toHaveLength(1)
@@ -89,17 +94,17 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
   ]))
 
   await page.getByRole('button', { name: 'Run' }).click()
-  await page.waitForURL(/\/ui\/runs\/run-/)
+  await page.waitForURL(new RegExp(`/ui/projects/${projectID}/runs/run-`))
   const runID = page.url().split('/').pop()!
 
   await expect.poll(async () => {
-    const response = await page.request.get(`${backend}/runs/${runID}`)
-    const body = await response.json() as { run: { status: string } }
-    return body.run.status
+    const response = await page.request.get(`${backend}${projectBase}/runs/${runID}`)
+    const body = await response.json() as { status: string }
+    return body.status
   }, { timeout: 90_000 }).toBe('success')
 
   const summaryResponse = await page.request.get(
-    `${backend}/runs/${runID}/artifacts/summarize/summary/summary.json`,
+    `${backend}${projectBase}/runs/${runID}/artifacts/summarize/summary/summary.json`,
   )
   expect(summaryResponse.ok()).toBeTruthy()
   expect(await summaryResponse.json()).toEqual({

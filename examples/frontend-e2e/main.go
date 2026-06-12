@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -112,6 +113,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Create the default e2e project so that project-scoped API calls work.
+	if err := createE2EProject(masterURL); err != nil {
+		log.Fatalf("create e2e project: %v", err)
+	}
+
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
 			Addr:        *agentAddr,
@@ -178,6 +184,23 @@ func startFakeS3(ctx context.Context) (string, *s3.Client, func(), error) {
 		_ = server.Shutdown(shutdownCtx)
 	}
 	return storageURL, client, stop, nil
+}
+
+const e2eProjectID = "e2e"
+
+func createE2EProject(masterURL string) error {
+	body, _ := json.Marshal(map[string]any{"id": e2eProjectID, "name": "E2E"})
+	resp, err := http.Post(masterURL+"/api/projects", "application/json",
+		io.NopCloser(bytes.NewReader(body)))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, b)
+	}
+	return nil
 }
 
 func e2eHandler(client *s3.Client) http.Handler {

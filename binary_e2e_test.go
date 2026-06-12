@@ -119,6 +119,9 @@ source:
 
 	waitHTTPReady(t, serverURL+"/health", 15*time.Second)
 
+	// Create the default project before submitting runs.
+	binaryE2ECreateProject(t, serverURL, "e2e")
+
 	// ── Worker subprocess ─────────────────────────────────────────────────────
 	// --master and --agent-addr are required; S3 credentials come from the config file.
 	wrkCmd := exec.Command(binary, "worker", "--config", configPath, "--master", serverURL, "--agent-addr", agentAddr)
@@ -233,10 +236,28 @@ func waitHTTPReady(t *testing.T, url string, timeout time.Duration) {
 	t.Fatalf("server at %s not ready within %s", url, timeout)
 }
 
+const binaryE2EProjectID = "e2e"
+
+func binaryE2EProjectBase() string { return "/api/projects/" + binaryE2EProjectID }
+
+func binaryE2ECreateProject(t *testing.T, serverURL, projectID string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"id": projectID, "name": "E2E"})
+	resp, err := http.Post(serverURL+"/api/projects", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create project status=%d: %s", resp.StatusCode, b)
+	}
+}
+
 func binaryE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": pipelineYAML})
-	resp, err := http.Post(serverURL+"/runs", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(serverURL+binaryE2EProjectBase()+"/runs", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +282,7 @@ func binaryE2EWaitStatus(t *testing.T, serverURL, runID, want string, timeout ti
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/runs/" + runID) //nolint:noctx
+		resp, err := http.Get(serverURL + binaryE2EProjectBase() + "/runs/" + runID) //nolint:noctx
 		if err != nil {
 			time.Sleep(200 * time.Millisecond)
 			continue

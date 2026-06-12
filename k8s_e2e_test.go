@@ -68,6 +68,7 @@ func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	k8sE2ECreateProject(t, serverURL)
 
 	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
 metadata:
@@ -167,6 +168,7 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 
 			serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 			waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+			k8sE2ECreateProject(t, serverURL)
 			waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"pipeline"}, 30*time.Second)
 
 			runID := k8sE2EPostRun(t, serverURL, string(yamlBytes))
@@ -225,6 +227,7 @@ func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	k8sE2ECreateProject(t, serverURL)
 	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook", "serving", "pipeline"}, 30*time.Second)
 
 	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
@@ -614,10 +617,28 @@ func hasK8sE2ECapabilities(got, want []string) bool {
 	return true
 }
 
+const k8sE2EProjectID = "e2e"
+
+func k8sE2EProjectBase() string { return "/api/projects/" + k8sE2EProjectID }
+
+func k8sE2ECreateProject(t *testing.T, serverURL string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"id": k8sE2EProjectID, "name": "E2E"})
+	resp, err := http.Post(serverURL+"/api/projects", "application/json", bytes.NewReader(body)) //nolint:noctx
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create project status=%d: %s", resp.StatusCode, b)
+	}
+}
+
 func k8sE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": pipelineYAML})
-	resp, err := http.Post(serverURL+"/runs", "application/json", bytes.NewReader(body)) //nolint:noctx
+	resp, err := http.Post(serverURL+k8sE2EProjectBase()+"/runs", "application/json", bytes.NewReader(body)) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +662,7 @@ func k8sE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 func k8sE2EPostService(t *testing.T, serverURL, serviceYAML string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": serviceYAML})
-	resp, err := http.Post(serverURL+"/serving", "application/json", bytes.NewReader(body)) //nolint:noctx
+	resp, err := http.Post(serverURL+k8sE2EProjectBase()+"/serving", "application/json", bytes.NewReader(body)) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +678,7 @@ func waitK8sE2ERunStatus(t *testing.T, serverURL, runID, want string, timeout ti
 	client := &http.Client{Timeout: time.Second}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(serverURL + "/runs/" + runID) //nolint:noctx
+		resp, err := client.Get(serverURL + k8sE2EProjectBase() + "/runs/" + runID) //nolint:noctx
 		if err == nil {
 			var result struct {
 				Run struct {
@@ -751,6 +772,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	k8sE2ECreateProject(t, serverURL)
 	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
 	const nbName = "e2e-notebook"
@@ -889,6 +911,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	k8sE2ECreateProject(t, serverURL)
 	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
 	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbImage)

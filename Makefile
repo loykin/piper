@@ -12,10 +12,15 @@ proto:
 build: ui
 	go build -o bin/piper ./cmd/piper
 
-# Static build for linux/arm64 or amd64 (for Docker)
+# Static build for linux/amd64 (Dockerfile uses bin/piper-amd64)
 build-linux:
-	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 \
-	go build -ldflags="-s -w" -o bin/piper ./cmd/piper
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+	go build -ldflags="-s -w" -o bin/piper-amd64 ./cmd/piper
+
+# Static build for linux/arm64
+build-linux-arm64:
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+	go build -ldflags="-s -w" -o bin/piper-arm64 ./cmd/piper
 
 # Build the React UI and update pkg/ui/dist (commit after building)
 ui:
@@ -26,7 +31,7 @@ ui:
 
 # Build Docker image (serves as both server and K8s agent)
 docker: build-linux
-	docker build -t $(IMAGE) .
+	docker build --build-arg TARGETARCH=amd64 -t $(IMAGE) .
 
 # Run tests
 test:

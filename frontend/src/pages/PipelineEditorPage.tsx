@@ -566,7 +566,7 @@ export default function PipelineEditorPage() {
       const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
       await submitPipeline(projectId, { name: pipelineName, yaml, volume_id: submitVolumeId || undefined })
       setSubmitModalOpen(false)
-      navigate(`/pipelines?name=${encodeURIComponent(pipelineName)}`)
+      navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(pipelineName)}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

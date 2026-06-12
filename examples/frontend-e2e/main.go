@@ -30,6 +30,7 @@ import (
 	"github.com/piper/piper/pkg/notebook"
 	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
+	"github.com/piper/piper/pkg/project"
 )
 
 const (
@@ -78,7 +79,15 @@ func main() {
 		log.Fatal(err)
 	}
 	now := time.Now().UTC()
+	if err := repos.Project.Create(ctx, &project.Project{
+		ID:          e2eProjectID,
+		Name:        "E2E",
+		Description: "Frontend E2E project",
+	}); err != nil {
+		log.Fatal(err)
+	}
 	if err := repos.NotebookVolume.Create(ctx, &notebook.NotebookVolume{
+		ProjectID: e2eProjectID,
 		ID:        volumeID,
 		Label:     "Frontend E2E Workspace",
 		WorkDir:   workspace,

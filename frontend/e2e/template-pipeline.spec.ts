@@ -99,8 +99,8 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
 
   await expect.poll(async () => {
     const response = await page.request.get(`${backend}${projectBase}/runs/${runID}`)
-    const body = await response.json() as { status: string }
-    return body.status
+    const body = await response.json() as { run: { status: string } }
+    return body.run.status
   }, { timeout: 90_000 }).toBe('success')
 
   const summaryResponse = await page.request.get(

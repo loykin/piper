@@ -113,23 +113,28 @@ func waitAgentRegistered(t *testing.T, serverURL, id string, timeout time.Durati
 	}
 }
 
-// submitPipeline posts a pipeline YAML to baseURL/runs and returns the run ID.
-func submitPipeline(t *testing.T, baseURL, yamlStr string) string {
+func defaultProjectAPI(serverURL string) string {
+	return serverURL + "/api/projects/default"
+}
+
+// submitPipeline posts a pipeline YAML to the default project and returns the run ID.
+func submitPipeline(t *testing.T, serverURL, yamlStr string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"yaml": yamlStr})
-	resp, err := http.Post(baseURL+"/runs", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(defaultProjectAPI(serverURL)+"/runs", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("POST /runs: %v", err)
+		t.Fatalf("POST default project run: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /runs returned %d", resp.StatusCode)
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST default project run returned %d: %s", resp.StatusCode, payload)
 	}
 	var result struct {
 		RunID string `json:"run_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode /runs response: %v", err)
+		t.Fatalf("decode default project run response: %v", err)
 	}
 	if result.RunID == "" {
 		t.Fatal("empty run_id in response")
@@ -137,13 +142,13 @@ func submitPipeline(t *testing.T, baseURL, yamlStr string) string {
 	return result.RunID
 }
 
-// pollRunStatus polls GET baseURL/runs/{id} until the run reaches a terminal
+// pollRunStatus polls the default project's run until it reaches a terminal
 // status ("success", "failed", "canceled"), then returns it.
-func pollRunStatus(t *testing.T, baseURL, runID string, timeout time.Duration) string {
+func pollRunStatus(t *testing.T, serverURL, runID string, timeout time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		r, err := http.Get(fmt.Sprintf("%s/runs/%s", baseURL, runID))
+		r, err := http.Get(fmt.Sprintf("%s/runs/%s", defaultProjectAPI(serverURL), runID))
 		if err != nil {
 			time.Sleep(300 * time.Millisecond)
 			continue
@@ -165,9 +170,14 @@ func pollRunStatus(t *testing.T, baseURL, runID string, timeout time.Duration) s
 	return ""
 }
 
-func fetchStepLogs(t *testing.T, baseURL, runID, stepName string) string {
+func fetchStepLogs(t *testing.T, serverURL, runID, stepName string) string {
 	t.Helper()
-	resp, err := http.Get(fmt.Sprintf("%s/runs/%s/steps/%s/logs", baseURL, runID, stepName))
+	resp, err := http.Get(fmt.Sprintf(
+		"%s/runs/%s/steps/%s/logs",
+		defaultProjectAPI(serverURL),
+		runID,
+		stepName,
+	))
 	if err != nil {
 		return fmt.Sprintf("fetch logs: %v", err)
 	}
@@ -213,7 +223,7 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	}
 	t.Cleanup(func() { _ = serverCmd.Process.Kill() })
 
-	waitReady(t, baseURL+"/runs", 15*time.Second)
+	waitReady(t, defaultProjectAPI(baseURL)+"/runs", 15*time.Second)
 
 	workerCmd := exec.CommandContext(ctx, workerBin,
 		"--agent-addr="+agentAddr,
@@ -373,7 +383,7 @@ func TestExampleArtifacts(t *testing.T) {
 	defer cancel()
 
 	go func() { _ = p.Serve(ctx, piper.ServeOption{AgentAddr: agentAddr}) }()
-	waitReady(t, serverURL+"/runs", 10*time.Second)
+	waitReady(t, defaultProjectAPI(serverURL)+"/runs", 10*time.Second)
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
@@ -638,7 +648,9 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	})
 
 	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
-	waitReady(t, serverURL+"/runs", 10*time.Second)
+	const projectID = "default"
+	projectAPI := serverURL + "/api/projects/" + projectID
+	waitReady(t, projectAPI+"/notebooks", 10*time.Second)
 
 	const nbName = "e2e-nb-baremetal"
 
@@ -654,7 +666,7 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	// Create notebook with baremetal spec.
 	const nbYAML = "metadata:\n  name: " + nbName + "\nspec:\n  process: {}\n"
 	nbBody, _ := json.Marshal(map[string]string{"yaml": nbYAML})
-	createResp, err := http.Post(serverURL+"/notebooks", "application/json", bytes.NewReader(nbBody))
+	createResp, err := http.Post(projectAPI+"/notebooks", "application/json", bytes.NewReader(nbBody))
 	if err != nil {
 		t.Fatalf("create notebook: %v", err)
 	}
@@ -665,13 +677,13 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	t.Logf("notebook %s created, waiting for running...", nbName)
 
 	// Poll until running.
-	if !pollNotebookStatus(t, serverURL, nbName, "running", 30*time.Second) {
+	if !pollNotebookStatus(t, projectAPI, nbName, "running", 30*time.Second) {
 		t.Fatalf("notebook %s did not reach running", nbName)
 	}
 	t.Logf("notebook %s is running", nbName)
 
 	// Stop the notebook.
-	stopResp, err := http.Post(serverURL+"/notebooks/"+nbName+"/stop", "application/json", nil)
+	stopResp, err := http.Post(projectAPI+"/notebooks/"+nbName+"/stop", "application/json", nil)
 	if err != nil {
 		t.Fatalf("stop notebook: %v", err)
 	}
@@ -682,12 +694,12 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	t.Logf("notebook %s stop requested, waiting for stopped...", nbName)
 
 	// Poll until stopped.
-	if !pollNotebookStatus(t, serverURL, nbName, "stopped", 30*time.Second) {
+	if !pollNotebookStatus(t, projectAPI, nbName, "stopped", 30*time.Second) {
 		t.Fatalf("notebook %s did not reach stopped", nbName)
 	}
 	t.Logf("notebook %s stopped, restarting...", nbName)
 
-	restartResp, err := http.Post(serverURL+"/notebooks/"+nbName+"/start", "application/json", nil)
+	restartResp, err := http.Post(projectAPI+"/notebooks/"+nbName+"/start", "application/json", nil)
 	if err != nil {
 		t.Fatalf("restart notebook: %v", err)
 	}
@@ -695,11 +707,11 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	if restartResp.StatusCode >= 300 {
 		t.Fatalf("restart notebook: status %d", restartResp.StatusCode)
 	}
-	if !pollNotebookStatus(t, serverURL, nbName, "running", 30*time.Second) {
+	if !pollNotebookStatus(t, projectAPI, nbName, "running", 30*time.Second) {
 		t.Fatalf("notebook %s did not reach running after restart", nbName)
 	}
 
-	finalStopResp, err := http.Post(serverURL+"/notebooks/"+nbName+"/stop", "application/json", nil)
+	finalStopResp, err := http.Post(projectAPI+"/notebooks/"+nbName+"/stop", "application/json", nil)
 	if err != nil {
 		t.Fatalf("final stop notebook: %v", err)
 	}
@@ -707,19 +719,19 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	if finalStopResp.StatusCode >= 300 {
 		t.Fatalf("final stop notebook: status %d", finalStopResp.StatusCode)
 	}
-	if !pollNotebookStatus(t, serverURL, nbName, "stopped", 30*time.Second) {
+	if !pollNotebookStatus(t, projectAPI, nbName, "stopped", 30*time.Second) {
 		t.Fatalf("notebook %s did not reach stopped after restart", nbName)
 	}
 	t.Logf("notebook %s restart lifecycle completed", nbName)
 }
 
-// pollNotebookStatus polls GET /notebooks/:name until the notebook reaches the
+// pollNotebookStatus polls GET {projectAPI}/notebooks/:name until the notebook reaches the
 // desired status or the timeout elapses. Returns true if the target is reached.
-func pollNotebookStatus(t *testing.T, baseURL, name, wantStatus string, timeout time.Duration) bool {
+func pollNotebookStatus(t *testing.T, projectAPI, name, wantStatus string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		r, err := http.Get(fmt.Sprintf("%s/notebooks/%s", baseURL, name))
+		r, err := http.Get(fmt.Sprintf("%s/notebooks/%s", projectAPI, name))
 		if err != nil {
 			time.Sleep(200 * time.Millisecond)
 			continue

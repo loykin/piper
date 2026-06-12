@@ -30,18 +30,30 @@ spec:
     run:
       type: command
       command: ["sh", "-c", "echo 'extracting data...' && echo 'row1,row2,row3' > $PIPER_OUTPUT_DIR/data.csv"]
+    outputs:
+      - name: data
+        path: data.csv
 
   - name: transform
     run:
       type: command
-      command: ["sh", "-c", "echo 'transforming...' && cat $PIPER_INPUT_DIR/extract/data.csv | tr ',' '\\n' > $PIPER_OUTPUT_DIR/rows.txt"]
+      command: ["sh", "-c", "echo 'transforming...' && tr ',' '\\n' < $PIPER_INPUT_DIR/data/data.csv > $PIPER_OUTPUT_DIR/rows.txt"]
     depends_on: [extract]
+    inputs:
+      - name: data
+        from: extract/data
+    outputs:
+      - name: rows
+        path: rows.txt
 
   - name: load
     run:
       type: command
-      command: ["sh", "-c", "echo 'loading...' && wc -l $PIPER_INPUT_DIR/transform/rows.txt"]
+      command: ["sh", "-c", "echo 'loading...' && wc -l $PIPER_INPUT_DIR/rows/rows.txt"]
     depends_on: [transform]
+    inputs:
+      - name: rows
+        from: transform/rows
 `
 
 func main() {

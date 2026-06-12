@@ -13,8 +13,9 @@
 ARG TARGETARCH=amd64
 
 FROM alpine:3.20
+ARG TARGETARCH
 RUN apk add --no-cache ca-certificates tzdata
 # Copy the architecture-specific binary.
-# Local builds (make docker) still use bin/piper for amd64.
+# Local builds (make docker) use bin/piper-amd64.
 COPY bin/piper-${TARGETARCH} /piper
 ENTRYPOINT ["/piper"]

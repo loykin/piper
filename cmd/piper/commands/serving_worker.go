@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	servingworker "github.com/piper/piper/pkg/serving/worker"
 )
@@ -44,10 +45,11 @@ func newServingWorkerCmd() *cobra.Command {
 			defer cancel()
 
 			w := servingworker.New(servingworker.Config{
-				AgentAddr: agentAddr,
-				GPUs:      gpus,
-				Hostname:  hostname,
-				ID:        id,
+				AgentAddr:   agentAddr,
+				WorkerToken: viper.GetString("worker.token"),
+				GPUs:        gpus,
+				Hostname:    hostname,
+				ID:          id,
 			})
 			return w.Run(ctx)
 		},

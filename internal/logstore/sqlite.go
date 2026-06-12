@@ -20,7 +20,7 @@ func (s *SQLiteLogStore) AppendMetrics(metrics []*Metric) error {
 		return err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO run_metrics (run_id, step_name, key, value, recorded_at) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO run_metrics (project_id, run_id, step_name, key, value, recorded_at) VALUES (?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -29,7 +29,7 @@ func (s *SQLiteLogStore) AppendMetrics(metrics []*Metric) error {
 	defer func() { _ = stmt.Close() }()
 
 	for _, m := range metrics {
-		if _, err := stmt.Exec(m.RunID, m.StepName, redact.String(m.Key), m.Value, m.Ts); err != nil {
+		if _, err := stmt.Exec(m.ProjectID, m.RunID, m.StepName, redact.String(m.Key), m.Value, m.Ts); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -37,9 +37,9 @@ func (s *SQLiteLogStore) AppendMetrics(metrics []*Metric) error {
 	return tx.Commit()
 }
 
-func (s *SQLiteLogStore) QueryMetrics(runID, stepName string) ([]*Metric, error) {
-	query := `SELECT id, run_id, step_name, key, value, recorded_at FROM run_metrics WHERE run_id=?`
-	args := []any{runID}
+func (s *SQLiteLogStore) QueryMetrics(projectID, runID, stepName string) ([]*Metric, error) {
+	query := `SELECT id, project_id, run_id, step_name, key, value, recorded_at FROM run_metrics WHERE project_id=? AND run_id=?`
+	args := []any{projectID, runID}
 	if stepName != "" {
 		query += ` AND step_name=?`
 		args = append(args, stepName)
@@ -54,7 +54,7 @@ func (s *SQLiteLogStore) QueryMetrics(runID, stepName string) ([]*Metric, error)
 	var out []*Metric
 	for rows.Next() {
 		var m Metric
-		if err := rows.Scan(&m.ID, &m.RunID, &m.StepName, &m.Key, &m.Value, &m.Ts); err != nil {
+		if err := rows.Scan(&m.ID, &m.ProjectID, &m.RunID, &m.StepName, &m.Key, &m.Value, &m.Ts); err != nil {
 			return nil, err
 		}
 		out = append(out, &m)
@@ -77,7 +77,7 @@ func (s *SQLiteLogStore) Append(lines []*Line) error {
 		return err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO logs (run_id, step_name, ts, stream, line) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT INTO logs (project_id, run_id, step_name, ts, stream, line) VALUES (?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -87,7 +87,7 @@ func (s *SQLiteLogStore) Append(lines []*Line) error {
 
 	for _, l := range lines {
 		l.Line = redact.String(l.Line)
-		if _, err := stmt.Exec(l.RunID, l.StepName, l.Ts, l.Stream, l.Line); err != nil {
+		if _, err := stmt.Exec(l.ProjectID, l.RunID, l.StepName, l.Ts, l.Stream, l.Line); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -95,12 +95,12 @@ func (s *SQLiteLogStore) Append(lines []*Line) error {
 	return tx.Commit()
 }
 
-func (s *SQLiteLogStore) Query(runID, stepName string, afterID int64) ([]*Line, error) {
+func (s *SQLiteLogStore) Query(projectID, runID, stepName string, afterID int64) ([]*Line, error) {
 	rows, err := s.db.Query(
-		`SELECT id, run_id, step_name, ts, stream, line
-		 FROM logs WHERE run_id=? AND step_name=? AND id>?
+		`SELECT id, project_id, run_id, step_name, ts, stream, line
+		 FROM logs WHERE project_id=? AND run_id=? AND step_name=? AND id>?
 		 ORDER BY id ASC`,
-		runID, stepName, afterID,
+		projectID, runID, stepName, afterID,
 	)
 	if err != nil {
 		return nil, err
@@ -110,7 +110,7 @@ func (s *SQLiteLogStore) Query(runID, stepName string, afterID int64) ([]*Line, 
 	var out []*Line
 	for rows.Next() {
 		var l Line
-		if err := rows.Scan(&l.ID, &l.RunID, &l.StepName, &l.Ts, &l.Stream, &l.Line); err != nil {
+		if err := rows.Scan(&l.ID, &l.ProjectID, &l.RunID, &l.StepName, &l.Ts, &l.Stream, &l.Line); err != nil {
 			return nil, err
 		}
 		out = append(out, &l)

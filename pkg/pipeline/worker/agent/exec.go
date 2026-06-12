@@ -28,11 +28,12 @@ const (
 // argument list. It is environment-agnostic; each RuntimeDriver supplies
 // the paths it mounts or creates.
 type AgentExecConfig struct {
-	MasterURL  string
-	Token      string
-	StorageURL string
-	OutputDir  string
-	InputDir   string
+	MasterURL    string
+	WorkerToken  string
+	StorageToken string
+	StorageURL   string
+	OutputDir    string
+	InputDir     string
 	// ResultFile is the path inside the execution environment where the agent
 	// writes the AgentResult JSON. Required when ReportMode is ReportModeFile.
 	ResultFile string
@@ -61,8 +62,11 @@ func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 	if cfg.MasterURL != "" {
 		args = append(args, "--master="+cfg.MasterURL)
 	}
-	if cfg.Token != "" {
-		args = append(args, "--token="+cfg.Token)
+	if cfg.WorkerToken != "" {
+		args = append(args, "--worker-token="+cfg.WorkerToken)
+	}
+	if cfg.StorageToken != "" {
+		args = append(args, "--storage-token="+cfg.StorageToken)
 	}
 	if cfg.StorageURL != "" {
 		args = append(args, "--storage-url="+cfg.StorageURL)

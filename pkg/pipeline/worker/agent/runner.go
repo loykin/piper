@@ -1,6 +1,6 @@
 // Package runner provides the common logic for executing piper tasks.
 //
-// Both the worker (polling) and agent (K8s one-shot) use this package.
+// Both long-running workers and K8s one-shot agents use this package.
 // The only difference is how they receive a task — the execution logic is identical.
 //
 //	receive task → download inputs → run command → upload outputs → report
@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,10 +30,11 @@ import (
 
 // Config holds Runner configuration.
 type Config struct {
-	MasterURL string
-	Token     string
-	OutputDir string // local output root directory
-	InputDir  string // local input root directory
+	MasterURL    string
+	WorkerToken  string
+	StorageToken string
+	OutputDir    string // local output root directory
+	InputDir     string // local input root directory
 
 	// StorageURL selects the artifact store backend.
 	// Supported schemes: s3://, file://, http://, https://.
@@ -68,7 +70,7 @@ func New(cfg Config) (*Runner, error) {
 	}
 
 	if cfg.StorageURL != "" {
-		st, err := storage.Open(cfg.StorageURL, cfg.Token)
+		st, err := storage.Open(cfg.StorageURL, cfg.StorageToken)
 		if err != nil {
 			return nil, fmt.Errorf("artifact store: %w", err)
 		}
@@ -118,7 +120,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 	}
 
 	// Log collector
-	logger := newBatchLogger(r, task.RunID, task.StepName, logFile)
+	logger := newBatchLogger(r, task.ProjectID, task.RunID, task.StepName, logFile)
 
 	// Periodically flush logs to master while the task is running
 	flushCtx, stopFlush := context.WithCancel(ctx)
@@ -141,7 +143,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 
 	// Report .metrics.json if present and step succeeded
 	if execErr == nil {
-		r.reportFinalMetrics(ctx, task.RunID, step.Name, stepOutputDir)
+		r.reportFinalMetrics(ctx, task.ProjectID, task.RunID, step.Name, stepOutputDir)
 	}
 
 	if execErr != nil {
@@ -151,7 +153,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 }
 
 // reportFinalMetrics reads .metrics.json from the step output dir and POSTs it to master.
-func (r *Runner) reportFinalMetrics(ctx context.Context, runID, stepName, outputDir string) {
+func (r *Runner) reportFinalMetrics(ctx context.Context, projectID, runID, stepName, outputDir string) {
 	if r.cfg.MasterURL == "" {
 		return
 	}
@@ -165,8 +167,8 @@ func (r *Runner) reportFinalMetrics(ctx context.Context, runID, stepName, output
 		return
 	}
 	payload, _ := json.Marshal(vals)
-	url := fmt.Sprintf("%s/runs/%s/steps/%s/final-metrics", r.cfg.MasterURL, runID, stepName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	endpoint := workerRunURL(r.cfg.MasterURL, projectID, runID, stepName, "final-metrics")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return
 	}
@@ -181,7 +183,6 @@ func (r *Runner) reportFinalMetrics(ctx context.Context, runID, stepName, output
 }
 
 // Report posts the TaskResult to the master via HTTP.
-// Used by callers that need the http report-mode (migration path).
 // No-op when MasterURL is not configured.
 func (r *Runner) Report(result proto.TaskResult) {
 	r.report(result.TaskID, result.Status, taskResult{
@@ -189,7 +190,7 @@ func (r *Runner) Report(result proto.TaskResult) {
 		StartedAt: result.StartedAt,
 		EndedAt:   result.EndedAt,
 		Error:     result.Error,
-		Attempts:  result.Attempt,
+		Attempt:   result.Attempt,
 	})
 }
 
@@ -273,18 +274,19 @@ type logEntry struct {
 }
 
 type batchLogger struct {
-	mu       sync.Mutex
-	entries  []logEntry
-	r        *Runner
-	runID    string
-	stepName string
-	file     *os.File
+	mu        sync.Mutex
+	entries   []logEntry
+	r         *Runner
+	projectID string
+	runID     string
+	stepName  string
+	file      *os.File
 }
 
 const logFlushInterval = 2 * time.Second
 
-func newBatchLogger(r *Runner, runID, stepName string, file *os.File) *batchLogger {
-	return &batchLogger{r: r, runID: runID, stepName: stepName, file: file}
+func newBatchLogger(r *Runner, projectID, runID, stepName string, file *os.File) *batchLogger {
+	return &batchLogger{r: r, projectID: projectID, runID: runID, stepName: stepName, file: file}
 }
 
 // flushLoop sends buffered logs to the master every logFlushInterval.
@@ -327,8 +329,8 @@ func (l *batchLogger) flush(ctx context.Context) {
 		return
 	}
 
-	url := fmt.Sprintf("%s/runs/%s/steps/%s/logs", l.r.cfg.MasterURL, l.runID, l.stepName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	endpoint := workerRunURL(l.r.cfg.MasterURL, l.projectID, l.runID, l.stepName, "logs")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return
 	}
@@ -350,7 +352,7 @@ type taskResult struct {
 	WorkerID  string    `json:"worker_id,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`
-	Attempts  int       `json:"attempts"`
+	Attempt   int       `json:"attempt"`
 }
 
 func (r *Runner) doneResult(task *proto.Task, startedAt time.Time) proto.TaskResult {
@@ -385,8 +387,8 @@ func (r *Runner) report(taskID, status string, result taskResult) {
 	if err != nil {
 		return
 	}
-	url := fmt.Sprintf("%s/api/tasks/%s/%s", r.cfg.MasterURL, taskID, status)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	endpoint := fmt.Sprintf("%s/api/tasks/%s/%s", r.cfg.MasterURL, taskID, status)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return
 	}
@@ -403,9 +405,20 @@ func (r *Runner) report(taskID, status string, result taskResult) {
 }
 
 func (r *Runner) setAuth(req *http.Request) {
-	if r.cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+r.cfg.Token)
+	if r.cfg.WorkerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+r.cfg.WorkerToken)
 	}
+}
+
+func workerRunURL(masterURL, projectID, runID, stepName, action string) string {
+	return fmt.Sprintf(
+		"%s/api/projects/%s/runs/%s/steps/%s/%s",
+		strings.TrimRight(masterURL, "/"),
+		url.PathEscape(projectID),
+		url.PathEscape(runID),
+		url.PathEscape(stepName),
+		action,
+	)
 }
 
 // ─── Artifact transfer ────────────────────────────────────────────────────────

@@ -91,8 +91,8 @@ func main() {
 	p, err := piper.New(piper.Config{
 		Repos:     repos,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
+		Auth:      piper.AuthConfig{Trusted: true},
 		Storage:   piper.StorageConfig{URL: s3URL},
-		Pipeline:  piper.PipelineConfig{DispatchMode: "agent"},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -233,19 +233,21 @@ func waitHTTP(ctx context.Context, url string) error {
 
 func runAgentExec(args []string) int {
 	var (
-		taskB64    string
-		masterURL  string
-		token      string
-		outputDir  string
-		inputDir   string
-		storageURL string
-		reportMode string
-		resultFile string
+		taskB64      string
+		masterURL    string
+		workerToken  string
+		storageToken string
+		outputDir    string
+		inputDir     string
+		storageURL   string
+		reportMode   string
+		resultFile   string
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
 	fs.StringVar(&masterURL, "master", "", "")
-	fs.StringVar(&token, "token", "", "")
+	fs.StringVar(&workerToken, "worker-token", "", "")
+	fs.StringVar(&storageToken, "storage-token", "", "")
 	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
 	fs.StringVar(&inputDir, "input-dir", "", "")
 	fs.StringVar(&storageURL, "storage-url", "", "")
@@ -263,11 +265,12 @@ func runAgentExec(args []string) int {
 		return 1
 	}
 	runner, err := agent.New(agent.Config{
-		MasterURL:  masterURL,
-		Token:      token,
-		OutputDir:  outputDir,
-		InputDir:   inputDir,
-		StorageURL: storageURL,
+		MasterURL:    masterURL,
+		WorkerToken:  workerToken,
+		StorageToken: storageToken,
+		OutputDir:    outputDir,
+		InputDir:     inputDir,
+		StorageURL:   storageURL,
 	})
 	if err != nil {
 		return 1

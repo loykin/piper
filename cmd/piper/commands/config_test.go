@@ -13,9 +13,20 @@ run:
   output_dir: /tmp/piper
 server:
   addr: :8080
+db:
+  path: /tmp/piper/custom.db
 `)
 	if err := StrictParseConfigFile(path); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConfigFileMapsSQLitePath(t *testing.T) {
+	var cf configFile
+	cf.DB.Path = "/tmp/piper/custom.db"
+	cfg := cf.toConfig()
+	if cfg.DBPath != cf.DB.Path {
+		t.Fatalf("DBPath = %q, want %q", cfg.DBPath, cf.DB.Path)
 	}
 }
 
@@ -43,15 +54,11 @@ storage:
   url: s3://artifact-bucket?endpoint=http://minio:9000&s3ForcePathStyle=true&accessKey=admin&secretKey=password
 server:
   addr: :8080
-  token: secret
+  worker_token: worker-secret
   tls:
     enabled: false
     cert_file: ""
     key_file: ""
-pipeline:
-  dispatch_mode: agent
-k8s:
-  worker: true
 retention:
   run_ttl: 168h
   artifact_ttl: 720h
@@ -202,19 +209,13 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 			Token:    "store-token",
 		},
 		Server: serverSection{
-			Addr:  ":9090",
-			Token: "srv-token",
+			Addr:        ":9090",
+			WorkerToken: "worker-token",
 			TLS: tlsSection{
 				Enabled:  true,
 				CertFile: "/certs/tls.crt",
 				KeyFile:  "/certs/tls.key",
 			},
-		},
-		Pipeline: pipelineSection{
-			DispatchMode: "agent",
-		},
-		K8s: k8sSection{
-			Worker: true,
 		},
 		Retention: retentionSection{
 			RunTTL:      168 * time.Hour,
@@ -299,12 +300,6 @@ func TestConfigFileToConfig_MapsAllFields(t *testing.T) {
 	}
 	if cfg.Server.TLS.CertFile != "/certs/tls.crt" {
 		t.Errorf("TLS.CertFile = %q, want /certs/tls.crt", cfg.Server.TLS.CertFile)
-	}
-	if cfg.Pipeline.DispatchMode != "agent" {
-		t.Errorf("Pipeline.DispatchMode = %q, want agent", cfg.Pipeline.DispatchMode)
-	}
-	if !cfg.K8s.Worker {
-		t.Error("K8s.Worker = false, want true")
 	}
 	if cfg.Retention.RunTTL != 168*time.Hour {
 		t.Errorf("Retention.RunTTL = %v, want 168h", cfg.Retention.RunTTL)

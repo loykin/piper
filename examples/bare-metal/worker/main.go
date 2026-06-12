@@ -33,6 +33,8 @@ func main() {
 
 	agentAddr := flag.String("agent-addr", "localhost:9090", "gRPC address of piper master agent server")
 	master := flag.String("master", "http://localhost:8080", "piper server URL (for agent exec callbacks)")
+	workerToken := flag.String("worker-token", "", "worker-to-master authentication token")
+	storageToken := flag.String("storage-token", "", "artifact storage authentication token")
 	label := flag.String("label", "", "worker label (e.g. gpu, cpu, large-mem)")
 	concurrency := flag.Int("concurrency", 4, "max parallel tasks")
 	metaDir := flag.String("meta-dir", "", "metadata directory for job state (default: $TMPDIR/piper-meta)")
@@ -41,12 +43,15 @@ func main() {
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
 			Addr:        *agentAddr,
+			WorkerToken: *workerToken,
 			Label:       *label,
 			Concurrency: *concurrency,
 		},
 		Store: worker.StoreConfig{
-			MasterURL: *master,
-			OutputDir: os.TempDir() + "/piper-worker-outputs",
+			MasterURL:    *master,
+			WorkerToken:  *workerToken,
+			StorageToken: *storageToken,
+			OutputDir:    os.TempDir() + "/piper-worker-outputs",
 		},
 		Baremetal: worker.BaremetalConfig{
 			MetaDir: *metaDir,
@@ -71,7 +76,8 @@ func main() {
 func runAgentExec(args []string) {
 	fs := flag.NewFlagSet("agent exec", flag.ExitOnError)
 	master := fs.String("master", "", "piper server URL")
-	token := fs.String("token", "", "auth token")
+	workerToken := fs.String("worker-token", "", "worker-to-master authentication token")
+	storageToken := fs.String("storage-token", "", "artifact storage authentication token")
 	taskB64 := fs.String("task", "", "base64-encoded proto.Task JSON")
 	outputDir := fs.String("output-dir", "/piper-outputs", "local output directory")
 	inputDir := fs.String("input-dir", "/piper-inputs", "local input directory")
@@ -94,11 +100,12 @@ func runAgentExec(args []string) {
 	}
 
 	r, err := agent.New(agent.Config{
-		MasterURL:  *master,
-		Token:      *token,
-		OutputDir:  *outputDir,
-		InputDir:   *inputDir,
-		StorageURL: *storageURL,
+		MasterURL:    *master,
+		WorkerToken:  *workerToken,
+		StorageToken: *storageToken,
+		OutputDir:    *outputDir,
+		InputDir:     *inputDir,
+		StorageURL:   *storageURL,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: init runner: %v\n", err)

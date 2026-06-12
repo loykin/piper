@@ -52,6 +52,7 @@ func main() {
 	defer func() { _ = db.Close() }()
 
 	p, err := piper.New(piper.Config{
+		Auth:      piper.AuthConfig{Trusted: true},
 		DB:        db,
 		OutputDir: os.TempDir() + "/piper-example-library",
 	})

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { getRun, listRuns, type Step } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { useProjectId } from '@/lib/projectContext'
 
 interface TaskHistoryRow {
   runId: string
@@ -32,16 +33,18 @@ function formatDuration(row: TaskHistoryRow): string {
 }
 
 export default function TaskHistoryPage() {
+  const projectId = useProjectId()
   const [rows, setRows] = useState<TaskHistoryRow[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
 
   const load = async () => {
+    if (!projectId) return
     try {
-      const runs = await listRuns()
+      const runs = await listRuns(projectId)
       const recentRuns = (Array.isArray(runs) ? runs : []).slice(0, 30)
-      const details = await Promise.allSettled(recentRuns.map((r) => getRun(r.id)))
+      const details = await Promise.allSettled(recentRuns.map((r) => getRun(projectId, r.id)))
 
       const merged: TaskHistoryRow[] = []
 
@@ -80,10 +83,10 @@ export default function TaskHistoryPage() {
   }
 
   useEffect(() => {
-    load()
-    intervalRef.current = setInterval(load, 4000)
+    void load()
+    intervalRef.current = setInterval(() => void load(), 4000)
     return () => clearInterval(intervalRef.current)
-  }, [])
+  }, [projectId])
 
   const columns: DataGridColumnDef<TaskHistoryRow>[] = useMemo(
     () => [

@@ -75,6 +75,9 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	if opts.Name != "piper-notebook-analysis" {
 		t.Fatalf("name = %q", opts.Name)
 	}
+	if opts.Config.Labels[dockerNotebookLabel] != "analysis" || opts.Config.Labels[dockerRuntimeLabel] != "analysis" {
+		t.Fatalf("identity labels = %#v", opts.Config.Labels)
+	}
 	if got := opts.HostConfig.PortBindings[network.MustParsePort("8888/tcp")][0].HostPort; got != "18888" {
 		t.Fatalf("host port = %q", got)
 	}
@@ -240,6 +243,8 @@ func TestDockerRecoverRegistersBeforeWatching(t *testing.T) {
 			Labels: map[string]string{
 				dockerManagedLabel:  "true",
 				dockerNotebookLabel: "demo",
+				dockerProjectLabel:  "project-a",
+				dockerRuntimeLabel:  "project-a__demo",
 				dockerWorkerLabel:   "worker-1",
 			},
 			Ports: []container.PortSummary{{PrivatePort: 8888, PublicPort: 18888, Type: "tcp"}},
@@ -258,11 +263,11 @@ func TestDockerRecoverRegistersBeforeWatching(t *testing.T) {
 	}
 	if err := rt.Recover(context.Background(), func(rec recoveredRuntime) func(string) {
 		registered = true
-		if rec.Name != "demo" || rec.Port != 18888 {
+		if rec.ProjectID != "project-a" || rec.Name != "demo" || rec.RuntimeName != "project-a__demo" || rec.Port != 18888 {
 			t.Fatalf("recovered = %#v", rec)
 		}
 		return func(string) {}
-	}, func(string, string) {}); err != nil {
+	}, func(recoveredRuntime, string) {}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -271,7 +276,7 @@ func TestDockerRecoverOnlyUsesCurrentWorkerContainers(t *testing.T) {
 	cli := &recoveryDockerClient{
 		items: []container.Summary{
 			{ID: "other", State: container.StateRunning, Labels: map[string]string{
-				dockerManagedLabel: "true", dockerNotebookLabel: "other", dockerWorkerLabel: "worker-2",
+				dockerManagedLabel: "true", dockerNotebookLabel: "other", dockerRuntimeLabel: "project-b__other", dockerWorkerLabel: "worker-2",
 			}},
 		},
 	}
@@ -284,8 +289,8 @@ func TestDockerRecoverOnlyUsesCurrentWorkerContainers(t *testing.T) {
 	if err := rt.Recover(context.Background(), func(recoveredRuntime) func(string) {
 		t.Fatal("another worker's container should not be recovered")
 		return func(string) {}
-	}, func(name, status string) {
-		exits = append(exits, name+":"+status)
+	}, func(rec recoveredRuntime, status string) {
+		exits = append(exits, rec.Name+":"+status)
 	}); err != nil {
 		t.Fatal(err)
 	}

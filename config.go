@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	storemod "github.com/piper/piper/internal/store"
+	"github.com/piper/piper/pkg/security"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -28,8 +30,12 @@ type Config struct {
 	DBDSN string `yaml:"db_dsn" mapstructure:"db_dsn"`
 	// Repos is a fully-constructed store injected by the caller.
 	// When set, all other DB fields are ignored and piper skips migrations.
-	// Use store.NewExternalRepos() to build one from your own repository implementations.
+	// Use piper.NewExternalRepos() to build one from your own repository implementations.
 	Repos *storemod.Repos `yaml:"-" mapstructure:"-"`
+
+	// Auth composes authentication and authorization capabilities.
+	// Trusted mode must be enabled explicitly.
+	Auth AuthConfig `yaml:"-" mapstructure:"-"`
 
 	// Hooks — all extension points. nil means no-op.
 	Hooks Hooks `yaml:"-" mapstructure:"-"`
@@ -53,12 +59,6 @@ type Config struct {
 
 	// Schedule controls cron/once scheduling behavior.
 	Schedule ScheduleConfig `yaml:"schedule" mapstructure:"schedule"`
-
-	// Pipeline controls pipeline dispatch mode.
-	Pipeline PipelineConfig `yaml:"pipeline" mapstructure:"pipeline"`
-
-	// K8s controls whether pipeline execution is delegated to a cluster-local K8s worker.
-	K8s K8sConfig `yaml:"k8s" mapstructure:"k8s"`
 
 	// Serving — model serving configuration.
 	Serving ServingConfig `yaml:"serving" mapstructure:"serving"`
@@ -100,11 +100,45 @@ type S3Config struct {
 	UseSSL    bool   `yaml:"use_ssl"    mapstructure:"use_ssl"`
 }
 
+// LoginRouteProvider registers the login/session endpoints for an auth scheme.
+// OIDC and host-application integrations can provide their own routes.
+type LoginRouteProvider interface {
+	RegisterPublicRoutes(rg *gin.RouterGroup)
+	RegisterAuthenticatedRoutes(rg *gin.RouterGroup)
+	LoginMode() string
+	LoginURL() string
+}
+
+// AuthConfig composes independent authentication and identity capabilities.
+type AuthConfig struct {
+	// Trusted explicitly enables no-auth mode. It cannot be combined with
+	// authentication or authorization capabilities.
+	Trusted bool
+
+	LoginRoutes          LoginRouteProvider
+	Authenticator        security.Authenticator
+	Authorizer           security.Authorizer
+	UserDirectory        security.UserDirectory
+	UserManager          security.UserManager
+	ProjectMemberManager security.ProjectMemberManager
+
+	// Factory creates capabilities after Piper has opened its repositories.
+	Factory AuthFactory
+}
+
+type AuthDependencies struct {
+	DB            *sql.DB
+	Driver        string
+	SecureCookies bool
+}
+
+type AuthFactory func(AuthDependencies) (AuthConfig, error)
+
 type ServerConfig struct {
-	Addr      string    `yaml:"addr"       mapstructure:"addr"`
-	AgentAddr string    `yaml:"agent_addr" mapstructure:"agent_addr"` // gRPC agent server, e.g. ":9090"
-	Token     string    `yaml:"token"      mapstructure:"token"`
-	TLS       TLSConfig `yaml:"tls"        mapstructure:"tls"`
+	Addr        string    `yaml:"addr"         mapstructure:"addr"`
+	AgentAddr   string    `yaml:"agent_addr"   mapstructure:"agent_addr"`   // gRPC agent server, e.g. ":9090"
+	WorkerToken string    `yaml:"worker_token" mapstructure:"worker_token"` // separate token for worker/agent auth
+	TLS         TLSConfig `yaml:"tls"          mapstructure:"tls"`
 }
 
 type TLSConfig struct {
@@ -124,22 +158,6 @@ type ScheduleConfig struct {
 	MisfirePolicy string `yaml:"misfire_policy" mapstructure:"misfire_policy"`
 	// MisfireGracePeriod is the delay tolerated before a due cron run is considered missed.
 	MisfireGracePeriod time.Duration `yaml:"misfire_grace_period" mapstructure:"misfire_grace_period"`
-}
-
-// PipelineConfig controls pipeline task dispatch behaviour.
-type PipelineConfig struct {
-	// DispatchMode selects how pipeline tasks are delivered to workers.
-	//   "agent"   – tasks are pushed to gRPC-connected workers (baremetal or K8s).
-	//   "polling" – tasks sit in a queue; workers pull via /api/tasks/next.
-	// Default: "polling" for backward compatibility.
-	// Set to "agent" for new installations using gRPC pipeline workers.
-	DispatchMode string `yaml:"dispatch_mode" mapstructure:"dispatch_mode"`
-}
-
-// K8sConfig holds server-side K8s worker dispatch configuration.
-type K8sConfig struct {
-	// Worker delegates pipeline K8s Job lifecycle to a cluster-local K8s worker.
-	Worker bool `yaml:"worker" mapstructure:"worker"`
 }
 
 // ServingConfig holds configuration for model serving (ModelService).
@@ -219,6 +237,9 @@ func DefaultConfig() Config {
 		RetryDelay:  5 * time.Second,
 		Concurrency: 4,
 		OutputDir:   "./piper-outputs",
+		Auth: AuthConfig{
+			Trusted: true,
+		},
 		Server: ServerConfig{
 			Addr: ":8080",
 		},
@@ -230,6 +251,29 @@ func DefaultConfig() Config {
 }
 
 func (c Config) Validate() error {
+	hasCapabilities := c.Auth.LoginRoutes != nil ||
+		c.Auth.Authenticator != nil ||
+		c.Auth.Authorizer != nil ||
+		c.Auth.UserDirectory != nil ||
+		c.Auth.UserManager != nil ||
+		c.Auth.ProjectMemberManager != nil
+	if c.Auth.Factory != nil && hasCapabilities {
+		return fmt.Errorf("auth capabilities and factory are mutually exclusive")
+	}
+	if c.Auth.Trusted && (c.Auth.Factory != nil || hasCapabilities) {
+		return fmt.Errorf("trusted auth mode cannot be combined with auth capabilities")
+	}
+	if !c.Auth.Trusted && c.Auth.Factory == nil {
+		if c.Auth.Authenticator == nil {
+			return fmt.Errorf("auth authenticator is required outside trusted mode")
+		}
+		if c.Auth.Authorizer == nil {
+			return fmt.Errorf("auth authorizer is required outside trusted mode")
+		}
+	}
+	if c.Auth.UserManager != nil && c.Auth.UserDirectory == nil {
+		return fmt.Errorf("auth user directory is required when user manager is configured")
+	}
 	if c.Server.TLS.Enabled {
 		if c.Server.TLS.CertFile == "" || c.Server.TLS.KeyFile == "" {
 			return fmt.Errorf("server.tls enabled but cert_file or key_file is not set")

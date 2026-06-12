@@ -35,13 +35,11 @@ func main() {
 	flag.Parse()
 
 	p, err := piper.New(piper.Config{
+		Auth:      piper.AuthConfig{Trusted: true},
 		DBPath:    "./piper.db",
 		OutputDir: "./piper-outputs",
 		Server: piper.ServerConfig{
 			Addr: *addr,
-		},
-		Pipeline: piper.PipelineConfig{
-			DispatchMode: "agent",
 		},
 	})
 	if err != nil {

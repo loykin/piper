@@ -5,6 +5,7 @@ type WorkerSyncStatusRequest struct {
 }
 
 type WorkerSyncStatusTarget struct {
+	ProjectID string `json:"project_id"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -14,7 +15,8 @@ type WorkerSyncStatusResponse struct {
 }
 
 type WorkerStatusUpdate struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Endpoint string `json:"endpoint,omitempty"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Endpoint  string `json:"endpoint,omitempty"`
 }

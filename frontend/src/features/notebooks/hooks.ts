@@ -1,28 +1,35 @@
 // notebooks feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
+import { api as sysApi } from '@/lib/api'
+import { useProjectId } from '@/lib/projectContext'
+import type { NotebookWorkerInfo } from './types'
 
 export const notebookKeys = {
-  all: ['notebooks'] as const,
-  list: () => ['notebooks', 'list'] as const,
-  one: (name: string) => ['notebooks', name] as const,
-  volumes: () => ['notebook-volumes'] as const,
-  volumeFiles: (volumeId: string) => ['notebook-volumes', volumeId, 'files'] as const,
-  workers: () => ['notebook-workers'] as const,
+  all: (projectId: string) => ['notebooks', projectId] as const,
+  list: (projectId: string) => ['notebooks', projectId, 'list'] as const,
+  one: (projectId: string, name: string) => ['notebooks', projectId, name] as const,
+  volumes: (projectId: string) => ['notebook-volumes', projectId] as const,
+  volumeFiles: (projectId: string, volumeId: string) =>
+    ['notebook-volumes', projectId, volumeId, 'files'] as const,
 }
 
 export function useNotebooks() {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: notebookKeys.list(),
-    queryFn: api.listNotebooks,
+    queryKey: notebookKeys.list(projectId),
+    queryFn: () => api.listNotebooks(projectId),
+    enabled: !!projectId,
     refetchInterval: 5000,
   })
 }
 
 export function useNotebook(name: string) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: notebookKeys.one(name),
-    queryFn: () => api.getNotebook(name),
+    queryKey: notebookKeys.one(projectId, name),
+    queryFn: () => api.getNotebook(projectId, name),
+    enabled: !!projectId && !!name,
     refetchInterval: (query) => {
       const status = query.state.data?.status
       return status === 'running' || status === 'provisioning' || status === 'starting' || status === 'stopping'
@@ -32,69 +39,77 @@ export function useNotebook(name: string) {
 }
 
 export function useCreateNotebook() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ yaml, volumeId }: { yaml: string; volumeId?: string }) =>
-      api.createNotebook(yaml, volumeId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all }),
+      api.createNotebook(projectId, yaml, volumeId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all(projectId) }),
   })
 }
 
 export function useStopNotebook() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: api.stopNotebook,
-    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all }),
+    mutationFn: (name: string) => api.stopNotebook(projectId, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all(projectId) }),
   })
 }
 
 export function useStartNotebook() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: api.startNotebook,
-    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all }),
+    mutationFn: (name: string) => api.startNotebook(projectId, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all(projectId) }),
   })
 }
 
 export function useDeleteNotebook() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: api.deleteNotebook,
-    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all }),
+    mutationFn: (name: string) => api.deleteNotebook(projectId, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.all(projectId) }),
   })
 }
 
 export function useNotebookVolumes() {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: notebookKeys.volumes(),
-    queryFn: api.listNotebookVolumes,
+    queryKey: notebookKeys.volumes(projectId),
+    queryFn: () => api.listNotebookVolumes(projectId),
+    enabled: !!projectId,
     refetchInterval: 5000,
   })
 }
 
 export function useVolumeFiles(volumeId: string, ext?: string) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: notebookKeys.volumeFiles(volumeId),
-    queryFn: () => api.listVolumeFiles(volumeId, ext),
-    enabled: !!volumeId,
-    refetchInterval: (query) => {
-      return query.state.data?.state === 'transitioning' ? 2000 : false
-    },
-  })
-}
-
-export function useNotebookWorkers() {
-  return useQuery({
-    queryKey: notebookKeys.workers(),
-    queryFn: api.listNotebookWorkers,
-    refetchInterval: 10000,
+    queryKey: notebookKeys.volumeFiles(projectId, volumeId),
+    queryFn: () => api.listVolumeFiles(projectId, volumeId, ext),
+    enabled: !!projectId && !!volumeId,
+    refetchInterval: (query) =>
+      query.state.data?.state === 'transitioning' ? 2000 : false,
   })
 }
 
 export function usePurgeVolume() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: api.purgeNotebookVolume,
-    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.volumes() }),
+    mutationFn: (id: string) => api.purgeNotebookVolume(projectId, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.volumes(projectId) }),
+  })
+}
+
+
+export function useNotebookWorkers() {
+  return useQuery({
+    queryKey: ['notebook-workers'],
+    queryFn: () => sysApi.get<NotebookWorkerInfo[]>('/api/notebook-workers').then(d => Array.isArray(d) ? d : []),
+    refetchInterval: 10000,
   })
 }

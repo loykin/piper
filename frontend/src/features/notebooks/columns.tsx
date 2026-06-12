@@ -14,6 +14,7 @@ export function getNotebookColumns(
   onStop: (name: string) => void,
   onStart: (name: string) => void,
   onDelete: (name: string) => void,
+  projectId: string,
 ): DataGridColumnDef<NotebookServer>[] {
   return [
     {
@@ -85,7 +86,7 @@ export function getNotebookColumns(
                 <Tooltip>
                   <TooltipTrigger>
                     <a
-                      href={notebookProxyURL(name)}
+                      href={notebookProxyURL(projectId, name)}
                       target="_blank"
                       rel="noreferrer"
                       onClick={e => e.stopPropagation()}

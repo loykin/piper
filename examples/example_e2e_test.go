@@ -360,9 +360,9 @@ func TestExampleArtifacts(t *testing.T) {
 	p, err := piper.New(piper.Config{
 		DB:        db,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
+		Auth:      piper.AuthConfig{Trusted: true},
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
-		Pipeline:  piper.PipelineConfig{DispatchMode: "agent"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -442,9 +442,9 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	p, err := piper.New(piper.Config{
 		DB:        db,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
+		Auth:      piper.AuthConfig{Trusted: true},
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
-		Pipeline:  piper.PipelineConfig{DispatchMode: "agent"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -619,7 +619,8 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	p, err := piper.New(piper.Config{
-		DB: db,
+		DB:   db,
+		Auth: piper.AuthConfig{Trusted: true},
 		Server: piper.ServerConfig{
 			Addr:      fmt.Sprintf(":%d", port),
 			AgentAddr: fmt.Sprintf("127.0.0.1:%d", freePort(t)),

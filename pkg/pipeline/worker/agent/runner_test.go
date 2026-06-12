@@ -30,10 +30,11 @@ func makeTaskWithRunID(t *testing.T, step pipeline.Step, runID string) *proto.Ta
 		t.Fatal(err)
 	}
 	return &proto.Task{
-		ID:       "task-1",
-		RunID:    runID,
-		StepName: step.Name,
-		Step:     b,
+		ProjectID: "project-a",
+		ID:        "task-1",
+		RunID:     runID,
+		StepName:  step.Name,
+		Step:      b,
 	}
 }
 
@@ -225,16 +226,21 @@ func TestRun_failed_invalid_step_json(t *testing.T) {
 
 func TestRun_logs_sent_to_master(t *testing.T) {
 	var logBody []byte
+	var logPath string
+	var authorization string
 	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/logs") {
+			logPath = r.URL.Path
+			authorization = r.Header.Get("Authorization")
 			logBody, _ = io.ReadAll(r.Body)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	r, err := agent.New(agent.Config{
-		MasterURL: srv.URL,
-		OutputDir: t.TempDir(),
+		MasterURL:   srv.URL,
+		WorkerToken: "worker-secret",
+		OutputDir:   t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -248,6 +254,12 @@ func TestRun_logs_sent_to_master(t *testing.T) {
 
 	if !strings.Contains(string(logBody), "log line") {
 		t.Errorf("expected log body to contain 'log line', got: %s", logBody)
+	}
+	if logPath != "/api/projects/project-a/runs/run-test/steps/log-step/logs" {
+		t.Fatalf("log path = %q", logPath)
+	}
+	if authorization != "Bearer worker-secret" {
+		t.Fatalf("authorization = %q", authorization)
 	}
 }
 
@@ -308,8 +320,9 @@ func TestRun_reports_final_metrics_on_success(t *testing.T) {
 
 	r.Run(context.Background(), task)
 
-	if !strings.Contains(receivedPath, "final-metrics") {
-		t.Fatalf("final-metrics endpoint not called; last path = %q", receivedPath)
+	wantPath := "/api/projects/project-a/runs/run-metrics-test/steps/train/final-metrics"
+	if receivedPath != wantPath {
+		t.Fatalf("final-metrics path = %q, want %q", receivedPath, wantPath)
 	}
 	if !strings.Contains(string(receivedBody), "accuracy") {
 		t.Errorf("body missing accuracy: %s", receivedBody)

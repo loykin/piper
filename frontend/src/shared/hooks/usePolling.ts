@@ -3,6 +3,8 @@ import { useEffect, useRef } from 'react'
 
 export function usePolling(fn: () => void, intervalMs: number, enabled = true) {
   const fnRef = useRef(fn)
+  // Updating ref outside render is safe; lint rule is overly strict here.
+  // eslint-disable-next-line react-hooks/refs
   fnRef.current = fn
 
   useEffect(() => {

@@ -2,10 +2,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import type { StorageConfig } from './types'
+import { useProjectId } from '@/lib/projectContext'
 
 export const storageKeys = {
   settings: () => ['storage', 'settings'] as const,
-  objects: (prefix?: string) => ['storage', 'objects', prefix] as const,
+  objects: (projectId: string, prefix?: string) => ['storage', projectId, 'objects', prefix] as const,
 }
 
 export function useStorageSettings() {
@@ -16,9 +17,11 @@ export function useStorageSettings() {
 }
 
 export function useStorageObjects(prefix = '') {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: storageKeys.objects(prefix),
-    queryFn: () => api.listStorageObjects(prefix),
+    queryKey: storageKeys.objects(projectId, prefix),
+    queryFn: () => api.listStorageObjects(projectId, prefix),
+    enabled: !!projectId,
   })
 }
 
@@ -31,18 +34,20 @@ export function useSaveStorageSettings() {
 }
 
 export function useDeleteObject() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: api.deleteStorageObject,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['storage', 'objects'] }),
+    mutationFn: (key: string) => api.deleteStorageObject(projectId, key),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['storage', projectId, 'objects'] }),
   })
 }
 
 export function useUploadObject() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ file, key }: { file: File; key?: string }) =>
-      api.uploadStorageObject(file, key),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['storage', 'objects'] }),
+      api.uploadStorageObject(projectId, file, key),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['storage', projectId, 'objects'] }),
   })
 }

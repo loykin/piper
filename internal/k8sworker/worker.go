@@ -24,6 +24,7 @@ import (
 // and this worker's identity within the agent registry.
 type AgentConfig struct {
 	Addr        string // gRPC address of the master agent server, e.g. "master:9090"
+	WorkerToken string // bearer token sent in gRPC authorization metadata
 	ID          string
 	ClusterName string
 }
@@ -31,8 +32,9 @@ type AgentConfig struct {
 // MasterConfig holds the HTTP connection to the piper master,
 // forwarded to K8s Job pods for artifact callbacks.
 type MasterConfig struct {
-	URL   string
-	Token string
+	URL          string
+	WorkerToken  string
+	StorageToken string
 }
 
 // K8sConfig groups all Kubernetes cluster options: client, namespaces,
@@ -116,6 +118,7 @@ func New(cfg Config) *Worker {
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		AgentAddr:    cfg.Agent.Addr,
 		AgentID:      cfg.Agent.ID,
+		WorkerToken:  cfg.Agent.WorkerToken,
 		Kind:         iagent.KindK8s,
 		ClusterName:  cfg.Agent.ClusterName,
 		Capabilities: capabilities,
@@ -177,9 +180,10 @@ func New(cfg Config) *Worker {
 			pipelineObserver = k8spipeline.Register(client.Dispatcher(), k8spipeline.Config{
 				WorkerID: cfg.Agent.ID,
 				Store: k8spipeline.StoreConfig{
-					MasterURL:  cfg.Master.URL,
-					Token:      cfg.Master.Token,
-					StorageURL: cfg.StorageURL,
+					MasterURL:    cfg.Master.URL,
+					WorkerToken:  cfg.Master.WorkerToken,
+					StorageToken: cfg.Master.StorageToken,
+					StorageURL:   cfg.StorageURL,
 				},
 				K8s: k8spipeline.K8sConfig{
 					Client:               cfg.K8s.Client,

@@ -100,13 +100,14 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 	containerResultFile := driver.ContainerResultDir + "/" + spec.RuntimeKey + ".result.json"
 
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
-		MasterURL:  spec.MasterURL,
-		Token:      spec.Token,
-		StorageURL: spec.StorageURL,
-		OutputDir:  driver.ContainerOutputDir,
-		InputDir:   driver.ContainerInputDir,
-		ResultFile: containerResultFile,
-		ReportMode: agent.ReportModeFile,
+		MasterURL:    spec.MasterURL,
+		WorkerToken:  spec.WorkerToken,
+		StorageToken: spec.StorageToken,
+		StorageURL:   spec.StorageURL,
+		OutputDir:    driver.ContainerOutputDir,
+		InputDir:     driver.ContainerInputDir,
+		ResultFile:   containerResultFile,
+		ReportMode:   agent.ReportModeFile,
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)

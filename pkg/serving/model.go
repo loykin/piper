@@ -16,18 +16,18 @@ const (
 
 // Service represents a deployed ModelService record in the database.
 type Service struct {
-	Name      string    `json:"name"       db:"name"`
-	OwnerID   string    `json:"owner_id,omitempty" db:"owner_id"`
-	RunID     string    `json:"run_id"     db:"run_id"`
-	Artifact  string    `json:"artifact"   db:"artifact"`
-	Status    string    `json:"status"     db:"status"`
-	Endpoint  string    `json:"endpoint"   db:"endpoint"`
+	ProjectID string    `json:"project_id"          db:"project_id"`
+	Name      string    `json:"name"                db:"name"`
+	RunID     string    `json:"run_id"              db:"run_id"`
+	Artifact  string    `json:"artifact"            db:"artifact"`
+	Status    string    `json:"status"              db:"status"`
+	Endpoint  string    `json:"endpoint"            db:"endpoint"`
 	Namespace string    `json:"namespace,omitempty" db:"namespace"`
-	PID       int       `json:"pid"        db:"pid"`
+	PID       int       `json:"pid"                 db:"pid"`
 	WorkerID  string    `json:"worker_id,omitempty" db:"worker_id"`
-	YAML      string    `json:"yaml"       db:"yaml"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	YAML      string    `json:"yaml"                db:"yaml"`
+	CreatedAt time.Time `json:"created_at"          db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"          db:"updated_at"`
 }
 
 // Redact returns a copy of the Service with sensitive fields masked.
@@ -51,6 +51,7 @@ func (s *Service) K8sNamespace() string {
 // ServiceHistory is an immutable record of a past deployment, written when a service is deleted.
 type ServiceHistory struct {
 	ID         int       `json:"id"          db:"id"`
+	ProjectID  string    `json:"project_id"  db:"project_id"`
 	Name       string    `json:"name"        db:"name"`
 	RunID      string    `json:"run_id"      db:"run_id"`
 	Artifact   string    `json:"artifact"    db:"artifact"`

@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/piper/piper/internal/agentpb"
 )
@@ -22,6 +23,10 @@ type ClientConfig struct {
 	AgentAddr string
 	// AgentID uniquely identifies this worker.
 	AgentID string
+	// WorkerToken is the bearer token sent in gRPC authorization metadata.
+	// Must match the master's server.worker_token.
+	// Leave empty in trusted/dev mode.
+	WorkerToken string
 	// Registration metadata sent to master on connect.
 	Kind         string
 	Mode         string
@@ -105,8 +110,16 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	}
 	defer func() { _ = conn.Close() }()
 
+	// Attach worker token as gRPC authorization metadata when configured.
+	streamCtx := ctx
+	if c.cfg.WorkerToken != "" {
+		streamCtx = metadata.AppendToOutgoingContext(ctx,
+			"authorization", "Bearer "+c.cfg.WorkerToken,
+		)
+	}
+
 	stub := agentpb.NewAgentServiceClient(conn)
-	stream, err := stub.Connect(ctx)
+	stream, err := stub.Connect(streamCtx)
 	if err != nil {
 		return err
 	}

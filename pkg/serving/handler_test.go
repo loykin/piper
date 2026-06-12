@@ -3,13 +3,14 @@ package serving
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/security"
 )
 
 // stubServingRepo is an in-memory Repository for handler tests.
@@ -29,7 +30,7 @@ func (r *stubServingRepo) Create(_ context.Context, svc *Service) error {
 	r.services[svc.Name] = svc
 	return nil
 }
-func (r *stubServingRepo) Get(_ context.Context, name string) (*Service, error) {
+func (r *stubServingRepo) Get(_ context.Context, _, name string) (*Service, error) {
 	return r.services[name], nil
 }
 func (r *stubServingRepo) Update(_ context.Context, svc *Service) error {
@@ -40,13 +41,13 @@ func (r *stubServingRepo) Upsert(_ context.Context, svc *Service) error {
 	r.services[svc.Name] = svc
 	return nil
 }
-func (r *stubServingRepo) SetStatus(_ context.Context, name, status string) error {
+func (r *stubServingRepo) SetStatus(_ context.Context, _, name, status string) error {
 	if s, ok := r.services[name]; ok {
 		s.Status = status
 	}
 	return nil
 }
-func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, name, status, endpoint string) error {
+func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, _, name, status, endpoint string) error {
 	if s, ok := r.services[name]; ok {
 		s.Status = status
 		if endpoint != "" {
@@ -55,25 +56,36 @@ func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, name, status, end
 	}
 	return nil
 }
-func (r *stubServingRepo) List(_ context.Context) ([]*Service, error) {
+func (r *stubServingRepo) List(_ context.Context, _ string) ([]*Service, error) {
 	out := make([]*Service, 0, len(r.services))
 	for _, s := range r.services {
 		out = append(out, s)
 	}
 	return out, nil
 }
-func (r *stubServingRepo) Delete(_ context.Context, name string) error {
+func (r *stubServingRepo) ListByWorker(_ context.Context, _ string) ([]*Service, error) {
+	return r.List(context.Background(), "")
+}
+func (r *stubServingRepo) Delete(_ context.Context, _, name string) error {
 	delete(r.services, name)
 	return nil
 }
-func (r *stubServingRepo) ListHistory(_ context.Context) ([]*ServiceHistory, error) {
+func (r *stubServingRepo) ListHistory(_ context.Context, _ string) ([]*ServiceHistory, error) {
 	return nil, nil
+}
+
+func injectProjectCtx(id string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := project.WithContext(c.Request.Context(), project.Context{ID: id, Role: security.ProjectRoleAdmin})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
 }
 
 func newServingRouter(deps HandlerDeps) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	NewHandler(deps).RegisterRoutes(r.Group(""))
+	NewHandler(deps).RegisterRoutes(r.Group("", injectProjectCtx("test-proj")))
 	return r
 }
 
@@ -102,7 +114,7 @@ func TestCreateService(t *testing.T) {
 	deployed := false
 	router := newServingRouter(HandlerDeps{
 		Services: repo,
-		Deploy: func(_ context.Context, yamlBytes []byte, ownerID string) (*Service, error) {
+		Deploy: func(_ context.Context, _ string, yamlBytes []byte) (*Service, error) {
 			deployed = true
 			svc := &Service{Name: "my-model", Status: StatusRunning}
 			_ = repo.Upsert(context.Background(), svc)
@@ -161,7 +173,7 @@ func TestDeleteService(t *testing.T) {
 	stopped := false
 	router := newServingRouter(HandlerDeps{
 		Services: repo,
-		Stop: func(_ context.Context, name string) error {
+		Stop: func(_ context.Context, _, name string) error {
 			stopped = true
 			return nil
 		},
@@ -187,7 +199,7 @@ func TestRestartService(t *testing.T) {
 	restarted := ""
 	router := newServingRouter(HandlerDeps{
 		Services: repo,
-		Restart: func(_ context.Context, name string) error {
+		Restart: func(_ context.Context, _, name string) error {
 			restarted = name
 			return nil
 		},
@@ -202,183 +214,5 @@ func TestRestartService(t *testing.T) {
 	}
 	if restarted != "live-model" {
 		t.Fatalf("Restart called with %q, want live-model", restarted)
-	}
-}
-
-// ── hook tests ────────────────────────────────────────────────────────────────
-
-type stubServingHooks struct {
-	beforeCreate func(ctx context.Context, r *http.Request, yaml string) error
-	beforeList   func(ctx context.Context, r *http.Request) (ServingFilter, error)
-	beforeGet    func(ctx context.Context, r *http.Request, name string) error
-}
-
-func (h *stubServingHooks) BeforeCreateService(ctx context.Context, r *http.Request, yaml string) error {
-	if h.beforeCreate != nil {
-		return h.beforeCreate(ctx, r, yaml)
-	}
-	return nil
-}
-func (h *stubServingHooks) BeforeListServices(ctx context.Context, r *http.Request) (ServingFilter, error) {
-	if h.beforeList != nil {
-		return h.beforeList(ctx, r)
-	}
-	return ServingFilter{}, nil
-}
-func (h *stubServingHooks) BeforeGetService(ctx context.Context, r *http.Request, name string) error {
-	if h.beforeGet != nil {
-		return h.beforeGet(ctx, r, name)
-	}
-	return nil
-}
-
-func doServingJSON(router *gin.Engine, method, path string, body string) *httptest.ResponseRecorder {
-	var req *http.Request
-	if body != "" {
-		req = httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-	} else {
-		req = httptest.NewRequest(method, path, nil)
-	}
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	return rec
-}
-
-func TestBeforeCreateService_Blocks(t *testing.T) {
-	router := newServingRouter(HandlerDeps{
-		Services: newStubServingRepo(),
-		Hooks: &stubServingHooks{
-			beforeCreate: func(_ context.Context, _ *http.Request, _ string) error {
-				return errors.New("not allowed")
-			},
-		},
-	})
-
-	rec := doServingJSON(router, http.MethodPost, "/serving", `{"yaml":"apiVersion: piper/v1"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body)
-	}
-}
-
-func TestBeforeListServices_OwnerFilter(t *testing.T) {
-	repo := newStubServingRepo(
-		&Service{Name: "svc-a", OwnerID: "user-1"},
-		&Service{Name: "svc-b", OwnerID: "user-2"},
-	)
-	router := newServingRouter(HandlerDeps{
-		Services: repo,
-		Hooks: &stubServingHooks{
-			beforeList: func(_ context.Context, _ *http.Request) (ServingFilter, error) {
-				return ServingFilter{OwnerID: "user-1"}, nil
-			},
-		},
-	})
-
-	rec := doServingJSON(router, http.MethodGet, "/serving", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	var out []Service
-	_ = json.NewDecoder(rec.Body).Decode(&out)
-	if len(out) != 1 || out[0].Name != "svc-a" {
-		t.Errorf("expected only svc-a (user-1), got %+v", out)
-	}
-}
-
-func TestBeforeListServices_Error(t *testing.T) {
-	router := newServingRouter(HandlerDeps{
-		Services: newStubServingRepo(),
-		Hooks: &stubServingHooks{
-			beforeList: func(_ context.Context, _ *http.Request) (ServingFilter, error) {
-				return ServingFilter{}, errors.New("auth error")
-			},
-		},
-	})
-
-	rec := doServingJSON(router, http.MethodGet, "/serving", "")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-}
-
-func TestBeforeGetService_BlocksGet(t *testing.T) {
-	repo := newStubServingRepo(&Service{Name: "model-v1"})
-	router := newServingRouter(HandlerDeps{
-		Services: repo,
-		Hooks: &stubServingHooks{
-			beforeGet: func(_ context.Context, _ *http.Request, _ string) error {
-				return errors.New("forbidden")
-			},
-		},
-	})
-
-	rec := doServingJSON(router, http.MethodGet, "/serving/model-v1", "")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-}
-
-func TestBeforeGetService_BlocksDelete(t *testing.T) {
-	repo := newStubServingRepo(&Service{Name: "model-v1"})
-	router := newServingRouter(HandlerDeps{
-		Services: repo,
-		Hooks: &stubServingHooks{
-			beforeGet: func(_ context.Context, _ *http.Request, _ string) error {
-				return errors.New("forbidden")
-			},
-		},
-	})
-
-	rec := doServingJSON(router, http.MethodDelete, "/serving/model-v1", "")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-	if _, ok := repo.services["model-v1"]; !ok {
-		t.Error("service should not be deleted when hook blocks")
-	}
-}
-
-func TestBeforeGetService_BlocksRestart(t *testing.T) {
-	repo := newStubServingRepo(&Service{Name: "model-v1"})
-	restartCalled := false
-	router := newServingRouter(HandlerDeps{
-		Services: repo,
-		Restart: func(_ context.Context, _ string) error {
-			restartCalled = true
-			return nil
-		},
-		Hooks: &stubServingHooks{
-			beforeGet: func(_ context.Context, _ *http.Request, _ string) error {
-				return errors.New("forbidden")
-			},
-		},
-	})
-
-	rec := doServingJSON(router, http.MethodPost, "/serving/model-v1/restart", "")
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-	if restartCalled {
-		t.Error("Restart should not be called when hook blocks")
-	}
-}
-
-func TestBeforeGetService_PassesName(t *testing.T) {
-	repo := newStubServingRepo(&Service{Name: "my-model"})
-	gotName := ""
-	router := newServingRouter(HandlerDeps{
-		Services: repo,
-		Hooks: &stubServingHooks{
-			beforeGet: func(_ context.Context, _ *http.Request, name string) error {
-				gotName = name
-				return nil
-			},
-		},
-	})
-
-	doServingJSON(router, http.MethodGet, "/serving/my-model", "")
-	if gotName != "my-model" {
-		t.Errorf("BeforeGetService called with %q, want my-model", gotName)
 	}
 }

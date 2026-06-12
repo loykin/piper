@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/storage"
 )
 
@@ -61,19 +63,19 @@ func (p *Piper) readStorageSettings() (StorageConfig, bool, error) {
 }
 
 func (p *Piper) writeStorageSettings(cfg StorageConfig) error {
-	path := p.storageSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	settingPath := p.storageSettingsPath()
+	if err := os.MkdirAll(filepath.Dir(settingPath), 0755); err != nil {
 		return err
 	}
 	raw, err := yaml.Marshal(storageSettingsFile{Storage: cfg})
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
+	tmp := settingPath + ".tmp"
 	if err := os.WriteFile(tmp, raw, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return os.Rename(tmp, settingPath)
 }
 
 // StorageSettings returns the editable storage configuration and runtime status.
@@ -109,18 +111,27 @@ func (p *Piper) ListStorageObjects(ctx context.Context, prefix string) ([]Storag
 	if p.store == nil {
 		return nil, fmt.Errorf("artifact store is unavailable")
 	}
-	objs, err := p.store.List(ctx, prefix)
+	projectPrefix, err := projectStoragePrefix(ctx)
+	if err != nil {
+		return nil, err
+	}
+	relativePrefix, err := cleanProjectStorageKey(prefix, true)
+	if err != nil {
+		return nil, err
+	}
+	objs, err := p.store.List(ctx, projectPrefix+relativePrefix)
 	if err != nil {
 		return nil, err
 	}
 	sort.Slice(objs, func(i, j int) bool { return objs[i].Key < objs[j].Key })
 	out := make([]StorageObjectInfo, 0, len(objs))
 	for _, obj := range objs {
+		key := strings.TrimPrefix(obj.Key, projectPrefix)
 		out = append(out, StorageObjectInfo{
-			Key:         obj.Key,
+			Key:         key,
 			Size:        obj.Size,
 			ModifiedAt:  obj.ModifiedAt.UTC().Format(time.RFC3339),
-			DownloadURL: "/api/storage/object?key=" + url.QueryEscape(obj.Key),
+			DownloadURL: "/api/projects/" + projectID(ctx) + "/storage/object?key=" + url.QueryEscape(key),
 		})
 	}
 	return out, nil
@@ -131,7 +142,11 @@ func (p *Piper) OpenStorageObject(ctx context.Context, key string) (io.ReadClose
 	if p.store == nil {
 		return nil, "", fmt.Errorf("artifact store is unavailable")
 	}
-	rc, err := p.store.Get(ctx, key)
+	fullKey, err := projectStorageKey(ctx, key)
+	if err != nil {
+		return nil, "", err
+	}
+	rc, err := p.store.Get(ctx, fullKey)
 	if err != nil {
 		return nil, "", err
 	}
@@ -143,7 +158,15 @@ func (p *Piper) DeleteStorageObject(ctx context.Context, keys ...string) error {
 	if p.store == nil {
 		return fmt.Errorf("artifact store is unavailable")
 	}
-	return p.store.Delete(ctx, keys...)
+	fullKeys := make([]string, len(keys))
+	for i, key := range keys {
+		fullKey, err := projectStorageKey(ctx, key)
+		if err != nil {
+			return err
+		}
+		fullKeys[i] = fullKey
+	}
+	return p.store.Delete(ctx, fullKeys...)
 }
 
 // UploadStorageObject stores a single uploaded file under the given key.
@@ -154,7 +177,53 @@ func (p *Piper) UploadStorageObject(ctx context.Context, key string, r io.Reader
 	if key == "" {
 		return fmt.Errorf("missing key")
 	}
-	return p.store.Put(ctx, key, r, size)
+	fullKey, err := projectStorageKey(ctx, key)
+	if err != nil {
+		return err
+	}
+	return p.store.Put(ctx, fullKey, r, size)
+}
+
+func projectID(ctx context.Context) string {
+	projectContext, _ := project.FromContext(ctx)
+	return projectContext.ID
+}
+
+func projectStoragePrefix(ctx context.Context) (string, error) {
+	id := projectID(ctx)
+	if id == "" {
+		return "", fmt.Errorf("project context is required")
+	}
+	return "projects/" + id + "/uploads/", nil
+}
+
+func projectStorageKey(ctx context.Context, key string) (string, error) {
+	prefix, err := projectStoragePrefix(ctx)
+	if err != nil {
+		return "", err
+	}
+	cleaned, err := cleanProjectStorageKey(key, false)
+	if err != nil {
+		return "", err
+	}
+	return prefix + cleaned, nil
+}
+
+func cleanProjectStorageKey(key string, allowEmpty bool) (string, error) {
+	key = strings.TrimSpace(strings.ReplaceAll(key, "\\", "/"))
+	for _, segment := range strings.Split(key, "/") {
+		if segment == ".." {
+			return "", fmt.Errorf("invalid key")
+		}
+	}
+	cleaned := strings.TrimPrefix(path.Clean("/"+key), "/")
+	if cleaned == "." {
+		cleaned = ""
+	}
+	if cleaned == "" && !allowEmpty {
+		return "", fmt.Errorf("missing key")
+	}
+	return cleaned, nil
 }
 
 func (p *Piper) storageBackendName() string {

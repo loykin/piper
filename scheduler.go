@@ -9,6 +9,7 @@ import (
 
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/robfig/cron/v3"
 )
@@ -24,7 +25,8 @@ func nextScheduleTime(expr string, from time.Time) (time.Time, error) {
 }
 
 func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.Time) ([]string, error) {
-	sc, err := p.repos.Schedule.Get(ctx, id)
+	projectContext, _ := project.FromContext(ctx)
+	sc, err := p.repos.Schedule.Get(ctx, projectContext.ID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +58,8 @@ func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.T
 			return nil, fmt.Errorf("backfill range creates more than 1000 runs")
 		}
 		runID, err := p.startRun(ctx, pl, dag, StartRunOptions{
+			ProjectID:  sc.ProjectID,
 			ScheduleID: sc.ID,
-			OwnerID:    sc.OwnerID,
 			Params:     params,
 			Vars:       proto.BuiltinVars{ScheduledAt: &scheduledAt},
 			YAML:       sc.PipelineYAML,
@@ -101,17 +103,17 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 		nextRunAt, err = nextScheduleTime(sc.CronExpr, sc.NextRunAt)
 		if err != nil {
 			slog.Warn("invalid cron expression in schedule", "schedule_id", sc.ID, "cron", sc.CronExpr, "err", err)
-			_ = p.repos.Schedule.SetEnabled(ctx, sc.ID, false)
+			_ = p.repos.Schedule.SetEnabled(ctx, sc.ProjectID, sc.ID, false)
 			return
 		}
 		if p.cfg.Schedule.MisfirePolicy != "run_once" && isCronMisfire(sc.NextRunAt, now, p.cfg.Schedule.MisfireGracePeriod) {
 			nextRunAt, err = nextScheduleTime(sc.CronExpr, now)
 			if err != nil {
 				slog.Warn("invalid cron expression in schedule", "schedule_id", sc.ID, "cron", sc.CronExpr, "err", err)
-				_ = p.repos.Schedule.SetEnabled(ctx, sc.ID, false)
+				_ = p.repos.Schedule.SetEnabled(ctx, sc.ProjectID, sc.ID, false)
 				return
 			}
-			if err := p.repos.Schedule.UpdateRun(ctx, sc.ID, now, nextRunAt); err != nil {
+			if err := p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt); err != nil {
 				slog.Warn("skip missed schedule update failed", "schedule_id", sc.ID, "err", err)
 			}
 			slog.Info("event", "type", "schedule.misfire_skipped", "schedule_id", sc.ID, "missed_at", sc.NextRunAt, "next_run_at", nextRunAt)
@@ -123,7 +125,7 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 	if err != nil {
 		slog.Warn("parse schedule pipeline failed", "schedule_id", sc.ID, "err", err)
 		if sc.ScheduleType == "cron" {
-			_ = p.repos.Schedule.UpdateRun(ctx, sc.ID, now, nextRunAt)
+			_ = p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt)
 		}
 		return
 	}
@@ -131,7 +133,7 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 	if err != nil {
 		slog.Warn("build schedule dag failed", "schedule_id", sc.ID, "err", err)
 		if sc.ScheduleType == "cron" {
-			_ = p.repos.Schedule.UpdateRun(ctx, sc.ID, now, nextRunAt)
+			_ = p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt)
 		}
 		return
 	}
@@ -146,8 +148,8 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 	}
 
 	if _, err := p.startRun(ctx, pl, dag, StartRunOptions{
+		ProjectID:  sc.ProjectID,
 		ScheduleID: sc.ID,
-		OwnerID:    sc.OwnerID,
 		Params:     params,
 		Vars:       proto.BuiltinVars{ScheduledAt: &scheduledAt},
 		YAML:       sc.PipelineYAML,
@@ -158,15 +160,15 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 
 	switch sc.ScheduleType {
 	case "cron":
-		if err := p.repos.Schedule.UpdateRun(ctx, sc.ID, now, nextRunAt); err != nil {
+		if err := p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt); err != nil {
 			slog.Warn("update schedule run failed", "schedule_id", sc.ID, "err", err)
 		}
 	case "once", "immediate":
 		// fire once then done
-		if err := p.repos.Schedule.SetEnabled(ctx, sc.ID, false); err != nil {
+		if err := p.repos.Schedule.SetEnabled(ctx, sc.ProjectID, sc.ID, false); err != nil {
 			slog.Warn("mark schedule done failed", "schedule_id", sc.ID, "err", err)
 		}
-		_ = p.repos.Schedule.UpdateRun(ctx, sc.ID, now, now)
+		_ = p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, now)
 	}
 }
 

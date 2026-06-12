@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/tunnelproxy"
+	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/security"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,12 +33,12 @@ type RPCSender interface {
 type HandlerDeps struct {
 	Notebooks        Repository
 	Volumes          VolumeRepository
-	Create           func(ctx context.Context, spec Notebook, yamlStr string) (*NotebookServer, error)
-	CreateWithVolume func(ctx context.Context, spec Notebook, volumeID, yamlStr string) (*NotebookServer, error)
-	Stop             func(ctx context.Context, name string) error
-	Restart          func(ctx context.Context, name string) error
-	Delete           func(ctx context.Context, name string) error
-	PurgeVolume      func(ctx context.Context, volumeID string) error
+	Create           func(ctx context.Context, projectID string, spec Notebook, yamlStr string) (*NotebookServer, error)
+	CreateWithVolume func(ctx context.Context, projectID string, spec Notebook, volumeID, yamlStr string) (*NotebookServer, error)
+	Stop             func(ctx context.Context, projectID, name string) error
+	Restart          func(ctx context.Context, projectID, name string) error
+	Delete           func(ctx context.Context, projectID, name string) error
+	PurgeVolume      func(ctx context.Context, projectID, volumeID string) error
 	AgentRegistry    *iagent.Registry
 	ProxyDialer      ProxyDialer
 	RPCSender        RPCSender
@@ -52,26 +54,42 @@ func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{deps: deps}
 }
 
-// RegisterRoutes mounts all /notebooks routes on the given router group.
+func currentProjectID(c *gin.Context) string {
+	projectContext, _ := project.FromContext(c.Request.Context())
+	return projectContext.ID
+}
+
+// RegisterRoutes mounts the JSON API routes for notebooks.
+// The browser proxy route is registered separately via RegisterProxyRoutes.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/notebooks", h.listNotebooks)
-	rg.POST("/notebooks", h.createNotebook)
 	rg.GET("/notebooks/:name", h.getNotebook)
-	rg.POST("/notebooks/:name/stop", h.stopNotebook)
-	rg.POST("/notebooks/:name/start", h.startNotebook)
-	rg.DELETE("/notebooks/:name", h.deleteNotebook)
-	rg.Any("/notebooks/:name/proxy/*path", h.proxyNotebook)
+
+	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
+	member.POST("/notebooks", h.createNotebook)
+	member.POST("/notebooks/:name/stop", h.stopNotebook)
+	member.POST("/notebooks/:name/start", h.startNotebook)
+	member.DELETE("/notebooks/:name", h.deleteNotebook)
 
 	if h.deps.Volumes != nil {
 		rg.GET("/notebook-volumes", h.listVolumes)
 		rg.GET("/notebook-volumes/:id/files", h.listVolumeFiles)
-		rg.DELETE("/notebook-volumes/:id", h.purgeVolume)
+		member.DELETE("/notebook-volumes/:id", h.purgeVolume)
 	}
+}
+
+// RegisterProxyRoutes mounts the browser proxy at the given router group.
+// Must be called on a group that already has :project_id in its path so
+// proxyNotebook can build the correct Jupyter base_url and redirect prefix.
+//
+// Expected group path: /projects/:project_id
+func (h *Handler) RegisterProxyRoutes(rg *gin.RouterGroup) {
+	rg.Any("/notebooks/:name/proxy/*path", h.proxyNotebook)
 }
 
 // GET /notebooks
 func (h *Handler) listNotebooks(c *gin.Context) {
-	nbs, err := h.deps.Notebooks.List(c.Request.Context())
+	nbs, err := h.deps.Notebooks.List(c.Request.Context(), currentProjectID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -109,13 +127,13 @@ func (h *Handler) createNotebook(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "CreateWithVolume not configured"})
 			return
 		}
-		nb, err = h.deps.CreateWithVolume(c.Request.Context(), spec, req.VolumeID, req.YAML)
+		nb, err = h.deps.CreateWithVolume(c.Request.Context(), currentProjectID(c), spec, req.VolumeID, req.YAML)
 	} else {
 		if h.deps.Create == nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Create not configured"})
 			return
 		}
-		nb, err = h.deps.Create(c.Request.Context(), spec, req.YAML)
+		nb, err = h.deps.Create(c.Request.Context(), currentProjectID(c), spec, req.YAML)
 	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -127,7 +145,7 @@ func (h *Handler) createNotebook(c *gin.Context) {
 // GET /notebooks/:name
 func (h *Handler) getNotebook(c *gin.Context) {
 	name := c.Param("name")
-	nb, err := h.deps.Notebooks.Get(c.Request.Context(), name)
+	nb, err := h.deps.Notebooks.Get(c.Request.Context(), currentProjectID(c), name)
 	if err != nil || nb == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "notebook not found"})
 		return
@@ -142,7 +160,7 @@ func (h *Handler) stopNotebook(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Stop not configured"})
 		return
 	}
-	if err := h.deps.Stop(c.Request.Context(), name); err != nil {
+	if err := h.deps.Stop(c.Request.Context(), currentProjectID(c), name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -156,11 +174,11 @@ func (h *Handler) startNotebook(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Restart not configured"})
 		return
 	}
-	if err := h.deps.Restart(c.Request.Context(), name); err != nil {
+	if err := h.deps.Restart(c.Request.Context(), currentProjectID(c), name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	nb, _ := h.deps.Notebooks.Get(c.Request.Context(), name)
+	nb, _ := h.deps.Notebooks.Get(c.Request.Context(), currentProjectID(c), name)
 	if nb != nil {
 		c.JSON(http.StatusOK, nb)
 	} else {
@@ -176,16 +194,16 @@ func (h *Handler) deleteNotebook(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Delete not configured"})
 		return
 	}
-	if err := h.deps.Delete(c.Request.Context(), name); err != nil {
+	if err := h.deps.Delete(c.Request.Context(), currentProjectID(c), name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
-// GET /notebook-volumes — list all volumes.
+// GET /notebook-volumes — list all volumes for the current project.
 func (h *Handler) listVolumes(c *gin.Context) {
-	vols, err := h.deps.Volumes.List(c.Request.Context())
+	vols, err := h.deps.Volumes.List(c.Request.Context(), currentProjectID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -200,6 +218,11 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 	id := c.Param("id")
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
 	if err != nil || vol == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
+	// Verify volume belongs to current project.
+	if vol.ProjectID != currentProjectID(c) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
 		return
 	}
@@ -222,7 +245,7 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 	// Look up the active notebook for this volume (provides Jupyter token for K8s).
 	var nbName, nbToken string
 	if h.deps.Notebooks != nil {
-		if nb, lookupErr := h.deps.Notebooks.GetByVolumeID(c.Request.Context(), vol.ID); lookupErr == nil && nb != nil {
+		if nb, lookupErr := h.deps.Notebooks.GetByVolumeID(c.Request.Context(), currentProjectID(c), vol.ID); lookupErr == nil && nb != nil {
 			nbName = nb.Name
 			nbToken = nb.Token
 		}
@@ -307,11 +330,17 @@ func (h *Handler) writeFilesResponse(c *gin.Context, resp *FSListFilesResponse) 
 // DELETE /notebook-volumes/:id — permanently delete a released volume.
 func (h *Handler) purgeVolume(c *gin.Context) {
 	id := c.Param("id")
+	// Verify volume belongs to current project before purging.
+	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
+	if err != nil || vol == nil || vol.ProjectID != currentProjectID(c) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		return
+	}
 	if h.deps.PurgeVolume == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "PurgeVolume not configured"})
 		return
 	}
-	if err := h.deps.PurgeVolume(c.Request.Context(), id); err != nil {
+	if err := h.deps.PurgeVolume(c.Request.Context(), currentProjectID(c), id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -320,9 +349,12 @@ func (h *Handler) purgeVolume(c *gin.Context) {
 
 // ANY /notebooks/:name/proxy/*path — reverse-proxies to the notebook endpoint.
 // Handles both HTTP and WebSocket (required for Jupyter kernel communication).
+// Called from a group that has :project_id in scope, so the full Jupyter
+// base_url is /projects/:project_id/notebooks/:name/proxy.
 func (h *Handler) proxyNotebook(c *gin.Context) {
+	projectID := currentProjectID(c)
 	name := c.Param("name")
-	nb, err := h.deps.Notebooks.Get(c.Request.Context(), name)
+	nb, err := h.deps.Notebooks.Get(c.Request.Context(), projectID, name)
 	if err != nil || nb == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "notebook not found"})
 		return
@@ -338,7 +370,8 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		return
 	}
 
-	upstreamPath := tunnelproxy.JoinPathPrefix("/notebooks/"+name+"/proxy", c.Param("path"))
+	proxyPrefix := "/projects/" + projectID + "/notebooks/" + name + "/proxy"
+	upstreamPath := tunnelproxy.JoinPathPrefix(proxyPrefix, c.Param("path"))
 
 	agentID := target.Host
 	dialTarget := target.Query().Get("target")
@@ -367,7 +400,7 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		Token:       nb.Token,
 		Host:        c.Request.Host,
 		Scheme:      tunnelproxy.RequestScheme(c.Request),
-		ProxyPrefix: "/notebooks/" + name + "/proxy",
+		ProxyPrefix: proxyPrefix,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

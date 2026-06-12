@@ -17,6 +17,7 @@ import PipelineCanvas from '@/shared/components/PipelineCanvas'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
 import { submitPipeline } from '@/features/pipelines/api'
+import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
   parsePipelineDraftYaml, validatePipelineDraft,
@@ -325,6 +326,7 @@ function ArtifactSection({
 
 export default function PipelineEditorPage() {
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const initialDraft = useMemo(() => defaultPipelineDraft(), [])
 
   const [searchParams, setSearchParams] = useSearchParams()
@@ -371,7 +373,10 @@ export default function PipelineEditorPage() {
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
   const dragDropHandledRef = useRef(false)
 
-  useEffect(() => { listNotebookVolumes().then(setVolumes).catch(() => setVolumes([])) }, [])
+  useEffect(() => {
+    if (!projectId) return
+    listNotebookVolumes(projectId).then(setVolumes).catch(() => setVolumes([]))
+  }, [projectId])
 
   useEffect(() => {
     if (!fileBrowserOpen && !artifactBrowseKey) return
@@ -391,7 +396,7 @@ export default function PipelineEditorPage() {
     }
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     function fetchFiles() {
-      listVolumeFiles(editorVolumeId!).then(result => {
+      listVolumeFiles(projectId, editorVolumeId!).then(result => {
         if (result.state === 'transitioning') {
           setVolumeFilesStatus('transitioning')
           // Keep existing files during transition — do not clear to empty.
@@ -559,7 +564,7 @@ export default function PipelineEditorPage() {
     setError('')
     try {
       const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
-      await submitPipeline({ name: pipelineName, yaml, volume_id: submitVolumeId || undefined })
+      await submitPipeline(projectId, { name: pipelineName, yaml, volume_id: submitVolumeId || undefined })
       setSubmitModalOpen(false)
       navigate(`/pipelines?name=${encodeURIComponent(pipelineName)}`)
     } catch (err) {

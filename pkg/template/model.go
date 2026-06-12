@@ -8,6 +8,7 @@ import (
 // Template is a versioned, named pipeline definition backed by an S3 snapshot.
 // Every submit creates a new row; the submit history IS the version history.
 type Template struct {
+	ProjectID  string    `json:"project_id"  db:"project_id"`
 	ID         string    `json:"id"          db:"id"`
 	Name       string    `json:"name"        db:"name"`
 	YAML       string    `json:"yaml"        db:"yaml"`
@@ -25,7 +26,7 @@ type Filter struct {
 // Repository is the persistence interface for Template records.
 type Repository interface {
 	Create(ctx context.Context, t *Template) error
-	Get(ctx context.Context, id string) (*Template, error)
-	List(ctx context.Context, f Filter) ([]*Template, error)
-	Delete(ctx context.Context, id string) error
+	Get(ctx context.Context, projectID, id string) (*Template, error)
+	List(ctx context.Context, projectID string, f Filter) ([]*Template, error)
+	Delete(ctx context.Context, projectID, id string) error
 }

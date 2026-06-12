@@ -6,7 +6,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	piper "github.com/piper/piper"
+	"github.com/piper/piper/internal/store/postgres"
+	sqlitestore "github.com/piper/piper/internal/store/sqlite"
+	"github.com/piper/piper/pkg/auth"
+	"github.com/piper/piper/pkg/security"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
@@ -20,8 +25,6 @@ type configFile struct {
 	Source         sourceSection         `yaml:"source"          mapstructure:"source"`
 	Storage        storageSection        `yaml:"storage"         mapstructure:"storage"`
 	Server         serverSection         `yaml:"server"          mapstructure:"server"`
-	Pipeline       pipelineSection       `yaml:"pipeline"        mapstructure:"pipeline"`
-	K8s            k8sSection            `yaml:"k8s"             mapstructure:"k8s"`
 	Retention      retentionSection      `yaml:"retention"       mapstructure:"retention"`
 	Schedule       scheduleSection       `yaml:"schedule"        mapstructure:"schedule"`
 	Serving        servingSection        `yaml:"serving"         mapstructure:"serving"`
@@ -29,10 +32,6 @@ type configFile struct {
 	DB             dbSection             `yaml:"db"              mapstructure:"db"`
 	NotebookWorker notebookWorkerSection `yaml:"notebook_worker" mapstructure:"notebook_worker"`
 	NotebookK8s    notebookK8sSection    `yaml:"notebook_k8s"    mapstructure:"notebook_k8s"`
-}
-
-type pipelineSection struct {
-	DispatchMode string `yaml:"dispatch_mode" mapstructure:"dispatch_mode"`
 }
 
 type storageSection struct {
@@ -67,19 +66,17 @@ type gitSection struct {
 }
 
 type serverSection struct {
-	Addr  string     `yaml:"addr"  mapstructure:"addr"`
-	Token string     `yaml:"token" mapstructure:"token"`
-	TLS   tlsSection `yaml:"tls"   mapstructure:"tls"`
+	Addr           string     `yaml:"addr"             mapstructure:"addr"`
+	AgentAddr      string     `yaml:"agent_addr"       mapstructure:"agent_addr"`
+	WorkerToken    string     `yaml:"worker_token"     mapstructure:"worker_token"`
+	AuthSigningKey string     `yaml:"auth_signing_key" mapstructure:"auth_signing_key"`
+	TLS            tlsSection `yaml:"tls"              mapstructure:"tls"`
 }
 
 type tlsSection struct {
 	Enabled  bool   `yaml:"enabled"   mapstructure:"enabled"`
 	CertFile string `yaml:"cert_file" mapstructure:"cert_file"`
 	KeyFile  string `yaml:"key_file"  mapstructure:"key_file"`
-}
-
-type k8sSection struct {
-	Worker bool `yaml:"worker" mapstructure:"worker"`
 }
 
 type retentionSection struct {
@@ -104,6 +101,7 @@ type logSection struct {
 type dbSection struct {
 	Driver string `yaml:"driver" mapstructure:"driver"`
 	DSN    string `yaml:"dsn"    mapstructure:"dsn"`
+	Path   string `yaml:"path"   mapstructure:"path"`
 }
 
 type notebookWorkerSection struct {
@@ -174,6 +172,7 @@ func (c *configFile) toConfig() piper.Config {
 		MaxRetries:  maxRetries,
 		RetryDelay:  c.Run.RetryDelay,
 		Concurrency: c.Run.Concurrency,
+		Auth:        piper.AuthConfig{Trusted: true},
 		Git: piper.GitConfig{
 			Token: c.Source.Git.Token,
 			User:  c.Source.Git.User,
@@ -191,8 +190,9 @@ func (c *configFile) toConfig() piper.Config {
 			Token:    c.Storage.Token,
 		},
 		Server: piper.ServerConfig{
-			Addr:  c.Server.Addr,
-			Token: c.Server.Token,
+			Addr:        c.Server.Addr,
+			AgentAddr:   c.Server.AgentAddr,
+			WorkerToken: c.Server.WorkerToken,
 			TLS: piper.TLSConfig{
 				Enabled:  c.Server.TLS.Enabled,
 				CertFile: c.Server.TLS.CertFile,
@@ -211,14 +211,9 @@ func (c *configFile) toConfig() piper.Config {
 			ModelDir: c.Serving.ModelDir,
 			Worker:   c.Serving.Worker,
 		},
-		Pipeline: piper.PipelineConfig{
-			DispatchMode: c.Pipeline.DispatchMode,
-		},
-		K8s: piper.K8sConfig{
-			Worker: c.K8s.Worker,
-		},
 		DBDriver: c.DB.Driver,
 		DBDSN:    c.DB.DSN,
+		DBPath:   c.DB.Path,
 		NotebookWorker: piper.NotebookWorkerConfig{
 			NotebooksRoot: c.NotebookWorker.NotebooksRoot,
 			PortRange:     c.NotebookWorker.PortRange,
@@ -262,17 +257,50 @@ func buildConfig() (piper.Config, error) {
 }
 
 // NewPiper creates a Piper instance from the current viper state.
+// When server.auth_signing_key is set, the built-in auth capabilities are
+// created after Piper opens its repositories.
 // Exported so that library users can pass it to Commands() as the factory.
 func NewPiper() (*piper.Piper, error) {
 	cfg, err := buildConfig()
 	if err != nil {
 		return nil, err
 	}
-	p, err := piper.New(cfg)
-	if err != nil {
-		return nil, err
+	signingKey := viper.GetString("server.auth_signing_key")
+	if signingKey != "" {
+		cfg.Auth = piper.AuthConfig{
+			Factory: func(deps piper.AuthDependencies) (piper.AuthConfig, error) {
+				if deps.DB == nil {
+					return piper.AuthConfig{}, fmt.Errorf("auth_signing_key requires a database (db_path or db_dsn)")
+				}
+				db := sqlx.NewDb(deps.DB, deps.Driver)
+				var (
+					users    auth.UserRepository
+					members  security.ProjectMemberRepository
+					sessions auth.SessionRepository
+				)
+				if deps.Driver == "postgres" {
+					users = postgres.NewUserRepo(db)
+					members = postgres.NewMemberRepo(db)
+					sessions = postgres.NewSessionRepo(db)
+				} else {
+					users = sqlitestore.NewUserRepo(db)
+					members = sqlitestore.NewMemberRepo(db)
+					sessions = sqlitestore.NewSessionRepo(db)
+				}
+				provider := auth.New(auth.Config{SigningKey: []byte(signingKey)}, users, members, sessions)
+				return piper.AuthConfig{
+					LoginRoutes:          auth.NewHandler(provider, provider, deps.SecureCookies),
+					Authenticator:        provider,
+					Authorizer:           provider,
+					UserDirectory:        provider,
+					UserManager:          provider,
+					ProjectMemberManager: provider,
+				}, nil
+			}}
+	} else {
+		cfg.Auth = piper.AuthConfig{Trusted: true}
 	}
-	return p, nil
+	return piper.New(cfg)
 }
 
 // resolveStorageURLFromViper derives the storage URL for workers/embedded workers.

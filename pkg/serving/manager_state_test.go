@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/piper/piper/internal/artifact"
+	"github.com/piper/piper/pkg/project"
 )
 
 type stateTestRepo struct {
@@ -16,7 +17,7 @@ func (r *stateTestRepo) Create(_ context.Context, svc *Service) error {
 	r.service = cloneService(svc)
 	return nil
 }
-func (r *stateTestRepo) Get(_ context.Context, name string) (*Service, error) {
+func (r *stateTestRepo) Get(_ context.Context, _, name string) (*Service, error) {
 	if r.service == nil || r.service.Name != name {
 		return nil, nil
 	}
@@ -30,13 +31,13 @@ func (r *stateTestRepo) Upsert(_ context.Context, svc *Service) error {
 	r.service = cloneService(svc)
 	return nil
 }
-func (r *stateTestRepo) SetStatus(_ context.Context, name, status string) error {
+func (r *stateTestRepo) SetStatus(_ context.Context, _, name, status string) error {
 	if r.service != nil && r.service.Name == name {
 		r.service.Status = status
 	}
 	return nil
 }
-func (r *stateTestRepo) SetStatusEndpoint(_ context.Context, name, status, endpoint string) error {
+func (r *stateTestRepo) SetStatusEndpoint(_ context.Context, _, name, status, endpoint string) error {
 	if r.service != nil && r.service.Name == name {
 		r.service.Status = status
 		if status == StatusStopped || status == StatusFailed {
@@ -48,22 +49,29 @@ func (r *stateTestRepo) SetStatusEndpoint(_ context.Context, name, status, endpo
 	}
 	return nil
 }
-func (r *stateTestRepo) List(context.Context) ([]*Service, error) {
+func (r *stateTestRepo) List(context.Context, string) ([]*Service, error) {
 	if r.service == nil {
 		return nil, nil
 	}
 	return []*Service{cloneService(r.service)}, nil
 }
-func (r *stateTestRepo) Delete(context.Context, string) error                   { r.service = nil; return nil }
-func (r *stateTestRepo) ListHistory(context.Context) ([]*ServiceHistory, error) { return nil, nil }
+func (r *stateTestRepo) ListByWorker(context.Context, string) ([]*Service, error) {
+	return r.List(context.Background(), "")
+}
+func (r *stateTestRepo) Delete(context.Context, string, string) error { r.service = nil; return nil }
+func (r *stateTestRepo) ListHistory(context.Context, string) ([]*ServiceHistory, error) {
+	return nil, nil
+}
 
 type stateTestDriver struct {
-	stopErr   error
-	deployRec *Service
+	stopErr    error
+	deployRec  *Service
+	deploySpec ModelService
 }
 
 func (d *stateTestDriver) ArtifactTarget() artifact.Target { return artifact.TargetLocal }
-func (d *stateTestDriver) Deploy(context.Context, ModelService, artifact.Resolved, string) (*Service, error) {
+func (d *stateTestDriver) Deploy(_ context.Context, svc ModelService, _ artifact.Resolved, _ string) (*Service, error) {
+	d.deploySpec = svc
 	if d.deployRec != nil {
 		return cloneService(d.deployRec), nil
 	}
@@ -79,7 +87,7 @@ func TestManagerStopRestoresObservedStateOnDriverFailure(t *testing.T) {
 	stopErr := errors.New("worker unavailable")
 	m := New(repo, &stateTestDriver{stopErr: stopErr})
 
-	if err := m.Stop(context.Background(), "demo"); !errors.Is(err, stopErr) {
+	if err := m.Stop(context.Background(), "project-a", "demo"); !errors.Is(err, stopErr) {
 		t.Fatalf("Stop() error = %v, want %v", err, stopErr)
 	}
 	if repo.service.Status != StatusRunning {
@@ -91,7 +99,7 @@ func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
 	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, WorkerID: "worker-a"}}
 	m := New(repo, &stateTestDriver{})
 
-	if err := m.UpdateStatus(context.Background(), "worker-b", "demo", StatusStopped, ""); err == nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-b", "demo", StatusStopped, ""); err == nil {
 		t.Fatal("UpdateStatus accepted non-owner")
 	}
 	if repo.service.Status != StatusRunning {
@@ -110,8 +118,15 @@ func TestManagerDeployPersistsResolvedRunMetadata(t *testing.T) {
 	spec := ModelService{}
 	spec.Metadata.Name = "demo"
 
-	if err := m.Deploy(context.Background(), spec, artifact.Resolved{RunID: "run-1"}, "service-yaml"); err != nil {
+	ctx := project.WithContext(context.Background(), project.Context{ID: "project-a"})
+	if err := m.Deploy(ctx, "project-a", spec, artifact.Resolved{RunID: "run-1"}, "service-yaml"); err != nil {
 		t.Fatalf("Deploy() error: %v", err)
+	}
+	if driver.deploySpec.Metadata.ProjectID != "project-a" {
+		t.Fatalf("driver project ID = %q, want project-a", driver.deploySpec.Metadata.ProjectID)
+	}
+	if repo.service.ProjectID != "project-a" {
+		t.Fatalf("stored project ID = %q, want project-a", repo.service.ProjectID)
 	}
 	if repo.service.RunID != "run-1" {
 		t.Fatalf("run ID = %q, want run-1", repo.service.RunID)
@@ -133,7 +148,7 @@ func TestManagerUpdateStatusPreservesDeploymentMetadata(t *testing.T) {
 	}}
 	m := New(repo, &stateTestDriver{})
 
-	if err := m.UpdateStatus(context.Background(), "worker-a", "demo", StatusStopped, ""); err != nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusStopped, ""); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 	if repo.service.RunID != "run-1" || repo.service.YAML != "service-yaml" {
@@ -153,7 +168,7 @@ func TestManagerStatusOnlySyncPreservesEndpoint(t *testing.T) {
 	}}
 	m := New(repo, &stateTestDriver{})
 
-	if err := m.UpdateStatus(context.Background(), "worker-a", "demo", StatusRunning, ""); err != nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusRunning, ""); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 	if repo.service.Endpoint != "http://worker:8080" {

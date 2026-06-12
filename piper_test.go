@@ -17,20 +17,52 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/internal/logstore"
-	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
+	"github.com/piper/piper/pkg/security"
 	"github.com/piper/piper/pkg/storage"
 )
 
-type noopBackend struct{}
+// testSecurityProvider implements the request authentication and authorization
+// capabilities used by router tests.
+type testSecurityProvider struct {
+	identity  *security.Identity
+	authErr   error
+	authCalls int
+}
 
-func (noopBackend) Dispatch(context.Context, *proto.Task) error { return nil }
+type testUserDirectory struct{}
+
+func (testUserDirectory) GetUser(context.Context, string) (*security.User, error) {
+	return nil, nil
+}
+
+func (testUserDirectory) ListUsers(context.Context) ([]*security.User, error) {
+	return []*security.User{}, nil
+}
+
+func (p *testSecurityProvider) Authenticate(_ context.Context, _ *http.Request) (*security.Identity, error) {
+	p.authCalls++
+	return p.identity, p.authErr
+}
+func (p *testSecurityProvider) ListProjectRoles(_ context.Context, _ *security.Identity) (map[string]security.ProjectRole, error) {
+	return nil, nil
+}
+func (p *testSecurityProvider) ProjectRole(_ context.Context, _ *security.Identity, _ string) (security.ProjectRole, error) {
+	return security.ProjectRoleAdmin, nil
+}
+func (p *testSecurityProvider) AuthorizeSystem(_ context.Context, _ *security.Identity) error {
+	return nil
+}
 
 func newTestPiper(t *testing.T, cfg Config) *Piper {
 	t.Helper()
+	if !cfg.Auth.Trusted && cfg.Auth.Authenticator == nil && cfg.Auth.Factory == nil {
+		cfg.Auth.Trusted = true
+	}
 	p, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -109,9 +141,22 @@ func TestHandlerServesUIDeepLinks(t *testing.T) {
 
 func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	const projectID = "project-a"
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.repos.Run.Create(context.Background(), &run.Run{
+		ID:           "run-metric",
+		ProjectID:    projectID,
+		PipelineName: "metric-test",
+		Status:       run.StatusRunning,
+		StartedAt:    time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	router := p.Handler(nil)
 	body := `[{"ts":"2026-05-29T10:00:00Z","stream":"stdout","line":"PIPER_METRIC loss=0.312"}]`
-	req := httptest.NewRequest(http.MethodPost, "/runs/run-metric/steps/train/logs", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/runs/run-metric/steps/train/logs", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -119,7 +164,7 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 		t.Fatalf("ingest status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/runs/run-metric/metrics?step=train", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/runs/run-metric/metrics?step=train", nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -164,6 +209,7 @@ func TestHandlerExposesArtifactStoreSettings(t *testing.T) {
 func TestConfigValidateAllowsStorageURLWithoutLegacyS3(t *testing.T) {
 	cfg := Config{
 		OutputDir: t.TempDir(),
+		Auth:      AuthConfig{Trusted: true},
 		Storage: StorageConfig{
 			URL: "file:///tmp/piper-store",
 		},
@@ -246,16 +292,20 @@ func TestStorageSettingsOverrideLoadsOnStartup(t *testing.T) {
 
 func TestStorageObjectManagement(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	const projectID = "project-a"
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
 	ls, ok := p.store.(*storage.LocalStore)
 	if !ok {
 		t.Fatal("expected local store for test")
 	}
-	if err := ls.Put(context.Background(), "runs/run-1/train/model.txt", strings.NewReader("hello"), int64(len("hello"))); err != nil {
+	if err := ls.Put(context.Background(), "projects/project-a/uploads/runs/run-1/train/model.txt", strings.NewReader("hello"), int64(len("hello"))); err != nil {
 		t.Fatal(err)
 	}
 	router := p.Handler(nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/storage/objects?prefix=runs/run-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/objects?prefix=runs/run-1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -271,7 +321,7 @@ func TestStorageObjectManagement(t *testing.T) {
 		t.Fatalf("objects = %#v", objs)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/storage/object?key=runs/run-1/train/model.txt", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/object?key=runs/run-1/train/model.txt", nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -281,7 +331,7 @@ func TestStorageObjectManagement(t *testing.T) {
 		t.Fatalf("download body = %q, want hello", got)
 	}
 
-	req = httptest.NewRequest(http.MethodDelete, "/api/storage/object?key=runs/run-1/train/model.txt", nil)
+	req = httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/storage/object?key=runs/run-1/train/model.txt", nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -291,6 +341,10 @@ func TestStorageObjectManagement(t *testing.T) {
 
 func TestStorageObjectUpload(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	const projectID = "project-a"
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
 	router := p.Handler(nil)
 
 	// Build a real multipart form so the handler exercises FormFile parsing.
@@ -309,7 +363,7 @@ func TestStorageObjectUpload(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/storage/object", &buf)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/storage/object", &buf)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -323,7 +377,7 @@ func TestStorageObjectUpload(t *testing.T) {
 	if !ok {
 		t.Fatal("expected local store")
 	}
-	rc, err := ls.Get(context.Background(), "runs/run-1/train/report.txt")
+	rc, err := ls.Get(context.Background(), "projects/project-a/uploads/runs/run-1/train/report.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,32 +391,30 @@ func TestStorageObjectUpload(t *testing.T) {
 	}
 }
 
-func TestWorkerRoutesOnlyMountedInPollingMode(t *testing.T) {
-	polling := newTestPiper(t, Config{OutputDir: t.TempDir()})
-	pollingRouter := polling.newRouter(nil).(*gin.Engine)
-	if !hasRoute(pollingRouter, http.MethodGet, "/api/workers") {
-		t.Fatal("polling mode should mount worker routes")
-	}
-	if polling.registry == nil {
-		t.Fatal("polling mode should lazily create worker registry")
-	}
-
-	active := newTestPiper(t, Config{OutputDir: t.TempDir()})
-	active.SetBackend(noopBackend{})
-	activeRouter := active.newRouter(nil).(*gin.Engine)
-	if hasRoute(activeRouter, http.MethodGet, "/api/workers") {
-		t.Fatal("active backend mode should not mount worker routes")
-	}
-	if hasRoute(activeRouter, http.MethodGet, "/api/tasks/next") {
-		t.Fatal("active backend mode should not mount polling task route")
-	}
-	if active.registry != nil {
-		t.Fatal("active backend mode should not hold worker registry")
+func TestLegacyWorkerPollingRoutesAreNotMounted(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	router := p.newRouter(nil).(*gin.Engine)
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/workers"},
+		{http.MethodPost, "/api/workers"},
+		{http.MethodPost, "/api/workers/:id/heartbeat"},
+		{http.MethodGet, "/api/tasks/next"},
+	} {
+		if hasRoute(router, route.method, route.path) {
+			t.Fatalf("legacy worker route is mounted: %s %s", route.method, route.path)
+		}
 	}
 }
 
 func TestStartRunPersistsExperiment(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	const projectID = "project-a"
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
 	pl := &pipeline.Pipeline{
 		Metadata: manifest.ObjectMeta{Name: "train"},
 		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{{
@@ -376,6 +428,7 @@ func TestStartRunPersistsExperiment(t *testing.T) {
 	}
 
 	runID, err := p.startRun(context.Background(), pl, dag, StartRunOptions{
+		ProjectID:  projectID,
 		Experiment: "exp-v2",
 		YAML:       "metadata:\n  name: train\n",
 	})
@@ -383,14 +436,14 @@ func TestStartRunPersistsExperiment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := p.repos.Run.Get(context.Background(), runID)
+	got, err := p.repos.Run.Get(context.Background(), projectID, runID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Experiment != "exp-v2" {
 		t.Fatalf("experiment = %q, want exp-v2", got.Experiment)
 	}
-	runs, err := p.repos.Run.List(context.Background(), run.RunFilter{Experiment: "exp-v2"})
+	runs, err := p.repos.Run.List(context.Background(), projectID, run.RunFilter{Experiment: "exp-v2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,11 +454,16 @@ func TestStartRunPersistsExperiment(t *testing.T) {
 
 func TestBackfillScheduleCreatesRunsForCronRange(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	const projectID = "project-a"
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
 	from := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
 	to := from.Add(2 * time.Minute)
 	yaml := "metadata:\n  name: train\nspec:\n  steps:\n    - name: step\n      run:\n        command: [\"true\"]\n"
 	sc := &schedule.Schedule{
 		ID:           "sch-backfill",
+		ProjectID:    projectID,
 		Name:         "train",
 		PipelineYAML: yaml,
 		ScheduleType: "cron",
@@ -419,14 +477,15 @@ func TestBackfillScheduleCreatesRunsForCronRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runIDs, err := p.BackfillSchedule(context.Background(), sc.ID, from, to)
+	ctx := project.WithContext(context.Background(), project.Context{ID: projectID})
+	runIDs, err := p.BackfillSchedule(ctx, sc.ID, from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(runIDs) != 3 {
 		t.Fatalf("runIDs = %v, want 3 runs", runIDs)
 	}
-	runs, err := p.repos.Run.List(context.Background(), run.RunFilter{ScheduleID: sc.ID})
+	runs, err := p.repos.Run.List(context.Background(), projectID, run.RunFilter{ScheduleID: sc.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,45 +511,51 @@ func hasRoute(router *gin.Engine, method, path string) bool {
 // TestAuth_ContextInjectedToDownstreamHooks verifies that the context returned
 // by Hooks.Auth is available in subsequent hooks (e.g. BeforeCreateRun).
 func TestAuth_ContextInjectedToDownstreamHooks(t *testing.T) {
-	type ctxKey struct{}
-
 	p := newTestPiper(t, Config{
 		OutputDir: t.TempDir(),
-		Hooks: Hooks{
-			Auth: func(r *http.Request) (context.Context, error) {
-				return context.WithValue(r.Context(), ctxKey{}, "user-42"), nil
+		Auth: AuthConfig{
+			Authenticator: &testSecurityProvider{
+				identity: &security.Identity{ID: "user-42"},
 			},
+			Authorizer: &testSecurityProvider{},
+		},
+		Hooks: Hooks{
 			BeforeCreateRun: func(ctx context.Context, r *http.Request, yaml string) error {
-				if ctx.Value(ctxKey{}) != "user-42" {
-					t.Errorf("BeforeCreateRun ctx missing identity injected by Auth")
+				id, ok := security.IdentityFromContext(ctx)
+				if !ok || id.ID != "user-42" {
+					t.Errorf("BeforeCreateRun ctx missing authenticated identity")
 				}
 				return nil
 			},
 		},
 	})
 	router := p.newRouter(nil)
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: "test", Name: "Test"}); err != nil {
+		t.Fatal(err)
+	}
 
 	body := `{"yaml":"metadata:\n  name: test\nspec:\n  steps: []\n"}`
-	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/test/runs", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 }
 
-// TestAuth_RejectsOnError verifies that an Auth hook returning an error
+// TestAuth_RejectsOnError verifies that an Authenticator returning an error
 // produces 401 and blocks the request.
 func TestAuth_RejectsOnError(t *testing.T) {
 	p := newTestPiper(t, Config{
 		OutputDir: t.TempDir(),
-		Hooks: Hooks{
-			Auth: func(r *http.Request) (context.Context, error) {
-				return nil, fmt.Errorf("invalid token")
+		Auth: AuthConfig{
+			Authenticator: &testSecurityProvider{
+				authErr: fmt.Errorf("invalid token"),
 			},
+			Authorizer: &testSecurityProvider{},
 		},
 	})
 	router := p.newRouter(nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -499,37 +564,159 @@ func TestAuth_RejectsOnError(t *testing.T) {
 	}
 }
 
-// TestExtractOwnerID_OverridesHeader verifies that Hooks.ExtractOwnerID
-// replaces the default X-Piper-Owner-ID header extraction.
-func TestExtractOwnerID_OverridesHeader(t *testing.T) {
-	p := newTestPiper(t, Config{
+func TestAuthFactoryRunsDuringNew(t *testing.T) {
+	provider := &testSecurityProvider{}
+	called := false
+	p, err := New(Config{
 		OutputDir: t.TempDir(),
-		Hooks: Hooks{
-			ExtractOwnerID: func(r *http.Request) string {
-				return "jwt-user-99"
+		Auth: AuthConfig{
+			Factory: func(deps AuthDependencies) (AuthConfig, error) {
+				called = true
+				if deps.DB == nil {
+					t.Fatal("factory DB is nil")
+				}
+				if deps.Driver != "sqlite" {
+					t.Fatalf("factory driver = %q, want sqlite", deps.Driver)
+				}
+				return AuthConfig{
+					Authenticator: provider,
+					Authorizer:    provider,
+				}, nil
 			},
 		},
 	})
-
-	// ownerIDFromRequest should use the hook, not the header.
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Piper-Owner-ID", "header-user")
-	got := p.ownerIDFromRequest(req)
-	if got != "jwt-user-99" {
-		t.Errorf("ownerIDFromRequest = %q, want jwt-user-99", got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	if !called {
+		t.Fatal("auth factory was not called")
+	}
+	if p.cfg.Auth.Authenticator != provider || p.cfg.Auth.Authorizer != provider {
+		t.Fatal("factory capabilities were not installed")
+	}
+	if p.cfg.Auth.Factory != nil {
+		t.Fatal("factory should be cleared after construction")
 	}
 }
 
-// TestExtractOwnerID_DefaultFallback verifies that without the hook,
-// the X-Piper-Owner-ID header is used.
-func TestExtractOwnerID_DefaultFallback(t *testing.T) {
-	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+func TestAuthCapabilitiesControlRouteRegistration(t *testing.T) {
+	provider := &testSecurityProvider{
+		identity: &security.Identity{ID: "admin", SystemAdmin: true},
+	}
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Auth: AuthConfig{
+			Authenticator: provider,
+			Authorizer:    provider,
+			UserDirectory: testUserDirectory{},
+		},
+	})
+	router := p.newRouter(nil).(*gin.Engine)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Piper-Owner-ID", "header-user")
-	got := p.ownerIDFromRequest(req)
-	if got != "header-user" {
-		t.Errorf("ownerIDFromRequest = %q, want header-user", got)
+	if !hasRoute(router, http.MethodGet, "/api/capabilities") {
+		t.Fatal("capabilities route was not registered")
+	}
+	if !hasRoute(router, http.MethodGet, "/api/users") {
+		t.Fatal("user directory route was not registered")
+	}
+	if hasRoute(router, http.MethodPost, "/api/users") {
+		t.Fatal("user create route registered without UserManager")
+	}
+	if hasRoute(router, http.MethodDelete, "/api/users/:id") {
+		t.Fatal("user delete route registered without UserManager")
+	}
+	if hasRoute(router, http.MethodGet, "/api/projects/:project_id/members") {
+		t.Fatal("member routes registered without ProjectMemberManager")
+	}
+}
+
+func TestConfigRejectsIncompleteAuthCapabilities(t *testing.T) {
+	provider := &testSecurityProvider{}
+
+	empty := Config{}
+	if err := empty.Validate(); err == nil {
+		t.Fatal("Validate accepted auth config without explicit trusted mode")
+	}
+
+	authenticatorOnly := DefaultConfig()
+	authenticatorOnly.Auth = AuthConfig{Authenticator: provider}
+	if err := authenticatorOnly.Validate(); err == nil {
+		t.Fatal("Validate accepted Authenticator without Authorizer")
+	}
+
+	authorizerOnly := DefaultConfig()
+	authorizerOnly.Auth = AuthConfig{Authorizer: provider}
+	if err := authorizerOnly.Validate(); err == nil {
+		t.Fatal("Validate accepted Authorizer without Authenticator")
+	}
+}
+
+func TestMetricsAggregatesRunsAcrossProjects(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := context.Background()
+	for _, projectID := range []string{"metrics-a", "metrics-b"} {
+		if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.repos.Run.Create(ctx, &run.Run{
+			ID:           "run-" + projectID,
+			ProjectID:    projectID,
+			PipelineName: "metrics",
+			Status:       run.StatusSuccess,
+			StartedAt:    time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	p.Handler(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `piper_runs_total{status="success"} 2`) {
+		t.Fatalf("metrics did not aggregate projects: %s", rec.Body.String())
+	}
+}
+
+func TestNewEnsuresDefaultProject(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	defaultProject, err := p.repos.Project.Get(context.Background(), project.DefaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultProject == nil {
+		t.Fatal("default project was not created")
+	}
+	if defaultProject.Name != "Default" {
+		t.Fatalf("default project name = %q, want Default", defaultProject.Name)
+	}
+}
+
+func TestWorkerRouteBypassesUserAuthentication(t *testing.T) {
+	provider := &testSecurityProvider{authErr: fmt.Errorf("user auth must not run")}
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Server:    ServerConfig{WorkerToken: "worker-secret"},
+		Auth: AuthConfig{
+			Authenticator: provider,
+			Authorizer:    provider,
+		},
+	})
+	router := p.newRouter(nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tasks/missing/done", strings.NewReader(`{"attempt":1}`))
+	req.Header.Set("Authorization", "Bearer worker-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("worker route passed through user authentication: %s", rec.Body.String())
+	}
+	if provider.authCalls != 0 {
+		t.Fatalf("user Authenticate called %d times for worker route", provider.authCalls)
 	}
 }
 

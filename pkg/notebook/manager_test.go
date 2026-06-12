@@ -27,7 +27,7 @@ func (r *fakeRepo) Create(_ context.Context, nb *NotebookServer) error {
 	return nil
 }
 
-func (r *fakeRepo) Get(_ context.Context, name string) (*NotebookServer, error) {
+func (r *fakeRepo) Get(_ context.Context, _, name string) (*NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	nb, ok := r.servers[name]
@@ -49,7 +49,7 @@ func (r *fakeRepo) Update(_ context.Context, nb *NotebookServer) error {
 	return nil
 }
 
-func (r *fakeRepo) SetStatus(_ context.Context, name, status string) error {
+func (r *fakeRepo) SetStatus(_ context.Context, _, name, status string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	nb, ok := r.servers[name]
@@ -60,7 +60,7 @@ func (r *fakeRepo) SetStatus(_ context.Context, name, status string) error {
 	return nil
 }
 
-func (r *fakeRepo) GetByVolumeID(_ context.Context, volumeID string) (*NotebookServer, error) {
+func (r *fakeRepo) GetByVolumeID(_ context.Context, _, volumeID string) (*NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, nb := range r.servers {
@@ -72,7 +72,7 @@ func (r *fakeRepo) GetByVolumeID(_ context.Context, volumeID string) (*NotebookS
 	return nil, nil
 }
 
-func (r *fakeRepo) List(_ context.Context) ([]*NotebookServer, error) {
+func (r *fakeRepo) List(_ context.Context, _ string) ([]*NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]*NotebookServer, 0, len(r.servers))
@@ -83,7 +83,20 @@ func (r *fakeRepo) List(_ context.Context) ([]*NotebookServer, error) {
 	return out, nil
 }
 
-func (r *fakeRepo) Delete(_ context.Context, name string) error {
+func (r *fakeRepo) ListByWorker(_ context.Context, workerID string) ([]*NotebookServer, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*NotebookServer
+	for _, nb := range r.servers {
+		if nb.WorkerID == workerID {
+			cp := *nb
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) Delete(_ context.Context, _, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.servers, name)
@@ -132,7 +145,7 @@ func (v *fakeVols) Get(_ context.Context, id string) (*NotebookVolume, error) {
 	return &cp, nil
 }
 
-func (v *fakeVols) List(_ context.Context) ([]*NotebookVolume, error) {
+func (v *fakeVols) List(_ context.Context, _ string) ([]*NotebookVolume, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	out := make([]*NotebookVolume, 0, len(v.vols))
@@ -300,7 +313,7 @@ func TestManager_Create_HappyPath(t *testing.T) {
 	spec := Notebook{}
 	spec.Metadata.Name = "nb-create"
 
-	nb, err := m.Create(context.Background(), spec, "")
+	nb, err := m.Create(context.Background(), "project-a", spec, "")
 	if err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
@@ -347,17 +360,17 @@ func TestManager_Create_DuplicateName(t *testing.T) {
 	spec := Notebook{}
 	spec.Metadata.Name = "dup"
 
-	if _, err := m.Create(context.Background(), spec, ""); err != nil {
+	if _, err := m.Create(context.Background(), "project-a", spec, ""); err != nil {
 		t.Fatalf("first Create() error: %v", err)
 	}
-	if _, err := m.Create(context.Background(), spec, ""); err == nil {
+	if _, err := m.Create(context.Background(), "project-a", spec, ""); err == nil {
 		t.Fatal("second Create() expected error, got nil")
 	}
 }
 
 func TestManager_Create_EmptyName(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	_, err := m.Create(context.Background(), Notebook{}, "")
+	_, err := m.Create(context.Background(), "project-a", Notebook{}, "")
 	if err == nil {
 		t.Fatal("Create() with empty name expected error")
 	}
@@ -377,7 +390,7 @@ func TestManager_Create_InvalidPrepareSpec(t *testing.T) {
 		},
 	}
 
-	_, err := m.Create(context.Background(), spec, "")
+	_, err := m.Create(context.Background(), "project-a", spec, "")
 	if err == nil {
 		t.Fatal("Create() with invalid prepare spec expected error")
 	}
@@ -393,7 +406,7 @@ func TestManager_Create_ProvisionFails(t *testing.T) {
 	spec := Notebook{}
 	spec.Metadata.Name = "nb-prov-fail"
 
-	nb, err := m.Create(context.Background(), spec, "")
+	nb, err := m.Create(context.Background(), "project-a", spec, "")
 	if err != nil {
 		t.Fatalf("Create() itself should not error: %v", err)
 	}
@@ -423,7 +436,7 @@ func TestManager_Create_StartFails(t *testing.T) {
 	spec := Notebook{}
 	spec.Metadata.Name = "nb-start-fail"
 
-	nb, err := m.Create(context.Background(), spec, "")
+	nb, err := m.Create(context.Background(), "project-a", spec, "")
 	if err != nil {
 		t.Fatalf("Create() itself should not error: %v", err)
 	}
@@ -453,13 +466,13 @@ func TestManager_CreateWithVolume_HappyPath(t *testing.T) {
 	m := New(repo, vols, drv)
 	ctx := context.Background()
 
-	vol := &NotebookVolume{ID: "vol-existing", Label: "old-nb", WorkDir: "/data/old-nb", Status: VolumeStatusReleased}
+	vol := &NotebookVolume{ProjectID: "project-a", ID: "vol-existing", Label: "old-nb", WorkDir: "/data/old-nb", Status: VolumeStatusReleased}
 	_ = vols.Create(ctx, vol)
 
 	spec := Notebook{}
 	spec.Metadata.Name = "nb-attach"
 
-	nb, err := m.CreateWithVolume(ctx, spec, "vol-existing", "")
+	nb, err := m.CreateWithVolume(ctx, "project-a", spec, "vol-existing", "")
 	if err != nil {
 		t.Fatalf("CreateWithVolume() error: %v", err)
 	}
@@ -487,7 +500,7 @@ func TestManager_CreateWithVolume_VolumeNotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
 	spec := Notebook{}
 	spec.Metadata.Name = "nb-no-vol"
-	_, err := m.CreateWithVolume(context.Background(), spec, "missing-vol", "")
+	_, err := m.CreateWithVolume(context.Background(), "project-a", spec, "missing-vol", "")
 	if err == nil {
 		t.Fatal("expected error for missing volume")
 	}
@@ -499,12 +512,12 @@ func TestManager_CreateWithVolume_VolumeNotReleased(t *testing.T) {
 	m := New(repo, vols, newFakeDriver())
 	ctx := context.Background()
 
-	vol := &NotebookVolume{ID: "vol-bound", Label: "nb", Status: VolumeStatusBound}
+	vol := &NotebookVolume{ProjectID: "project-a", ID: "vol-bound", Label: "nb", Status: VolumeStatusBound}
 	_ = vols.Create(ctx, vol)
 
 	spec := Notebook{}
 	spec.Metadata.Name = "nb-reuse"
-	_, err := m.CreateWithVolume(ctx, spec, "vol-bound", "")
+	_, err := m.CreateWithVolume(ctx, "project-a", spec, "vol-bound", "")
 	if err == nil {
 		t.Fatal("expected error for non-released volume")
 	}
@@ -519,12 +532,12 @@ func TestManager_CreateWithVolume_StartFails(t *testing.T) {
 	m := New(repo, vols, drv)
 	ctx := context.Background()
 
-	vol := &NotebookVolume{ID: "vol-sfail", Label: "sfail", Status: VolumeStatusReleased}
+	vol := &NotebookVolume{ProjectID: "project-a", ID: "vol-sfail", Label: "sfail", Status: VolumeStatusReleased}
 	_ = vols.Create(ctx, vol)
 
 	spec := Notebook{}
 	spec.Metadata.Name = "nb-sfail"
-	nb, err := m.CreateWithVolume(ctx, spec, "vol-sfail", "")
+	nb, err := m.CreateWithVolume(ctx, "project-a", spec, "vol-sfail", "")
 	if err != nil {
 		t.Fatalf("CreateWithVolume() should return immediately: %v", err)
 	}
@@ -557,7 +570,7 @@ func TestManager_Stop_RunningServer(t *testing.T) {
 
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-stop", Status: StatusRunning})
 
-	if err := m.Stop(ctx, "nb-stop"); err != nil {
+	if err := m.Stop(ctx, "project-a", "nb-stop"); err != nil {
 		t.Fatalf("Stop() error: %v", err)
 	}
 
@@ -583,7 +596,7 @@ func TestManager_Stop_DriverFailureRestoresObservedStatus(t *testing.T) {
 	ctx := context.Background()
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-offline", Status: StatusRunning})
 
-	if err := m.Stop(ctx, "nb-offline"); !errors.Is(err, ErrAgentUnavailable) {
+	if err := m.Stop(ctx, "project-a", "nb-offline"); !errors.Is(err, ErrAgentUnavailable) {
 		t.Fatalf("Stop() error = %v, want ErrAgentUnavailable", err)
 	}
 	nb := repo.get("nb-offline")
@@ -601,14 +614,14 @@ func TestManager_Stop_AlreadyStopped(t *testing.T) {
 	ctx := context.Background()
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-already-stopped", Status: StatusStopped})
 
-	if err := m.Stop(ctx, "nb-already-stopped"); err != nil {
+	if err := m.Stop(ctx, "project-a", "nb-already-stopped"); err != nil {
 		t.Fatalf("Stop() on stopped server should be no-op: %v", err)
 	}
 }
 
 func TestManager_Stop_NotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	if err := m.Stop(context.Background(), "no-such"); err == nil {
+	if err := m.Stop(context.Background(), "project-a", "no-such"); err == nil {
 		t.Fatal("Stop() on missing server expected error")
 	}
 }
@@ -628,7 +641,7 @@ func TestManager_Restart_StoppedServer(t *testing.T) {
 	_ = vols.Create(ctx, vol)
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-rst", Status: StatusStopped, VolumeID: "vol-rst", WorkDir: "/data/rst"})
 
-	if err := m.Restart(ctx, "nb-rst"); err != nil {
+	if err := m.Restart(ctx, "project-a", "nb-rst"); err != nil {
 		t.Fatalf("Restart() error: %v", err)
 	}
 
@@ -653,7 +666,7 @@ func TestManager_Restart_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-running", Status: StatusRunning})
 
-	if err := m.Restart(ctx, "nb-running"); err != nil {
+	if err := m.Restart(ctx, "project-a", "nb-running"); err != nil {
 		t.Fatalf("Restart() on running server should be no-op: %v", err)
 	}
 }
@@ -665,7 +678,7 @@ func TestManager_Restart_NoVolumeNoWorkDir(t *testing.T) {
 	// Server with empty VolumeID and empty WorkDir — cannot restart.
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-nodir", Status: StatusStopped})
 
-	if err := m.Restart(ctx, "nb-nodir"); err == nil {
+	if err := m.Restart(ctx, "project-a", "nb-nodir"); err == nil {
 		t.Fatal("Restart() with no volume and no work_dir expected error")
 	}
 }
@@ -683,7 +696,7 @@ func TestManager_Delete_StoppedServer(t *testing.T) {
 	_ = vols.Create(ctx, vol)
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-del", Status: StatusStopped, VolumeID: "vol-del"})
 
-	if err := m.Delete(ctx, "nb-del"); err != nil {
+	if err := m.Delete(ctx, "project-a", "nb-del"); err != nil {
 		t.Fatalf("Delete() error: %v", err)
 	}
 
@@ -710,7 +723,7 @@ func TestManager_Delete_RunningServerCallsStop(t *testing.T) {
 	_ = vols.Create(ctx, vol)
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-del-run", Status: StatusRunning, VolumeID: "vol-del-run"})
 
-	if err := m.Delete(ctx, "nb-del-run"); err != nil {
+	if err := m.Delete(ctx, "project-a", "nb-del-run"); err != nil {
 		t.Fatalf("Delete() error: %v", err)
 	}
 
@@ -723,7 +736,7 @@ func TestManager_Delete_RunningServerCallsStop(t *testing.T) {
 
 func TestManager_Delete_NotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	if err := m.Delete(context.Background(), "ghost"); err == nil {
+	if err := m.Delete(context.Background(), "project-a", "ghost"); err == nil {
 		t.Fatal("Delete() on missing server expected error")
 	}
 }
@@ -737,10 +750,10 @@ func TestManager_PurgeVolume_ReleasedVolume(t *testing.T) {
 	m := New(repo, vols, drv)
 	ctx := context.Background()
 
-	vol := &NotebookVolume{ID: "vol-purge", Label: "old", WorkDir: "/data/old", Status: VolumeStatusReleased}
+	vol := &NotebookVolume{ProjectID: "project-a", ID: "vol-purge", Label: "old", WorkDir: "/data/old", Status: VolumeStatusReleased}
 	_ = vols.Create(ctx, vol)
 
-	if err := m.PurgeVolume(ctx, "vol-purge"); err != nil {
+	if err := m.PurgeVolume(ctx, "project-a", "vol-purge"); err != nil {
 		t.Fatalf("PurgeVolume() error: %v", err)
 	}
 
@@ -762,14 +775,14 @@ func TestManager_PurgeVolume_BoundVolume(t *testing.T) {
 	vol := &NotebookVolume{ID: "vol-bound-purge", Status: VolumeStatusBound}
 	_ = vols.Create(ctx, vol)
 
-	if err := m.PurgeVolume(ctx, "vol-bound-purge"); err == nil {
+	if err := m.PurgeVolume(ctx, "project-a", "vol-bound-purge"); err == nil {
 		t.Fatal("PurgeVolume() on bound volume expected error")
 	}
 }
 
 func TestManager_PurgeVolume_NotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	if err := m.PurgeVolume(context.Background(), "no-vol"); err == nil {
+	if err := m.PurgeVolume(context.Background(), "project-a", "no-vol"); err == nil {
 		t.Fatal("PurgeVolume() on missing volume expected error")
 	}
 }
@@ -786,7 +799,7 @@ func TestManager_UpdateStatus_FullUpdate(t *testing.T) {
 	_ = vols.Create(ctx, vol)
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-us", Status: StatusStarting, VolumeID: "vol-us"})
 
-	err := m.UpdateStatus(ctx, "", "nb-us", StatusRunning, "http://worker:8888", "/new/workdir", "new-token", 42, "base")
+	err := m.UpdateStatus(ctx, "project-a", "", "nb-us", StatusRunning, "http://worker:8888", "/new/workdir", "new-token", 42, "base")
 	if err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
@@ -817,7 +830,7 @@ func TestManager_UpdateStatus_FullUpdate(t *testing.T) {
 
 func TestManager_UpdateStatus_NotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	if err := m.UpdateStatus(context.Background(), "", "ghost", StatusRunning, "", "", "", 0, ""); err == nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "", "ghost", StatusRunning, "", "", "", 0, ""); err == nil {
 		t.Fatal("UpdateStatus() on missing server expected error")
 	}
 }
@@ -828,7 +841,7 @@ func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
 	ctx := context.Background()
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-owned", WorkerID: "worker-a", Status: StatusRunning})
 
-	err := m.UpdateStatus(ctx, "worker-b", "nb-owned", StatusStopped, "", "", "", 0, "")
+	err := m.UpdateStatus(ctx, "project-a", "worker-b", "nb-owned", StatusStopped, "", "", "", 0, "")
 	if err == nil {
 		t.Fatal("UpdateStatus() accepted update from non-owner")
 	}
@@ -853,7 +866,7 @@ func TestManagerUpdateStatusClearsRuntimeFieldsWhenStopped(t *testing.T) {
 		Token:    "secret",
 	})
 
-	if err := m.UpdateStatus(ctx, "", "nb-stale-runtime", StatusStopped, "", "", "", 0, ""); err != nil {
+	if err := m.UpdateStatus(ctx, "project-a", "", "nb-stale-runtime", StatusStopped, "", "", "", 0, ""); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 	nb := repo.get("nb-stale-runtime")
@@ -872,7 +885,7 @@ func TestManager_UpdateStatus_PartialUpdate(t *testing.T) {
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-partial", Status: StatusStarting, Token: "keep-me", PID: 0})
 
 	// Only update status; other fields should be preserved.
-	if err := m.UpdateStatus(ctx, "", "nb-partial", StatusRunning, "", "", "", 0, ""); err != nil {
+	if err := m.UpdateStatus(ctx, "project-a", "", "nb-partial", StatusRunning, "", "", "", 0, ""); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 

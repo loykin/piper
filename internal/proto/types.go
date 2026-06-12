@@ -37,6 +37,7 @@ type BuiltinVars struct {
 
 // Task is the unit of work the server delivers to a worker
 type Task struct {
+	ProjectID string         `json:"project_id"`
 	ID        string         `json:"id"`
 	RunID     string         `json:"run_id"`
 	StepName  string         `json:"step_name"`
@@ -60,20 +61,7 @@ type TaskResult struct {
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`
-	Attempt   int       `json:"attempt,omitempty"` // authoritative attempt number; replaces Attempts
-	Attempts  int       `json:"attempts"`          // legacy wire field kept for migration
-}
-
-// ReportedAttempt returns the authoritative attempt number, accepting the
-// legacy Attempts field from older workers during migration.
-func (r TaskResult) ReportedAttempt() int {
-	if r.Attempt != 0 {
-		return r.Attempt
-	}
-	if r.Attempts != 0 {
-		return r.Attempts
-	}
-	return 1
+	Attempt   int       `json:"attempt"`
 }
 
 // RunRequest is used by a client to request a pipeline run

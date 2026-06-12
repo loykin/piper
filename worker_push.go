@@ -82,7 +82,7 @@ func handleNotebookStatusPush(ctx context.Context, agentID string, payload []byt
 		slog.Warn("notebook status push missing name")
 		return nil
 	}
-	return nbMgr.UpdateStatus(ctx, agentID, body.Name, body.Status, body.Endpoint, body.WorkDir, body.Token, body.PID, body.Env)
+	return nbMgr.UpdateStatus(ctx, body.ProjectID, agentID, body.Name, body.Status, body.Endpoint, body.WorkDir, body.Token, body.PID, body.Env)
 }
 
 func handleServingStatusPush(ctx context.Context, agentID string, payload []byte, servingMgr *serving.Manager) error {
@@ -95,7 +95,7 @@ func handleServingStatusPush(ctx context.Context, agentID string, payload []byte
 		slog.Warn("serving status push missing name")
 		return nil
 	}
-	if err := servingMgr.UpdateStatus(ctx, agentID, body.Name, body.Status, body.Endpoint); err != nil {
+	if err := servingMgr.UpdateStatus(ctx, body.ProjectID, agentID, body.Name, body.Status, body.Endpoint); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Push arrived before deploy RPC completed on master — drop silently.
 			// The worker will push the final status (running/failed) after health check.

@@ -13,14 +13,18 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
-	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/event"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/run"
-	worker "github.com/piper/piper/pkg/pipeline/worker"
+	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
+	"github.com/piper/piper/pkg/security"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/storage"
 	"github.com/piper/piper/pkg/template"
@@ -125,7 +129,7 @@ func (p *Piper) serveGRPCAgents(ctx context.Context, addr string) {
 		slog.Error("grpc agent server: listen failed", "addr", addr, "err", err)
 		return
 	}
-	grpcSrv := p.grpcAgentServer.GRPCServer()
+	grpcSrv := p.grpcAgentServer.GRPCServer(p.workerTokenGRPCOptions()...)
 	go func() {
 		<-ctx.Done()
 		grpcSrv.GracefulStop()
@@ -143,22 +147,9 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	r.Use(gin.Recovery())
 	r.Use(limitRequestBody(maxRequestBodyBytes))
 
-	// Auth + extra handler middleware
+	// Caller-provided routes run before Piper routes. Authentication is applied
+	// only to user-facing groups below; worker routes have a separate credential.
 	r.Use(func(c *gin.Context) {
-		if err := p.checkBearerToken(c.Request); err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-			c.Abort()
-			return
-		}
-		ctx, err := p.cfg.Hooks.callAuth(c.Request)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-			c.Abort()
-			return
-		}
-		// Replace request context so downstream hooks receive the enriched context
-		// (e.g. verified user identity injected by the Auth hook).
-		c.Request = c.Request.WithContext(ctx)
 		if extra != nil {
 			rw := &responseRecorder{ResponseWriter: c.Writer}
 			extra.ServeHTTP(rw, c.Request)
@@ -170,31 +161,15 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		c.Next()
 	})
 
-	r.GET("/api/settings", func(c *gin.Context) {
-		c.JSON(http.StatusOK, p.Settings())
-	})
-	r.GET("/api/storage/settings", func(c *gin.Context) {
-		view, err := p.StorageSettings()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, view)
-	})
-	r.PUT("/api/storage/settings", func(c *gin.Context) {
-		var cfg StorageConfig
-		if err := c.ShouldBindJSON(&cfg); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		view, err := p.UpdateStorageSettings(cfg)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, view)
-	})
-	r.POST("/api/storage/object", func(c *gin.Context) {
+	userAPI := r.Group("/api", p.authenticateUser())
+	p.registerAuthRoutes(r, userAPI)
+	sysAdmin := p.registerAdminRoutes(userAPI)
+
+	// Project management — logged-in users can list; create/delete is system-admin.
+	project.NewHandler(p.repos.Project, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
+	projectStorage := userAPI.Group("/projects/:project_id/storage", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
+	projectStorageMember := projectStorage.Group("", project.RequireRole(security.ProjectRoleMember))
+	projectStorageMember.POST("/object", func(c *gin.Context) {
 		file, header, err := c.Request.FormFile("file")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing file"})
@@ -206,29 +181,29 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 			key = header.Filename
 		}
 		if err := p.UploadStorageObject(c.Request.Context(), key, file, header.Size); err != nil {
-			status := http.StatusInternalServerError
+			httpStatus := http.StatusInternalServerError
 			if p.store == nil {
-				status = http.StatusServiceUnavailable
+				httpStatus = http.StatusServiceUnavailable
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			c.JSON(httpStatus, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"key": key})
 	})
-	r.GET("/api/storage/objects", func(c *gin.Context) {
+	projectStorage.GET("/objects", func(c *gin.Context) {
 		prefix := c.Query("prefix")
 		objs, err := p.ListStorageObjects(c.Request.Context(), prefix)
 		if err != nil {
-			status := http.StatusInternalServerError
+			httpStatus := http.StatusInternalServerError
 			if p.store == nil {
-				status = http.StatusServiceUnavailable
+				httpStatus = http.StatusServiceUnavailable
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			c.JSON(httpStatus, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, objs)
 	})
-	r.GET("/api/storage/object", func(c *gin.Context) {
+	projectStorage.GET("/object", func(c *gin.Context) {
 		key := strings.TrimSpace(c.Query("key"))
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
@@ -236,13 +211,13 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		}
 		rc, filename, err := p.OpenStorageObject(c.Request.Context(), key)
 		if err != nil {
-			status := http.StatusInternalServerError
+			httpStatus := http.StatusInternalServerError
 			if err == storage.ErrNotFound {
-				status = http.StatusNotFound
+				httpStatus = http.StatusNotFound
 			} else if p.store == nil {
-				status = http.StatusServiceUnavailable
+				httpStatus = http.StatusServiceUnavailable
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			c.JSON(httpStatus, gin.H{"error": err.Error()})
 			return
 		}
 		defer func() { _ = rc.Close() }()
@@ -250,34 +225,35 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		c.Status(http.StatusOK)
 		_, _ = io.Copy(c.Writer, rc)
 	})
-	r.DELETE("/api/storage/object", func(c *gin.Context) {
+	projectStorageMember.DELETE("/object", func(c *gin.Context) {
 		key := strings.TrimSpace(c.Query("key"))
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
 			return
 		}
 		if err := p.DeleteStorageObject(c.Request.Context(), key); err != nil {
-			status := http.StatusInternalServerError
+			httpStatus := http.StatusInternalServerError
 			if p.store == nil {
-				status = http.StatusServiceUnavailable
+				httpStatus = http.StatusServiceUnavailable
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
+			c.JSON(httpStatus, gin.H{"error": err.Error()})
 			return
 		}
 		c.Status(http.StatusNoContent)
 	})
 
 	// Run domain
-	run.NewHandler(run.HandlerDeps{
+	runHandler := run.NewHandler(run.HandlerDeps{
 		Runs:    p.repos.Run,
 		Steps:   p.repos.Step,
 		Logs:    p.logs,
 		Metrics: p.metrics,
-		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, experiment)
+		StartRun: func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+			return p.startRunFromAPI(ctx, yaml, params, vars, experiment)
 		},
-		StartSweep: func(ctx context.Context, req run.SweepRequest, ownerID string) (run.SweepResponse, error) {
-			return p.startSweep(ctx, req, ownerID)
+		StartSweep: func(ctx context.Context, req run.SweepRequest) (run.SweepResponse, error) {
+			projectContext, _ := project.FromContext(ctx)
+			return p.startSweep(ctx, projectContext.ID, req)
 		},
 		CancelRun: p.CancelRun,
 		RerunRun:  p.RerunRun,
@@ -285,8 +261,8 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		DeleteRun: p.DeleteRun,
 		Artifacts: &piperArtifacts{p: p},
 		Hooks:     &piperRunHooks{p: p},
-		OwnerID:   p.ownerIDFromRequest,
-	}).RegisterRoutes(r.Group(""))
+	})
+	runHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
 	// Schedule domain
 	schedule.NewHandler(schedule.HandlerDeps{
@@ -300,24 +276,22 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		},
 		NextTime: nextScheduleTime,
 		Backfill: p.BackfillSchedule,
-		OwnerID:  p.ownerIDFromRequest,
-		Hooks:    &piperScheduleHooks{p: p},
 		GenID:    genScheduleID,
-	}).RegisterRoutes(r.Group(""))
+	}).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
-	// Serving domain
-	serving.NewHandler(serving.HandlerDeps{
+	// Serving domain (JSON API + browser predict proxy)
+	servingHandler := serving.NewHandler(serving.HandlerDeps{
 		Services: p.repos.Serving,
-		Deploy:   p.DeployServiceAs,
+		Deploy:   p.DeployService,
 		Stop:     p.StopService,
 		Restart:  p.RestartService,
 		Proxy:    p.serving.proxy,
-		OwnerID:  p.ownerIDFromRequest,
-		Hooks:    &piperServingHooks{p: p},
-	}).RegisterRoutes(r.Group(""))
+	})
+	servingHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+	servingHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
-	// Notebook domain
-	notebook.NewHandler(notebook.HandlerDeps{
+	// Notebook domain (JSON API + browser proxy)
+	notebookHandler := notebook.NewHandler(notebook.HandlerDeps{
 		Notebooks:        p.repos.Notebook,
 		Volumes:          p.repos.NotebookVolume,
 		Create:           p.notebookManager.Create,
@@ -329,7 +303,9 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		AgentRegistry:    p.agentRegistry,
 		ProxyDialer:      p.grpcAgentServer,
 		RPCSender:        p.grpcAgentServer,
-	}).RegisterRoutes(r.Group(""))
+	})
+	notebookHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+	notebookHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
 	// Pipeline template domain
 	template.NewHandler(template.HandlerDeps{
@@ -340,32 +316,17 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},
-		StartRun: func(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-			return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, experiment)
+		StartRun: func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+			return p.startRunFromAPI(ctx, yaml, params, vars, experiment)
 		},
-		OwnerID: p.ownerIDFromRequest,
-		GenID:   genScheduleID,
-	}).RegisterRoutes(r.Group("/api"))
+		GenID: genScheduleID,
+	}).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
 	// Built-in file server: expose /store/* routes only when using a LocalStore.
 	// Workers and K8s pods reach the store via HTTP using the master URL.
 	p.registerStoreRoutes(r)
 
-	// Task completion routes: /api/tasks/:id/done|failed
-	// Retained for external callers and backward compatibility.
-	// K8s and baremetal workers now use gRPC push (pipeline.task_result) instead.
-	worker.NewHandler(worker.HandlerDeps{Queue: p.queue}).RegisterCompletionRoutes(r.Group("/api"))
-
-	// HTTP poll routes: mounted only in polling dispatch mode (migration/backward compat).
-	if p.backend == nil {
-		worker.NewHandler(worker.HandlerDeps{
-			Registry: p.workerRegistry(),
-			Queue:    p.queue,
-		}).RegisterPollRoutes(r.Group("/api"))
-	}
-
-	// Unified agent registry domain.
-	iagent.NewHandler(p.agentRegistry).RegisterRoutes(r.Group("/api"))
+	p.registerWorkerRoutes(r, sysAdmin, runHandler)
 
 	// JupyterLab requests /custom/custom.css as an absolute path (no base_url prefix).
 	// The file is empty by convention — it is a user customization hook.
@@ -377,8 +338,8 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	r.GET("/metrics", p.metricsHandler)
-	r.GET("/events", p.eventsHandler)
+	r.GET("/metrics", p.authenticateUser(), p.requireSystemAdmin(), p.metricsHandler)
+	r.GET("/events", p.authenticateUser(), p.eventsHandler) // filtered by project_id param; see eventsHandler
 
 	// SPA — served under /ui/; root redirects for convenience
 	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/ui/") })
@@ -439,7 +400,8 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 	if !ok {
 		return // external store (S3, HTTP) — no need for built-in server routes
 	}
-	rg := r.Group("/store")
+	// Built-in store is accessed by workers only; protect with the worker token.
+	rg := r.Group("/store", p.workerTokenMiddleware())
 	rg.PUT("/*key", func(c *gin.Context) {
 		key := strings.TrimPrefix(c.Param("key"), "/")
 		if err := ls.Put(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength); err != nil {
@@ -490,18 +452,124 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func (p *Piper) checkBearerToken(r *http.Request) error {
-	if p.cfg.Server.Token == "" || r.URL.Path == "/health" {
+func (p *Piper) authenticateUser() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authenticator := p.cfg.Auth.Authenticator
+		if authenticator == nil {
+			c.Next()
+			return
+		}
+		identity, err := authenticator.Authenticate(c.Request.Context(), c.Request)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			c.Abort()
+			return
+		}
+		if identity != nil {
+			c.Request = c.Request.WithContext(
+				security.WithIdentity(c.Request.Context(), identity),
+			)
+		}
+		c.Next()
+	}
+}
+
+// requireSystemAdmin returns a Gin middleware that allows only system admins.
+// In trusted mode all requests pass through.
+func (p *Piper) requireSystemAdmin() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authorizer := p.cfg.Auth.Authorizer
+		if authorizer == nil {
+			c.Next()
+			return
+		}
+		identity, _ := security.IdentityFromContext(c.Request.Context())
+		if err := authorizer.AuthorizeSystem(c.Request.Context(), identity); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "system admin required"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// workerTokenGRPCOptions returns gRPC server options that install unary and
+// stream interceptors to verify the worker token in Authorization metadata.
+// Returns nil when no token is configured (trusted mode).
+func (p *Piper) workerTokenGRPCOptions() []grpc.ServerOption {
+	token := p.cfg.Server.WorkerToken
+	if token == "" {
 		return nil
 	}
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != p.cfg.Server.Token {
-		return fmt.Errorf("invalid bearer token")
+	check := func(ctx context.Context) error {
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			for _, v := range md.Get("authorization") {
+				if strings.TrimPrefix(v, "Bearer ") == token {
+					return nil
+				}
+			}
+		}
+		return status.Error(codes.Unauthenticated, "invalid worker token")
 	}
-	return nil
+	return []grpc.ServerOption{
+		grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+			if err := check(ctx); err != nil {
+				return nil, err
+			}
+			return handler(ctx, req)
+		}),
+		grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+			if err := check(ss.Context()); err != nil {
+				return err
+			}
+			return handler(srv, ss)
+		}),
+	}
+}
+
+// workerTokenMiddleware returns a Gin middleware that requires the request to
+// carry the configured worker token. When WorkerToken is empty the check is
+// skipped for trusted/dev mode.
+func (p *Piper) workerTokenMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := p.cfg.Server.WorkerToken
+		if token == "" {
+			c.Next()
+			return
+		}
+		auth := c.Request.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid worker token"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 func (p *Piper) eventsHandler(c *gin.Context) {
+	// ?project_id=xxx filters to events scoped to that project plus infra events.
+	// Without project_id only system admins receive all events.
+	filterProject := strings.TrimSpace(c.Query("project_id"))
+
+	if p.cfg.Auth.Authorizer != nil {
+		identity, _ := security.IdentityFromContext(c.Request.Context())
+		if filterProject != "" {
+			// Verify caller can access the requested project.
+			role, err := p.cfg.Auth.Authorizer.ProjectRole(c.Request.Context(), identity, filterProject)
+			if err != nil || role < security.ProjectRoleViewer {
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				return
+			}
+		} else {
+			// No project filter → require system admin to avoid info leak.
+			if err := p.cfg.Auth.Authorizer.AuthorizeSystem(c.Request.Context(), identity); err != nil {
+				c.JSON(http.StatusForbidden, gin.H{"error": "system admin required for global event stream"})
+				return
+			}
+		}
+	}
+
 	events, cancel := p.events.Subscribe()
 	defer cancel()
 
@@ -515,30 +583,18 @@ func (p *Piper) eventsHandler(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return false
 		case ev := <-events:
+			if filterProject != "" {
+				// Project-scoped stream: deliver only events for this project.
+				// Infra events (ProjectID=="") are infrastructure-level and must not
+				// leak to project users — they are available on the unfiltered stream.
+				if ev.ProjectID != filterProject {
+					return true
+				}
+			}
 			_, _ = fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", ev.ID, ev.Type, event.Encode(ev))
 			return true
 		}
 	})
-}
-
-// ownerIDFromRequest returns the caller's owner ID. When Hooks.ExtractOwnerID
-// is set it delegates to that function, so library users can derive identity
-// from JWT claims or sessions instead of trusting a raw header.
-func (p *Piper) ownerIDFromRequest(r *http.Request) string {
-	if p.cfg.Hooks.ExtractOwnerID != nil {
-		return p.cfg.Hooks.ExtractOwnerID(r)
-	}
-	return defaultOwnerIDFromRequest(r)
-}
-
-func defaultOwnerIDFromRequest(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	if ownerID := strings.TrimSpace(r.Header.Get("X-Piper-Owner-ID")); ownerID != "" {
-		return ownerID
-	}
-	return strings.TrimSpace(r.URL.Query().Get("owner_id"))
 }
 
 func genRunID() string {
@@ -551,7 +607,9 @@ func genScheduleID() string {
 
 // startRunFromAPI handles creating a run from the HTTP API, including
 // future-scheduled runs and immediate dispatch.
-func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+func (p *Piper) startRunFromAPI(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+	projectContext, _ := project.FromContext(ctx)
+
 	pl, err := p.Parse([]byte(yaml))
 	if err != nil {
 		return "", fmt.Errorf("parse: %w", err)
@@ -568,7 +626,7 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 		runID := genRunID()
 		newRun := &run.Run{
 			ID:           runID,
-			OwnerID:      ownerID,
+			ProjectID:    projectContext.ID,
 			Experiment:   experiment,
 			PipelineName: pl.Metadata.Name,
 			Status:       run.StatusScheduled,
@@ -584,7 +642,7 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 	}
 
 	return p.startRun(ctx, pl, dag, StartRunOptions{
-		OwnerID:    ownerID,
+		ProjectID:  projectContext.ID,
 		Experiment: experiment,
 		Params:     params,
 		Vars:       vars,
@@ -593,13 +651,14 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml, ownerID string, param
 }
 
 // StartRun is the exported entry point for creating a run from the HTTP API.
-func (p *Piper) StartRun(ctx context.Context, yaml, ownerID string, params map[string]any, vars BuiltinVars) (string, error) {
-	return p.startRunFromAPI(ctx, yaml, ownerID, params, vars, "")
+func (p *Piper) StartRun(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars) (string, error) {
+	return p.startRunFromAPI(ctx, yaml, params, vars, "")
 }
 
 // CancelRun cancels a queued or running run.
 func (p *Piper) CancelRun(ctx context.Context, runID string) error {
-	return p.queue.Cancel(ctx, runID)
+	projectContext, _ := project.FromContext(ctx)
+	return p.queue.Cancel(ctx, projectContext.ID, runID)
 }
 
 // RerunRun re-executes a run, optionally limiting to failed steps only.
@@ -617,17 +676,13 @@ func (p *Piper) DeleteRun(ctx context.Context, runID string) error {
 	return p.deleteRunWithArtifacts(ctx, runID)
 }
 
-// DeployServiceAs deploys a service on behalf of the given owner.
-func (p *Piper) DeployServiceAs(ctx context.Context, yamlBytes []byte, ownerID string) (*serving.Service, error) {
-	return p.deployService(ctx, yamlBytes, ownerID)
-}
-
 func (p *Piper) cancelRun(ctx context.Context, runID string) error {
-	return p.queue.Cancel(ctx, runID)
+	projectContext, _ := project.FromContext(ctx)
+	return p.queue.Cancel(ctx, projectContext.ID, runID)
 }
 
 func (p *Piper) metricsHandler(c *gin.Context) {
-	runs, err := p.repos.Run.List(c.Request.Context(), run.RunFilter{})
+	runs, err := p.listRunsAcrossProjects(c.Request.Context(), run.RunFilter{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -644,8 +699,8 @@ func (p *Piper) metricsHandler(c *gin.Context) {
 	}
 	stats := p.queue.Stats()
 	c.Header("Content-Type", "text/plain; version=0.0.4")
-	for status, count := range counts {
-		_, _ = fmt.Fprintf(c.Writer, "piper_runs_total{status=%q} %d\n", status, count)
+	for runStatus, count := range counts {
+		_, _ = fmt.Fprintf(c.Writer, "piper_runs_total{status=%q} %d\n", runStatus, count)
 	}
 	_, _ = fmt.Fprintf(c.Writer, "piper_run_duration_seconds_sum %.3f\n", totalDurationSeconds)
 	_, _ = fmt.Fprintf(c.Writer, "piper_run_duration_seconds_count %d\n", completed)
@@ -653,15 +708,13 @@ func (p *Piper) metricsHandler(c *gin.Context) {
 	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"pending\"} %d\n", stats.Pending)
 	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"ready\"} %d\n", stats.Ready)
 	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"running\"} %d\n", stats.Running)
-	workerCount := 0
-	if p.registry != nil {
-		workerCount = len(p.registry.List())
-	}
+	workerCount := len(p.agentRegistry.List())
 	_, _ = fmt.Fprintf(c.Writer, "piper_workers %d\n", workerCount)
 }
 
 func (p *Piper) rerunRun(ctx context.Context, runID string, failedOnly bool) (string, error) {
-	prev, err := p.repos.Run.Get(ctx, runID)
+	projectContext, _ := project.FromContext(ctx)
+	prev, err := p.repos.Run.Get(ctx, projectContext.ID, runID)
 	if err != nil || prev == nil {
 		return "", fmt.Errorf("run %q not found", runID)
 	}
@@ -677,7 +730,7 @@ func (p *Piper) rerunRun(ctx context.Context, runID string, failedOnly bool) (st
 		return "", fmt.Errorf("parse previous run yaml: %w", err)
 	}
 	if failedOnly {
-		steps, err := p.repos.Step.List(ctx, runID)
+		steps, err := p.repos.Step.List(ctx, projectContext.ID, runID)
 		if err != nil {
 			return "", err
 		}
@@ -704,18 +757,19 @@ func (p *Piper) rerunRun(ctx context.Context, runID string, failedOnly bool) (st
 		return "", fmt.Errorf("build dag: %w", err)
 	}
 	return p.startRun(ctx, pl, dag, StartRunOptions{
-		OwnerID: prev.OwnerID,
-		Params:  params,
-		YAML:    prev.PipelineYAML,
+		ProjectID: prev.ProjectID,
+		Params:    params,
+		YAML:      prev.PipelineYAML,
 	})
 }
 
 func (p *Piper) retryStep(ctx context.Context, runID, stepName string) (string, error) {
-	prev, err := p.repos.Run.Get(ctx, runID)
+	projectContext, _ := project.FromContext(ctx)
+	prev, err := p.repos.Run.Get(ctx, projectContext.ID, runID)
 	if err != nil || prev == nil {
 		return "", fmt.Errorf("run %q not found", runID)
 	}
-	steps, err := p.repos.Step.List(ctx, runID)
+	steps, err := p.repos.Step.List(ctx, projectContext.ID, runID)
 	if err != nil {
 		return "", err
 	}
@@ -748,7 +802,7 @@ func (p *Piper) retryStep(ctx context.Context, runID, stepName string) (string, 
 			if err != nil {
 				return "", fmt.Errorf("build dag: %w", err)
 			}
-			return p.startRun(ctx, pl, dag, StartRunOptions{OwnerID: prev.OwnerID, Params: params, YAML: prev.PipelineYAML})
+			return p.startRun(ctx, pl, dag, StartRunOptions{ProjectID: prev.ProjectID, Params: params, YAML: prev.PipelineYAML})
 		}
 	}
 	return "", fmt.Errorf("step %q not found in pipeline yaml", stepName)
@@ -759,7 +813,8 @@ func (p *Piper) deleteRunWithArtifacts(ctx context.Context, runID string) error 
 	if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, runID); err != nil {
 		slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
 	}
-	return p.repos.DeleteRun(ctx, runID)
+	projectContext, _ := project.FromContext(ctx)
+	return p.repos.DeleteRun(ctx, projectContext.ID, runID)
 }
 
 // ── piperRunHooks — bridges Hooks into run.RunHooks ──────────────────────────
@@ -770,13 +825,7 @@ type piperRunHooks struct {
 
 func (h *piperRunHooks) BeforeListRuns(ctx context.Context, r *http.Request) (run.RunFilter, error) {
 	f, err := h.p.cfg.Hooks.callBeforeListRuns(ctx, r)
-	if f.OwnerID == "" {
-		f.OwnerID = h.p.ownerIDFromRequest(r)
-	}
-	return run.RunFilter{
-		OwnerID:      f.OwnerID,
-		PipelineName: f.PipelineName,
-	}, err
+	return run.RunFilter{PipelineName: f.PipelineName}, err
 }
 
 func (h *piperRunHooks) BeforeCreateRun(ctx context.Context, r *http.Request, yaml string) error {
@@ -784,78 +833,11 @@ func (h *piperRunHooks) BeforeCreateRun(ctx context.Context, r *http.Request, ya
 }
 
 func (h *piperRunHooks) BeforeGetRun(ctx context.Context, r *http.Request, id string) error {
-	if err := h.p.cfg.Hooks.callBeforeGetRun(ctx, r, id); err != nil {
-		return err
-	}
-	return h.checkRunOwner(ctx, r, id)
+	return h.p.cfg.Hooks.callBeforeGetRun(ctx, r, id)
 }
 
 func (h *piperRunHooks) BeforeGetLogs(ctx context.Context, r *http.Request, runID, step string) error {
-	if err := h.p.cfg.Hooks.callBeforeGetLogs(ctx, r, runID, step); err != nil {
-		return err
-	}
-	return h.checkRunOwner(ctx, r, runID)
-}
-
-func (h *piperRunHooks) checkRunOwner(ctx context.Context, r *http.Request, runID string) error {
-	ownerID := h.p.ownerIDFromRequest(r)
-	if ownerID == "" {
-		return nil
-	}
-	rec, err := h.p.repos.Run.Get(ctx, runID)
-	if err != nil || rec == nil {
-		return nil
-	}
-	if rec.OwnerID != "" && rec.OwnerID != ownerID {
-		return fmt.Errorf("forbidden")
-	}
-	return nil
-}
-
-// ── piperScheduleHooks — bridges Hooks into schedule.ScheduleHooks ──────────
-
-type piperScheduleHooks struct {
-	p *Piper
-}
-
-func (h *piperScheduleHooks) BeforeCreateSchedule(ctx context.Context, r *http.Request, yaml string) error {
-	return h.p.cfg.Hooks.callBeforeCreateSchedule(ctx, r, yaml)
-}
-
-func (h *piperScheduleHooks) BeforeListSchedules(ctx context.Context, r *http.Request) (schedule.ScheduleFilter, error) {
-	f, err := h.p.cfg.Hooks.callBeforeListSchedules(ctx, r)
-	ownerID := f.OwnerID
-	if ownerID == "" {
-		ownerID = h.p.ownerIDFromRequest(r)
-	}
-	return schedule.ScheduleFilter{OwnerID: ownerID}, err
-}
-
-func (h *piperScheduleHooks) BeforeGetSchedule(ctx context.Context, r *http.Request, id string) error {
-	return h.p.cfg.Hooks.callBeforeGetSchedule(ctx, r, id)
-}
-
-// ── piperServingHooks — bridges Hooks into serving.ServingHooks ──────────────
-
-type piperServingHooks struct {
-	p *Piper
-}
-
-func (h *piperServingHooks) BeforeCreateService(ctx context.Context, r *http.Request, yaml string) error {
-	return h.p.cfg.Hooks.callBeforeCreateService(ctx, r, yaml)
-}
-
-func (h *piperServingHooks) BeforeListServices(ctx context.Context, r *http.Request) (serving.ServingFilter, error) {
-	f, err := h.p.cfg.Hooks.callBeforeListServices(ctx, r)
-	ownerID := f.OwnerID
-	if ownerID == "" {
-		ownerID = h.p.ownerIDFromRequest(r)
-	}
-	return serving.ServingFilter{OwnerID: ownerID}, err
-}
-
-func (h *piperServingHooks) BeforeGetService(ctx context.Context, r *http.Request, name string) error {
-	return h.p.cfg.Hooks.callBeforeGetService(ctx, r, name)
+	return h.p.cfg.Hooks.callBeforeGetLogs(ctx, r, runID, step)
 }
 
 // ── piperArtifacts — implements run.ArtifactProvider ─────────────────────────

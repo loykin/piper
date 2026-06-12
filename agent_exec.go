@@ -29,7 +29,8 @@ func runEmbeddedAgentExec() int {
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	taskB64 := fs.String("task", "", "")
 	masterURL := fs.String("master", "", "")
-	token := fs.String("token", "", "")
+	workerToken := fs.String("worker-token", "", "")
+	storageToken := fs.String("storage-token", "", "")
 	outputDir := fs.String("output-dir", "./piper-outputs", "")
 	inputDir := fs.String("input-dir", "", "")
 	storageURL := fs.String("storage-url", "", "")
@@ -54,11 +55,12 @@ func runEmbeddedAgentExec() int {
 	}
 
 	r, err := agentpkg.New(agentpkg.Config{
-		MasterURL:  *masterURL,
-		Token:      *token,
-		OutputDir:  *outputDir,
-		InputDir:   *inputDir,
-		StorageURL: *storageURL,
+		MasterURL:    *masterURL,
+		WorkerToken:  *workerToken,
+		StorageToken: *storageToken,
+		OutputDir:    *outputDir,
+		InputDir:     *inputDir,
+		StorageURL:   *storageURL,
 	})
 	if err != nil {
 		slog.Error("agent exec: init runner", "err", err)

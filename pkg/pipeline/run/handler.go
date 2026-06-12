@@ -14,11 +14,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/security"
 )
 
 // LogQuerier abstracts log storage for the run handler.
 type LogQuerier interface {
-	Query(runID, stepName string, afterID int64) ([]*logstore.Line, error)
+	Query(projectID, runID, stepName string, afterID int64) ([]*logstore.Line, error)
 	Append(lines []*logstore.Line) error
 }
 
@@ -42,15 +44,14 @@ type HandlerDeps struct {
 	Steps      StepRepository
 	Logs       LogQuerier
 	Metrics    logstore.MetricStore
-	StartRun   func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
-	StartSweep func(ctx context.Context, req SweepRequest, ownerID string) (SweepResponse, error)
+	StartRun   func(ctx context.Context, yaml string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
+	StartSweep func(ctx context.Context, req SweepRequest) (SweepResponse, error)
 	CancelRun  func(ctx context.Context, runID string) error
 	RerunRun   func(ctx context.Context, runID string, failedOnly bool) (string, error)
 	RetryStep  func(ctx context.Context, runID, stepName string) (string, error)
 	DeleteRun  func(ctx context.Context, runID string) error
 	Artifacts  ArtifactProvider
 	Hooks      RunHooks
-	OwnerID    func(r *http.Request) string
 }
 
 // ArtifactProvider is the domain interface for artifact listing and download.
@@ -78,24 +79,39 @@ func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{deps: deps}
 }
 
+func projectID(c *gin.Context) string {
+	ctx, _ := project.FromContext(c.Request.Context())
+	return ctx.ID
+}
+
 // RegisterRoutes mounts all /runs routes onto the given router group.
+// Read routes are accessible to viewers; write routes require member role.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
+	// Viewer routes
 	rg.GET("/runs", h.listRuns)
-	rg.POST("/runs", h.createRun)
-	rg.POST("/runs/sweep", h.createSweep)
 	rg.GET("/runs/:id", h.getRun)
-	rg.POST("/runs/:id/cancel", h.cancelRun)
-	rg.POST("/runs/:id/rerun", h.rerunRun)
-	rg.DELETE("/runs/:id", h.deleteRun)
 	rg.GET("/runs/:id/steps", h.listSteps)
-	rg.POST("/runs/:id/steps/:step/retry", h.retryStep)
 	rg.GET("/runs/:id/steps/:step/logs", h.getLogs)
 	rg.GET("/runs/:id/steps/:step/logs/stream", h.streamLogs)
-	rg.POST("/runs/:id/steps/:step/logs", h.ingestLogs)
-	rg.POST("/runs/:id/steps/:step/final-metrics", h.ingestFinalMetrics)
 	rg.GET("/runs/:id/metrics", h.getMetrics)
 	rg.GET("/runs/:id/artifacts", h.listArtifacts)
 	rg.GET("/runs/:id/artifacts/*path", h.downloadArtifact)
+
+	// Member routes
+	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
+	member.POST("/runs", h.createRun)
+	member.POST("/runs/sweep", h.createSweep)
+	member.POST("/runs/:id/cancel", h.cancelRun)
+	member.POST("/runs/:id/rerun", h.rerunRun)
+	member.DELETE("/runs/:id", h.deleteRun)
+	member.POST("/runs/:id/steps/:step/retry", h.retryStep)
+}
+
+// RegisterWorkerRoutes mounts infrastructure callbacks used by pipeline workers.
+// The caller must apply worker authentication and project resolution middleware.
+func (h *Handler) RegisterWorkerRoutes(rg *gin.RouterGroup) {
+	rg.POST("/runs/:id/steps/:step/logs", h.ingestLogs)
+	rg.POST("/runs/:id/steps/:step/final-metrics", h.ingestFinalMetrics)
 }
 
 // GET /runs
@@ -117,7 +133,8 @@ func (h *Handler) listRuns(c *gin.Context) {
 		filter.PipelineName = pipelineName
 	}
 
-	runs, err := h.deps.Runs.List(c.Request.Context(), filter)
+	projectID := projectID(c)
+	runs, err := h.deps.Runs.List(c.Request.Context(), projectID, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -130,7 +147,7 @@ func (h *Handler) listRuns(c *gin.Context) {
 	result := make([]runWithSteps, 0, len(runs))
 	for _, r := range runs {
 		r = r.Redact()
-		steps, _ := h.deps.Steps.List(c.Request.Context(), r.ID)
+		steps, _ := h.deps.Steps.List(c.Request.Context(), projectID, r.ID)
 		if steps == nil {
 			steps = []*Step{}
 		}
@@ -144,7 +161,6 @@ func (h *Handler) createRun(c *gin.Context) {
 	var req struct {
 		YAML       string            `json:"yaml"`
 		Params     map[string]any    `json:"params,omitempty"`
-		OwnerID    string            `json:"owner_id,omitempty"`
 		Experiment string            `json:"experiment,omitempty"`
 		Vars       proto.BuiltinVars `json:"vars,omitempty"`
 	}
@@ -164,11 +180,8 @@ func (h *Handler) createRun(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "StartRun not configured"})
 		return
 	}
-	if req.OwnerID == "" && h.deps.OwnerID != nil {
-		req.OwnerID = h.deps.OwnerID(c.Request)
-	}
 
-	runID, err := h.deps.StartRun(c.Request.Context(), req.YAML, req.OwnerID, req.Params, req.Vars, req.Experiment)
+	runID, err := h.deps.StartRun(c.Request.Context(), req.YAML, req.Params, req.Vars, req.Experiment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -201,11 +214,7 @@ func (h *Handler) createSweep(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "StartSweep not configured"})
 		return
 	}
-	ownerID := ""
-	if h.deps.OwnerID != nil {
-		ownerID = h.deps.OwnerID(c.Request)
-	}
-	resp, err := h.deps.StartSweep(c.Request.Context(), req, ownerID)
+	resp, err := h.deps.StartSweep(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -216,7 +225,8 @@ func (h *Handler) createSweep(c *gin.Context) {
 // GET /runs/:id
 func (h *Handler) getRun(c *gin.Context) {
 	runID := c.Param("id")
-	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	projectID := projectID(c)
+	r, err := h.deps.Runs.Get(c.Request.Context(), projectID, runID)
 	if err != nil || r == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
 		return
@@ -227,7 +237,7 @@ func (h *Handler) getRun(c *gin.Context) {
 			return
 		}
 	}
-	steps, err := h.deps.Steps.List(c.Request.Context(), runID)
+	steps, err := h.deps.Steps.List(c.Request.Context(), projectID, runID)
 	if err != nil {
 		slog.Warn("list steps failed", "run_id", runID, "err", err)
 	}
@@ -237,7 +247,7 @@ func (h *Handler) getRun(c *gin.Context) {
 // POST /runs/:id/cancel
 func (h *Handler) cancelRun(c *gin.Context) {
 	runID := c.Param("id")
-	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	r, err := h.deps.Runs.Get(c.Request.Context(), projectID(c), runID)
 	if err != nil || r == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
 		return
@@ -272,7 +282,7 @@ func (h *Handler) rerunRun(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 
-	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	r, err := h.deps.Runs.Get(c.Request.Context(), projectID(c), runID)
 	if err != nil || r == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
 		return
@@ -298,7 +308,7 @@ func (h *Handler) rerunRun(c *gin.Context) {
 // DELETE /runs/:id
 func (h *Handler) deleteRun(c *gin.Context) {
 	runID := c.Param("id")
-	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	r, err := h.deps.Runs.Get(c.Request.Context(), projectID(c), runID)
 	if err != nil || r == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
 		return
@@ -325,7 +335,7 @@ func (h *Handler) deleteRun(c *gin.Context) {
 // GET /runs/:id/steps
 func (h *Handler) listSteps(c *gin.Context) {
 	runID := c.Param("id")
-	steps, err := h.deps.Steps.List(c.Request.Context(), runID)
+	steps, err := h.deps.Steps.List(c.Request.Context(), projectID(c), runID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -337,7 +347,7 @@ func (h *Handler) listSteps(c *gin.Context) {
 func (h *Handler) retryStep(c *gin.Context) {
 	runID := c.Param("id")
 	stepName := c.Param("step")
-	r, err := h.deps.Runs.Get(c.Request.Context(), runID)
+	r, err := h.deps.Runs.Get(c.Request.Context(), projectID(c), runID)
 	if err != nil || r == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
 		return
@@ -371,7 +381,7 @@ func (h *Handler) getLogs(c *gin.Context) {
 		}
 	}
 	afterID, _ := strconv.ParseInt(c.Query("after"), 10, 64)
-	lines, err := h.deps.Logs.Query(runID, stepName, afterID)
+	lines, err := h.deps.Logs.Query(projectID(c), runID, stepName, afterID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -404,7 +414,7 @@ func (h *Handler) streamLogs(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return false
 		case <-ticker.C:
-			lines, err := h.deps.Logs.Query(runID, stepName, afterID)
+			lines, err := h.deps.Logs.Query(projectID(c), runID, stepName, afterID)
 			if err != nil {
 				_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 				return false
@@ -416,10 +426,10 @@ func (h *Handler) streamLogs(c *gin.Context) {
 			}
 
 			// Check if run has ended
-			runRec, err := h.deps.Runs.Get(c.Request.Context(), runID)
+			runRec, err := h.deps.Runs.Get(c.Request.Context(), projectID(c), runID)
 			if err == nil && runRec != nil && runRec.Status != StatusRunning {
 				// Flush remaining logs
-				if tail, err2 := h.deps.Logs.Query(runID, stepName, afterID); err2 == nil {
+				if tail, err2 := h.deps.Logs.Query(projectID(c), runID, stepName, afterID); err2 == nil {
 					for _, l := range tail {
 						b, _ := json.Marshal(l)
 						_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
@@ -436,6 +446,9 @@ func (h *Handler) streamLogs(c *gin.Context) {
 // POST /runs/:id/steps/:step/logs  — ingest worker logs
 func (h *Handler) ingestLogs(c *gin.Context) {
 	ref := stepRef{RunID: c.Param("id"), StepName: c.Param("step")}
+	if !h.workerRunExists(c, ref.RunID) {
+		return
+	}
 
 	var entries []ingestedLogEntry
 	if err := c.ShouldBindJSON(&entries); err != nil {
@@ -445,15 +458,18 @@ func (h *Handler) ingestLogs(c *gin.Context) {
 
 	lines := make([]*logstore.Line, len(entries))
 	var metrics []*logstore.Metric
+	currentProjectID := projectID(c)
 	for i, e := range entries {
 		lines[i] = &logstore.Line{
-			RunID:    ref.RunID,
-			StepName: ref.StepName,
-			Ts:       e.Ts,
-			Stream:   e.Stream,
-			Line:     e.Line,
+			ProjectID: currentProjectID,
+			RunID:     ref.RunID,
+			StepName:  ref.StepName,
+			Ts:        e.Ts,
+			Stream:    e.Stream,
+			Line:      e.Line,
 		}
 		if metric, ok := parseMetricLine(ref, e); ok {
+			metric.ProjectID = currentProjectID
 			metrics = append(metrics, metric)
 		}
 	}
@@ -476,6 +492,9 @@ func (h *Handler) ingestFinalMetrics(c *gin.Context) {
 	}
 	runID := c.Param("id")
 	stepName := c.Param("step")
+	if !h.workerRunExists(c, runID) {
+		return
+	}
 
 	var vals map[string]float64
 	if err := c.ShouldBindJSON(&vals); err != nil {
@@ -487,11 +506,12 @@ func (h *Handler) ingestFinalMetrics(c *gin.Context) {
 	metrics := make([]*logstore.Metric, 0, len(vals))
 	for k, v := range vals {
 		metrics = append(metrics, &logstore.Metric{
-			RunID:    runID,
-			StepName: stepName,
-			Key:      k,
-			Value:    v,
-			Ts:       now,
+			ProjectID: projectID(c),
+			RunID:     runID,
+			StepName:  stepName,
+			Key:       k,
+			Value:     v,
+			Ts:        now,
 		})
 	}
 	if err := h.deps.Metrics.AppendMetrics(metrics); err != nil {
@@ -500,12 +520,29 @@ func (h *Handler) ingestFinalMetrics(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+func (h *Handler) workerRunExists(c *gin.Context, runID string) bool {
+	if h.deps.Runs == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "run repository not configured"})
+		return false
+	}
+	runRec, err := h.deps.Runs.Get(c.Request.Context(), projectID(c), runID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	if runRec == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return false
+	}
+	return true
+}
+
 func (h *Handler) getMetrics(c *gin.Context) {
 	if h.deps.Metrics == nil {
 		c.JSON(http.StatusOK, []any{})
 		return
 	}
-	metrics, err := h.deps.Metrics.QueryMetrics(c.Param("id"), c.Query("step"))
+	metrics, err := h.deps.Metrics.QueryMetrics(projectID(c), c.Param("id"), c.Query("step"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

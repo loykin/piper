@@ -6,10 +6,10 @@ import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
-import { useRuns } from '@/features/runs/hooks'
-import { runKeys } from '@/features/runs/hooks'
+import { useRuns, runKeys } from '@/features/runs/hooks'
 import { getRunMetrics } from '@/features/runs/api'
 import type { Run, RunMetrics } from '@/features/runs/types'
+import { useProjectId } from '@/lib/projectContext'
 
 interface SortState { step: string; key: string; order: 'asc' | 'desc' }
 
@@ -21,6 +21,7 @@ function parseParams(json?: string): Record<string, unknown> {
 export default function ExperimentDetailPage() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const experiment = decodeURIComponent(name ?? '')
   const [sort, setSort] = useState<SortState | null>(null)
 
@@ -33,8 +34,8 @@ export default function ExperimentDetailPage() {
   // Fetch metrics for all runs in parallel
   const metricQueries = useQueries({
     queries: runs.map(r => ({
-      queryKey: runKeys.metrics(r.id),
-      queryFn: () => getRunMetrics(r.id),
+      queryKey: runKeys.metrics(projectId, r.id),
+      queryFn: () => getRunMetrics(projectId, r.id),
     })),
   })
 

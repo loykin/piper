@@ -12,7 +12,7 @@ interface YamlMirrorProps {
   rows?: number
 }
 
-function YamlMirror({ value, onChange, className, readOnly, rows: _ }: YamlMirrorProps) {
+function YamlMirror({ value, onChange, className, readOnly, rows: _rows }: YamlMirrorProps) {
   return (
     <div className={cn('overflow-hidden rounded-lg border border-border', className)}>
       <CodeMirror

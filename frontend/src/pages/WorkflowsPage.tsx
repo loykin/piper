@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { useProjectId } from '@/lib/projectContext'
 import { ArrowRight, Power, Plus, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
@@ -11,6 +12,7 @@ import type { Schedule } from '@/features/schedules/api'
 
 export default function WorkflowsPage() {
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const { data: schedules = [], isLoading, isError } = useSchedules()
   const { mutate: deleteSchedule } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
@@ -24,7 +26,7 @@ export default function WorkflowsPage() {
       return (
         <div className="flex items-center gap-0.5">
           <IconButton icon={<ArrowRight />} label="View"
-            onClick={() => navigate(`/schedules/${s.id}`)} />
+            onClick={() => navigate(`/projects/${projectId}/schedules/${s.id}`)} />
           {s.schedule_type === 'cron' && (
             <IconButton icon={<Power />} label={s.enabled ? 'Disable' : 'Enable'}
               onClick={(e) => {
@@ -55,7 +57,7 @@ export default function WorkflowsPage() {
           description="Manage cron and one-time pipeline schedules."
         />
         <DataPage.Actions>
-          <Button size="sm" onClick={() => navigate('/schedules/create')}>
+          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/create`)}>
             <Plus size={14} className="mr-1.5" /> Create
           </Button>
         </DataPage.Actions>
@@ -79,7 +81,7 @@ export default function WorkflowsPage() {
                 tableWidthMode="fill-last"
                 rowHeight={44}
                 rowCursor
-                onRowClick={(row) => navigate(`/schedules/${row.id}`)}
+                onRowClick={(row) => navigate(`/projects/${projectId}/schedules/${row.id}`)}
                 pagination={{ pageSize: 20 }}
                 footer={(table) => (
                   <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">

@@ -25,22 +25,26 @@ func newWorkerCmd() *cobra.Command {
 			if runtime == "" {
 				runtime = worker.RuntimeBaremetal
 			}
+			workerToken := viper.GetString("worker.token")
+			storageToken := viper.GetString("storage.token")
 
 			cfg := worker.Config{
 				Agent: worker.AgentConfig{
 					Addr:        viper.GetString("worker.agent_addr"),
+					WorkerToken: workerToken,
 					ID:          id,
 					Label:       viper.GetString("worker.label"),
 					Concurrency: viper.GetInt("worker.concurrency"),
 				},
 				Store: worker.StoreConfig{
-					MasterURL:   viper.GetString("worker.master"),
-					Token:       viper.GetString("worker.token"),
-					StorageURL:  resolveStorageURLFromViper(),
-					OutputDir:   viper.GetString("worker.output_dir"),
-					RemoteStore: viper.GetString("storage.url") != "" || viper.GetString("s3.bucket") != "",
-					GitUser:     viper.GetString("git.user"),
-					GitToken:    viper.GetString("git.token"),
+					MasterURL:    viper.GetString("worker.master"),
+					WorkerToken:  workerToken,
+					StorageToken: storageToken,
+					StorageURL:   resolveStorageURLFromViper(),
+					OutputDir:    viper.GetString("worker.output_dir"),
+					RemoteStore:  viper.GetString("storage.url") != "" || viper.GetString("s3.bucket") != "",
+					GitUser:      viper.GetString("git.user"),
+					GitToken:     viper.GetString("git.token"),
 				},
 				Runtime: runtime,
 				Baremetal: worker.BaremetalConfig{
@@ -67,7 +71,8 @@ func newWorkerCmd() *cobra.Command {
 	cmd.Flags().String("id", "", "stable worker ID (auto-generated if empty)")
 	cmd.Flags().String("label", "", "worker label for task routing")
 	cmd.Flags().String("master", "", "piper master HTTP URL (for agent exec callbacks)")
-	cmd.Flags().String("token", "", "authentication token")
+	cmd.Flags().String("worker-token", "", "worker token for gRPC and master callbacks")
+	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
 	cmd.Flags().Int("concurrency", 4, "max parallel tasks")
 	cmd.Flags().String("runtime", "baremetal", "execution runtime: baremetal or docker")
 	cmd.Flags().String("output-dir", "./piper-outputs", "output directory")
@@ -79,7 +84,8 @@ func newWorkerCmd() *cobra.Command {
 	mustBindPFlag("worker.id", cmd.Flags().Lookup("id"))
 	mustBindPFlag("worker.label", cmd.Flags().Lookup("label"))
 	mustBindPFlag("worker.master", cmd.Flags().Lookup("master"))
-	mustBindPFlag("worker.token", cmd.Flags().Lookup("token"))
+	mustBindPFlag("worker.token", cmd.Flags().Lookup("worker-token"))
+	mustBindPFlag("storage.token", cmd.Flags().Lookup("storage-token"))
 	mustBindPFlag("worker.concurrency", cmd.Flags().Lookup("concurrency"))
 	mustBindPFlag("worker.runtime", cmd.Flags().Lookup("runtime"))
 	mustBindPFlag("worker.output_dir", cmd.Flags().Lookup("output-dir"))

@@ -20,10 +20,11 @@ import (
 
 // Config holds configuration for a serving worker agent.
 type Config struct {
-	AgentAddr string // gRPC address of master agent server, e.g. "master:9090"
-	GPUs      []string
-	Hostname  string
-	ID        string // UUID; caller must generate
+	AgentAddr   string // gRPC address of master agent server, e.g. "master:9090"
+	WorkerToken string // bearer token sent in gRPC authorization metadata
+	GPUs        []string
+	Hostname    string
+	ID          string // UUID; caller must generate
 }
 
 // serviceRecord holds the worker-observed state of an active service.
@@ -50,6 +51,7 @@ func New(cfg Config) *Worker {
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		AgentAddr:    cfg.AgentAddr,
 		AgentID:      cfg.ID,
+		WorkerToken:  cfg.WorkerToken,
 		Kind:         iagent.KindBareMetal,
 		Hostname:     cfg.Hostname,
 		GPUs:         cfg.GPUs,
@@ -66,7 +68,10 @@ func New(cfg Config) *Worker {
 	d := client.Dispatcher()
 	_ = grpcagent.RegisterJSON(d, iagent.MethodServingDeploy, w.deploy)
 	_ = grpcagent.RegisterJSON(d, iagent.MethodServingStop, func(ctx context.Context, req servingStopRequest) (any, error) {
-		return nil, w.stop(ctx, req.Name)
+		if req.ProjectID == "" {
+			return nil, fmt.Errorf("project_id is required")
+		}
+		return nil, w.stop(ctx, serviceKey(req.ProjectID, req.Name), serviceName(req.ProjectID, req.Name))
 	})
 	_ = grpcagent.RegisterJSON(d, iagent.MethodServingSyncStatus, w.syncStatus)
 
@@ -81,13 +86,26 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 type servingStopRequest struct {
-	Name string `json:"name"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
 }
 
 type deployRequest struct {
+	ProjectID string `json:"project_id"`
 	YAML      string `json:"yaml"`
 	LocalPath string `json:"local_path"`
 	S3URI     string `json:"s3_uri"`
+}
+
+// serviceKey returns the composite map key "projectID:name".
+func serviceKey(projectID, name string) string { return projectID + ":" + name }
+
+// serviceName returns the runtime-safe name using "__" separator.
+func serviceName(projectID, name string) string {
+	if projectID == "" {
+		return name
+	}
+	return projectID + "__" + name
 }
 
 type deployResponse struct {
@@ -95,6 +113,9 @@ type deployResponse struct {
 }
 
 func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, error) {
+	if req.ProjectID == "" {
+		return nil, fmt.Errorf("project_id is required")
+	}
 	var svc serving.ModelService
 	if err := yaml.Unmarshal([]byte(req.YAML), &svc); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
@@ -109,6 +130,9 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		return nil, fmt.Errorf("run.port must be set")
 	}
 
+	key := serviceKey(req.ProjectID, name)
+	rn := serviceName(req.ProjectID, name) // runtime-safe composite name
+
 	modelDir := req.LocalPath
 	if modelDir == "" {
 		modelDir = req.S3URI
@@ -119,7 +143,7 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		gpus = svc.Spec.Driver.Process.GPUs
 	}
 	spec := process.ProcessSpec{
-		Name:       name,
+		Name:       rn,
 		Command:    rt.Command,
 		Env:        map[string]string{"PIPER_MODEL_DIR": modelDir, "PIPER_SERVICE_NAME": name},
 		Port:       rt.Port,
@@ -128,26 +152,24 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	}
 
 	endpoint := fmt.Sprintf("http://localhost:%d", rt.Port)
-	gen, err := w.reserveService(name, endpoint)
+	gen, err := w.reserveService(key, endpoint)
 	if err != nil {
 		return nil, err
 	}
 
 	_, startedEndpoint, err := w.supervisor.Start(spec, func(status string) {
-		// Process exited — remove from services map, then push final status.
 		slog.Info("serving process exited", "name", name, "status", status)
-		if removed, finalStatus := w.completeService(name, gen, status); removed {
-			w.pushStatus(name, finalStatus, "")
+		if removed, finalStatus := w.completeService(key, gen, status); removed {
+			w.pushStatus(req.ProjectID, name, finalStatus, "")
 		}
 	})
 	if err != nil {
-		w.removeService(name, gen)
+		w.removeService(key, gen)
 		return nil, err
 	}
 	endpoint = startedEndpoint
 
-	// A fast process exit may have removed this generation before Start returned.
-	if !w.isCurrentService(name, gen) {
+	if !w.isCurrentService(key, gen) {
 		return &deployResponse{Endpoint: endpoint}, nil
 	}
 
@@ -160,23 +182,21 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 			slog.Warn("serving health check timed out", "name", name, "endpoint", endpoint)
 			// Keep the service tracked while stopping. The exit override makes the
 			// OnExit callback report "failed" instead of the stop signal result.
-			if w.failService(name, gen) {
-				if stopErr := w.supervisor.Stop(name); stopErr != nil {
+			if w.failService(key, gen) {
+				if stopErr := w.supervisor.Stop(rn); stopErr != nil {
 					slog.Warn("serving process stop after health failure failed", "name", name, "err", stopErr)
-					// The process is still tracked. Report the unhealthy workload as
-					// failed while retaining the record for later stop/reconciliation.
-					w.pushStatus(name, serving.StatusFailed, "")
+					w.pushStatus(req.ProjectID, name, serving.StatusFailed, "")
 				}
 			}
 			return
 		}
-		if w.updateService(name, gen, serving.StatusRunning, endpoint) {
-			w.pushStatus(name, serving.StatusRunning, endpoint)
+		if w.updateService(key, gen, serving.StatusRunning, endpoint) {
+			w.pushStatus(req.ProjectID, name, serving.StatusRunning, endpoint)
 		}
 	}()
 
-	if w.isCurrentService(name, gen) {
-		w.pushStatus(name, serving.StatusStarting, endpoint)
+	if w.isCurrentService(key, gen) {
+		w.pushStatus(req.ProjectID, name, serving.StatusStarting, endpoint)
 	}
 	return &deployResponse{Endpoint: endpoint}, nil
 }
@@ -250,19 +270,21 @@ func (w *Worker) completeService(name string, gen uint64, status string) (bool, 
 	return true, status
 }
 
-func (w *Worker) stop(_ context.Context, name string) error {
-	return w.supervisor.Stop(name)
+func (w *Worker) stop(_ context.Context, key, rn string) error {
+	_ = key // key is for services map; rn is the runtime process name
+	return w.supervisor.Stop(rn)
 }
 
 func (w *Worker) shutdown() {
 	_ = w.supervisor.KillAll()
 }
 
-func (w *Worker) pushStatus(name, status, endpoint string) {
+func (w *Worker) pushStatus(projectID, name, status, endpoint string) {
 	if err := w.client.SendPush(iagent.MethodServingStatusUpdate, serving.WorkerStatusUpdate{
-		Name:     name,
-		Status:   status,
-		Endpoint: endpoint,
+		ProjectID: projectID,
+		Name:      name,
+		Status:    status,
+		Endpoint:  endpoint,
 	}); err != nil {
 		slog.Warn("serving worker: status push failed", "name", name, "status", status, "err", err)
 	}
@@ -276,10 +298,11 @@ func (w *Worker) syncStatus(_ context.Context, req serving.WorkerSyncStatusReque
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, target := range req.Services {
-		if rec, ok := w.services[target.Name]; ok {
-			statuses[target.Name] = rec.status
+		key := serviceKey(target.ProjectID, target.Name)
+		if rec, ok := w.services[key]; ok {
+			statuses[key] = rec.status
 		} else {
-			statuses[target.Name] = serving.StatusStopped
+			statuses[key] = serving.StatusStopped
 		}
 	}
 	return serving.WorkerSyncStatusResponse{Statuses: statuses}, nil

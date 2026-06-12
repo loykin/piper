@@ -3,65 +3,45 @@ export type {
 } from './types'
 
 import type { StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult } from './types'
+import { api, projectApi } from '@/lib/api'
 
-const BASE = ''
-
-async function requestJSON<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
-    ...init,
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(body || `${res.status} ${res.statusText}`)
-  }
-  return res.json()
-}
+// ── System-scoped (admin) ─────────────────────────────────────────────────────
 
 export async function getStorageSettings(): Promise<StorageSettingsView> {
-  return requestJSON(`${BASE}/api/storage/settings`)
+  return api.get<StorageSettingsView>('/api/storage/settings')
 }
 
 export async function saveStorageSettings(config: StorageConfig): Promise<StorageSettingsView> {
-  return requestJSON(`${BASE}/api/storage/settings`, {
-    method: 'PUT',
-    body: JSON.stringify(config),
-  })
+  return api.put<StorageSettingsView>('/api/storage/settings', config)
 }
 
-export async function listStorageObjects(prefix = ''): Promise<StorageObjectInfo[]> {
-  const url = new URL(`${BASE}/api/storage/objects`, window.location.origin)
-  if (prefix) url.searchParams.set('prefix', prefix)
-  return requestJSON(url)
+// ── Project-scoped ────────────────────────────────────────────────────────────
+
+export async function listStorageObjects(
+  projectId: string,
+  prefix = '',
+): Promise<StorageObjectInfo[]> {
+  const qs = prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''
+  const data = await projectApi(projectId).get<StorageObjectInfo[]>(`/storage/objects${qs}`)
+  return Array.isArray(data) ? data : []
 }
 
-export function storageObjectURL(key: string): string {
-  const url = new URL(`${BASE}/api/storage/object`, window.location.origin)
-  url.searchParams.set('key', key)
-  return url.toString()
+export function storageObjectURL(projectId: string, key: string): string {
+  const base = `/api/projects/${encodeURIComponent(projectId)}/storage/object`
+  return `${base}?key=${encodeURIComponent(key)}`
 }
 
-export async function deleteStorageObject(key: string): Promise<void> {
-  const url = new URL(`${BASE}/api/storage/object`, window.location.origin)
-  url.searchParams.set('key', key)
-  const res = await fetch(url, { method: 'DELETE' })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(body || `${res.status} ${res.statusText}`)
-  }
+export async function deleteStorageObject(projectId: string, key: string): Promise<void> {
+  return projectApi(projectId).delete(`/storage/object?key=${encodeURIComponent(key)}`)
 }
 
-export async function uploadStorageObject(file: File, key?: string): Promise<StorageUploadResult> {
+export async function uploadStorageObject(
+  projectId: string,
+  file: File,
+  key?: string,
+): Promise<StorageUploadResult> {
   const form = new FormData()
   form.set('file', file)
   if (key) form.set('key', key)
-  const res = await fetch(`${BASE}/api/storage/object`, {
-    method: 'POST',
-    body: form,
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(body || `${res.status} ${res.statusText}`)
-  }
-  return res.json()
+  return projectApi(projectId).upload<StorageUploadResult>('/storage/object', form)
 }

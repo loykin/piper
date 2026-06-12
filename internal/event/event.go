@@ -9,11 +9,13 @@ import (
 )
 
 // Event is a structured event emitted by the piper server.
+// ProjectID is empty for infrastructure events (worker/agent connect).
 type Event struct {
-	ID     string         `json:"id"`
-	Type   string         `json:"type"`
-	At     time.Time      `json:"at"`
-	Fields map[string]any `json:"fields,omitempty"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	ProjectID string         `json:"project_id,omitempty"`
+	At        time.Time      `json:"at"`
+	Fields    map[string]any `json:"fields,omitempty"`
 }
 
 // Publisher can emit events to all current subscribers.
@@ -69,8 +71,19 @@ func (h *Hub) Publish(e Event) {
 	}
 }
 
-// New constructs an Event with a generated ID and the current UTC timestamp.
-func New(eventType string, fields map[string]any) Event {
+// New constructs a project-scoped Event with a generated ID and the current UTC timestamp.
+func New(projectID, eventType string, fields map[string]any) Event {
+	return Event{
+		ID:        newID(),
+		Type:      eventType,
+		ProjectID: projectID,
+		At:        time.Now().UTC(),
+		Fields:    fields,
+	}
+}
+
+// NewInfra constructs an infrastructure Event (no project scope).
+func NewInfra(eventType string, fields map[string]any) Event {
 	return Event{
 		ID:     newID(),
 		Type:   eventType,

@@ -8,8 +8,8 @@ import (
 
 type Schedule struct {
 	ID           string     `json:"id"                    db:"id"`
+	ProjectID    string     `json:"project_id"            db:"project_id"`
 	Name         string     `json:"name"                  db:"name"`
-	OwnerID      string     `json:"owner_id,omitempty"    db:"owner_id"`
 	PipelineYAML string     `json:"pipeline_yaml"         db:"pipeline_yaml"`
 	ScheduleType string     `json:"schedule_type"         db:"schedule_type"`
 	CronExpr     string     `json:"cron_expr,omitempty"   db:"cron_expr"`

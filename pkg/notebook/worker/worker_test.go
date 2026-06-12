@@ -43,9 +43,9 @@ func (r *recoveryRuntime) Status(string) string               { return notebook.
 func (r *recoveryRuntime) Recover(
 	_ context.Context,
 	onRecovered func(recoveredRuntime) func(status string),
-	_ func(name, status string),
+	_ func(recoveredRuntime, string),
 ) error {
-	r.onExit = onRecovered(recoveredRuntime{Name: "demo", Port: 18888})
+	r.onExit = onRecovered(recoveredRuntime{ProjectID: "project-a", Name: "demo", RuntimeName: "project-a__demo", Port: 18888})
 	return nil
 }
 
@@ -80,7 +80,8 @@ func (r *targetRecoveryRuntime) RecoverTarget(name string, port int, onExit func
 func TestNotebookWorker_StartInvalidYAML(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
-		YAML: ":::not yaml:::",
+		ProjectID: "project-a",
+		YAML:      ":::not yaml:::",
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
@@ -98,7 +99,8 @@ spec:
     port: 8888
 `
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
-		YAML: yamlPayload,
+		ProjectID: "project-a",
+		YAML:      yamlPayload,
 	})
 	if err == nil {
 		t.Fatal("expected error for empty name")
@@ -116,9 +118,10 @@ spec:
     port: 8888
 `
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
-		YAML:     yamlPayload,
-		VolumeID: "",
-		WorkDir:  "",
+		ProjectID: "project-a",
+		YAML:      yamlPayload,
+		VolumeID:  "",
+		WorkDir:   "",
 	})
 	if err == nil {
 		t.Fatal("expected error for missing volume_id and work_dir")
@@ -133,9 +136,10 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 	w.portAllocator = func() (int, error) { return 18888, nil }
 
 	resp, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
-		YAML:     "metadata:\n  name: demo\nspec: {}\n",
-		VolumeID: "vol-demo",
-		WorkDir:  workDir,
+		ProjectID: "project-a",
+		YAML:      "metadata:\n  name: demo\nspec: {}\n",
+		VolumeID:  "vol-demo",
+		WorkDir:   workDir,
 	})
 	if err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
@@ -165,7 +169,7 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 func TestNotebookWorker_StopNonExistent(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
 	// stopNotebook is idempotent for non-existent notebooks.
-	if err := w.stopNotebook(context.Background(), "nonexistent"); err != nil {
+	if err := w.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "project-a", Name: "nonexistent"}); err != nil {
 		t.Fatalf("stopNotebook nonexistent: %v", err)
 	}
 }
@@ -184,8 +188,9 @@ func TestNotebookWorker_RejectsDuplicateActiveNotebook(t *testing.T) {
 		return port, nil
 	}
 	req := notebook.WorkerStartRequest{
-		YAML:    "metadata:\n  name: demo\nspec: {}\n",
-		WorkDir: t.TempDir(),
+		ProjectID: "project-a",
+		YAML:      "metadata:\n  name: demo\nspec: {}\n",
+		WorkDir:   t.TempDir(),
 	}
 	if _, err := w.startNotebook(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -228,18 +233,19 @@ func TestNotebookWorker_SyncStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("syncStatus: %v", err)
 	}
-	if resp.Statuses["running-nb"] != notebook.StatusRunning {
-		t.Errorf("running-nb status = %q, want %q", resp.Statuses["running-nb"], notebook.StatusRunning)
+	// Composite key: "projectID:name" — empty projectID produces ":name".
+	if resp.Statuses[":running-nb"] != notebook.StatusRunning {
+		t.Errorf("running-nb status = %q, want %q", resp.Statuses[":running-nb"], notebook.StatusRunning)
 	}
-	if resp.Statuses["stopped-nb"] != notebook.StatusStopped {
-		t.Errorf("stopped-nb status = %q, want %q", resp.Statuses["stopped-nb"], notebook.StatusStopped)
+	if resp.Statuses[":stopped-nb"] != notebook.StatusStopped {
+		t.Errorf("stopped-nb status = %q, want %q", resp.Statuses[":stopped-nb"], notebook.StatusStopped)
 	}
 }
 
 func TestNotebookWorker_SyncStatusUsesRecoveredTerminalState(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
 	w.runtime = &conformanceRuntime{}
-	w.terminal["failed-nb"] = notebook.StatusFailed
+	w.terminal[":failed-nb"] = notebook.StatusFailed // composite key: ""+":" +"failed-nb"
 
 	resp, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
 		Targets: []notebook.WorkerSyncStatusTarget{{Name: "failed-nb"}},
@@ -247,8 +253,8 @@ func TestNotebookWorker_SyncStatusUsesRecoveredTerminalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Statuses["failed-nb"] != notebook.StatusFailed {
-		t.Fatalf("status = %q", resp.Statuses["failed-nb"])
+	if resp.Statuses[":failed-nb"] != notebook.StatusFailed {
+		t.Fatalf("status = %q", resp.Statuses[":failed-nb"])
 	}
 }
 
@@ -263,19 +269,36 @@ func TestNotebookWorker_SyncStatusRecoversProcessTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Statuses["recover-me"] != notebook.StatusRunning {
-		t.Fatalf("status = %q", resp.Statuses["recover-me"])
+	if resp.Statuses[":recover-me"] != notebook.StatusRunning {
+		t.Fatalf("status = %q", resp.Statuses[":recover-me"])
 	}
 	if rt.name != "recover-me" || rt.port != 18888 {
 		t.Fatalf("recover target = (%q, %d)", rt.name, rt.port)
 	}
 
 	w.mu.Lock()
-	nb := w.notebooks["recover-me"]
+	nb := w.notebooks[":recover-me"] // composite key with empty projectID
 	_, reserved := w.reservedPorts[18888]
 	w.mu.Unlock()
 	if nb == nil || nb.port != 18888 || !reserved {
 		t.Fatalf("recovered notebook was not registered: nb=%+v reserved=%v", nb, reserved)
+	}
+}
+
+func TestNotebookWorker_RecoveryUsesProjectRuntimeName(t *testing.T) {
+	rt := &targetRecoveryRuntime{running: true}
+	w := New(Config{ID: "nb-test-id"})
+	w.runtime = rt
+
+	if err := w.recoverProcessTarget(rt, notebook.WorkerSyncStatusTarget{
+		ProjectID: "project-a",
+		Name:      "recover-me",
+		Port:      18888,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rt.name != "project-a__recover-me" {
+		t.Fatalf("runtime name = %q, want project-a__recover-me", rt.name)
 	}
 }
 
@@ -296,7 +319,7 @@ func TestNotebookWorker_RecoveryReleasesPortLearnedAfterAttach(t *testing.T) {
 	rt.onExit(notebook.StatusStopped)
 
 	w.mu.Lock()
-	_, active := w.notebooks["recover-me"]
+	_, active := w.notebooks[":recover-me"]
 	_, reserved := w.reservedPorts[18888]
 	w.mu.Unlock()
 	if active {
@@ -312,7 +335,7 @@ func TestNotebookWorker_StopRecoversProcessBeforeSync(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
 	w.runtime = rt
 
-	if err := w.stopNotebook(context.Background(), "recover-me"); err != nil {
+	if err := w.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "project-a", Name: "recover-me"}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.running {
@@ -320,8 +343,8 @@ func TestNotebookWorker_StopRecoversProcessBeforeSync(t *testing.T) {
 	}
 
 	w.mu.Lock()
-	_, active := w.notebooks["recover-me"]
-	terminal := w.terminal["recover-me"]
+	_, active := w.notebooks["project-a:recover-me"]
+	terminal := w.terminal["project-a:recover-me"]
 	w.mu.Unlock()
 	if active || terminal != notebook.StatusStopped {
 		t.Fatalf("active=%v terminal=%q", active, terminal)
@@ -334,7 +357,8 @@ func TestNotebookWorker_StartRejectsRecoveredProcessBeforeSync(t *testing.T) {
 	w.runtime = rt
 
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
-		YAML: "metadata:\n  name: recover-me\n",
+		ProjectID: "project-a",
+		YAML:      "metadata:\n  name: recover-me\n",
 	})
 	if err == nil {
 		t.Fatal("expected duplicate start to reject the recovered process")
@@ -350,15 +374,15 @@ func TestNotebookWorker_RecoveredExitCannotRemoveNewGeneration(t *testing.T) {
 	w.mu.Lock()
 	w.nextGen++
 	newGen := w.nextGen
-	w.notebooks["demo"] = &localNotebook{name: "demo", port: 18889, gen: newGen}
+	w.notebooks["project-a:demo"] = &localNotebook{projectID: "project-a", name: "demo", port: 18889, gen: newGen}
 	w.reservedPorts[18889] = struct{}{}
 	w.mu.Unlock()
 
 	rt.onExit(notebook.StatusStopped)
 
 	w.mu.Lock()
-	current := w.notebooks["demo"]
-	terminal := w.terminal["demo"]
+	current := w.notebooks["project-a:demo"]
+	terminal := w.terminal["project-a:demo"]
 	_, oldPortReserved := w.reservedPorts[18888]
 	_, newPortReserved := w.reservedPorts[18889]
 	w.mu.Unlock()

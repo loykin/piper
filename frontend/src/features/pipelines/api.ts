@@ -6,58 +6,44 @@ export type {
 import type {
   PipelineTemplate, SubmitPipelineRequest, TriggerRunRequest, DeployRequest,
 } from './types'
+import { projectApi } from '@/lib/api'
 
-const BASE = '/api'
-
-async function throwOnError(res: Response): Promise<void> {
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error((err as { error?: string }).error ?? res.statusText)
-  }
-}
-
-export async function listPipelines(name?: string, limit?: number): Promise<PipelineTemplate[]> {
+export async function listPipelines(
+  projectId: string,
+  name?: string,
+  limit?: number,
+): Promise<PipelineTemplate[]> {
   const params = new URLSearchParams()
   if (name) params.set('name', name)
   if (limit) params.set('limit', String(limit))
-  const url = `${BASE}/pipelines${params.size > 0 ? '?' + params.toString() : ''}`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`listPipelines: ${res.status}`)
-  const data: unknown = await res.json()
-  return Array.isArray(data) ? (data as PipelineTemplate[]) : []
+  const qs = params.size > 0 ? `?${params.toString()}` : ''
+  const data = await projectApi(projectId).get<PipelineTemplate[]>(`/pipelines${qs}`)
+  return Array.isArray(data) ? data : []
 }
 
-export async function submitPipeline(req: SubmitPipelineRequest): Promise<PipelineTemplate> {
-  const res = await fetch(`${BASE}/pipelines`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req),
-  })
-  await throwOnError(res)
-  return res.json()
+export async function submitPipeline(
+  projectId: string,
+  req: SubmitPipelineRequest,
+): Promise<PipelineTemplate> {
+  return projectApi(projectId).post<PipelineTemplate>('/pipelines', req)
 }
 
-export async function deletePipeline(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/pipelines/${id}`, { method: 'DELETE' })
-  await throwOnError(res)
+export async function deletePipeline(projectId: string, id: string): Promise<void> {
+  return projectApi(projectId).delete(`/pipelines/${id}`)
 }
 
-export async function runPipeline(id: string, req?: TriggerRunRequest): Promise<{ id: string }> {
-  const res = await fetch(`${BASE}/pipelines/${id}/run`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req ?? {}),
-  })
-  await throwOnError(res)
-  return res.json()
+export async function runPipeline(
+  projectId: string,
+  id: string,
+  req?: TriggerRunRequest,
+): Promise<{ id: string }> {
+  return projectApi(projectId).post<{ id: string }>(`/pipelines/${id}/run`, req ?? {})
 }
 
-export async function deployPipeline(id: string, req: DeployRequest): Promise<unknown> {
-  const res = await fetch(`${BASE}/pipelines/${id}/deploy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled: true, ...req }),
-  })
-  await throwOnError(res)
-  return res.json()
+export async function deployPipeline(
+  projectId: string,
+  id: string,
+  req: DeployRequest,
+): Promise<unknown> {
+  return projectApi(projectId).post(`/pipelines/${id}/deploy`, { enabled: true, ...req })
 }

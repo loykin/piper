@@ -10,16 +10,59 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/piper/piper/pkg/project"
 )
 
+func ProjectRepoSuite(t *testing.T, repo project.Repository) {
+	t.Helper()
+	ctx := context.Background()
+
+	first := &project.Project{ID: uuid.NewString(), Name: "alpha", Description: "first"}
+	second := &project.Project{ID: uuid.NewString(), Name: "beta", Description: "second"}
+	if err := repo.Create(ctx, first); err != nil {
+		t.Fatalf("Create first project: %v", err)
+	}
+	if err := repo.Create(ctx, second); err != nil {
+		t.Fatalf("Create second project: %v", err)
+	}
+
+	got, err := repo.Get(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("Get project: %v", err)
+	}
+	if got == nil || got.ID != first.ID || got.Name != first.Name {
+		t.Fatalf("Get project = %#v, want %#v", got, first)
+	}
+
+	projects, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List projects: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("List projects = %d, want 2", len(projects))
+	}
+
+	if err := repo.Delete(ctx, first.ID); err != nil {
+		t.Fatalf("Delete project: %v", err)
+	}
+	deleted, err := repo.Get(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("Get deleted project: %v", err)
+	}
+	if deleted != nil {
+		t.Fatalf("deleted project still exists: %#v", deleted)
+	}
+}
+
 // RunRepoSuite runs a full CRUD contract test against any run.Repository implementation.
-func RunRepoSuite(t *testing.T, repo run.Repository) {
+func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 	t.Helper()
 	ctx := context.Background()
 
 	t.Run("Create_and_Get", func(t *testing.T) {
 		r := &run.Run{
 			ID:           uuid.NewString(),
+			ProjectID:    projectID,
 			PipelineName: "test-pipeline",
 			Status:       run.StatusRunning,
 			StartedAt:    time.Now().UTC().Truncate(time.Millisecond),
@@ -27,7 +70,7 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 		if err := repo.Create(ctx, r); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		got, err := repo.Get(ctx, r.ID)
+		got, err := repo.Get(ctx, projectID, r.ID)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -48,7 +91,7 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 	t.Run("Get_missing_returns_not_found", func(t *testing.T) {
 		// Get for a missing ID should either return (nil, nil) or (nil, sql.ErrNoRows).
 		// Both are acceptable; the caller must check both cases.
-		got, _ := repo.Get(ctx, "nonexistent-id")
+		got, _ := repo.Get(ctx, projectID, "nonexistent-id")
 		if got != nil {
 			t.Errorf("expected nil record for missing run, got %+v", got)
 		}
@@ -58,13 +101,14 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 		id := uuid.NewString()
 		if err := repo.Create(ctx, &run.Run{
 			ID:           id,
+			ProjectID:    projectID,
 			PipelineName: "list-test",
 			Status:       run.StatusFailed,
 			StartedAt:    time.Now().UTC(),
 		}); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		runs, err := repo.List(ctx, run.RunFilter{Status: run.StatusFailed})
+		runs, err := repo.List(ctx, projectID, run.RunFilter{Status: run.StatusFailed})
 		if err != nil {
 			t.Fatalf("List: %v", err)
 		}
@@ -84,6 +128,7 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 		id := uuid.NewString()
 		if err := repo.Create(ctx, &run.Run{
 			ID:           id,
+			ProjectID:    projectID,
 			PipelineName: "update-test",
 			Status:       run.StatusRunning,
 			StartedAt:    time.Now().UTC(),
@@ -91,10 +136,10 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 			t.Fatalf("Create: %v", err)
 		}
 		now := time.Now().UTC().Truncate(time.Millisecond)
-		if err := repo.UpdateStatus(ctx, id, run.StatusSuccess, &now); err != nil {
+		if err := repo.UpdateStatus(ctx, projectID, id, run.StatusSuccess, &now); err != nil {
 			t.Fatalf("UpdateStatus: %v", err)
 		}
-		got, err := repo.Get(ctx, id)
+		got, err := repo.Get(ctx, projectID, id)
 		if err != nil || got == nil {
 			t.Fatalf("Get after UpdateStatus: %v, got=%v", err, got)
 		}
@@ -110,6 +155,7 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 			endedAt := now.Add(time.Duration(i) * time.Second)
 			if err := repo.Create(ctx, &run.Run{
 				ID:           uuid.NewString(),
+				ProjectID:    projectID,
 				PipelineName: pname,
 				Status:       status,
 				StartedAt:    now.Add(time.Duration(i) * time.Second),
@@ -118,7 +164,7 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 				t.Fatalf("Create: %v", err)
 			}
 		}
-		got, err := repo.GetLatestSuccessful(ctx, pname)
+		got, err := repo.GetLatestSuccessful(ctx, projectID, pname)
 		if err != nil {
 			t.Fatalf("GetLatestSuccessful: %v", err)
 		}
@@ -130,7 +176,7 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 		}
 
 		// Non-existent pipeline should return nil, nil
-		missing, err := repo.GetLatestSuccessful(ctx, "no-such-pipeline")
+		missing, err := repo.GetLatestSuccessful(ctx, projectID, "no-such-pipeline")
 		if err != nil {
 			t.Fatalf("GetLatestSuccessful(missing): %v", err)
 		}
@@ -143,17 +189,18 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 		id := uuid.NewString()
 		if err := repo.Create(ctx, &run.Run{
 			ID:           id,
+			ProjectID:    projectID,
 			PipelineName: "delete-test",
 			Status:       run.StatusSuccess,
 			StartedAt:    time.Now().UTC(),
 		}); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		if err := repo.Delete(ctx, id); err != nil {
+		if err := repo.Delete(ctx, projectID, id); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
 		// After deletion, Get should return nil record (error or nil).
-		got, _ := repo.Get(ctx, id)
+		got, _ := repo.Get(ctx, projectID, id)
 		if got != nil {
 			t.Errorf("expected nil record after delete, got %+v", got)
 		}
@@ -161,21 +208,22 @@ func RunRepoSuite(t *testing.T, repo run.Repository) {
 }
 
 // StepRepoSuite runs a contract test against any run.StepRepository implementation.
-func StepRepoSuite(t *testing.T, repo run.StepRepository) {
+func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 	t.Helper()
 	ctx := context.Background()
 
 	t.Run("Upsert_and_List", func(t *testing.T) {
 		runID := uuid.NewString()
 		step := &run.Step{
-			RunID:    runID,
-			StepName: "train",
-			Status:   "pending",
+			ProjectID: projectID,
+			RunID:     runID,
+			StepName:  "train",
+			Status:    "pending",
 		}
 		if err := repo.Upsert(ctx, step); err != nil {
 			t.Fatalf("Upsert: %v", err)
 		}
-		steps, err := repo.List(ctx, runID)
+		steps, err := repo.List(ctx, projectID, runID)
 		if err != nil {
 			t.Fatalf("List: %v", err)
 		}
@@ -189,7 +237,7 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository) {
 
 	t.Run("Upsert_updates_existing", func(t *testing.T) {
 		runID := uuid.NewString()
-		step := &run.Step{RunID: runID, StepName: "eval", Status: "pending"}
+		step := &run.Step{ProjectID: projectID, RunID: runID, StepName: "eval", Status: "pending"}
 		if err := repo.Upsert(ctx, step); err != nil {
 			t.Fatalf("Upsert initial: %v", err)
 		}
@@ -197,7 +245,7 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository) {
 		if err := repo.Upsert(ctx, step); err != nil {
 			t.Fatalf("Upsert update: %v", err)
 		}
-		steps, err := repo.List(ctx, runID)
+		steps, err := repo.List(ctx, projectID, runID)
 		if err != nil {
 			t.Fatalf("List: %v", err)
 		}
@@ -212,14 +260,14 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository) {
 	t.Run("DeleteByRun", func(t *testing.T) {
 		runID := uuid.NewString()
 		for _, name := range []string{"step-a", "step-b"} {
-			if err := repo.Upsert(ctx, &run.Step{RunID: runID, StepName: name, Status: "pending"}); err != nil {
+			if err := repo.Upsert(ctx, &run.Step{ProjectID: projectID, RunID: runID, StepName: name, Status: "pending"}); err != nil {
 				t.Fatalf("Upsert %q: %v", name, err)
 			}
 		}
-		if err := repo.DeleteByRun(ctx, runID); err != nil {
+		if err := repo.DeleteByRun(ctx, projectID, runID); err != nil {
 			t.Fatalf("DeleteByRun: %v", err)
 		}
-		steps, err := repo.List(ctx, runID)
+		steps, err := repo.List(ctx, projectID, runID)
 		if err != nil {
 			t.Fatalf("List after DeleteByRun: %v", err)
 		}

@@ -13,6 +13,7 @@ const (
 // NotebookVolume represents persistent storage for a Jupyter notebook server.
 // It exists independently of NotebookServer, analogous to a Kubernetes PersistentVolume.
 type NotebookVolume struct {
+	ProjectID string    `json:"project_id"  db:"project_id"`
 	ID        string    `json:"id"         db:"id"`
 	Label     string    `json:"label"      db:"label"`
 	WorkDir   string    `json:"work_dir"   db:"work_dir"`
@@ -26,7 +27,7 @@ type NotebookVolume struct {
 type VolumeRepository interface {
 	Create(ctx context.Context, v *NotebookVolume) error
 	Get(ctx context.Context, id string) (*NotebookVolume, error)
-	List(ctx context.Context) ([]*NotebookVolume, error)
+	List(ctx context.Context, projectID string) ([]*NotebookVolume, error)
 	Update(ctx context.Context, v *NotebookVolume) error
 	SetStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) error

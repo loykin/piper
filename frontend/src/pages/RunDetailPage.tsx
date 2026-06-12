@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useProjectId } from '@/lib/projectContext'
 import { RotateCcw, RefreshCw, XCircle, Trash2 } from 'lucide-react'
 import { DataPage } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
-import { useRun, useDeleteRun, useCancelRun, useRerunRun, useRetryStep } from '@/features/runs/hooks'
-import { useStepArtifacts } from '@/features/runs/hooks'
+import { useRun, useRunSteps, useDeleteRun, useCancelRun, useRerunRun, useRetryStep, useStepArtifacts } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
 import RunDAG from '@/shared/components/RunDAG'
 import { StepList } from '@/features/runs/components/StepList'
@@ -14,11 +14,11 @@ import { ArtifactPanel } from '@/features/runs/components/ArtifactPanel'
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const [selectedStep, setSelectedStep] = useState<string | null>(null)
 
-  const { data: runData, isLoading } = useRun(id!)
-  const run = runData?.run ?? null
-  const steps = runData?.steps ?? []
+  const { data: run = null, isLoading } = useRun(id!)
+  const { data: steps = [] } = useRunSteps(id!)
 
   const { data: allArtifacts = [] } = useStepArtifacts(id!, selectedStep)
 
@@ -47,7 +47,7 @@ export default function RunDetailPage() {
     <DataPage>
       <DataPage.Header>
         <DataPage.TitleBlock
-          breadcrumb={<Link to="/history" className="hover:text-foreground transition-colors">← History</Link>}
+          breadcrumb={<Link to={`/projects/${projectId}/history`} className="hover:text-foreground transition-colors">← History</Link>}
           title={<span className="font-mono text-lg">{run.id}</span>}
         />
         <DataPage.Actions>
@@ -62,17 +62,17 @@ export default function RunDetailPage() {
               className="text-orange-400 hover:bg-orange-950" />
             <IconButton icon={<RotateCcw />} label="Rerun"
               disabled={run.status === 'running' || run.status === 'scheduled'}
-              onClick={() => rerunRun({ id: run.id }, { onSuccess: (data) => navigate(`/runs/${data.run_id}`) })}
+              onClick={() => rerunRun(run.id, { onSuccess: (data) => navigate(`/projects/${projectId}/runs/${data.run_id}`) })}
               className="text-indigo-400 hover:bg-indigo-950" />
             <IconButton icon={<RefreshCw />} label="Retry Failed"
               disabled={run.status !== 'failed'}
-              onClick={() => rerunRun({ id: run.id, failedOnly: true }, { onSuccess: (data) => navigate(`/runs/${data.run_id}`) })}
+              onClick={() => rerunRun(run.id, { onSuccess: (data) => navigate(`/projects/${projectId}/runs/${data.run_id}`) })}
               className="text-yellow-400 hover:bg-yellow-950" />
             <IconButton icon={<Trash2 />} label="Delete Run"
               disabled={run.status === 'running'}
               onClick={() => {
                 if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
-                deleteRun(run.id, { onSuccess: () => navigate('/history') })
+                deleteRun(run.id, { onSuccess: () => navigate(`/projects/${projectId}/history`) })
               }}
               className="text-destructive hover:bg-destructive/10" />
           </div>

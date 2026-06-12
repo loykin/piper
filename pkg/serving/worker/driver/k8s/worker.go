@@ -55,8 +55,9 @@ func Register(dispatcher Dispatcher, cfg Config) *Worker {
 }
 
 type servingDeployRequest struct {
-	YAML  string `json:"yaml"`
-	S3URI string `json:"s3_uri"`
+	ProjectID string `json:"project_id"`
+	YAML      string `json:"yaml"`
+	S3URI     string `json:"s3_uri"`
 }
 
 type servingDeployResponse struct {
@@ -65,6 +66,7 @@ type servingDeployResponse struct {
 }
 
 type servingStopRequest struct {
+	ProjectID string `json:"project_id"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
 }
@@ -78,6 +80,9 @@ func (a *Worker) register(dispatcher Dispatcher) {
 }
 
 func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (servingDeployResponse, error) {
+	if req.ProjectID == "" {
+		return servingDeployResponse{}, fmt.Errorf("project_id is required")
+	}
 	if req.S3URI == "" {
 		return servingDeployResponse{}, fmt.Errorf("s3_uri is required")
 	}
@@ -118,8 +123,11 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	if replicas == 0 {
 		replicas = 1
 	}
-	name := k8smeta.SafeName(svc.Metadata.Name)
-	labels := a.k8sLabels("serving", svc.Metadata.Name)
+	name := servingResourceName(req.ProjectID, svc.Metadata.Name)
+	workloadID := servingKey(req.ProjectID, svc.Metadata.Name)
+	labels := a.k8sLabels("serving", workloadID)
+	annotations := k8smeta.WorkloadAnnotations(svc.Metadata.Name)
+	annotations[k8smeta.AnnotationProjectID] = req.ProjectID
 
 	var res manifest.ResourceSpec
 	if svc.Spec.Driver.K8s != nil {
@@ -152,7 +160,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 			Name:        name,
 			Namespace:   ns,
 			Labels:      labels,
-			Annotations: k8smeta.WorkloadAnnotations(svc.Metadata.Name),
+			Annotations: annotations,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -197,7 +205,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 			Name:        name,
 			Namespace:   ns,
 			Labels:      labels,
-			Annotations: k8smeta.WorkloadAnnotations(svc.Metadata.Name),
+			Annotations: annotations,
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: labels,
@@ -228,10 +236,13 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 }
 
 func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error {
+	if req.ProjectID == "" {
+		return fmt.Errorf("project_id is required")
+	}
 	if req.Name == "" {
 		return fmt.Errorf("name is required")
 	}
-	name := k8smeta.SafeName(req.Name)
+	name := servingResourceName(req.ProjectID, req.Name)
 	ns := req.Namespace
 	if ns == "" {
 		ns = a.servingNamespace()
@@ -243,8 +254,12 @@ func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error 
 		return err
 	}
 	if a.cfg.ReportStatus != nil {
-		a.statusChanged(req.Name, serving.StatusStopped)
-		_ = a.cfg.ReportStatus(serving.WorkerStatusUpdate{Name: req.Name, Status: serving.StatusStopped})
+		a.statusChanged(servingKey(req.ProjectID, req.Name), serving.StatusStopped)
+		_ = a.cfg.ReportStatus(serving.WorkerStatusUpdate{
+			ProjectID: req.ProjectID,
+			Name:      req.Name,
+			Status:    serving.StatusStopped,
+		})
 	}
 	return nil
 }
@@ -252,19 +267,23 @@ func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error 
 func (a *Worker) syncStatus(ctx context.Context, req serving.WorkerSyncStatusRequest) (serving.WorkerSyncStatusResponse, error) {
 	statuses := make(map[string]string, len(req.Services))
 	for _, target := range req.Services {
+		if target.ProjectID == "" || target.Name == "" {
+			continue
+		}
+		key := servingKey(target.ProjectID, target.Name)
 		ns := target.Namespace
 		if ns == "" {
 			ns = a.servingNamespace()
 		}
 		a.rememberNamespace(ns)
-		deployment, err := a.cfg.Client.AppsV1().Deployments(ns).Get(ctx, k8smeta.SafeName(target.Name), metav1.GetOptions{})
+		deployment, err := a.cfg.Client.AppsV1().Deployments(ns).Get(ctx, servingResourceName(target.ProjectID, target.Name), metav1.GetOptions{})
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
-				statuses[target.Name] = serving.StatusStopped
+				statuses[key] = serving.StatusStopped
 			}
 			continue
 		}
-		statuses[target.Name] = observedDeploymentStatus(deployment)
+		statuses[key] = observedDeploymentStatus(deployment)
 	}
 	return serving.WorkerSyncStatusResponse{Statuses: statuses}, nil
 }
@@ -305,11 +324,16 @@ func (a *Worker) observeOnce(ctx context.Context) {
 		for i := range items.Items {
 			deployment := &items.Items[i]
 			name := deployment.Annotations[k8smeta.AnnotationWorkloadID]
+			projectID := deployment.Annotations[k8smeta.AnnotationProjectID]
 			status := observedDeploymentStatus(deployment)
-			if name == "" || status == "" || !a.statusChanged(name, status) {
+			if projectID == "" || name == "" || status == "" || !a.statusChanged(servingKey(projectID, name), status) {
 				continue
 			}
-			_ = a.cfg.ReportStatus(serving.WorkerStatusUpdate{Name: name, Status: status})
+			_ = a.cfg.ReportStatus(serving.WorkerStatusUpdate{
+				ProjectID: projectID,
+				Name:      name,
+				Status:    status,
+			})
 		}
 	}
 }
@@ -373,4 +397,12 @@ func (a *Worker) servingNamespace() string {
 
 func (a *Worker) k8sLabels(kind, id string) map[string]string {
 	return k8smeta.WorkloadLabels(a.cfg.ClusterName, kind, id)
+}
+
+func servingKey(projectID, name string) string {
+	return projectID + ":" + name
+}
+
+func servingResourceName(projectID, name string) string {
+	return k8smeta.SafeName(projectID + "--" + name)
 }

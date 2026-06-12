@@ -16,8 +16,8 @@ const (
 
 type Run struct {
 	ID           string     `json:"id"                     db:"id"`
+	ProjectID    string     `json:"project_id"             db:"project_id"`
 	ScheduleID   string     `json:"schedule_id,omitempty"  db:"schedule_id"`
-	OwnerID      string     `json:"owner_id,omitempty"     db:"owner_id"`
 	Experiment   string     `json:"experiment,omitempty"   db:"experiment"`
 	PipelineName string     `json:"pipeline_name"          db:"pipeline_name"`
 	Status       string     `json:"status"                 db:"status"`
@@ -29,6 +29,7 @@ type Run struct {
 }
 
 type Step struct {
+	ProjectID string     `json:"project_id"          db:"project_id"`
 	RunID     string     `json:"run_id"              db:"run_id"`
 	StepName  string     `json:"step_name"           db:"step_name"`
 	Status    string     `json:"status"              db:"status"`
@@ -50,7 +51,6 @@ func (r *Run) Redact() *Run {
 }
 
 type RunFilter struct {
-	OwnerID      string
 	Experiment   string
 	PipelineName string
 	ScheduleID   string

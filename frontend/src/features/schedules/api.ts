@@ -3,67 +3,46 @@ export type { Schedule, CreateScheduleOptions } from './types'
 
 import type { Run } from '@/features/runs/api'
 import type { Schedule, CreateScheduleOptions } from './types'
+import { projectApi } from '@/lib/api'
 
-const BASE = ''
-
-export async function listSchedules(): Promise<Schedule[]> {
-  const res = await fetch(`${BASE}/schedules`)
-  if (!res.ok) throw new Error(`listSchedules: ${res.status}`)
-  const data: unknown = await res.json()
-  return Array.isArray(data) ? (data as Schedule[]) : []
+export async function listSchedules(projectId: string): Promise<Schedule[]> {
+  const data = await projectApi(projectId).get<Schedule[]>('/schedules')
+  return Array.isArray(data) ? data : []
 }
 
-export async function getSchedule(id: string): Promise<Schedule> {
-  const res = await fetch(`${BASE}/schedules/${id}`)
-  if (!res.ok) throw new Error(`getSchedule: ${res.status}`)
-  return res.json()
+export async function getSchedule(projectId: string, id: string): Promise<Schedule> {
+  return projectApi(projectId).get<Schedule>(`/schedules/${id}`)
 }
 
-export async function listScheduleRuns(scheduleId: string): Promise<Run[]> {
-  const res = await fetch(`${BASE}/schedules/${scheduleId}/runs`)
-  if (!res.ok) throw new Error(`listScheduleRuns: ${res.status}`)
-  const data: unknown = await res.json()
-  return Array.isArray(data) ? (data as Run[]) : []
+export async function listScheduleRuns(projectId: string, scheduleId: string): Promise<Run[]> {
+  const data = await projectApi(projectId).get<Run[]>(`/schedules/${scheduleId}/runs`)
+  return Array.isArray(data) ? data : []
 }
 
-export async function createSchedule(options: CreateScheduleOptions): Promise<{ schedule_id: string }> {
-  const res = await fetch(`${BASE}/schedules`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(options),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error ?? res.statusText)
-  }
-  return res.json()
+export async function createSchedule(
+  projectId: string,
+  options: CreateScheduleOptions,
+): Promise<{ schedule_id: string }> {
+  return projectApi(projectId).post<{ schedule_id: string }>('/schedules', options)
 }
 
-export async function setScheduleEnabled(id: string, enabled: boolean): Promise<void> {
-  const res = await fetch(`${BASE}/schedules/${id}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error ?? res.statusText)
-  }
+export async function setScheduleEnabled(
+  projectId: string,
+  id: string,
+  enabled: boolean,
+): Promise<void> {
+  return projectApi(projectId).patch(`/schedules/${id}`, { enabled })
 }
 
-export async function deleteSchedule(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/schedules/${id}`, { method: 'DELETE' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error ?? res.statusText)
-  }
+export async function deleteSchedule(projectId: string, id: string): Promise<void> {
+  return projectApi(projectId).delete(`/schedules/${id}`)
 }
 
-export async function triggerSchedule(id: string): Promise<{ run_id: string }> {
-  const res = await fetch(`${BASE}/schedules/${id}/trigger`, { method: 'POST' })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error ?? res.statusText)
-  }
-  return res.json()
+export async function backfillSchedule(
+  projectId: string,
+  id: string,
+  from: string,
+  to: string,
+): Promise<{ run_ids: string[] }> {
+  return projectApi(projectId).post<{ run_ids: string[] }>(`/schedules/${id}/backfill`, { from, to })
 }

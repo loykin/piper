@@ -39,6 +39,7 @@ type WorkerProvisionVolumeResponse struct {
 }
 
 type WorkerStartRequest struct {
+	ProjectID string `json:"project_id"`
 	YAML      string `json:"yaml"`
 	MasterURL string `json:"master_url,omitempty"`
 	WorkDir   string `json:"work_dir"`
@@ -52,7 +53,8 @@ type WorkerStartResponse struct {
 }
 
 type WorkerStopRequest struct {
-	Name string `json:"name"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
 }
 
 type WorkerDeprovisionVolumeRequest struct {
@@ -64,10 +66,14 @@ type WorkerSyncStatusRequest struct {
 }
 
 type WorkerSyncStatusTarget struct {
-	Name string `json:"name"`
-	Port int    `json:"port,omitempty"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Port      int    `json:"port,omitempty"`
 }
 
+// WorkerSyncStatusResponse carries observed states keyed by "projectID:name".
+// The composite key prevents cross-project name collisions when a single
+// worker hosts notebooks from multiple projects.
 type WorkerSyncStatusResponse struct {
 	Statuses map[string]string `json:"statuses"`
 }
@@ -75,11 +81,12 @@ type WorkerSyncStatusResponse struct {
 // WorkerStatusUpdate is the backend-neutral observed state reported by a worker.
 // Runtime-specific workers populate the fields they can observe.
 type WorkerStatusUpdate struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Endpoint string `json:"endpoint,omitempty"`
-	WorkDir  string `json:"work_dir,omitempty"`
-	Token    string `json:"token,omitempty"`
-	PID      int    `json:"pid,omitempty"`
-	Env      string `json:"env,omitempty"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Endpoint  string `json:"endpoint,omitempty"`
+	WorkDir   string `json:"work_dir,omitempty"`
+	Token     string `json:"token,omitempty"`
+	PID       int    `json:"pid,omitempty"`
+	Env       string `json:"env,omitempty"`
 }

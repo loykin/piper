@@ -21,9 +21,10 @@ type Dispatcher = *grpcagent.Dispatcher
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to K8s Job pods via piper agent exec arguments.
 type StoreConfig struct {
-	MasterURL  string
-	Token      string
-	StorageURL string
+	MasterURL    string
+	WorkerToken  string
+	StorageToken string
+	StorageURL   string
 }
 
 // K8sConfig holds Kubernetes-specific driver and placement options.
@@ -128,12 +129,13 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	}
 
 	spec := pdriver.ExecSpec{
-		RuntimeKey: pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
-		Image:      image,
-		Namespace:  namespace,
-		MasterURL:  a.cfg.Store.MasterURL,
-		Token:      a.cfg.Store.Token,
-		StorageURL: a.cfg.Store.StorageURL,
+		RuntimeKey:   pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
+		Image:        image,
+		Namespace:    namespace,
+		MasterURL:    a.cfg.Store.MasterURL,
+		WorkerToken:  a.cfg.Store.WorkerToken,
+		StorageToken: a.cfg.Store.StorageToken,
+		StorageURL:   a.cfg.Store.StorageURL,
 	}
 
 	handle, err := a.driver.Start(ctx, task, spec)

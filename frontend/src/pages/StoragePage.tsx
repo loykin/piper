@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useProjectId } from '@/lib/projectContext'
 import { Download, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { DataPage } from '@loykin/designkit'
 import { Badge } from '@/components/ui/badge'
@@ -49,6 +50,7 @@ function fmtDate(value: string): string {
 }
 
 export default function StoragePage() {
+  const projectId = useProjectId()
   const [storage, setStorage] = useState<StorageSettingsView | null>(null)
   const [objects, setObjects] = useState<StorageObjectInfo[]>([])
   const [prefix, setPrefix] = useState('')
@@ -71,7 +73,7 @@ export default function StoragePage() {
         setForm(st.config)
       }
       if (st.effective.status === 'enabled') {
-        const objs = await listStorageObjects(prefix).catch(() => [])
+        const objs = await listStorageObjects(projectId, prefix).catch(() => [])
         setObjects(objs)
       } else {
         setObjects([])
@@ -97,7 +99,7 @@ export default function StoragePage() {
   async function handleRefresh() {
     setRefreshing(true)
     try {
-      const objs = await listStorageObjects(prefix)
+      const objs = await listStorageObjects(projectId, prefix)
       setObjects(objs)
     } catch {
       setObjects([])
@@ -125,7 +127,7 @@ export default function StoragePage() {
     if (!confirm(`Delete stored object "${key}"?`)) return
     setBusyKey(key)
     try {
-      await deleteStorageObject(key)
+      await deleteStorageObject(projectId, key)
       await handleRefresh()
     } finally {
       setBusyKey(null)
@@ -137,7 +139,7 @@ export default function StoragePage() {
     setUploading(true)
     try {
       const key = uploadKey.trim() || uploadFile.name
-      await uploadStorageObject(uploadFile, key)
+      await uploadStorageObject(projectId, uploadFile, key)
       await handleRefresh()
       setUploadFile(null)
       setUploadKey('')
@@ -333,7 +335,7 @@ export default function StoragePage() {
                         <td className="py-3 pr-0">
                           <div className="flex justify-end gap-2">
                             <a
-                              href={storageObjectURL(obj.key)}
+                              href={storageObjectURL(projectId, obj.key)}
                               target="_blank"
                               rel="noreferrer"
                               className={buttonVariants({ variant: 'outline', size: 'sm' })}

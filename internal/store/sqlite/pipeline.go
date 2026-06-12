@@ -16,24 +16,24 @@ func NewPipelineRepo(db *sqlx.DB) template.Repository {
 
 func (r *pipelineRepo) Create(ctx context.Context, t *template.Template) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO pipelines (id, name, yaml, snapshot_id, volume_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		t.ID, t.Name, t.YAML, t.SnapshotID, t.VolumeID, t.CreatedAt,
+		`INSERT INTO pipelines (project_id, id, name, yaml, snapshot_id, volume_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.ProjectID, t.ID, t.Name, t.YAML, t.SnapshotID, t.VolumeID, t.CreatedAt,
 	)
 	return err
 }
 
-func (r *pipelineRepo) Get(ctx context.Context, id string) (*template.Template, error) {
+func (r *pipelineRepo) Get(ctx context.Context, projectID, id string) (*template.Template, error) {
 	var t template.Template
 	err := r.db.GetContext(ctx, &t,
-		`SELECT id, name, yaml, snapshot_id, volume_id, created_at FROM pipelines WHERE id=?`, id)
+		`SELECT project_id, id, name, yaml, snapshot_id, volume_id, created_at FROM pipelines WHERE project_id=? AND id=?`, projectID, id)
 	if err != nil {
 		return nil, err
 	}
 	return &t, nil
 }
 
-func (r *pipelineRepo) List(ctx context.Context, f template.Filter) ([]*template.Template, error) {
+func (r *pipelineRepo) List(ctx context.Context, projectID string, f template.Filter) ([]*template.Template, error) {
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 50
@@ -43,14 +43,14 @@ func (r *pipelineRepo) List(ctx context.Context, f template.Filter) ([]*template
 	var err error
 	if f.Name != "" {
 		err = r.db.SelectContext(ctx, &rows,
-			`SELECT id, name, yaml, snapshot_id, volume_id, created_at
-			   FROM pipelines WHERE name=? ORDER BY created_at DESC LIMIT ?`,
-			f.Name, limit)
+			`SELECT project_id, id, name, yaml, snapshot_id, volume_id, created_at
+			   FROM pipelines WHERE project_id=? AND name=? ORDER BY created_at DESC LIMIT ?`,
+			projectID, f.Name, limit)
 	} else {
 		err = r.db.SelectContext(ctx, &rows,
-			`SELECT id, name, yaml, snapshot_id, volume_id, created_at
-			   FROM pipelines ORDER BY created_at DESC LIMIT ?`,
-			limit)
+			`SELECT project_id, id, name, yaml, snapshot_id, volume_id, created_at
+			   FROM pipelines WHERE project_id=? ORDER BY created_at DESC LIMIT ?`,
+			projectID, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func (r *pipelineRepo) List(ctx context.Context, f template.Filter) ([]*template
 	return rows, nil
 }
 
-func (r *pipelineRepo) Delete(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM pipelines WHERE id=?`, id)
+func (r *pipelineRepo) Delete(ctx context.Context, projectID, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM pipelines WHERE project_id=? AND id=?`, projectID, id)
 	return err
 }

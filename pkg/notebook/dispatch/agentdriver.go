@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/pkg/notebook"
@@ -64,26 +65,32 @@ func (d *AgentDriver) Start(ctx context.Context, spec notebook.Notebook, vol *no
 
 	workDir := ""
 	volumeID := ""
+	projectID := spec.Metadata.ProjectID
 	if vol != nil {
 		workDir = vol.WorkDir
 		volumeID = vol.ID
+		if projectID == "" {
+			projectID = vol.ProjectID
+		}
 		vol.WorkerID = agentInfo.ID
 	}
 	var result notebook.WorkerStartResponse
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStart, notebook.WorkerStartRequest{
-		YAML:     yamlStr,
-		WorkDir:  workDir,
-		VolumeID: volumeID,
+		ProjectID: projectID,
+		YAML:      yamlStr,
+		WorkDir:   workDir,
+		VolumeID:  volumeID,
 	}, &result); err != nil {
 		return nil, fmt.Errorf("notebook agent start: %w", err)
 	}
 	return &notebook.NotebookServer{
-		Name:     spec.Metadata.Name,
-		Status:   notebook.StatusStarting,
-		Token:    result.Token,
-		WorkDir:  result.WorkDir,
-		Endpoint: result.Endpoint,
-		WorkerID: agentInfo.ID,
+		ProjectID: projectID,
+		Name:      spec.Metadata.Name,
+		Status:    notebook.StatusStarting,
+		Token:     result.Token,
+		WorkDir:   result.WorkDir,
+		Endpoint:  result.Endpoint,
+		WorkerID:  agentInfo.ID,
 	}, nil
 }
 
@@ -92,8 +99,9 @@ func (d *AgentDriver) Stop(ctx context.Context, nb *notebook.NotebookServer) err
 	if err != nil {
 		return notebook.ErrAgentUnavailable
 	}
-	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStop, map[string]any{
-		"name": nb.Name,
+	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStop, notebook.WorkerStopRequest{
+		ProjectID: nb.ProjectID,
+		Name:      nb.Name,
 	}, nil); err != nil {
 		return fmt.Errorf("notebook agent stop: %w", err)
 	}
@@ -113,7 +121,7 @@ func (d *AgentDriver) DeprovisionVolume(ctx context.Context, vol *notebook.Noteb
 	return nil
 }
 
-func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.NotebookServer, apply func(name, status string)) error {
+func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.NotebookServer, apply func(projectID, name, status string)) error {
 	if d == nil || d.repo == nil {
 		return nil
 	}
@@ -129,8 +137,9 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 			continue
 		}
 		byAgent[agentInfo.ID] = append(byAgent[agentInfo.ID], notebook.WorkerSyncStatusTarget{
-			Name: nb.Name,
-			Port: notebookEndpointPort(nb.Endpoint),
+			ProjectID: nb.ProjectID,
+			Name:      nb.Name,
+			Port:      notebookEndpointPort(nb.Endpoint),
 		})
 	}
 	for agentID, targets := range byAgent {
@@ -138,10 +147,15 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 		if err := d.rpc.SendRPC(ctx, agentID, iagent.MethodNotebookSyncStatus, notebook.WorkerSyncStatusRequest{Targets: targets}, &result); err != nil {
 			return fmt.Errorf("notebook agent sync status: %w", err)
 		}
-		for name, status := range result.Statuses {
-			if status != "" {
-				apply(name, status)
+		for compositeKey, status := range result.Statuses {
+			if status == "" {
+				continue
 			}
+			projectID, name, ok := strings.Cut(compositeKey, ":")
+			if !ok || projectID == "" || name == "" {
+				continue
+			}
+			apply(projectID, name, status)
 		}
 	}
 	return nil

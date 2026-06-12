@@ -13,9 +13,9 @@ import (
 	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/store/postgres"
 	"github.com/piper/piper/internal/store/sqlite"
-	"github.com/piper/piper/internal/worker"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/template"
@@ -24,10 +24,10 @@ import (
 // Repos holds all repository implementations for the selected driver.
 // Add new drivers by implementing each Repository interface and registering here.
 type Repos struct {
+	Project          project.Repository
 	Run              run.Repository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
-	Worker           worker.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
 	NotebookVolume   notebook.VolumeRepository
@@ -39,25 +39,44 @@ type Repos struct {
 	driver    string
 	ownsDB    bool
 	closeFunc func() error
-	deleteRun func(ctx context.Context, id string) error
+	deleteRun func(ctx context.Context, projectID, id string) error
 }
 
 // ExternalReposConfig is used to build a Repos from externally supplied implementations.
 // Use this when embedding piper in an application that already manages its own database.
 type ExternalReposConfig struct {
-	Run      run.Repository
-	Step     run.StepRepository
-	Schedule schedule.Repository
-	Worker   worker.Repository
-	Serving  serving.Repository
-	Notebook notebook.Repository
-	Log      logstore.LogStore
-	Metric   logstore.MetricStore
+	Project          project.Repository
+	Run              run.Repository
+	Step             run.StepRepository
+	Schedule         schedule.Repository
+	Serving          serving.Repository
+	Notebook         notebook.Repository
+	NotebookVolume   notebook.VolumeRepository
+	PipelineTemplate template.Repository
+	Log              logstore.LogStore
+	Metric           logstore.MetricStore
 	// DeleteRun handles atomic deletion of a run with all its steps, logs, and metrics.
 	// If nil, DeleteRun returns an error — provide an implementation for the target database.
-	DeleteRun func(ctx context.Context, id string) error
+	DeleteRun func(ctx context.Context, projectID, id string) error
 	// Close is called when Repos.Close() is invoked. May be nil.
 	Close func() error
+}
+
+func NewExternalRepos(cfg ExternalReposConfig) *Repos {
+	return &Repos{
+		Project:          cfg.Project,
+		Run:              cfg.Run,
+		Step:             cfg.Step,
+		Schedule:         cfg.Schedule,
+		Serving:          cfg.Serving,
+		Notebook:         cfg.Notebook,
+		NotebookVolume:   cfg.NotebookVolume,
+		PipelineTemplate: cfg.PipelineTemplate,
+		Log:              cfg.Log,
+		Metric:           cfg.Metric,
+		closeFunc:        cfg.Close,
+		deleteRun:        cfg.DeleteRun,
+	}
 }
 
 // Open opens a SQLite file and returns Repos with all repositories wired.
@@ -111,10 +130,10 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 	switch driver {
 	case "sqlite", "sqlite3", "":
 		return &Repos{
+			Project:          sqlite.NewProjectRepo(db),
 			Run:              sqlite.NewRunRepo(db),
 			Step:             sqlite.NewStepRepo(db),
 			Schedule:         sqlite.NewScheduleRepo(db),
-			Worker:           sqlite.NewWorkerRepo(db),
 			Serving:          sqlite.NewServingRepo(db),
 			Notebook:         sqlite.NewNotebookRepo(db),
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(db),
@@ -127,10 +146,10 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 		}, nil
 	case "postgres", "postgresql":
 		return &Repos{
+			Project:          postgres.NewProjectRepo(db),
 			Run:              postgres.NewRunRepo(db),
 			Step:             postgres.NewStepRepo(db),
 			Schedule:         postgres.NewScheduleRepo(db),
-			Worker:           postgres.NewWorkerRepo(db),
 			Serving:          postgres.NewServingRepo(db),
 			Notebook:         postgres.NewNotebookRepo(db),
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(db),
@@ -169,22 +188,34 @@ func (r *Repos) DB() *sql.DB {
 	return r.db.DB
 }
 
+// Driver returns the normalized database driver used by these repositories.
+func (r *Repos) Driver() string {
+	switch r.driver {
+	case "", "sqlite3":
+		return "sqlite"
+	case "postgresql":
+		return "postgres"
+	default:
+		return r.driver
+	}
+}
+
 // DeleteRun removes a run and all its steps, logs, and metrics atomically.
-func (r *Repos) DeleteRun(ctx context.Context, id string) error {
+func (r *Repos) DeleteRun(ctx context.Context, projectID, id string) error {
 	if r.deleteRun != nil {
-		return r.deleteRun(ctx, id)
+		return r.deleteRun(ctx, projectID, id)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	for _, q := range []string{
-		r.db.Rebind(`DELETE FROM run_metrics WHERE run_id=?`),
-		r.db.Rebind(`DELETE FROM logs WHERE run_id=?`),
-		r.db.Rebind(`DELETE FROM steps WHERE run_id=?`),
-		r.db.Rebind(`DELETE FROM runs WHERE id=?`),
+		r.db.Rebind(`DELETE FROM run_metrics WHERE project_id=? AND run_id=?`),
+		r.db.Rebind(`DELETE FROM logs WHERE project_id=? AND run_id=?`),
+		r.db.Rebind(`DELETE FROM steps WHERE project_id=? AND run_id=?`),
+		r.db.Rebind(`DELETE FROM runs WHERE project_id=? AND id=?`),
 	} {
-		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+		if _, err := tx.ExecContext(ctx, q, projectID, id); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

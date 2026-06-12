@@ -23,19 +23,21 @@ func TestMain(m *testing.M) {
 
 func runAgentExecInExamples() int {
 	var (
-		taskB64    string
-		masterURL  string
-		token      string
-		outputDir  string
-		inputDir   string
-		storageURL string
-		reportMode string
-		resultFile string
+		taskB64      string
+		masterURL    string
+		workerToken  string
+		storageToken string
+		outputDir    string
+		inputDir     string
+		storageURL   string
+		reportMode   string
+		resultFile   string
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
 	fs.StringVar(&masterURL, "master", "", "")
-	fs.StringVar(&token, "token", "", "")
+	fs.StringVar(&workerToken, "worker-token", "", "")
+	fs.StringVar(&storageToken, "storage-token", "", "")
 	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
 	fs.StringVar(&inputDir, "input-dir", "", "")
 	fs.StringVar(&storageURL, "storage-url", "", "")
@@ -60,11 +62,12 @@ func runAgentExecInExamples() int {
 	}
 
 	r, err := agentpkg.New(agentpkg.Config{
-		MasterURL:  masterURL,
-		Token:      token,
-		OutputDir:  outputDir,
-		InputDir:   inputDir,
-		StorageURL: storageURL,
+		MasterURL:    masterURL,
+		WorkerToken:  workerToken,
+		StorageToken: storageToken,
+		OutputDir:    outputDir,
+		InputDir:     inputDir,
+		StorageURL:   storageURL,
 	})
 	if err != nil {
 		return 1

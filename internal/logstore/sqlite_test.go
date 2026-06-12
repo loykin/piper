@@ -17,6 +17,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	}
 	_, err = db.Exec(`CREATE TABLE logs (
 		id        INTEGER PRIMARY KEY AUTOINCREMENT,
+		project_id TEXT NOT NULL,
 		run_id    TEXT NOT NULL,
 		step_name TEXT NOT NULL,
 		ts        DATETIME NOT NULL,
@@ -35,14 +36,14 @@ func TestSQLiteLogStore_AppendAndQuery(t *testing.T) {
 	ls := logstore.NewSQLite(db)
 
 	lines := []*logstore.Line{
-		{RunID: "r1", StepName: "train", Ts: time.Now(), Stream: "stdout", Line: "epoch 1"},
-		{RunID: "r1", StepName: "train", Ts: time.Now(), Stream: "stdout", Line: "epoch 2"},
+		{ProjectID: "project-a", RunID: "r1", StepName: "train", Ts: time.Now(), Stream: "stdout", Line: "epoch 1"},
+		{ProjectID: "project-a", RunID: "r1", StepName: "train", Ts: time.Now(), Stream: "stdout", Line: "epoch 2"},
 	}
 	if err := ls.Append(lines); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := ls.Query("r1", "train", 0)
+	got, err := ls.Query("project-a", "r1", "train", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,17 +61,17 @@ func TestSQLiteLogStore_QueryAfterID(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		_ = ls.Append([]*logstore.Line{
-			{RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "line"},
+			{ProjectID: "project-a", RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "line"},
 		})
 	}
 
-	all, _ := ls.Query("r1", "s1", 0)
+	all, _ := ls.Query("project-a", "r1", "s1", 0)
 	if len(all) != 5 {
 		t.Fatalf("expected 5, got %d", len(all))
 	}
 
 	// Query only lines after the 3rd
-	tail, err := ls.Query("r1", "s1", all[2].ID)
+	tail, err := ls.Query("project-a", "r1", "s1", all[2].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +93,12 @@ func TestSQLiteLogStore_QueryDifferentSteps(t *testing.T) {
 	ls := logstore.NewSQLite(db)
 
 	_ = ls.Append([]*logstore.Line{
-		{RunID: "r1", StepName: "step-a", Ts: time.Now(), Stream: "stdout", Line: "a"},
-		{RunID: "r1", StepName: "step-b", Ts: time.Now(), Stream: "stdout", Line: "b"},
+		{ProjectID: "project-a", RunID: "r1", StepName: "step-a", Ts: time.Now(), Stream: "stdout", Line: "a"},
+		{ProjectID: "project-a", RunID: "r1", StepName: "step-b", Ts: time.Now(), Stream: "stdout", Line: "b"},
 	})
 
-	gotA, _ := ls.Query("r1", "step-a", 0)
-	gotB, _ := ls.Query("r1", "step-b", 0)
+	gotA, _ := ls.Query("project-a", "r1", "step-a", 0)
+	gotB, _ := ls.Query("project-a", "r1", "step-b", 0)
 	if len(gotA) != 1 || gotA[0].Line != "a" {
 		t.Errorf("step-a: expected [a], got %v", gotA)
 	}
@@ -111,11 +112,11 @@ func TestSQLiteLogStore_RedactsSecrets(t *testing.T) {
 	ls := logstore.NewSQLite(db)
 
 	if err := ls.Append([]*logstore.Line{
-		{RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "token=supersecret"},
+		{ProjectID: "project-a", RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "token=supersecret"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ls.Query("r1", "s1", 0)
+	got, err := ls.Query("project-a", "r1", "s1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

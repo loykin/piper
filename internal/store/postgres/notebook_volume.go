@@ -16,17 +16,17 @@ func NewNotebookVolumeRepo(db *sqlx.DB) notebook.VolumeRepository {
 	return &notebookVolumeRepo{db: db}
 }
 
-const pgVolumeCols = `id, label, work_dir, status, worker_id, created_at, updated_at`
+const pgVolumeCols = `project_id, id, label, work_dir, status, worker_id, created_at, updated_at`
 
 func (r *notebookVolumeRepo) Create(ctx context.Context, v *notebook.NotebookVolume) error {
 	now := time.Now()
 	v.CreatedAt = now
 	v.UpdatedAt = now
 	q := r.db.Rebind(
-		`INSERT INTO notebook_volumes (id, label, work_dir, status, worker_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO notebook_volumes (project_id, id, label, work_dir, status, worker_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := r.db.ExecContext(ctx, q,
-		v.ID, v.Label, v.WorkDir, v.Status, v.WorkerID, v.CreatedAt, v.UpdatedAt)
+		v.ProjectID, v.ID, v.Label, v.WorkDir, v.Status, v.WorkerID, v.CreatedAt, v.UpdatedAt)
 	return err
 }
 
@@ -40,10 +40,10 @@ func (r *notebookVolumeRepo) Get(ctx context.Context, id string) (*notebook.Note
 	return &v, nil
 }
 
-func (r *notebookVolumeRepo) List(ctx context.Context) ([]*notebook.NotebookVolume, error) {
+func (r *notebookVolumeRepo) List(ctx context.Context, projectID string) ([]*notebook.NotebookVolume, error) {
 	var out []*notebook.NotebookVolume
-	err := r.db.SelectContext(ctx, &out,
-		`SELECT `+pgVolumeCols+` FROM notebook_volumes ORDER BY created_at DESC`)
+	q := r.db.Rebind(`SELECT ` + pgVolumeCols + ` FROM notebook_volumes WHERE project_id=? ORDER BY created_at DESC`)
+	err := r.db.SelectContext(ctx, &out, q, projectID)
 	if out == nil {
 		out = []*notebook.NotebookVolume{}
 	}

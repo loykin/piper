@@ -17,6 +17,7 @@ const (
 	AnnotationStepName   = "piper.io/step-name"
 	AnnotationVolumeID   = "piper.io/volume-id"
 	AnnotationWorkloadID = "piper.io/workload-id"
+	AnnotationProjectID  = "piper.io/project-id"
 
 	ManagedByPiper = "piper"
 )

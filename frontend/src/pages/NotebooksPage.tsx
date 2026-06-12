@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useProjectId } from '@/lib/projectContext'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
@@ -11,6 +12,7 @@ import {
 
 export default function NotebooksPage() {
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const { data: notebooks = [], isLoading } = useNotebooks()
   const { data: allVolumes = [] } = useNotebookVolumes()
   const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
@@ -32,7 +34,7 @@ export default function NotebooksPage() {
   }
 
   const columns = useMemo(
-    () => getNotebookColumns(busy, handleStop, handleStart, handleDelete),
+    () => getNotebookColumns(busy, handleStop, handleStart, handleDelete, projectId),
     [busy],
   )
 
@@ -44,7 +46,7 @@ export default function NotebooksPage() {
           description="Jupyter notebook servers. Click Open to launch in a new tab."
         />
         <DataPage.Actions>
-          <Button size="sm" onClick={() => navigate('/notebooks/create')}>Launch</Button>
+          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
         </DataPage.Actions>
       </DataPage.Header>
 
@@ -78,7 +80,7 @@ export default function NotebooksPage() {
                         variant="link"
                         size="sm"
                         className="h-auto p-0 text-xs"
-                        onClick={() => navigate(`/notebooks/create?volume=${releasedVolumes[0].id}`)}
+                        onClick={() => navigate(`/projects/${projectId}/notebooks/create?volume=${releasedVolumes[0].id}`)}
                       >
                         {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
                       </Button>

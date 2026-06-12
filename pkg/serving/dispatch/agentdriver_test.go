@@ -23,7 +23,7 @@ func newStubServingRepo(initial ...*serving.Service) *stubServingRepo {
 	return r
 }
 
-func (r *stubServingRepo) Get(_ context.Context, name string) (*serving.Service, error) {
+func (r *stubServingRepo) Get(_ context.Context, _, name string) (*serving.Service, error) {
 	s, ok := r.services[name]
 	if !ok {
 		return nil, nil
@@ -41,7 +41,7 @@ func (r *stubServingRepo) Update(_ context.Context, s *serving.Service) error {
 	return nil
 }
 
-func (r *stubServingRepo) List(_ context.Context) ([]*serving.Service, error) {
+func (r *stubServingRepo) List(_ context.Context, _ string) ([]*serving.Service, error) {
 	out := make([]*serving.Service, 0, len(r.services))
 	for _, s := range r.services {
 		out = append(out, s)
@@ -49,19 +49,22 @@ func (r *stubServingRepo) List(_ context.Context) ([]*serving.Service, error) {
 	return out, nil
 }
 
-func (r *stubServingRepo) Delete(_ context.Context, name string) error {
+func (r *stubServingRepo) ListByWorker(_ context.Context, _ string) ([]*serving.Service, error) {
+	return r.List(context.Background(), "")
+}
+func (r *stubServingRepo) Delete(_ context.Context, _, name string) error {
 	delete(r.services, name)
 	return nil
 }
 
-func (r *stubServingRepo) SetStatus(_ context.Context, name, status string) error {
+func (r *stubServingRepo) SetStatus(_ context.Context, _, name, status string) error {
 	if s, ok := r.services[name]; ok {
 		s.Status = status
 	}
 	return nil
 }
 
-func (r *stubServingRepo) ListHistory(_ context.Context) ([]*serving.ServiceHistory, error) {
+func (r *stubServingRepo) ListHistory(_ context.Context, _ string) ([]*serving.ServiceHistory, error) {
 	return nil, nil
 }
 
@@ -70,7 +73,7 @@ func (r *stubServingRepo) Upsert(_ context.Context, s *serving.Service) error {
 	return nil
 }
 
-func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, name, status, endpoint string) error {
+func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, _, name, status, endpoint string) error {
 	if s, ok := r.services[name]; ok {
 		s.Status = status
 		s.Endpoint = endpoint

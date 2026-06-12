@@ -16,7 +16,9 @@ import (
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
+	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
+	"github.com/piper/piper/pkg/security"
 	"github.com/piper/piper/pkg/storage"
 	"gopkg.in/yaml.v3"
 )
@@ -29,10 +31,9 @@ type HandlerDeps struct {
 	Store     storage.Store // nil when object storage is not configured
 
 	Parse    func(yaml []byte) (*pipeline.Pipeline, error)
-	StartRun func(ctx context.Context, yaml, ownerID string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
+	StartRun func(ctx context.Context, yaml string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
 
-	OwnerID func(r *http.Request) string
-	GenID   func() string // generates a schedule ID; may be nil
+	GenID func() string // generates a schedule ID; may be nil
 }
 
 // Handler is the Gin HTTP handler for the /pipelines domain.
@@ -47,15 +48,18 @@ func NewHandler(deps HandlerDeps) *Handler {
 
 // RegisterRoutes mounts all /pipelines routes.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.POST("/pipelines", h.submit)
 	rg.GET("/pipelines", h.list)
-	rg.DELETE("/pipelines/:id", h.delete)
-	rg.POST("/pipelines/:id/run", h.triggerRun)
-	rg.POST("/pipelines/:id/deploy", h.deploy)
+
+	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
+	member.POST("/pipelines", h.submit)
+	member.DELETE("/pipelines/:id", h.delete)
+	member.POST("/pipelines/:id/run", h.triggerRun)
+	member.POST("/pipelines/:id/deploy", h.deploy)
 }
 
 // POST /pipelines — submit a new pipeline template
 func (h *Handler) submit(c *gin.Context) {
+	projectContext, _ := project.FromContext(c.Request.Context())
 	var req struct {
 		Name     string `json:"name"`
 		YAML     string `json:"yaml"`
@@ -121,6 +125,7 @@ func (h *Handler) submit(c *gin.Context) {
 	}
 
 	t := &Template{
+		ProjectID:  projectContext.ID,
 		ID:         uuid.New().String(),
 		Name:       req.Name,
 		YAML:       req.YAML,
@@ -144,7 +149,8 @@ func (h *Handler) list(c *gin.Context) {
 			f.Limit = n
 		}
 	}
-	templates, err := h.deps.Templates.List(c.Request.Context(), f)
+	projectContext, _ := project.FromContext(c.Request.Context())
+	templates, err := h.deps.Templates.List(c.Request.Context(), projectContext.ID, f)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -155,8 +161,9 @@ func (h *Handler) list(c *gin.Context) {
 // DELETE /pipelines/:id — delete template and its S3 snapshot
 func (h *Handler) delete(c *gin.Context) {
 	id := c.Param("id")
+	projectContext, _ := project.FromContext(c.Request.Context())
 
-	t, err := h.deps.Templates.Get(c.Request.Context(), id)
+	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template not found"})
 		return
@@ -175,7 +182,7 @@ func (h *Handler) delete(c *gin.Context) {
 		}
 	}
 
-	if err := h.deps.Templates.Delete(c.Request.Context(), id); err != nil {
+	if err := h.deps.Templates.Delete(c.Request.Context(), projectContext.ID, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -186,8 +193,9 @@ func (h *Handler) delete(c *gin.Context) {
 // POST /pipelines/:id/run — trigger an immediate run from a template
 func (h *Handler) triggerRun(c *gin.Context) {
 	id := c.Param("id")
+	projectContext, _ := project.FromContext(c.Request.Context())
 
-	t, err := h.deps.Templates.Get(c.Request.Context(), id)
+	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template not found"})
 		return
@@ -200,12 +208,7 @@ func (h *Handler) triggerRun(c *gin.Context) {
 
 	rewrittenYAML := rewriteLocalSources(t.YAML, t.SnapshotID, t.Name)
 
-	ownerID := ""
-	if h.deps.OwnerID != nil {
-		ownerID = h.deps.OwnerID(c.Request)
-	}
-
-	runID, err := h.deps.StartRun(c.Request.Context(), rewrittenYAML, ownerID, req.Params, proto.BuiltinVars{}, "")
+	runID, err := h.deps.StartRun(c.Request.Context(), rewrittenYAML, req.Params, proto.BuiltinVars{}, "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -217,8 +220,9 @@ func (h *Handler) triggerRun(c *gin.Context) {
 // POST /pipelines/:id/deploy — deploy a template as a schedule
 func (h *Handler) deploy(c *gin.Context) {
 	id := c.Param("id")
+	projectContext, _ := project.FromContext(c.Request.Context())
 
-	t, err := h.deps.Templates.Get(c.Request.Context(), id)
+	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template not found"})
 		return
@@ -257,6 +261,7 @@ func (h *Handler) deploy(c *gin.Context) {
 	now := time.Now().UTC()
 	sc := &schedule.Schedule{
 		ID:           schedID,
+		ProjectID:    projectContext.ID,
 		Name:         t.Name,
 		PipelineYAML: rewrittenYAML,
 		ScheduleType: "cron",

@@ -50,13 +50,13 @@ func newE2EServer(t *testing.T) (*Piper, *testutil.Server) {
 	p, err := New(Config{
 		OutputDir: t.TempDir(),
 		DB:        db,
+		Auth:      AuthConfig{Trusted: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
-	p.SetDispatchMode("agent")
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
@@ -357,6 +357,7 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	p, err := New(Config{
 		OutputDir: t.TempDir(),
 		DB:        db,
+		Auth:      AuthConfig{Trusted: true},
 		Server: ServerConfig{
 			Addr: fmt.Sprintf("127.0.0.1:%d", serverPort),
 		},
@@ -375,7 +376,6 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 
-	p.SetDispatchMode("agent")
 	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL)
 	startE2EServingWorker(t, srv.URL, p.cfg.Server.AgentAddr, "serving-agent")
 	pipelineWorkerID := findE2EAgentByCapability(t, srv.URL, "pipeline")
@@ -410,7 +410,7 @@ spec:
     placement:
       worker: serving-agent
 `)
-	t.Cleanup(func() { _ = p.StopService(context.Background(), "baremetal-worker-service") })
+	t.Cleanup(func() { _ = p.StopService(context.Background(), "", "baremetal-worker-service") })
 	svc := getE2EService(t, srv.URL, "baremetal-worker-service")
 	if svc.WorkerID != "serving-agent" {
 		t.Fatalf("service worker_id = %q, want serving-agent", svc.WorkerID)
@@ -619,13 +619,13 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Serv
 	p, err := New(Config{
 		OutputDir: outputDir,
 		DB:        db,
+		Auth:      AuthConfig{Trusted: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
-	p.SetDispatchMode("agent")
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
@@ -646,6 +646,7 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 	p, err := New(Config{
 		OutputDir: outputDir,
 		DB:        db,
+		Auth:      AuthConfig{Trusted: true},
 		Storage:   StorageConfig{URL: storageURL},
 	})
 	if err != nil {
@@ -653,7 +654,6 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 	}
 	agentAddr := startE2EAgentServer(t, p)
 	p.cfg.Server.AgentAddr = agentAddr
-	p.SetDispatchMode("agent")
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
 	return p, srv
@@ -752,7 +752,7 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 
 	piperInst, srv := newE2EServerWithDirAndStorage(t, outputDir, storageURL)
 	t.Cleanup(func() {
-		_ = piperInst.StopService(context.Background(), serviceName)
+		_ = piperInst.StopService(context.Background(), "", serviceName)
 	})
 
 	startE2EServingWorker(t, srv.URL, piperInst.cfg.Server.AgentAddr, "fake-serving-worker")

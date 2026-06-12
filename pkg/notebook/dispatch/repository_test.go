@@ -25,7 +25,7 @@ func (r *fakeRepo) Create(_ context.Context, nb *notebook.NotebookServer) error 
 	return nil
 }
 
-func (r *fakeRepo) Get(_ context.Context, name string) (*notebook.NotebookServer, error) {
+func (r *fakeRepo) Get(_ context.Context, _, name string) (*notebook.NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	nb, ok := r.servers[name]
@@ -47,7 +47,7 @@ func (r *fakeRepo) Update(_ context.Context, nb *notebook.NotebookServer) error 
 	return nil
 }
 
-func (r *fakeRepo) SetStatus(_ context.Context, name, status string) error {
+func (r *fakeRepo) SetStatus(_ context.Context, _, name, status string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	nb, ok := r.servers[name]
@@ -58,7 +58,7 @@ func (r *fakeRepo) SetStatus(_ context.Context, name, status string) error {
 	return nil
 }
 
-func (r *fakeRepo) GetByVolumeID(_ context.Context, volumeID string) (*notebook.NotebookServer, error) {
+func (r *fakeRepo) GetByVolumeID(_ context.Context, _, volumeID string) (*notebook.NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, nb := range r.servers {
@@ -70,7 +70,7 @@ func (r *fakeRepo) GetByVolumeID(_ context.Context, volumeID string) (*notebook.
 	return nil, nil
 }
 
-func (r *fakeRepo) List(_ context.Context) ([]*notebook.NotebookServer, error) {
+func (r *fakeRepo) List(_ context.Context, _ string) ([]*notebook.NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]*notebook.NotebookServer, 0, len(r.servers))
@@ -81,7 +81,20 @@ func (r *fakeRepo) List(_ context.Context) ([]*notebook.NotebookServer, error) {
 	return out, nil
 }
 
-func (r *fakeRepo) Delete(_ context.Context, name string) error {
+func (r *fakeRepo) ListByWorker(_ context.Context, workerID string) ([]*notebook.NotebookServer, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*notebook.NotebookServer
+	for _, nb := range r.servers {
+		if nb.WorkerID == workerID {
+			cp := *nb
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) Delete(_ context.Context, _, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.servers, name)

@@ -8,13 +8,15 @@ import (
 	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/store"
 	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/piper/piper/pkg/project"
 )
 
 // seedRun inserts a run with the given experiment and returns its ID.
-func seedRun(t *testing.T, repo run.Repository, id, experiment string) {
+func seedRun(t *testing.T, repo run.Repository, projectID, id, experiment string) {
 	t.Helper()
 	err := repo.Create(context.Background(), &run.Run{
 		ID:           id,
+		ProjectID:    projectID,
 		PipelineName: "train",
 		Experiment:   experiment,
 		Status:       run.StatusSuccess,
@@ -26,14 +28,15 @@ func seedRun(t *testing.T, repo run.Repository, id, experiment string) {
 }
 
 // seedMetric inserts a single metric row.
-func seedMetric(t *testing.T, ms logstore.MetricStore, runID, step, key string, value float64) {
+func seedMetric(t *testing.T, ms logstore.MetricStore, projectID, runID, step, key string, value float64) {
 	t.Helper()
 	err := ms.AppendMetrics([]*logstore.Metric{{
-		RunID:    runID,
-		StepName: step,
-		Key:      key,
-		Value:    value,
-		Ts:       time.Now().UTC(),
+		ProjectID: projectID,
+		RunID:     runID,
+		StepName:  step,
+		Key:       key,
+		Value:     value,
+		Ts:        time.Now().UTC(),
 	}})
 	if err != nil {
 		t.Fatalf("seedMetric run=%q key=%q: %v", runID, key, err)
@@ -46,15 +49,19 @@ func TestList_MetricSort_Desc(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = repos.Close() })
+	const projectID = "project-a"
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
 
-	seedRun(t, repos.Run, "run-a", "sweep-1")
-	seedRun(t, repos.Run, "run-b", "sweep-1")
-	seedRun(t, repos.Run, "run-c", "sweep-1")
-	seedMetric(t, repos.Metric, "run-a", "train", "accuracy", 0.80)
-	seedMetric(t, repos.Metric, "run-b", "train", "accuracy", 0.95)
-	seedMetric(t, repos.Metric, "run-c", "train", "accuracy", 0.72)
+	seedRun(t, repos.Run, projectID, "run-a", "sweep-1")
+	seedRun(t, repos.Run, projectID, "run-b", "sweep-1")
+	seedRun(t, repos.Run, projectID, "run-c", "sweep-1")
+	seedMetric(t, repos.Metric, projectID, "run-a", "train", "accuracy", 0.80)
+	seedMetric(t, repos.Metric, projectID, "run-b", "train", "accuracy", 0.95)
+	seedMetric(t, repos.Metric, projectID, "run-c", "train", "accuracy", 0.72)
 
-	got, err := repos.Run.List(context.Background(), run.RunFilter{
+	got, err := repos.Run.List(context.Background(), projectID, run.RunFilter{
 		Experiment:  "sweep-1",
 		MetricStep:  "train",
 		MetricKey:   "accuracy",
@@ -80,13 +87,17 @@ func TestList_MetricSort_Asc(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = repos.Close() })
+	const projectID = "project-a"
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
 
-	seedRun(t, repos.Run, "run-a", "sweep-2")
-	seedRun(t, repos.Run, "run-b", "sweep-2")
-	seedMetric(t, repos.Metric, "run-a", "train", "val_loss", 0.31)
-	seedMetric(t, repos.Metric, "run-b", "train", "val_loss", 0.18)
+	seedRun(t, repos.Run, projectID, "run-a", "sweep-2")
+	seedRun(t, repos.Run, projectID, "run-b", "sweep-2")
+	seedMetric(t, repos.Metric, projectID, "run-a", "train", "val_loss", 0.31)
+	seedMetric(t, repos.Metric, projectID, "run-b", "train", "val_loss", 0.18)
 
-	got, err := repos.Run.List(context.Background(), run.RunFilter{
+	got, err := repos.Run.List(context.Background(), projectID, run.RunFilter{
 		Experiment:  "sweep-2",
 		MetricStep:  "train",
 		MetricKey:   "val_loss",
@@ -110,14 +121,18 @@ func TestList_MetricSort_NullsLast(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { _ = repos.Close() })
+	const projectID = "project-a"
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
 
-	seedRun(t, repos.Run, "run-a", "sweep-3")
-	seedRun(t, repos.Run, "run-b", "sweep-3")
-	seedRun(t, repos.Run, "run-c", "sweep-3") // no metric
-	seedMetric(t, repos.Metric, "run-a", "train", "accuracy", 0.80)
-	seedMetric(t, repos.Metric, "run-b", "train", "accuracy", 0.90)
+	seedRun(t, repos.Run, projectID, "run-a", "sweep-3")
+	seedRun(t, repos.Run, projectID, "run-b", "sweep-3")
+	seedRun(t, repos.Run, projectID, "run-c", "sweep-3") // no metric
+	seedMetric(t, repos.Metric, projectID, "run-a", "train", "accuracy", 0.80)
+	seedMetric(t, repos.Metric, projectID, "run-b", "train", "accuracy", 0.90)
 
-	got, err := repos.Run.List(context.Background(), run.RunFilter{
+	got, err := repos.Run.List(context.Background(), projectID, run.RunFilter{
 		Experiment:  "sweep-3",
 		MetricStep:  "train",
 		MetricKey:   "accuracy",

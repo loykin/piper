@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { listRuns, createRun, type Run } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { useProjectId } from '@/lib/projectContext'
 
 const EXAMPLE_YAML = `apiVersion: piper/v1
 kind: Pipeline
@@ -29,6 +30,7 @@ function elapsed(run: Run): string {
 }
 
 export default function RunsPage() {
+  const projectId = useProjectId()
   const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
   const [yaml, setYaml] = useState(EXAMPLE_YAML)
@@ -37,24 +39,27 @@ export default function RunsPage() {
   const navigate = useNavigate()
   const intervalRef = useRef<ReturnType<typeof setInterval>>(0 as unknown as ReturnType<typeof setInterval>)
 
-  const load = () =>
-    listRuns()
+  const load = () => {
+    if (!projectId) return Promise.resolve()
+    return listRuns(projectId)
       .then(setRuns)
       .catch(() => {})
       .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
-    load()
-    intervalRef.current = setInterval(load, 3000)
+    void load()
+    intervalRef.current = setInterval(() => void load(), 3000)
     return () => clearInterval(intervalRef.current!)
-  }, [])
+  }, [projectId])
 
   async function handleRun() {
+    if (!projectId) return
     setSubmitting(true)
     setError('')
     try {
-      const { run_id } = await createRun(yaml)
-      navigate(`/runs/${run_id}`)
+      const { run_id } = await createRun(projectId, yaml)
+      navigate(`/projects/${projectId}/runs/${run_id}`)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

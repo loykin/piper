@@ -96,13 +96,14 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 		namespace = d.defaultNamespace()
 	}
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
-		MasterURL:  spec.MasterURL,
-		Token:      spec.Token,
-		StorageURL: spec.StorageURL,
-		OutputDir:  "/piper-outputs",
-		InputDir:   "/piper-inputs",
-		ResultFile: "/dev/termination-log",
-		ReportMode: agent.ReportModeFile,
+		MasterURL:    spec.MasterURL,
+		WorkerToken:  spec.WorkerToken,
+		StorageToken: spec.StorageToken,
+		StorageURL:   spec.StorageURL,
+		OutputDir:    "/piper-outputs",
+		InputDir:     "/piper-inputs",
+		ResultFile:   "/dev/termination-log",
+		ReportMode:   agent.ReportModeFile,
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("k8s driver: build agent args: %w", err)

@@ -26,6 +26,8 @@ const (
 	dockerNotebookPort  = "8888/tcp"
 	dockerManagedLabel  = "piper.managed"
 	dockerNotebookLabel = "piper.notebook"
+	dockerProjectLabel  = "piper.project-id"
+	dockerRuntimeLabel  = "piper.runtime-name"
 	dockerWorkerLabel   = "piper.worker-id"
 )
 
@@ -247,7 +249,7 @@ func (r *dockerRuntime) Status(name string) string {
 func (r *dockerRuntime) Recover(
 	ctx context.Context,
 	onRecovered func(recoveredRuntime) func(status string),
-	onTerminal func(name, status string),
+	onTerminal func(recoveredRuntime, string),
 ) error {
 	items, err := r.listManagedContainers(ctx, "")
 	if err != nil {
@@ -255,8 +257,15 @@ func (r *dockerRuntime) Recover(
 	}
 	for _, item := range items {
 		name := item.Labels[dockerNotebookLabel]
-		if name == "" {
+		runtimeName := item.Labels[dockerRuntimeLabel]
+		if name == "" || runtimeName == "" {
 			continue
+		}
+		rec := recoveredRuntime{
+			ProjectID:   item.Labels[dockerProjectLabel],
+			Name:        name,
+			RuntimeName: runtimeName,
+			Port:        dockerHostPort(item),
 		}
 		// Docker applies the worker label filter server-side. Recheck ownership at
 		// this boundary so a non-conforming client or daemon response cannot attach
@@ -267,13 +276,13 @@ func (r *dockerRuntime) Recover(
 		id := item.ID
 		if item.State == container.StateRunning || item.State == container.StateRestarting {
 			r.mu.Lock()
-			r.containers[name] = id
+			r.containers[runtimeName] = id
 			r.mu.Unlock()
-			onExit := onRecovered(recoveredRuntime{Name: name, Port: dockerHostPort(item)})
+			onExit := onRecovered(rec)
 			wait := r.client.ContainerWait(context.Background(), id, dockerclient.ContainerWaitOptions{
 				Condition: container.WaitConditionNotRunning,
 			})
-			go func(nbName, containerID string) {
+			go func(runtimeName, containerID string) {
 				status := notebook.StatusStopped
 				select {
 				case err := <-wait.Error:
@@ -287,18 +296,18 @@ func (r *dockerRuntime) Recover(
 				}
 				_ = r.removeContainer(context.Background(), containerID)
 				r.mu.Lock()
-				if r.containers[nbName] == containerID {
-					delete(r.containers, nbName)
+				if r.containers[runtimeName] == containerID {
+					delete(r.containers, runtimeName)
 				}
 				r.mu.Unlock()
 				onExit(status)
-			}(name, id)
+			}(runtimeName, id)
 		} else {
 			status := r.containerExitStatus(ctx, id)
 			if err := r.removeContainer(ctx, id); err != nil {
 				return fmt.Errorf("remove terminal notebook container %s: %w", id, err)
 			}
-			onTerminal(name, status)
+			onTerminal(rec, status)
 		}
 	}
 	return nil
@@ -375,9 +384,15 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 		readOnly = ds.ReadOnly
 	}
 
+	notebookName := req.NotebookName
+	if notebookName == "" {
+		notebookName = req.Name
+	}
 	labels := map[string]string{
 		dockerManagedLabel:  "true",
-		dockerNotebookLabel: req.Name,
+		dockerNotebookLabel: notebookName,
+		dockerProjectLabel:  req.ProjectID,
+		dockerRuntimeLabel:  req.Name,
 		dockerWorkerLabel:   r.workerID,
 	}
 	prepSteps, err := prepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendDocker)
@@ -436,7 +451,7 @@ func (r *dockerRuntime) removeContainer(ctx context.Context, id string) error {
 func (r *dockerRuntime) listManagedContainers(ctx context.Context, name string) ([]container.Summary, error) {
 	filters := dockerclient.Filters{}.Add("label", dockerManagedLabel+"=true")
 	if name != "" {
-		filters = filters.Add("label", dockerNotebookLabel+"="+name)
+		filters = filters.Add("label", dockerRuntimeLabel+"="+name)
 	}
 	filters = filters.Add("label", dockerWorkerLabel+"="+r.workerID)
 	list, err := r.client.ContainerList(ctx, dockerclient.ContainerListOptions{All: true, Filters: filters})

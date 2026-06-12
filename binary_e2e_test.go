@@ -102,8 +102,6 @@ source:
     secret_key: "test"
     bucket: %q
     use_ssl: false
-pipeline:
-  dispatch_mode: agent
 `, s3Endpoint, bucket))
 
 	// ── Server subprocess ─────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { DataPage } from '@loykin/designkit'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { listRuns, listArtifacts, type Run, type StepArtifacts } from '@/features/runs/api'
 import type { Service } from '@/features/serving/api'
+import { useProjectId } from '@/lib/projectContext'
 
 const STATUS_COLOR: Record<string, string> = {
   running: 'bg-green-500/20 text-green-300 border border-green-500/30',
@@ -243,9 +244,9 @@ ${k8sSection}`
 // which don't exist in the current API. This page is not registered in App.tsx (legacy).
 // The functions below are placeholders that reference the serving API equivalently.
 async function listServices(): Promise<Service[]> { return [] }
-async function deployService(_yaml: string): Promise<{ name: string }> { return { name: '' } }
-async function stopService(_name: string): Promise<void> {}
-async function restartService(_name: string): Promise<void> {}
+async function deployService(_svcYaml: string): Promise<{ name: string }> { return { name: '' } }
+async function stopService(_svcName: string): Promise<void> {}
+async function restartService(_svcName: string): Promise<void> {}
 
 // ─── Deploy panel ─────────────────────────────────────────────────────────────
 
@@ -266,6 +267,7 @@ function DeployPanel({
   form, setForm, tab, setTab, yaml, setYaml, showPreview, setShowPreview,
   onClose, onDeployed,
 }: DeployPanelProps) {
+  const projectId = useProjectId()
   const [deploying, setDeploying] = useState(false)
   const [error, setError] = useState('')
 
@@ -273,18 +275,19 @@ function DeployPanel({
   const [artifacts, setArtifacts] = useState<StepArtifacts[]>([])
 
   useEffect(() => {
-    listRuns({ status: 'success' }).then(setSuccessRuns).catch(() => {})
-  }, [])
+    if (!projectId) return
+    listRuns(projectId, { status: 'success' }).then(setSuccessRuns).catch(() => {})
+  }, [projectId])
 
   const pipelines = Array.from(new Set(successRuns.map(r => r.pipeline_name))).sort()
   const pipelineRuns = successRuns.filter(r => r.pipeline_name === form.pipeline)
 
   useEffect(() => {
-    if (!form.pipeline) { setArtifacts([]); return }
+    if (!projectId || !form.pipeline) { setArtifacts([]); return }
     const runId = form.run === 'latest' ? pipelineRuns[0]?.id : form.run
     if (!runId) { setArtifacts([]); return }
-    listArtifacts(runId).then(setArtifacts).catch(() => setArtifacts([]))
-  }, [form.pipeline, form.run, pipelineRuns[0]?.id])
+    listArtifacts(projectId, runId).then(setArtifacts).catch(() => setArtifacts([]))
+  }, [projectId, form.pipeline, form.run, pipelineRuns[0]?.id])
 
   const steps = artifacts.map(sa => sa.step)
   const artifactNames = artifacts.find(sa => sa.step === form.step)?.artifacts.map(a => a.name) ?? []

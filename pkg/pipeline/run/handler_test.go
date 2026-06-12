@@ -12,7 +12,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/security"
 )
+
+// injectProjectContext is a test middleware that injects a project context with admin role.
+func injectProjectContext(id string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := project.WithContext(c.Request.Context(), project.Context{
+			ID:   id,
+			Role: security.ProjectRoleAdmin,
+		})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
 
 type capturingRunRepo struct {
 	filter RunFilter
@@ -20,31 +34,31 @@ type capturingRunRepo struct {
 }
 
 func (r *capturingRunRepo) Create(context.Context, *Run) error { return nil }
-func (r *capturingRunRepo) Get(context.Context, string) (*Run, error) {
+func (r *capturingRunRepo) Get(context.Context, string, string) (*Run, error) {
 	return r.run, nil
 }
-func (r *capturingRunRepo) List(_ context.Context, filter RunFilter) ([]*Run, error) {
+func (r *capturingRunRepo) List(_ context.Context, _ string, filter RunFilter) ([]*Run, error) {
 	r.filter = filter
 	return []*Run{}, nil
 }
-func (r *capturingRunRepo) UpdateStatus(context.Context, string, string, *time.Time) error {
+func (r *capturingRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
 	return nil
 }
-func (r *capturingRunRepo) MarkRunning(context.Context, string, time.Time) error {
+func (r *capturingRunRepo) MarkRunning(context.Context, string, string, time.Time) error {
 	return nil
 }
-func (r *capturingRunRepo) Delete(context.Context, string) error { return nil }
-func (r *capturingRunRepo) GetLatestSuccessful(context.Context, string) (*Run, error) {
+func (r *capturingRunRepo) Delete(context.Context, string, string) error { return nil }
+func (r *capturingRunRepo) GetLatestSuccessful(context.Context, string, string) (*Run, error) {
 	return nil, nil
 }
 
 type emptyStepRepo struct{}
 
 func (r emptyStepRepo) Upsert(context.Context, *Step) error { return nil }
-func (r emptyStepRepo) List(context.Context, string) ([]*Step, error) {
+func (r emptyStepRepo) List(context.Context, string, string) ([]*Step, error) {
 	return []*Step{}, nil
 }
-func (r emptyStepRepo) DeleteByRun(context.Context, string) error { return nil }
+func (r emptyStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
 
 // ── metric filter ─────────────────────────────────────────────────────────────
 
@@ -52,7 +66,7 @@ func TestListRunsMetricFilterPassedToRepo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repo := &capturingRunRepo{}
 	router := gin.New()
-	NewHandler(HandlerDeps{Runs: repo, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group(""))
+	NewHandler(HandlerDeps{Runs: repo, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodGet, "/runs?experiment=sweep-1&metric_step=train&metric_key=accuracy&metric_order=asc", nil)
 	rec := httptest.NewRecorder()
@@ -82,11 +96,11 @@ func TestCreateSweep_Success(t *testing.T) {
 	NewHandler(HandlerDeps{
 		Runs:  repo,
 		Steps: emptyStepRepo{},
-		StartSweep: func(_ context.Context, req SweepRequest, _ string) (SweepResponse, error) {
+		StartSweep: func(_ context.Context, req SweepRequest) (SweepResponse, error) {
 			gotReq = req
 			return SweepResponse{Experiment: req.Experiment, RunIDs: []string{"r1", "r2"}}, nil
 		},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"metadata:\n  name: train\n","experiment":"lr-sweep","runs":[{"params":{"lr":0.01}},{"params":{"lr":0.1}}]}`
 	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
@@ -111,7 +125,7 @@ func TestCreateSweep_Success(t *testing.T) {
 func TestCreateSweep_MissingExperiment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group(""))
+	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"...","runs":[{"params":{"lr":0.01}}]}`
 	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
@@ -127,7 +141,7 @@ func TestCreateSweep_MissingExperiment(t *testing.T) {
 func TestCreateSweep_EmptyRuns(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group(""))
+	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"...","experiment":"lr-sweep","runs":[]}`
 	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
@@ -150,7 +164,7 @@ func (s *captureMetricStore) AppendMetrics(m []*logstore.Metric) error {
 	s.appended = append(s.appended, m...)
 	return nil
 }
-func (s *captureMetricStore) QueryMetrics(_, _ string) ([]*logstore.Metric, error) {
+func (s *captureMetricStore) QueryMetrics(_, _, _ string) ([]*logstore.Metric, error) {
 	return nil, nil
 }
 
@@ -162,7 +176,7 @@ func TestIngestFinalMetrics_Success(t *testing.T) {
 		Runs:    &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusRunning}},
 		Steps:   emptyStepRepo{},
 		Metrics: store,
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterWorkerRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"accuracy":0.94,"val_loss":0.23}`
 	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/steps/train/final-metrics", strings.NewReader(body))
@@ -198,7 +212,7 @@ func TestIngestFinalMetrics_InvalidJSON(t *testing.T) {
 		Runs:    &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusRunning}},
 		Steps:   emptyStepRepo{},
 		Metrics: &captureMetricStore{},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterWorkerRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/steps/train/final-metrics", strings.NewReader(`not json`))
 	req.Header.Set("Content-Type", "application/json")
@@ -217,7 +231,7 @@ func TestListRunsPipelineNameQuery(t *testing.T) {
 	NewHandler(HandlerDeps{
 		Runs:  repo,
 		Steps: emptyStepRepo{},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodGet, "/runs?pipeline_name=train&status=success&experiment=exp-v2", nil)
 	rec := httptest.NewRecorder()
@@ -245,11 +259,11 @@ func TestCreateRunPassesExperiment(t *testing.T) {
 	NewHandler(HandlerDeps{
 		Runs:  repo,
 		Steps: emptyStepRepo{},
-		StartRun: func(_ context.Context, _ string, _ string, _ map[string]any, _ proto.BuiltinVars, experiment string) (string, error) {
+		StartRun: func(_ context.Context, _ string, _ map[string]any, _ proto.BuiltinVars, experiment string) (string, error) {
 			gotExperiment = experiment
 			return "run-1", nil
 		},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"yaml":"metadata:\n  name: train\n","experiment":"exp-v2"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -276,7 +290,7 @@ func TestCancelRunUsesCancelDependency(t *testing.T) {
 			canceled = runID
 			return nil
 		},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/cancel", nil)
 	rec := httptest.NewRecorder()
@@ -304,7 +318,7 @@ func TestRerunUsesRerunDependency(t *testing.T) {
 			gotFailedOnly = failedOnly
 			return "run-2", nil
 		},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/rerun", nil)
 	rec := httptest.NewRecorder()
@@ -358,7 +372,7 @@ func TestDeleteRun_CallsBeforeGetRunHook(t *testing.T) {
 				return nil
 			},
 		},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodDelete, "/runs/run-1", nil)
 	rec := httptest.NewRecorder()
@@ -392,7 +406,7 @@ func TestDeleteRun_HookBlocksDeletion(t *testing.T) {
 				return fmt.Errorf("forbidden")
 			},
 		},
-	}).RegisterRoutes(router.Group(""))
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodDelete, "/runs/run-1", nil)
 	rec := httptest.NewRecorder()

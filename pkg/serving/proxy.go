@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/piper/piper/internal/tunnelproxy"
+	"github.com/piper/piper/pkg/project"
 )
 
 func init() {
@@ -45,7 +46,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	svc, err := p.repo.Get(r.Context(), name)
+	projectContext, _ := project.FromContext(r.Context())
+	svc, err := p.repo.Get(r.Context(), projectContext.ID, name)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

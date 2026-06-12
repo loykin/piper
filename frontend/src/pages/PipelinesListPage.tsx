@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useProjectId } from '@/lib/projectContext'
 import { CalendarClock, Play, Plus, Trash2, X } from 'lucide-react'
 import { DataPage } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,7 @@ function relativeTime(iso: string): string {
 
 export default function PipelinesListPage() {
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const [searchParams] = useSearchParams()
   const filterName = searchParams.get('name') ?? ''
 
@@ -36,7 +38,7 @@ export default function PipelinesListPage() {
     setActionError('')
     try {
       const result = await runPipeline({ id: t.id })
-      navigate(`/runs/${result.id}`)
+      navigate(`/projects/${projectId}/runs/${result.id}`)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     }
@@ -75,7 +77,7 @@ export default function PipelinesListPage() {
           description="Each submit creates a new versioned snapshot. Deploy to schedule or run on demand."
         />
         <DataPage.Actions>
-          <Button size="sm" onClick={() => navigate('/pipelines/editor')}>
+          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
             <Plus size={14} className="mr-1.5" /> New Pipeline
           </Button>
         </DataPage.Actions>
@@ -95,7 +97,7 @@ export default function PipelinesListPage() {
         ) : grouped.size === 0 ? (
           <div className="py-16 text-center">
             <p className="text-sm text-muted-foreground">No pipeline templates yet.</p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate('/pipelines/editor')}>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
               <Plus size={14} className="mr-1.5" /> Create your first pipeline
             </Button>
           </div>
@@ -160,7 +162,7 @@ export default function PipelinesListPage() {
         onCronChange={setDeployCron}
         onEnabledChange={setDeployEnabled}
         onClose={() => setDeployTarget(null)}
-        onDeployed={() => navigate('/schedules')}
+        onDeployed={() => navigate(`/projects/${projectId}/schedules`)}
         error={actionError}
       />
     </DataPage>

@@ -48,10 +48,6 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 				return p.Serve(ctx, piper.ServeOption{Addr: addr, AgentAddr: agentAddr})
 			}
 
-			// --local mode: embedded gRPC workers handle all workloads.
-			// Activate agent dispatch so pipeline tasks are pushed via gRPC.
-			p.SetDispatchMode("agent")
-
 			// Embedded local pipeline worker: connects to the local gRPC agent server.
 			hostname, _ := os.Hostname()
 			localAgentAddr := p.Config().Server.AgentAddr
@@ -60,20 +56,25 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			}
 			localAgentConnAddr := localAgentConnURL(localAgentAddr)
 
+			workerToken := p.Config().Server.WorkerToken
+			storageToken := p.Config().Storage.Token
+
 			wCfg := worker.Config{
 				Agent: worker.AgentConfig{
 					Addr:        localAgentConnAddr,
+					WorkerToken: workerToken,
 					ID:          worker.NewID("local"),
 					Label:       "local",
 					Concurrency: localConcurrency,
 				},
 				Store: worker.StoreConfig{
-					MasterURL:  localMasterURL(addr),
-					Token:      p.Config().Server.Token,
-					StorageURL: resolveStorageURLFromViper(),
-					OutputDir:  viper.GetString("worker.output_dir"),
-					GitUser:    viper.GetString("git.user"),
-					GitToken:   viper.GetString("git.token"),
+					MasterURL:    localMasterURL(addr),
+					WorkerToken:  workerToken,
+					StorageToken: storageToken,
+					StorageURL:   resolveStorageURLFromViper(),
+					OutputDir:    viper.GetString("worker.output_dir"),
+					GitUser:      viper.GetString("git.user"),
+					GitToken:     viper.GetString("git.token"),
 				},
 			}
 			w, err := worker.New(wCfg)
@@ -83,14 +84,16 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 			slog.Info("embedded local worker enabled", "agent_addr", localAgentConnAddr, "concurrency", localConcurrency)
 
 			sw := servingworker.New(servingworker.Config{
-				AgentAddr: localAgentConnAddr,
-				Hostname:  hostname,
-				ID:        stableWorkerID("serving", hostname, "local"),
+				AgentAddr:   localAgentConnAddr,
+				WorkerToken: workerToken,
+				Hostname:    hostname,
+				ID:          stableWorkerID("serving", hostname, "local"),
 			})
 
 			notebookMode := effectiveNotebookMode(p.Config().NotebookWorker.Mode)
 			nw := notebookworker.New(notebookworker.Config{
 				AgentAddr:     localAgentConnAddr,
+				WorkerToken:   workerToken,
 				Hostname:      hostname,
 				ID:            stableWorkerID("notebook", hostname, notebookMode, "local"),
 				NotebooksRoot: p.Config().NotebookWorker.NotebooksRoot,
@@ -117,7 +120,6 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 	}
 
 	cmd.Flags().String("addr", "", "listen address (default :8080)")
-	cmd.Flags().String("token", "", "bearer token required for API and UI requests")
 	cmd.Flags().String("agent-addr", "", "gRPC agent listen address (default from config)")
 	cmd.Flags().Bool("tls", false, "enable TLS")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file")
@@ -126,7 +128,6 @@ func newServerCmd(factory PiperFactory) *cobra.Command {
 	cmd.Flags().Int("local-concurrency", 4, "concurrency for the embedded local worker")
 
 	mustBindPFlag("server.addr", cmd.Flags().Lookup("addr"))
-	mustBindPFlag("server.token", cmd.Flags().Lookup("token"))
 	mustBindPFlag("server.tls.enabled", cmd.Flags().Lookup("tls"))
 	mustBindPFlag("server.tls.cert_file", cmd.Flags().Lookup("tls-cert"))
 	mustBindPFlag("server.tls.key_file", cmd.Flags().Lookup("tls-key"))

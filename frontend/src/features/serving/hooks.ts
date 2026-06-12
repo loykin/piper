@@ -1,66 +1,77 @@
 // serving feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
+import { api as sysApi } from '@/lib/api'
+import { useProjectId } from '@/lib/projectContext'
+import type { ServingWorkerInfo } from './types'
 
 export const servingKeys = {
-  all: ['serving'] as const,
-  list: () => ['serving', 'list'] as const,
-  one: (name: string) => ['serving', name] as const,
-  history: () => ['serving', 'history'] as const,
-  workers: () => ['serving-workers'] as const,
+  all: (projectId: string) => ['serving', projectId] as const,
+  list: (projectId: string) => ['serving', projectId, 'list'] as const,
+  one: (projectId: string, name: string) => ['serving', projectId, name] as const,
+  history: (projectId: string) => ['serving', projectId, 'history'] as const,
 }
 
 export function useServices() {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: servingKeys.list(),
-    queryFn: api.listServing,
+    queryKey: servingKeys.list(projectId),
+    queryFn: () => api.listServing(projectId),
+    enabled: !!projectId,
     refetchInterval: 5000,
   })
 }
 
 export function useService(name: string) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: servingKeys.one(name),
-    queryFn: () => api.getServing(name),
+    queryKey: servingKeys.one(projectId, name),
+    queryFn: () => api.getServing(projectId, name),
+    enabled: !!projectId && !!name,
     refetchInterval: 5000,
   })
 }
 
 export function useServingHistory() {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: servingKeys.history(),
-    queryFn: api.listServingHistory,
+    queryKey: servingKeys.history(projectId),
+    queryFn: () => api.listServingHistory(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useDeployService() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (yaml: string) => api.deployServing(projectId, yaml),
+    onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all(projectId) }),
+  })
+}
+
+export function useStopService() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.stopServing(projectId, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all(projectId) }),
+  })
+}
+
+export function useRestartService() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.restartServing(projectId, name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all(projectId) }),
   })
 }
 
 export function useServingWorkers() {
   return useQuery({
-    queryKey: servingKeys.workers(),
-    queryFn: api.listServingWorkers,
+    queryKey: ['serving-workers'],
+    queryFn: () => sysApi.get<ServingWorkerInfo[]>('/api/serving-workers').then(d => Array.isArray(d) ? d : []),
     refetchInterval: 10000,
-  })
-}
-
-export function useDeployService() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: api.deployServing,
-    onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all }),
-  })
-}
-
-export function useStopService() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: api.stopServing,
-    onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all }),
-  })
-}
-
-export function useRestartService() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: api.restartServing,
-    onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all }),
   })
 }

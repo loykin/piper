@@ -40,5 +40,8 @@ type Driver interface {
 // apply is called for each status update so the Manager can persist and emit
 // lifecycle events through its normal UpdateStatus path.
 type StatusSyncer interface {
-	SyncStatus(ctx context.Context, servers []*NotebookServer, apply func(name, status string)) error
+	// SyncStatus reconciles observed worker state with the master DB.
+	// apply is called with (projectID, name, status) so the Manager can use
+	// the (projectID, name) composite key to prevent cross-project name collisions.
+	SyncStatus(ctx context.Context, servers []*NotebookServer, apply func(projectID, name, status string)) error
 }

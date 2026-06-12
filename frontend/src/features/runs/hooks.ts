@@ -3,40 +3,43 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import * as api from './api'
 import type { LogLine, RunFilter, SweepRequest } from './types'
+import { useProjectId } from '@/lib/projectContext'
 
 export const runKeys = {
-  all: ['runs'] as const,
-  list: (filter?: RunFilter) => ['runs', 'list', filter] as const,
-  one: (id: string) => ['runs', id] as const,
-  steps: (id: string) => ['runs', id, 'steps'] as const,
-  metrics: (id: string) => ['runs', id, 'metrics'] as const,
-  artifacts: (runId: string, stepId: string) => ['runs', runId, 'artifacts', stepId] as const,
+  all: (projectId: string) => ['runs', projectId] as const,
+  list: (projectId: string, filter?: RunFilter) => ['runs', projectId, 'list', filter] as const,
+  one: (projectId: string, id: string) => ['runs', projectId, id] as const,
+  steps: (projectId: string, id: string) => ['runs', projectId, id, 'steps'] as const,
+  metrics: (projectId: string, id: string) => ['runs', projectId, id, 'metrics'] as const,
+  artifacts: (projectId: string, runId: string) => ['runs', projectId, runId, 'artifacts'] as const,
 }
 
 export function useRuns(filter?: RunFilter) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: runKeys.list(filter),
-    queryFn: () => api.listRuns(filter),
+    queryKey: runKeys.list(projectId, filter),
+    queryFn: () => api.listRuns(projectId, filter),
+    enabled: !!projectId,
     refetchInterval: 5000,
   })
 }
 
 export function useRun(id: string) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: runKeys.one(id),
-    queryFn: () => api.getRun(id),
-    refetchInterval: (query) =>
-      query.state.data?.run?.status === 'running' ? 2000 : 5000,
+    queryKey: runKeys.one(projectId, id),
+    queryFn: () => api.getRun(projectId, id),
+    enabled: !!projectId && !!id,
+    refetchInterval: 5000,
   })
 }
 
 export function useRunSteps(runId: string) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: runKeys.steps(runId),
-    queryFn: async () => {
-      const { steps } = await api.getRun(runId)
-      return steps
-    },
+    queryKey: runKeys.steps(projectId, runId),
+    queryFn: () => api.getRunSteps(projectId, runId),
+    enabled: !!projectId && !!runId,
     refetchInterval: (query) => {
       const steps = query.state.data ?? []
       return steps.some(s => s.status === 'running' || s.status === 'pending') ? 2000 : 5000
@@ -45,80 +48,103 @@ export function useRunSteps(runId: string) {
 }
 
 export function useStepArtifacts(runId: string, stepId: string | null) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: runKeys.artifacts(runId, stepId ?? ''),
-    queryFn: () => api.listArtifacts(runId),
-    enabled: !!stepId,
-  })
-}
-
-export function useDeleteRun() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: api.deleteRun,
-    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all }),
-  })
-}
-
-export function useCancelRun() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: api.cancelRun,
-    onSuccess: (_data, runId) =>
-      qc.invalidateQueries({ queryKey: runKeys.one(runId) }),
-  })
-}
-
-export function useRerunRun() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, failedOnly }: { id: string; failedOnly?: boolean }) =>
-      api.rerunRun(id, failedOnly),
-    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all }),
+    queryKey: runKeys.artifacts(projectId, runId),
+    queryFn: () => api.listArtifacts(projectId, runId),
+    enabled: !!projectId && !!stepId,
   })
 }
 
 export function useRunMetrics(runId: string) {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: runKeys.metrics(runId),
-    queryFn: () => api.getRunMetrics(runId),
+    queryKey: runKeys.metrics(projectId, runId),
+    queryFn: () => api.getRunMetrics(projectId, runId),
+    enabled: !!projectId && !!runId,
+  })
+}
+
+export function useDeleteRun() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteRun(projectId, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all(projectId) }),
+  })
+}
+
+export function useCancelRun() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.cancelRun(projectId, id),
+    onSuccess: (_data, id) => qc.invalidateQueries({ queryKey: runKeys.one(projectId, id) }),
+  })
+}
+
+export function useRerunRun() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.rerunRun(projectId, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all(projectId) }),
   })
 }
 
 export function useCreateSweep() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (req: SweepRequest) => api.createSweep(req),
-    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all }),
+    mutationFn: (req: SweepRequest) => api.createSweep(projectId, req),
+    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all(projectId) }),
   })
 }
 
 export function useRetryStep() {
+  const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ runId, stepId }: { runId: string; stepId: string }) =>
-      api.retryStep(runId, stepId),
+      api.retryStep(projectId, runId, stepId),
     onSuccess: (_data, { runId }) =>
-      qc.invalidateQueries({ queryKey: runKeys.one(runId) }),
+      qc.invalidateQueries({ queryKey: runKeys.one(projectId, runId) }),
   })
 }
 
-// EventSource hook for streaming logs
+export function useCreateRun() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ yaml, params }: { yaml: string; params?: Record<string, unknown> }) =>
+      api.createRun(projectId, yaml, params),
+    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all(projectId) }),
+  })
+}
+
+// Streaming log hook using SSE
 export function useRunLogs(runId: string, stepId: string | null) {
+  const projectId = useProjectId()
   const [lines, setLines] = useState<LogLine[]>([])
   const [done, setDone] = useState(false)
 
   useEffect(() => {
-    if (!stepId) { setLines([]); setDone(false); return }
-    setLines([]); setDone(false)
-    const es = api.streamLogs(
-      runId,
-      stepId,
-      (line) => setLines(prev => [...prev, line]),
-      () => setDone(true),
-    )
+    setLines([])
+    setDone(false)
+    if (!stepId || !projectId) return
+
+    const url = api.runLogsStreamURL(projectId, runId, stepId)
+    const es = new EventSource(url)
+    es.onmessage = (ev) => {
+      try {
+        const line = JSON.parse(ev.data as string) as LogLine
+        setLines(prev => [...prev, line])
+      } catch { /* ignore */ }
+    }
+    es.addEventListener('done', () => { setDone(true); es.close() })
+    es.onerror = () => { setDone(true); es.close() }
     return () => es.close()
-  }, [runId, stepId])
+  }, [projectId, runId, stepId])
 
   return { lines, done }
 }

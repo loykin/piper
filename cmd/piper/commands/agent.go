@@ -23,16 +23,17 @@ func newAgentCmd() *cobra.Command {
 }
 
 type agentExecFlags struct {
-	master     string
-	token      string
-	taskB64    string
-	outputDir  string
-	inputDir   string
-	storageURL string
-	resultFile string
-	reportMode string
-	gitUser    string
-	gitToken   string
+	master       string
+	workerToken  string
+	storageToken string
+	taskB64      string
+	outputDir    string
+	inputDir     string
+	storageURL   string
+	resultFile   string
+	reportMode   string
+	gitUser      string
+	gitToken     string
 }
 
 func newAgentExecCmd() *cobra.Command {
@@ -48,7 +49,8 @@ func newAgentExecCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL")
-	cmd.Flags().StringVar(&f.token, "token", "", "auth token")
+	cmd.Flags().StringVar(&f.workerToken, "worker-token", "", "worker callback token")
+	cmd.Flags().StringVar(&f.storageToken, "storage-token", "", "artifact store token")
 	cmd.Flags().StringVar(&f.taskB64, "task", "", "base64-encoded proto.Task JSON")
 	cmd.Flags().StringVar(&f.outputDir, "output-dir", "/piper-outputs", "local output directory")
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
@@ -76,13 +78,14 @@ func runAgentExec(ctx context.Context, f agentExecFlags) error {
 	}
 
 	r, err := agent.New(agent.Config{
-		MasterURL:  f.master,
-		Token:      f.token,
-		OutputDir:  f.outputDir,
-		InputDir:   f.inputDir,
-		StorageURL: f.storageURL,
-		GitUser:    gitUser,
-		GitToken:   gitToken,
+		MasterURL:    f.master,
+		WorkerToken:  f.workerToken,
+		StorageToken: f.storageToken,
+		OutputDir:    f.outputDir,
+		InputDir:     f.inputDir,
+		StorageURL:   f.storageURL,
+		GitUser:      gitUser,
+		GitToken:     gitToken,
 	})
 	if err != nil {
 		return fmt.Errorf("runner init: %w", err)

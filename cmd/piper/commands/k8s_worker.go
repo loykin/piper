@@ -23,7 +23,7 @@ func newK8sWorkerCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			masterURL, _ := cmd.Flags().GetString("master")
 			agentAddr, _ := cmd.Flags().GetString("agent-addr")
-			token, _ := cmd.Flags().GetString("token")
+			workerToken, _ := cmd.Flags().GetString("worker-token")
 			id, _ := cmd.Flags().GetString("id")
 			cluster, _ := cmd.Flags().GetString("cluster")
 			namespacesStr, _ := cmd.Flags().GetString("namespaces")
@@ -65,15 +65,18 @@ func newK8sWorkerCmd() *cobra.Command {
 			}
 
 			cfg, _ := buildConfig()
+			storageToken := cfg.Storage.Token
 			return k8sworker.New(k8sworker.Config{
 				Agent: k8sworker.AgentConfig{
 					Addr:        agentAddr,
+					WorkerToken: workerToken,
 					ID:          id,
 					ClusterName: cluster,
 				},
 				Master: k8sworker.MasterConfig{
-					URL:   masterURL,
-					Token: token,
+					URL:          masterURL,
+					WorkerToken:  workerToken,
+					StorageToken: storageToken,
 				},
 				K8s: k8sworker.K8sConfig{
 					Client:               k8sClient,
@@ -98,7 +101,7 @@ func newK8sWorkerCmd() *cobra.Command {
 
 	cmd.Flags().String("master", "", "master server URL (required)")
 	cmd.Flags().String("agent-addr", "", "piper master gRPC agent address, e.g. piper-server:9090 (required)")
-	cmd.Flags().String("token", "", "bearer token for master API")
+	cmd.Flags().String("worker-token", "", "worker token for master callbacks")
 	cmd.Flags().String("id", "", "worker ID (default: stable k8s-<cluster>)")
 	cmd.Flags().String("cluster", "", "cluster name reported to master (required)")
 	cmd.Flags().String("namespaces", "", "comma-separated namespaces this worker may manage")

@@ -58,9 +58,10 @@ type ExecSpec struct {
 	Namespace string
 
 	// Artifact store connection (passed through to piper agent exec).
-	MasterURL  string
-	Token      string
-	StorageURL string
+	MasterURL    string
+	WorkerToken  string
+	StorageToken string
+	StorageURL   string
 
 	// OutputDir is the output directory on the host filesystem.
 	// Baremetal uses it directly; Docker bind-mounts it into the container.

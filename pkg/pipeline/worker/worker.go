@@ -35,6 +35,7 @@ const (
 // and this worker's identity within the agent registry.
 type AgentConfig struct {
 	Addr        string // gRPC address of master agent server, e.g. "master:9090"
+	WorkerToken string // bearer token for gRPC authorization metadata
 	ID          string // stable worker identity
 	Label       string
 	Hostname    string
@@ -44,11 +45,12 @@ type AgentConfig struct {
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to every piper agent exec subprocess.
 type StoreConfig struct {
-	MasterURL   string
-	Token       string
-	StorageURL  string
-	OutputDir   string
-	RemoteStore bool // true when using a remote store (S3, HTTP); false for local file://
+	MasterURL    string
+	WorkerToken  string
+	StorageToken string
+	StorageURL   string
+	OutputDir    string
+	RemoteStore  bool // true when using a remote store (S3, HTTP); false for local file://
 	// Git source credentials forwarded as PIPER_GIT_USER / PIPER_GIT_TOKEN.
 	// Falls back to environment variables when empty.
 	GitUser  string
@@ -121,6 +123,7 @@ func New(cfg Config) (*Worker, error) {
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		AgentAddr:    cfg.Agent.Addr,
 		AgentID:      cfg.Agent.ID,
+		WorkerToken:  cfg.Agent.WorkerToken,
 		Kind:         iagent.KindBareMetal,
 		Hostname:     hostname,
 		Capabilities: []string{iagent.CapabilityPipeline},
@@ -240,6 +243,9 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // dispatch is called by the gRPC dispatcher when the master sends a pipeline.dispatch RPC.
 func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
+	if task.ProjectID == "" {
+		return fmt.Errorf("pipeline worker: project_id is required")
+	}
 	w.mu.Lock()
 	if w.inFlight >= w.cfg.Agent.Concurrency {
 		w.mu.Unlock()
@@ -250,12 +256,13 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	runtimeKey := pdriver.RuntimeKey(w.cfg.Agent.ID, task.RunID, task.StepName, task.Attempt)
 
 	spec := pdriver.ExecSpec{
-		RuntimeKey: runtimeKey,
-		OutputDir:  w.cfg.Store.OutputDir,
-		MasterURL:  w.cfg.Store.MasterURL,
-		Token:      w.cfg.Store.Token,
-		StorageURL: w.cfg.Store.StorageURL,
-		Env:        w.gitEnv(),
+		RuntimeKey:   runtimeKey,
+		OutputDir:    w.cfg.Store.OutputDir,
+		MasterURL:    w.cfg.Store.MasterURL,
+		WorkerToken:  w.cfg.Store.WorkerToken,
+		StorageToken: w.cfg.Store.StorageToken,
+		StorageURL:   w.cfg.Store.StorageURL,
+		Env:          w.gitEnv(),
 	}
 
 	// Image must be resolved here (in the worker layer) for container runtimes.

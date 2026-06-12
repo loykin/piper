@@ -1,5 +1,4 @@
 -- +goose Up
-ALTER TABLE services ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
+-- owner_id removed: project tenancy replaces per-row ownership.
 
 -- +goose Down
-ALTER TABLE services DROP COLUMN owner_id;

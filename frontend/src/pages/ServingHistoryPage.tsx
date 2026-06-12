@@ -2,18 +2,21 @@ import { useEffect, useState } from 'react'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
 import { listServingHistory, type ServiceHistory } from '@/features/serving/api'
+import { useProjectId } from '@/lib/projectContext'
 import { serviceHistoryColumns } from '@/features/serving/columns'
 
 export default function ServingHistoryPage() {
+  const projectId = useProjectId()
   const [history, setHistory] = useState<ServiceHistory[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    listServingHistory()
+    if (!projectId) return
+    listServingHistory(projectId)
       .then(setHistory)
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [projectId])
 
   return (
     <DataPage>

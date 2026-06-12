@@ -27,6 +27,7 @@ import (
 
 func main() {
 	p, err := piper.New(piper.Config{
+		Auth:      piper.AuthConfig{Trusted: true},
 		DBPath:    "./piper-embedded.db",
 		OutputDir: os.TempDir() + "/piper-embedded",
 	})

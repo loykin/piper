@@ -32,8 +32,12 @@ func New(repo Repository, driver Driver) *Manager {
 func (m *Manager) ArtifactTarget() artifact.Target { return m.driver.ArtifactTarget() }
 
 // Deploy starts a ModelService. Artifact resolution must happen before calling Deploy.
-func (m *Manager) Deploy(ctx context.Context, svc ModelService, art artifact.Resolved, yamlStr string) error {
+func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) error {
+	if projectID == "" {
+		return fmt.Errorf("serving: project ID is required")
+	}
 	name := svc.Metadata.Name
+	svc.Metadata.ProjectID = projectID
 
 	artifactLabel := ""
 	if svc.Spec.Model.FromArtifact != nil {
@@ -55,18 +59,22 @@ func (m *Manager) Deploy(ctx context.Context, svc ModelService, art artifact.Res
 		rec.Name = name
 	}
 	rec.RunID = art.RunID
+	rec.ProjectID = projectID
 	rec.YAML = yamlStr
 
 	if err := m.repo.Upsert(ctx, rec); err != nil {
 		return err
 	}
-	m.emit("service.deployed", map[string]any{"name": name, "artifact": artifactLabel})
+	m.emit(projectID, "service.deployed", map[string]any{"name": name, "artifact": artifactLabel})
 	return nil
 }
 
 // Stop terminates a running service.
-func (m *Manager) Stop(ctx context.Context, name string) error {
-	svc, err := m.repo.Get(ctx, name)
+func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
+	if projectID == "" {
+		return fmt.Errorf("serving: project ID is required")
+	}
+	svc, err := m.repo.Get(ctx, projectID, name)
 	if err != nil {
 		return fmt.Errorf("get service: %w", err)
 	}
@@ -77,11 +85,11 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 	if svc.Status == StatusStopped || svc.Status == StatusStopping {
 		return nil
 	}
-	if err := m.repo.SetStatus(ctx, name, StatusStopping); err != nil {
+	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopping); err != nil {
 		return fmt.Errorf("set service stopping: %w", err)
 	}
 	if err := m.driver.Stop(ctx, svc); err != nil {
-		if restoreErr := m.repo.SetStatus(ctx, name, svc.Status); restoreErr != nil {
+		if restoreErr := m.repo.SetStatus(ctx, projectID, name, svc.Status); restoreErr != nil {
 			return fmt.Errorf("stop service: %v; restore status: %w", err, restoreErr)
 		}
 		return fmt.Errorf("stop service: %w", err)
@@ -90,14 +98,20 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 }
 
 // Restart stops and re-deploys a service with the resolved artifact.
-func (m *Manager) Restart(ctx context.Context, svc ModelService, art artifact.Resolved, yamlStr string) error {
-	_ = m.Stop(ctx, svc.Metadata.Name)
-	return m.Deploy(ctx, svc, art, yamlStr)
+func (m *Manager) Restart(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) error {
+	if projectID == "" {
+		return fmt.Errorf("serving: project ID is required")
+	}
+	_ = m.Stop(ctx, projectID, svc.Metadata.Name)
+	return m.Deploy(ctx, projectID, svc, art, yamlStr)
 }
 
 // SetYAML stores the original YAML on the service record.
-func (m *Manager) SetYAML(ctx context.Context, name, yaml string) error {
-	svc, err := m.repo.Get(ctx, name)
+func (m *Manager) SetYAML(ctx context.Context, projectID, name, yaml string) error {
+	if projectID == "" {
+		return fmt.Errorf("serving: project ID is required")
+	}
+	svc, err := m.repo.Get(ctx, projectID, name)
 	if err != nil || svc == nil {
 		return fmt.Errorf("service %q not found", name)
 	}
@@ -106,8 +120,11 @@ func (m *Manager) SetYAML(ctx context.Context, name, yaml string) error {
 }
 
 // UpdateStatus applies backend-observed state from the owning worker.
-func (m *Manager) UpdateStatus(ctx context.Context, agentID, name, status, endpoint string) error {
-	svc, err := m.repo.Get(ctx, name)
+func (m *Manager) UpdateStatus(ctx context.Context, projectID, agentID, name, status, endpoint string) error {
+	if projectID == "" {
+		return fmt.Errorf("serving: project ID is required")
+	}
+	svc, err := m.repo.Get(ctx, projectID, name)
 	if err != nil || svc == nil {
 		return fmt.Errorf("service %q not found", name)
 	}
@@ -118,13 +135,13 @@ func (m *Manager) UpdateStatus(ctx context.Context, agentID, name, status, endpo
 	if status == "" {
 		status = previousStatus
 	}
-	if err := m.repo.SetStatusEndpoint(ctx, name, status, endpoint); err != nil {
+	if err := m.repo.SetStatusEndpoint(ctx, projectID, name, status, endpoint); err != nil {
 		return err
 	}
 	if status == previousStatus {
 		return nil
 	}
-	m.emit("service.status", map[string]any{"name": name, "status": status})
+	m.emit(projectID, "service.status", map[string]any{"name": name, "status": status})
 	return nil
 }
 
@@ -133,7 +150,7 @@ func (m *Manager) SyncAgent(ctx context.Context, agentID string) {
 	if !ok {
 		return
 	}
-	services, err := m.repo.List(ctx)
+	services, err := m.repo.ListByWorker(ctx, agentID)
 	if err != nil {
 		return
 	}
@@ -146,15 +163,15 @@ func (m *Manager) SyncAgent(ctx context.Context, agentID string) {
 	if len(active) == 0 {
 		return
 	}
-	_ = syncer.SyncStatus(ctx, active, func(name, status string) {
-		if err := m.UpdateStatus(ctx, agentID, name, status, ""); err != nil {
-			slog.Warn("serving sync apply failed", "agent", agentID, "name", name, "status", status, "err", err)
+	_ = syncer.SyncStatus(ctx, active, func(projectID, name, status string) {
+		if err := m.UpdateStatus(ctx, projectID, agentID, name, status, ""); err != nil {
+			slog.Warn("serving sync apply failed", "agent", agentID, "project", projectID, "name", name, "status", status, "err", err)
 		}
 	})
 }
 
-func (m *Manager) emit(eventType string, fields map[string]any) {
+func (m *Manager) emit(projectID, eventType string, fields map[string]any) {
 	if m.events != nil {
-		m.events.Publish(event.New(eventType, fields))
+		m.events.Publish(event.New(projectID, eventType, fields))
 	}
 }

@@ -237,7 +237,6 @@ step container (user image)  →  /piper-tools/piper agent exec --task=<encoded-
 ```yaml
 # .piper.yaml
 pipeline:
-  dispatch_mode: agent  # enable gRPC agent dispatch
 
 k8s:
   worker: true          # pipeline steps routed to k8s-worker
@@ -319,7 +318,7 @@ Workers register automatically over gRPC when they connect to the master's agent
 GET  /api/agents                     list connected agents (workers)
 ```
 
-The legacy HTTP polling endpoints (`/api/workers`, `/api/tasks/next`) are still available for backward compatibility but are not used by the current gRPC-based workers.
+Pipeline workers connect to the master through the gRPC agent API. HTTP worker polling endpoints are not supported.
 
 ## Model Serving
 
@@ -656,7 +655,6 @@ server:
     key_file: ""
 
 pipeline:
-  dispatch_mode: agent  # "agent" (gRPC push) or "polling" (legacy HTTP pull)
 
 run:
   output_dir: ./piper-outputs

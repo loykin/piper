@@ -11,7 +11,7 @@ func TestHub_SubscribeReceivesPublished(t *testing.T) {
 	ch, cancel := h.Subscribe()
 	defer cancel()
 
-	e := New("run.started", map[string]any{"run_id": "r1"})
+	e := New("proj-1", "run.started", map[string]any{"run_id": "r1"})
 	h.Publish(e)
 
 	select {
@@ -32,7 +32,7 @@ func TestHub_CancelStopsDelivery(t *testing.T) {
 	ch, cancel := h.Subscribe()
 	cancel()
 
-	h.Publish(New("run.done", nil))
+	h.Publish(NewInfra("run.done", nil))
 
 	select {
 	case _, ok := <-ch:
@@ -55,7 +55,7 @@ func TestHub_MultipleSubscribers(t *testing.T) {
 		defer cancels[i]()
 	}
 
-	h.Publish(New("test.event", nil))
+	h.Publish(NewInfra("test.event", nil))
 
 	for i, ch := range chans {
 		select {
@@ -75,7 +75,7 @@ func TestHub_CancelOneDoesNotAffectOthers(t *testing.T) {
 
 	cancel1()
 
-	h.Publish(New("x", nil))
+	h.Publish(NewInfra("x", nil))
 
 	select {
 	case <-ch2:
@@ -96,7 +96,7 @@ func TestHub_ConcurrentPublish(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			h.Publish(New("concurrent", nil))
+			h.Publish(NewInfra("concurrent", nil))
 		}()
 	}
 	wg.Wait()
@@ -104,7 +104,7 @@ func TestHub_ConcurrentPublish(t *testing.T) {
 
 func TestNew_PopulatesFields(t *testing.T) {
 	before := time.Now().UTC()
-	e := New("step.done", map[string]any{"step": "train"})
+	e := New("proj-1", "step.done", map[string]any{"step": "train"})
 	after := time.Now().UTC()
 
 	if e.ID == "" {
@@ -122,7 +122,7 @@ func TestNew_PopulatesFields(t *testing.T) {
 }
 
 func TestEncode_ValidJSON(t *testing.T) {
-	e := New("test", nil)
+	e := New("proj-1", "test", nil)
 	data := Encode(e)
 	if len(data) == 0 {
 		t.Fatal("Encode returned empty bytes")

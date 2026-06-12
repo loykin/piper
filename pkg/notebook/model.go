@@ -14,6 +14,7 @@ const (
 // NotebookServer represents a running (or stopped) Jupyter notebook server.
 // Each server is backed by a NotebookVolume that persists independently.
 type NotebookServer struct {
+	ProjectID string    `json:"project_id" db:"project_id"`
 	Name      string    `json:"name"       db:"name"`
 	Status    string    `json:"status"     db:"status"`
 	Env       string    `json:"env"        db:"env"`

@@ -19,5 +19,13 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // setState-in-effect is intentional for reset patterns (usePolling, log stream, etc.)
+      'react-hooks/set-state-in-effect': 'warn',
+      // Context files export both Provider and hook — HMR trade-off accepted.
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      // Underscore-prefixed params are intentionally unused (placeholder functions, etc.)
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
   },
 ])

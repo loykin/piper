@@ -1,4 +1,5 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useProjectId } from '@/lib/projectContext'
 import { Power, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataPage } from '@loykin/designkit'
@@ -53,6 +54,7 @@ const runColumns: DataGridColumnDef<Run>[] = [
 export default function ScheduleDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const { data: schedule, isLoading: scheduleLoading } = useSchedule(id!)
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id!)
   const { mutate: deleteSchedule } = useDeleteSchedule()
@@ -86,7 +88,7 @@ export default function ScheduleDetailPage() {
     <DataPage>
       <DataPage.Header>
         <DataPage.TitleBlock
-          breadcrumb={<Link to="/schedules" className="hover:text-foreground transition-colors">← Schedules</Link>}
+          breadcrumb={<Link to={`/projects/${projectId}/schedules`} className="hover:text-foreground transition-colors">← Schedules</Link>}
           title={schedule.name}
           description={`${TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type} schedule`}
         />
@@ -100,7 +102,7 @@ export default function ScheduleDetailPage() {
           <IconButton icon={<Trash2 />} label="Delete"
             onClick={() => {
               if (!confirm(`Delete schedule "${schedule.name}"?`)) return
-              deleteSchedule(schedule.id, { onSuccess: () => navigate('/schedules') })
+              deleteSchedule(schedule.id, { onSuccess: () => navigate(`/projects/${projectId}/schedules`) })
             }}
             className="text-destructive hover:bg-destructive/10" />
         </DataPage.Actions>

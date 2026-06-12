@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,12 +31,12 @@ import (
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/run"
 	worker "github.com/piper/piper/pkg/pipeline/worker"
+	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/serving"
 	servingdispatch "github.com/piper/piper/pkg/serving/dispatch"
 	"github.com/piper/piper/pkg/storage"
 
 	storemod "github.com/piper/piper/internal/store"
-	iworker "github.com/piper/piper/internal/worker"
 )
 
 // servingBundle groups the serving manager and proxy together.
@@ -58,7 +57,6 @@ type Piper struct {
 	logs            logstore.LogStore
 	metrics         logstore.MetricStore
 	queue           *queue.Queue
-	registry        *iworker.Registry
 	serving         servingBundle
 	notebookManager *notebook.Manager
 	agentRegistry   *iagent.Registry
@@ -114,6 +112,30 @@ func New(cfg Config) (*Piper, error) {
 	repos, err := openStore(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
+	}
+	if err := ensureDefaultProject(context.Background(), repos.Project); err != nil {
+		_ = repos.Close()
+		return nil, fmt.Errorf("ensure default project: %w", err)
+	}
+	if cfg.Auth.Factory != nil {
+		authConfig, err := cfg.Auth.Factory(AuthDependencies{
+			DB:            repos.DB(),
+			Driver:        repos.Driver(),
+			SecureCookies: cfg.Server.TLS.Enabled,
+		})
+		if err != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("create auth capabilities: %w", err)
+		}
+		if authConfig.Factory != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("create auth capabilities: nested factory is not allowed")
+		}
+		cfg.Auth = authConfig
+		if err := cfg.Validate(); err != nil {
+			_ = repos.Close()
+			return nil, err
+		}
 	}
 	modelDir := cfg.Serving.ModelDir
 	if modelDir == "" {
@@ -188,11 +210,7 @@ func New(cfg Config) (*Piper, error) {
 	}
 	storageURL := resolveStorageURL(cfg)
 	if storageURL != "" {
-		token := cfg.Storage.Token
-		if token == "" {
-			token = cfg.Server.Token
-		}
-		if st, err := storage.Open(storageURL, token); err != nil {
+		if st, err := storage.Open(storageURL, cfg.Storage.Token); err != nil {
 			slog.Warn("artifact store unavailable", "url", storageURL, "err", err)
 			p.storageErr = err
 		} else {
@@ -205,11 +223,8 @@ func New(cfg Config) (*Piper, error) {
 		outputDir:  cfg.OutputDir,
 		storageURL: p.storageURL,
 	}
-	// AgentBackend routes pipeline tasks to gRPC-connected workers (K8s or baremetal).
-	// Activated when K8s.Worker is true or Pipeline.DispatchMode is "agent".
-	if cfg.K8s.Worker || cfg.Pipeline.DispatchMode == "agent" {
-		p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer))
-	}
+	// Pipeline tasks are delivered only through gRPC-connected agents.
+	p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer))
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)
@@ -227,6 +242,21 @@ func New(cfg Config) (*Piper, error) {
 	return p, nil
 }
 
+func ensureDefaultProject(ctx context.Context, repo project.Repository) error {
+	existing, err := repo.Get(ctx, project.DefaultID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	return repo.Create(ctx, &project.Project{
+		ID:          project.DefaultID,
+		Name:        "Default",
+		Description: "Default project",
+	})
+}
+
 // handleRunSuccess is called (in a goroutine) when a queued run completes successfully.
 // It triggers on_success.deploy if configured in the pipeline spec.
 func (p *Piper) handleRunSuccess(ctx context.Context, runID string, pl *pipeline.Pipeline) {
@@ -234,7 +264,8 @@ func (p *Piper) handleRunSuccess(ctx context.Context, runID string, pl *pipeline
 		return
 	}
 	trigger := pl.Spec.OnSuccess.Deploy
-	svc, err := p.repos.Serving.Get(ctx, trigger.Service)
+	projectContext, _ := project.FromContext(ctx)
+	svc, err := p.repos.Serving.Get(ctx, projectContext.ID, trigger.Service)
 	if err != nil || svc == nil {
 		return
 	}
@@ -250,23 +281,20 @@ func (p *Piper) handleRunSuccess(ctx context.Context, runID string, pl *pipeline
 		ms.Spec.Model.FromArtifact.Run = runID
 	}
 	updatedYAML, _ := yaml.Marshal(ms)
-	if _, err := p.DeployService(ctx, updatedYAML); err != nil {
+	if _, err := p.DeployService(ctx, projectContext.ID, updatedYAML); err != nil {
 		slog.Warn("auto-deploy on run success failed", "run_id", runID, "service", trigger.Service, "err", err)
 	}
 }
 
-// runCleanup periodically removes expired workers and stuck queue entries.
+// runCleanup periodically reconciles workers and removes stuck queue entries.
 func (p *Piper) runCleanup(ctx context.Context) {
-	ticker := time.NewTicker(iworker.WorkerTTL / 2)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if p.registry != nil {
-				p.registry.Cleanup()
-			}
 			p.reconcileBackend(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.cleanupRetention(ctx)
@@ -288,8 +316,24 @@ func (p *Piper) reconcileBackend(ctx context.Context) {
 	})
 }
 
+func (p *Piper) listRunsAcrossProjects(ctx context.Context, filter run.RunFilter) ([]*run.Run, error) {
+	projects, err := p.repos.Project.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var runs []*run.Run
+	for _, projectRecord := range projects {
+		projectRuns, err := p.repos.Run.List(ctx, projectRecord.ID, filter)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, projectRuns...)
+	}
+	return runs, nil
+}
+
 func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
-	runs, err := p.repos.Run.List(ctx, run.RunFilter{Status: run.StatusRunning})
+	runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{Status: run.StatusRunning})
 	if err != nil {
 		slog.Warn("recover running runs failed", "err", err)
 		return
@@ -298,7 +342,7 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 	for _, r := range runs {
 		if r.PipelineYAML == "" {
 			// No YAML — can't reconstruct DAG, mark failed.
-			if err := p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now); err != nil {
+			if err := p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now); err != nil {
 				slog.Warn("recover run failed", "run_id", r.ID, "err", err)
 			}
 			continue
@@ -306,16 +350,16 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 		pl, err := p.Parse([]byte(r.PipelineYAML))
 		if err != nil {
 			slog.Warn("recover: parse pipeline failed", "run_id", r.ID, "err", err)
-			_ = p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now)
+			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
 			continue
 		}
 		dag, err := pipeline.BuildDAG(pl)
 		if err != nil {
 			slog.Warn("recover: build dag failed", "run_id", r.ID, "err", err)
-			_ = p.repos.Run.UpdateStatus(ctx, r.ID, run.StatusFailed, &now)
+			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
 			continue
 		}
-		steps, _ := p.repos.Step.List(ctx, r.ID)
+		steps, _ := p.repos.Step.List(ctx, r.ProjectID, r.ID)
 		var recovered []queue.RecoveredStep
 		for _, s := range steps {
 			switch s.Status {
@@ -334,7 +378,7 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
 		}
 		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
-		p.queue.Recover(ctx, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered)
+		p.queue.Recover(ctx, r.ProjectID, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered)
 	}
 }
 
@@ -344,7 +388,7 @@ func (p *Piper) cleanupRetention(ctx context.Context) {
 	if runTTL <= 0 && artifactTTL <= 0 {
 		return
 	}
-	runs, err := p.repos.Run.List(ctx, run.RunFilter{})
+	runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{})
 	if err != nil {
 		slog.Warn("retention list runs failed", "err", err)
 		return
@@ -355,7 +399,7 @@ func (p *Piper) cleanupRetention(ctx context.Context) {
 			continue
 		}
 		if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
-			if err := p.deleteRunWithArtifacts(ctx, r.ID); err != nil {
+			if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
 				slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
 			}
 			continue
@@ -409,8 +453,9 @@ type BuiltinVars = proto.BuiltinVars
 
 // RunOptions holds optional parameters for local pipeline execution.
 type RunOptions struct {
-	Vars   BuiltinVars    // system-injected builtin variables (e.g. ScheduledAt)
-	Params map[string]any // run-level params; override step-level YAML params at runtime
+	ProjectID string
+	Vars      BuiltinVars    // system-injected builtin variables (e.g. ScheduledAt)
+	Params    map[string]any // run-level params; override step-level YAML params at runtime
 }
 
 // RunFile runs a pipeline YAML file through the full dispatch stack
@@ -460,8 +505,6 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
 	masterURL := "http://" + httpAddr
 
-	p.SetDispatchMode("agent")
-
 	events, unsub := p.events.Subscribe()
 	defer unsub()
 
@@ -489,16 +532,20 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	}
 	defer func() { _ = os.RemoveAll(metaDir) }()
 
+	storageToken := p.cfg.Storage.Token
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
 			Addr:        agentAddr,
+			WorkerToken: p.cfg.Server.WorkerToken,
 			ID:          worker.NewID("run"),
 			Concurrency: concurrency,
 		},
 		Store: worker.StoreConfig{
-			MasterURL:  masterURL,
-			OutputDir:  outputDir,
-			StorageURL: p.storageURL,
+			MasterURL:    masterURL,
+			WorkerToken:  p.cfg.Server.WorkerToken,
+			StorageToken: storageToken,
+			OutputDir:    outputDir,
+			StorageURL:   p.storageURL,
 		},
 		Baremetal: worker.BaremetalConfig{
 			MetaDir: metaDir,
@@ -513,17 +560,29 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 		return nil, fmt.Errorf("run: worker did not register: %w", err)
 	}
 
-	runID, err := p.startRunFromAPI(ctx, string(yamlBytes), "", opts.Params, opts.Vars, "")
+	projectID := opts.ProjectID
+	if projectID == "" {
+		projectID = "default"
+	}
+	if existing, err := p.repos.Project.Get(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("run: get project: %w", err)
+	} else if existing == nil {
+		if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+			return nil, fmt.Errorf("run: create project: %w", err)
+		}
+	}
+	projectCtx := project.WithContext(ctx, project.Context{ID: projectID})
+	runID, err := p.startRunFromAPI(projectCtx, string(yamlBytes), opts.Params, opts.Vars, "")
 	if err != nil {
 		return nil, err
 	}
 
-	status, err := waitForRunCompleted(ctx, events, runID)
+	_, err = waitForRunCompleted(ctx, events, runID)
 	if err != nil {
 		return nil, fmt.Errorf("run: wait for completion: %w", err)
 	}
 
-	return p.buildRunResult(ctx, runID, status)
+	return p.buildRunResult(ctx, projectID, runID)
 }
 
 // randomFreePort asks the OS for an available TCP port.
@@ -618,12 +677,12 @@ func waitForRunCompleted(ctx context.Context, events <-chan event.Event, runID s
 }
 
 // buildRunResult reads the run and step records from the DB and constructs a RunResult.
-func (p *Piper) buildRunResult(ctx context.Context, runID, _ string) (*pipeline.RunResult, error) {
-	r, err := p.repos.Run.Get(ctx, runID)
+func (p *Piper) buildRunResult(ctx context.Context, projectID, runID string) (*pipeline.RunResult, error) {
+	r, err := p.repos.Run.Get(ctx, projectID, runID)
 	if err != nil {
 		return nil, fmt.Errorf("get run: %w", err)
 	}
-	steps, err := p.repos.Step.List(ctx, runID)
+	steps, err := p.repos.Step.List(ctx, projectID, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list steps: %w", err)
 	}
@@ -656,7 +715,7 @@ func (p *Piper) buildRunResult(ctx context.Context, runID, _ string) (*pipeline.
 
 // StartRunOptions holds parameters for enqueuing a new distributed run.
 type StartRunOptions struct {
-	OwnerID    string
+	ProjectID  string
 	ScheduleID string
 	Experiment string
 	Params     map[string]any
@@ -674,8 +733,8 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 
 	r := &run.Run{
 		ID:           runID,
+		ProjectID:    opts.ProjectID,
 		ScheduleID:   opts.ScheduleID,
-		OwnerID:      opts.OwnerID,
 		Experiment:   opts.Experiment,
 		PipelineName: pl.Metadata.Name,
 		Status:       run.StatusRunning,
@@ -690,15 +749,16 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 
 	for _, s := range pl.Spec.Steps {
 		if err := p.repos.Step.Upsert(ctx, &run.Step{
-			RunID:    runID,
-			StepName: s.Name,
-			Status:   "pending",
+			ProjectID: opts.ProjectID,
+			RunID:     runID,
+			StepName:  s.Name,
+			Status:    "pending",
 		}); err != nil {
 			slog.Warn("init step failed", "run_id", runID, "step", s.Name, "err", err)
 		}
 	}
 
-	p.queue.Add(ctx, pl, dag, runID, ".", outputDir, opts.Vars, opts.Params)
+	p.queue.Add(ctx, opts.ProjectID, pl, dag, runID, ".", outputDir, opts.Vars, opts.Params)
 	slog.Info("event", "type", "run.started", "run_id", runID, "pipeline", pl.Metadata.Name)
 
 	if p.cfg.Hooks.OnRunStart != nil {
@@ -710,7 +770,7 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 
 // startSweep submits multiple runs from one YAML with different params.
 // On partial failure it cancels already-submitted runs (best-effort).
-func (p *Piper) startSweep(ctx context.Context, req run.SweepRequest, ownerID string) (run.SweepResponse, error) {
+func (p *Piper) startSweep(ctx context.Context, projectID string, req run.SweepRequest) (run.SweepResponse, error) {
 	pl, err := pipeline.Parse([]byte(req.YAML))
 	if err != nil {
 		return run.SweepResponse{}, fmt.Errorf("parse pipeline: %w", err)
@@ -723,7 +783,7 @@ func (p *Piper) startSweep(ctx context.Context, req run.SweepRequest, ownerID st
 	runIDs := make([]string, 0, len(req.Runs))
 	for i, trial := range req.Runs {
 		runID, err := p.startRun(ctx, pl, dag, StartRunOptions{
-			OwnerID:    ownerID,
+			ProjectID:  projectID,
 			Experiment: req.Experiment,
 			Params:     trial.Params,
 			YAML:       req.YAML,
@@ -731,7 +791,7 @@ func (p *Piper) startSweep(ctx context.Context, req run.SweepRequest, ownerID st
 		if err != nil {
 			now := time.Now().UTC()
 			for _, id := range runIDs {
-				_ = p.repos.Run.UpdateStatus(ctx, id, run.StatusCanceled, &now)
+				_ = p.repos.Run.UpdateStatus(ctx, projectID, id, run.StatusCanceled, &now)
 			}
 			return run.SweepResponse{}, fmt.Errorf("trial %d: %w", i, err)
 		}
@@ -758,195 +818,20 @@ func (p *Piper) sourceConfig() srcfetch.Config {
 	}
 }
 
-// SetDispatchMode switches to agent dispatch mode at runtime.
-// Called by --local server to activate gRPC dispatch for embedded workers.
-func (p *Piper) SetDispatchMode(mode string) {
-	if mode == "agent" {
-		p.SetBackend(pipelinedispatch.NewAgentBackend(p.workloadRouter, p.grpcAgentServer))
-	}
-}
-
 // SetBackend registers an external execution environment such as a K8s Job launcher.
 // When set, Dispatch is called immediately whenever a task becomes ready.
-// Setting nil reverts to worker polling mode.
+// Setting nil disables task dispatch until another backend is configured.
 func (p *Piper) SetBackend(b pipelinedispatch.ExecutionBackend) {
 	p.backend = b
 	p.queue.SetBackend(b)
-	if b != nil {
-		p.registry = nil
-	}
-}
-
-func (p *Piper) workerRegistry() *iworker.Registry {
-	if p.registry == nil {
-		p.registry = iworker.NewRegistry(p.repos.Worker)
-	}
-	return p.registry
 }
 
 func (p *Piper) Config() Config {
 	return p.cfg
 }
 
-// DeployService parses a ModelService YAML and deploys it.
-// It resolves the artifact via the central resolver and starts the runtime process or K8s Deployment.
-func (p *Piper) DeployService(ctx context.Context, yamlBytes []byte) (*serving.Service, error) {
-	return p.deployService(ctx, yamlBytes, "")
-}
-
-func (p *Piper) deployService(ctx context.Context, yamlBytes []byte, ownerID string) (*serving.Service, error) {
-	var svc serving.ModelService
-	if err := yaml.Unmarshal(yamlBytes, &svc); err != nil {
-		return nil, fmt.Errorf("parse ModelService YAML: %w", err)
-	}
-	if svc.Metadata.Name == "" {
-		return nil, fmt.Errorf("ModelService metadata.name is required")
-	}
-
-	target := p.serving.manager.ArtifactTarget()
-
-	resolved, artifactLabel, err := p.resolveServiceModel(ctx, svc, target)
-	if err != nil {
-		return nil, err
-	}
-
-	// Stop existing instance so the port is free. If Deploy fails we mark the
-	// service "failed" so operators can see it is down rather than showing a
-	// stale "stopped" status.
-	_ = p.serving.manager.Stop(ctx, svc.Metadata.Name)
-	if err := p.serving.manager.Deploy(ctx, svc, resolved, string(yamlBytes)); err != nil {
-		_ = p.repos.Serving.SetStatus(ctx, svc.Metadata.Name, serving.StatusFailed)
-		return nil, fmt.Errorf("deploy service: %w", err)
-	}
-
-	// Persist YAML and run_id
-	rec, err := p.repos.Serving.Get(ctx, svc.Metadata.Name)
-	if err != nil || rec == nil {
-		return nil, fmt.Errorf("get service after deploy: %w", err)
-	}
-	rec.YAML = string(yamlBytes)
-	rec.RunID = resolved.RunID
-	rec.OwnerID = ownerID
-	if artifactLabel != "" {
-		rec.Artifact = artifactLabel
-	}
-	if err := p.repos.Serving.Update(ctx, rec); err != nil {
-		return nil, fmt.Errorf("update service record: %w", err)
-	}
-	return rec, nil
-}
-
-func (p *Piper) resolveServiceModel(ctx context.Context, svc serving.ModelService, target artifact.Target) (artifact.Resolved, string, error) {
-	ref := svc.Spec.Model.FromArtifact
-	if ref != nil {
-		resolved, err := p.resolver.Resolve(ctx, ref.Pipeline, ref.Step, ref.Artifact, ref.Run, target)
-		if err != nil {
-			return artifact.Resolved{}, "", fmt.Errorf("resolve artifact: %w", err)
-		}
-		return resolved, ref.Step + "/" + ref.Artifact, nil
-	}
-	uri := strings.TrimSpace(svc.Spec.Model.FromURI)
-	if uri == "" {
-		return artifact.Resolved{}, "", fmt.Errorf("spec.model.from_artifact or spec.model.from_uri is required")
-	}
-	resolved, err := p.resolveModelURI(ctx, svc.Metadata.Name, uri, target)
-	if err != nil {
-		return artifact.Resolved{}, "", err
-	}
-	return resolved, uri, nil
-}
-
-func (p *Piper) resolveModelURI(ctx context.Context, serviceName, uri string, target artifact.Target) (artifact.Resolved, error) {
-	if strings.HasPrefix(uri, "s3://") {
-		if target == artifact.TargetS3 {
-			return artifact.Resolved{S3URI: uri}, nil
-		}
-		if p.store == nil {
-			return artifact.Resolved{}, fmt.Errorf("local serving from s3:// URI requires a storage backend (configure storage.url or s3)")
-		}
-		dir := p.modelDir(serviceName)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return artifact.Resolved{}, err
-		}
-		// Strip s3://bucket/ prefix to get the key prefix, then download.
-		without := strings.TrimPrefix(uri, "s3://")
-		slash := strings.IndexByte(without, '/')
-		if slash < 0 {
-			return artifact.Resolved{}, fmt.Errorf("invalid s3 URI %q: missing key", uri)
-		}
-		prefix := without[slash+1:]
-		if err := storage.DownloadDir(ctx, p.store, prefix, dir); err != nil {
-			return artifact.Resolved{}, fmt.Errorf("download s3 model: %w", err)
-		}
-		return artifact.Resolved{LocalPath: dir}, nil
-	}
-	if strings.HasPrefix(uri, "file://") {
-		return artifact.Resolved{LocalPath: strings.TrimPrefix(uri, "file://")}, nil
-	}
-	if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
-		if target == artifact.TargetS3 {
-			return artifact.Resolved{}, fmt.Errorf("k8s serving from http(s) URI requires an s3:// URI")
-		}
-		dir := filepath.Join(p.cfg.Serving.ModelDir, serviceName)
-		if p.cfg.Serving.ModelDir == "" {
-			dir = filepath.Join(p.cfg.OutputDir, "models", serviceName)
-		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return artifact.Resolved{}, err
-		}
-		dest := filepath.Join(dir, filepath.Base(strings.Split(uri, "?")[0]))
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
-		if err != nil {
-			return artifact.Resolved{}, err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return artifact.Resolved{}, err
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return artifact.Resolved{}, fmt.Errorf("download model URI: status %d", resp.StatusCode)
-		}
-		out, err := os.Create(dest)
-		if err != nil {
-			return artifact.Resolved{}, err
-		}
-		defer func() { _ = out.Close() }()
-		if _, err := io.Copy(out, resp.Body); err != nil {
-			return artifact.Resolved{}, err
-		}
-		return artifact.Resolved{LocalPath: dir}, nil
-	}
-	return artifact.Resolved{LocalPath: uri}, nil
-}
-
-// StopService stops the named service.
-func (p *Piper) StopService(ctx context.Context, name string) error {
-	return p.serving.manager.Stop(ctx, name)
-}
-
-// RestartService re-deploys the named service using its stored YAML.
-func (p *Piper) RestartService(ctx context.Context, name string) error {
-	rec, err := p.repos.Serving.Get(ctx, name)
-	if err != nil || rec == nil {
-		return fmt.Errorf("service %q not found", name)
-	}
-	if rec.YAML == "" {
-		return fmt.Errorf("service %q has no stored YAML; cannot restart", name)
-	}
-	_, err = p.DeployService(ctx, []byte(rec.YAML))
-	return err
-}
-
-// ListServices returns all registered services.
-func (p *Piper) ListServices(ctx context.Context) ([]*serving.Service, error) {
-	return p.repos.Serving.List(ctx)
-}
-
-// GetService returns a single service by name.
-func (p *Piper) GetService(ctx context.Context, name string) (*serving.Service, error) {
-	return p.repos.Serving.Get(ctx, name)
-}
+// Repos returns the underlying store.Repos, useful for admin CLI commands.
+func (p *Piper) Repos() *storemod.Repos { return p.repos }
 
 // piperArtifactResolver implements artifact.Resolver for the Piper instance.
 type piperArtifactResolver struct {
@@ -958,7 +843,8 @@ type piperArtifactResolver struct {
 func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, artName, runRef string, target artifact.Target) (artifact.Resolved, error) {
 	runID := runRef
 	if runID == "latest" || runID == "" {
-		latest, err := r.runRepo.GetLatestSuccessful(ctx, pipeline)
+		projectContext, _ := project.FromContext(ctx)
+		latest, err := r.runRepo.GetLatestSuccessful(ctx, projectContext.ID, pipeline)
 		if err != nil {
 			return artifact.Resolved{}, fmt.Errorf("lookup latest run for pipeline %q: %w", pipeline, err)
 		}

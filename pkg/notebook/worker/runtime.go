@@ -27,8 +27,10 @@ type Runtime interface {
 }
 
 type recoveredRuntime struct {
-	Name string
-	Port int
+	ProjectID   string
+	Name        string
+	RuntimeName string
+	Port        int
 }
 
 // recoverableRuntime is implemented only by runtimes whose external engine can
@@ -37,7 +39,7 @@ type recoverableRuntime interface {
 	Recover(
 		ctx context.Context,
 		onRecovered func(recoveredRuntime) func(status string),
-		onTerminal func(name, status string),
+		onTerminal func(recoveredRuntime, string),
 	) error
 }
 
@@ -46,13 +48,15 @@ type targetedRecoveryRuntime interface {
 }
 
 type RuntimeStartRequest struct {
-	Name    string
-	Spec    notebook.Notebook
-	WorkDir string
-	Port    int
-	Token   string
-	BaseURL string
-	OnExit  func(status string)
+	Name         string
+	ProjectID    string
+	NotebookName string
+	Spec         notebook.Notebook
+	WorkDir      string
+	Port         int
+	Token        string
+	BaseURL      string
+	OnExit       func(status string)
 }
 
 type StartedNotebook struct {

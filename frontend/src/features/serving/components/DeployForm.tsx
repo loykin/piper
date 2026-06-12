@@ -10,6 +10,7 @@ import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useRuns } from '@/features/runs/hooks'
 import { listArtifacts, type StepArtifacts } from '@/features/runs/api'
 import { useDeployService, useServingWorkers } from '../hooks'
+import { useProjectId } from '@/lib/projectContext'
 import { buildYAML, DEFAULT_FORM, RUNTIME_TEMPLATES, type FormState } from '../editor'
 
 interface DeployFormProps {
@@ -18,6 +19,7 @@ interface DeployFormProps {
 }
 
 export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
+  const projectId = useProjectId()
   const { data: allRuns = [] } = useRuns({ status: 'success' })
   const { data: servingWorkers = [] } = useServingWorkers()
   const { mutateAsync: deploy, isPending: deploying } = useDeployService()
@@ -35,7 +37,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
     if (!form.pipeline) { setArtifacts([]); return }
     const runId = form.run === 'latest' ? pipelineRuns[0]?.id : form.run
     if (!runId) { setArtifacts([]); return }
-    listArtifacts(runId).then(setArtifacts).catch(() => setArtifacts([]))
+    listArtifacts(projectId, runId).then(setArtifacts).catch(() => setArtifacts([]))
   }, [form.pipeline, form.run, pipelineRuns[0]?.id])
 
   const steps = artifacts.map(sa => sa.step)

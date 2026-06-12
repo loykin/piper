@@ -4,8 +4,6 @@ package queue
 // Task ID: "{runID}:{stepName}" (colon separator; step names must not contain a colon).
 //
 // When an ExecutionBackend is configured, Dispatch is called immediately when a task becomes ready.
-// (Active dispatch mode, e.g. K8s Jobs)
-// When backend is nil, workers pull tasks by polling /api/tasks/next.
 
 import (
 	"context"
@@ -22,6 +20,7 @@ import (
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/piper/piper/pkg/project"
 )
 
 type taskStatus string
@@ -51,11 +50,12 @@ type taskEntry struct {
 }
 
 type runEntry struct {
-	runID   string
-	pl      *pipeline.Pipeline
-	dag     *pipeline.DAG
-	tasks   map[string]*taskEntry // stepName → entry
-	addedAt time.Time
+	projectID string
+	runID     string
+	pl        *pipeline.Pipeline
+	dag       *pipeline.DAG
+	tasks     map[string]*taskEntry // stepName → entry
+	addedAt   time.Time
 }
 
 // Queue is the DAG-aware task queue for distributed worker execution.
@@ -64,7 +64,7 @@ type Queue struct {
 	runs         map[string]*runEntry // runID → entry
 	runRepo      run.Repository
 	stepRepo     run.StepRepository
-	backend      pipelinedispatch.ExecutionBackend // nil means polling mode
+	backend      pipelinedispatch.ExecutionBackend // nil means dispatch is disabled
 	serverCtx    context.Context                   // cancelled on server shutdown; used for backend dispatch
 	maxAttempts  int                               // total attempts, including the first try
 	retryDelay   time.Duration
@@ -126,7 +126,7 @@ func SplitTaskID(id string) (runID, stepName string, err error) {
 }
 
 // Add registers a pipeline in the queue and immediately marks steps with no dependencies as ready.
-func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any) {
+func (q *Queue) Add(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -134,11 +134,12 @@ func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DA
 	pipelineJSON, _ := json.Marshal(pl)
 
 	r := &runEntry{
-		runID:   runID,
-		pl:      pl,
-		dag:     dag,
-		tasks:   make(map[string]*taskEntry),
-		addedAt: time.Now(),
+		projectID: projectID,
+		runID:     runID,
+		pl:        pl,
+		dag:       dag,
+		tasks:     make(map[string]*taskEntry),
+		addedAt:   time.Now(),
 	}
 
 	for i := range pl.Spec.Steps {
@@ -149,6 +150,7 @@ func (q *Queue) Add(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DA
 			continue
 		}
 		task := &proto.Task{
+			ProjectID: projectID,
 			ID:        MakeTaskID(runID, s.Name),
 			RunID:     runID,
 			StepName:  s.Name,
@@ -187,7 +189,7 @@ type RecoveredStep struct {
 
 // Recover re-adds an interrupted run from a previous server session.
 // recovered lists every step whose state was persisted; absent steps are treated as pending.
-func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep) {
+func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -199,17 +201,19 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 
 	pipelineJSON, _ := json.Marshal(pl)
 	r := &runEntry{
-		runID:   runID,
-		pl:      pl,
-		dag:     dag,
-		tasks:   make(map[string]*taskEntry),
-		addedAt: time.Now(),
+		projectID: projectID,
+		runID:     runID,
+		pl:        pl,
+		dag:       dag,
+		tasks:     make(map[string]*taskEntry),
+		addedAt:   time.Now(),
 	}
 
 	for i := range pl.Spec.Steps {
 		s := pl.Spec.Steps[i]
 		stepJSON, _ := json.Marshal(&s)
 		task := &proto.Task{
+			ProjectID: projectID,
 			ID:        MakeTaskID(runID, s.Name),
 			RunID:     runID,
 			StepName:  s.Name,
@@ -256,45 +260,13 @@ func (q *Queue) Recover(ctx context.Context, pl *pipeline.Pipeline, dag *pipelin
 			}
 		}
 		finishedAt := time.Now()
-		_ = q.runRepo.UpdateStatus(ctx, runID, runStatus, &finishedAt)
+		_ = q.runRepo.UpdateStatus(ctx, projectID, runID, runStatus, &finishedAt)
 		return
 	}
 
 	q.promoteReady(ctx, r)
 	q.runs[runID] = r
 	slog.Info("run recovered into queue", "run_id", runID, "recovered_steps", len(recovered))
-}
-
-// Next transitions a ready task matching the given label to running and returns it. Returns nil if none available.
-func (q *Queue) Next(label string) *proto.Task {
-	return q.NextForWorker("", label)
-}
-
-// NextForWorker transitions a ready task matching the worker and label to running.
-func (q *Queue) NextForWorker(workerID, label string) *proto.Task {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	for _, r := range q.runs {
-		for _, entry := range r.tasks {
-			if entry.status != taskReady {
-				continue
-			}
-			if entry.task.WorkerID != "" && entry.task.WorkerID != workerID {
-				continue
-			}
-			if entry.task.Label != "" && entry.task.Label != label {
-				continue
-			}
-			entry.assignedWorkerID = workerID
-			q.startTaskLocked(context.Background(), r.runID, entry)
-			slog.Info("task dispatched", "task_id", entry.task.ID, "label", label)
-			task := *entry.task
-			task.WorkerID = workerID
-			return &task
-		}
-	}
-	return nil
 }
 
 // Complete records the task result and processes downstream steps.
@@ -311,10 +283,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	if !ok {
 		// Run was removed from the in-memory queue (completed, failed, or canceled).
 		// Treat any late result as idempotent rather than an error.
-		if rec, getErr := q.runRepo.Get(ctx, runID); getErr == nil && rec != nil {
-			return nil
-		}
-		return fmt.Errorf("run %s not found in queue", runID)
+		return nil
 	}
 	entry, ok := r.tasks[stepName]
 	if !ok {
@@ -335,7 +304,10 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	if result.WorkerID != "" && ownerID != "" && result.WorkerID != ownerID {
 		return fmt.Errorf("task %s owned by worker %q, result from %q rejected", result.TaskID, ownerID, result.WorkerID)
 	}
-	resultAttempt := result.ReportedAttempt()
+	resultAttempt := result.Attempt
+	if resultAttempt == 0 {
+		resultAttempt = 1
+	}
 
 	// Idempotency: ignore duplicate result for an already-terminal step.
 	switch entry.status {
@@ -363,15 +335,16 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	}
 
 	endedAt := result.EndedAt
-	q.emit("step.reported", map[string]any{"run_id": runID, "step": stepName, "task_id": result.TaskID, "status": result.Status})
+	q.emit(r.projectID, "step.reported", map[string]any{"run_id": runID, "step": stepName, "task_id": result.TaskID, "status": result.Status})
 
 	if result.Status == string(taskDone) {
 		q.stopRetryTimerLocked(entry)
 		entry.status = taskDone
 		entry.startedAt = nil
 		entry.leaseAt = nil
-		q.emit("step.done", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts})
+		q.emit(r.projectID, "step.done", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts})
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
+			ProjectID: r.projectID,
 			RunID:     runID,
 			StepName:  stepName,
 			Status:    result.Status,
@@ -390,6 +363,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		entry.startedAt = nil
 		entry.leaseAt = nil
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
+			ProjectID: r.projectID,
 			RunID:     runID,
 			StepName:  stepName,
 			Status:    string(taskRunning),
@@ -406,8 +380,9 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		entry.status = taskFailed
 		entry.startedAt = nil
 		entry.leaseAt = nil
-		q.emit("step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": result.Error})
+		q.emit(r.projectID, "step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": result.Error})
 		if err := q.stepRepo.Upsert(ctx, &run.Step{
+			ProjectID: r.projectID,
 			RunID:     runID,
 			StepName:  stepName,
 			Status:    result.Status,
@@ -431,7 +406,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 			}
 		}
 		finishedAt := time.Now()
-		if err := q.runRepo.UpdateStatus(ctx, runID, runStatus, &finishedAt); err != nil {
+		if err := q.runRepo.UpdateStatus(ctx, r.projectID, runID, runStatus, &finishedAt); err != nil {
 			slog.Warn("update run status failed", "run_id", runID, "err", err)
 		}
 		pl := r.pl
@@ -439,12 +414,12 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
 			owner.ReleaseRun(runID)
 		}
-		q.emit("run.completed", map[string]any{"run_id": runID, "status": runStatus})
+		q.emit(r.projectID, "run.completed", map[string]any{"run_id": runID, "status": runStatus})
 
 		if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
 			// Use a detached context so the callback isn't cancelled when the
 			// HTTP request context that triggered Complete() ends.
-			q.OnRunSuccess(context.Background(), runID, pl)
+			q.OnRunSuccess(project.WithContext(context.Background(), project.Context{ID: r.projectID}), runID, pl)
 		}
 	}
 
@@ -453,11 +428,12 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 
 // Cancel stops queue-owned work for a run and marks any non-terminal steps as canceled.
 // Active backends may also receive a cancellation request to stop in-flight work.
-func (q *Queue) Cancel(ctx context.Context, runID string) error {
+func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 	q.mu.Lock()
 	r, ok := q.runs[runID]
 	b := q.backend
 	if ok {
+		projectID = r.projectID
 		for _, entry := range r.tasks {
 			switch entry.status {
 			case taskDone, taskFailed, taskSkipped, taskCanceled:
@@ -468,11 +444,12 @@ func (q *Queue) Cancel(ctx context.Context, runID string) error {
 				entry.startedAt = nil
 				now := time.Now()
 				if err := q.stepRepo.Upsert(ctx, &run.Step{
-					RunID:    runID,
-					StepName: entry.step.Name,
-					Status:   string(taskCanceled),
-					EndedAt:  &now,
-					Attempts: entry.attempts,
+					ProjectID: r.projectID,
+					RunID:     runID,
+					StepName:  entry.step.Name,
+					Status:    string(taskCanceled),
+					EndedAt:   &now,
+					Attempts:  entry.attempts,
 				}); err != nil {
 					slog.Warn("upsert canceled step failed", "task_id", entry.task.ID, "err", err)
 				}
@@ -489,8 +466,8 @@ func (q *Queue) Cancel(ctx context.Context, runID string) error {
 	}
 
 	now := time.Now()
-	q.emit("run.canceled", map[string]any{"run_id": runID})
-	return q.runRepo.UpdateStatus(ctx, runID, run.StatusCanceled, &now)
+	q.emit(projectID, "run.canceled", map[string]any{"run_id": runID})
+	return q.runRepo.UpdateStatus(ctx, projectID, runID, run.StatusCanceled, &now)
 }
 
 func (q *Queue) promoteReady(ctx context.Context, r *runEntry) {
@@ -501,7 +478,7 @@ func (q *Queue) promoteReady(ctx context.Context, r *runEntry) {
 		}
 		if depsAllDone(entry.step.DependsOn, done) {
 			entry.status = taskReady
-			q.emit("step.ready", map[string]any{"run_id": r.runID, "step": entry.step.Name, "task_id": entry.task.ID})
+			q.emit(r.projectID, "step.ready", map[string]any{"run_id": r.runID, "step": entry.step.Name, "task_id": entry.task.ID})
 			q.dispatchIfNeeded(ctx, entry)
 		}
 	}
@@ -514,8 +491,9 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 	now := time.Now()
 	entry.startedAt = &now
 	entry.leaseAt = &now
-	q.emit("step.running", map[string]any{"run_id": runID, "step": entry.step.Name, "task_id": entry.task.ID, "attempt": entry.attempts})
+	q.emit(entry.task.ProjectID, "step.running", map[string]any{"run_id": runID, "step": entry.step.Name, "task_id": entry.task.ID, "attempt": entry.attempts})
 	if err := q.stepRepo.Upsert(ctx, &run.Step{
+		ProjectID: entry.task.ProjectID,
 		RunID:     runID,
 		StepName:  entry.step.Name,
 		Status:    string(taskRunning),
@@ -561,15 +539,19 @@ func (q *Queue) RenewLeases(workerID string, taskIDs []string) {
 	}
 }
 
-func (q *Queue) emit(eventType string, fields map[string]any) {
+func (q *Queue) emit(projectID, eventType string, fields map[string]any) {
 	slog.Info("event", "type", eventType, "fields", fields)
 	if q.events != nil {
-		q.events.Publish(event.New(eventType, fields))
+		if projectID == "" {
+			q.events.Publish(event.NewInfra(eventType, fields))
+		} else {
+			q.events.Publish(event.New(projectID, eventType, fields))
+		}
 	}
 }
 
-// dispatchIfNeeded immediately dispatches a task if an active ExecutionBackend is configured.
-// A nil backend is polling mode: tasks stay ready until a worker calls /api/tasks/next.
+// dispatchIfNeeded immediately dispatches a task if an ExecutionBackend is configured.
+// A nil backend leaves tasks ready until a backend is configured.
 // Called while holding the lock; captures the backend reference before launching
 // the goroutine to avoid a race with SetBackend.
 func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
@@ -676,13 +658,14 @@ func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep stri
 			if dep == failedStep {
 				entry.status = taskSkipped
 				if err := q.stepRepo.Upsert(ctx, &run.Step{
-					RunID:    r.runID,
-					StepName: entry.step.Name,
-					Status:   "skipped",
+					ProjectID: r.projectID,
+					RunID:     r.runID,
+					StepName:  entry.step.Name,
+					Status:    "skipped",
 				}); err != nil {
 					slog.Warn("upsert skipped step failed", "task_id", entry.task.ID, "err", err)
 				}
-				q.emit("step.skipped", map[string]any{"run_id": r.runID, "step": entry.step.Name, "task_id": entry.task.ID, "failed_dep": failedStep})
+				q.emit(r.projectID, "step.skipped", map[string]any{"run_id": r.runID, "step": entry.step.Name, "task_id": entry.task.ID, "failed_dep": failedStep})
 				q.skipDownstream(ctx, r, entry.step.Name)
 				break
 			}
@@ -740,21 +723,22 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 					entry.startedAt = nil
 					entry.leaseAt = nil
 					if err := q.stepRepo.Upsert(ctx, &run.Step{
-						RunID:    runID,
-						StepName: entry.step.Name,
-						Status:   string(taskFailed),
-						EndedAt:  &now,
-						Attempts: entry.attempts,
-						Error:    "task lease expired",
+						ProjectID: r.projectID,
+						RunID:     runID,
+						StepName:  entry.step.Name,
+						Status:    string(taskFailed),
+						EndedAt:   &now,
+						Attempts:  entry.attempts,
+						Error:     "task lease expired",
 					}); err != nil {
 						slog.Warn("upsert expired step failed", "task_id", entry.task.ID, "err", err)
 					}
 				}
 			}
-			if err := q.runRepo.UpdateStatus(ctx, runID, run.StatusFailed, &now); err != nil {
+			if err := q.runRepo.UpdateStatus(ctx, r.projectID, runID, run.StatusFailed, &now); err != nil {
 				slog.Warn("update expired run failed", "run_id", runID, "err", err)
 			}
-			q.emit("run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
+			q.emit(r.projectID, "run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
 			delete(q.runs, runID)
 			if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
 				owner.ReleaseRun(runID)

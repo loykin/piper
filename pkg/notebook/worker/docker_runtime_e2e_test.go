@@ -139,7 +139,7 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	if err := recovered.Recover(ctx, func(rec recoveredRuntime) func(string) {
 		recoveredCh <- rec
 		return func(status string) { exitCh <- status }
-	}, func(_ string, status string) {
+	}, func(_ recoveredRuntime, status string) {
 		exitCh <- status
 	}); err != nil {
 		t.Fatalf("recover containers: %v", err)

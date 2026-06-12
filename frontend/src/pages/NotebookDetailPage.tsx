@@ -12,18 +12,20 @@ import {
   deleteNotebook,
   type NotebookServer,
 } from '@/features/notebooks/api'
+import { useProjectId } from '@/lib/projectContext'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 
 export default function NotebookDetailPage() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const [notebook, setNotebook] = useState<NotebookServer | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
 
   async function load() {
-    if (!name) return
-    const nb = await getNotebook(name).catch(() => null)
+    if (!name || !projectId) return
+    const nb = await getNotebook(projectId, name).catch(() => null)
     setNotebook(nb)
     setLoading(false)
   }
@@ -66,24 +68,24 @@ export default function NotebookDetailPage() {
 
   async function handleStop() {
     if (!name) return
-    await withBusy(() => stopNotebook(name))
+    await withBusy(() => stopNotebook(projectId, name))
   }
 
   async function handleStart() {
     if (!name) return
-    await withBusy(() => startNotebook(name).then(() => {}))
+    await withBusy(() => startNotebook(projectId, name).then(() => {}))
   }
 
   async function handleDelete() {
     if (!name || !confirm(`Delete notebook "${name}"?\nThe volume and work directory are preserved.`)) return
-    await withBusy(() => deleteNotebook(name).then(() => navigate('/notebooks')))
+    await withBusy(() => deleteNotebook(projectId, name).then(() => navigate(`/projects/${projectId}/notebooks`)))
   }
 
   return (
     <DataPage>
       <DataPage.Header>
         <DataPage.TitleBlock
-          breadcrumb={<Link to="/notebooks" className="hover:text-foreground transition-colors">← Notebooks</Link>}
+          breadcrumb={<Link to={`/projects/${projectId}/notebooks`} className="hover:text-foreground transition-colors">← Notebooks</Link>}
           title={notebook.name}
           description="Notebook server detail and workspace status"
         />
@@ -91,7 +93,7 @@ export default function NotebookDetailPage() {
           <StatusBadge status={notebook.status} />
           {notebook.status === 'running' && (
             <a
-              href={notebookProxyURL(notebook.name)}
+              href={notebookProxyURL(projectId, notebook.name)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"

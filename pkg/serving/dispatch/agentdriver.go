@@ -3,6 +3,7 @@ package servingdispatch
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/artifact"
@@ -34,6 +35,7 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 		Endpoint string `json:"endpoint"`
 	}
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodServingDeploy, map[string]any{
+		"project_id": spec.Metadata.ProjectID,
 		"yaml":       yamlStr,
 		"local_path": art.LocalPath,
 		"s3_uri":     art.S3URI,
@@ -56,15 +58,16 @@ func (d *AgentDriver) Stop(ctx context.Context, svc *serving.Service) error {
 		return err
 	}
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodServingStop, map[string]any{
-		"name":      svc.Name,
-		"namespace": svc.Namespace,
+		"project_id": svc.ProjectID,
+		"name":       svc.Name,
+		"namespace":  svc.Namespace,
 	}, nil); err != nil {
 		return fmt.Errorf("serving agent stop: %w", err)
 	}
 	return nil
 }
 
-func (d *AgentDriver) SyncStatus(ctx context.Context, services []*serving.Service, apply func(name, status string)) error {
+func (d *AgentDriver) SyncStatus(ctx context.Context, services []*serving.Service, apply func(projectID, name, status string)) error {
 	byAgent := make(map[string][]serving.WorkerSyncStatusTarget)
 	for _, svc := range services {
 		if svc == nil {
@@ -75,6 +78,7 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, services []*serving.Servic
 			continue
 		}
 		byAgent[agentInfo.ID] = append(byAgent[agentInfo.ID], serving.WorkerSyncStatusTarget{
+			ProjectID: svc.ProjectID,
 			Name:      svc.Name,
 			Namespace: svc.Namespace,
 		})
@@ -84,10 +88,15 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, services []*serving.Servic
 		if err := d.rpc.SendRPC(ctx, agentID, iagent.MethodServingSyncStatus, serving.WorkerSyncStatusRequest{Services: targets}, &result); err != nil {
 			return fmt.Errorf("serving agent sync status: %w", err)
 		}
-		for name, status := range result.Statuses {
-			if status != "" {
-				apply(name, status)
+		for compositeKey, status := range result.Statuses {
+			if status == "" {
+				continue
 			}
+			projectID, name, ok := strings.Cut(compositeKey, ":")
+			if !ok || projectID == "" || name == "" {
+				continue
+			}
+			apply(projectID, name, status)
 		}
 	}
 	return nil

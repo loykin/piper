@@ -1,4 +1,5 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useProjectId } from '@/lib/projectContext'
 import { RefreshCw, Square, Trash2 } from 'lucide-react'
 import { DataPage } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
@@ -8,6 +9,7 @@ import { useService, useStopService, useRestartService } from '@/features/servin
 export default function ServingDetailPage() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const { data: service, isLoading } = useService(name!)
   const { mutateAsync: stopService } = useStopService()
   const { mutateAsync: restartService } = useRestartService()
@@ -44,14 +46,14 @@ export default function ServingDetailPage() {
 
   async function handleDelete() {
     if (!name || !confirm(`Delete service "${name}"?`)) return
-    try { await stopService(name); navigate('/serving') } catch { /* no-op */ }
+    try { await stopService(name); navigate(`/projects/${projectId}/serving`) } catch { /* no-op */ }
   }
 
   return (
     <DataPage>
       <DataPage.Header>
         <DataPage.TitleBlock
-          breadcrumb={<Link to="/serving" className="hover:text-foreground transition-colors">← Serving</Link>}
+          breadcrumb={<Link to={`/projects/${projectId}/serving`} className="hover:text-foreground transition-colors">← Serving</Link>}
           title={service.name}
           description="ModelService deployment"
         />

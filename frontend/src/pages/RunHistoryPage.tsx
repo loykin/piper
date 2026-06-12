@@ -20,10 +20,10 @@ export default function RunHistoryPage() {
     deleteRun(run.id)
   }
 
-  const handleRerun = async (e: React.MouseEvent, run: Run, failedOnly = false) => {
+  const handleRerun = async (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
     try {
-      const { run_id } = await rerunRun({ id: run.id, failedOnly })
+      const { run_id } = await rerunRun(run.id)
       navigate(`/runs/${run_id}`)
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err))
@@ -42,7 +42,7 @@ export default function RunHistoryPage() {
           className="text-primary hover:bg-primary/10" />
         <IconButton icon={<RefreshCw />} label="Retry Failed"
           disabled={row.original.status !== 'failed'}
-          onClick={(e) => handleRerun(e, row.original, true)}
+          onClick={(e) => handleRerun(e, row.original)}
           className="text-yellow-400 hover:bg-yellow-400/10" />
         <IconButton icon={<Trash2 />} label="Delete"
           disabled={row.original.status === 'running' || (deleting && deletingId === row.original.id)}

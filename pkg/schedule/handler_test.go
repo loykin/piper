@@ -13,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/security"
 )
 
 func init() {
@@ -33,14 +35,14 @@ func (r *stubScheduleRepo) Create(_ context.Context, sc *Schedule) error {
 	r.schedules[sc.ID] = sc
 	return nil
 }
-func (r *stubScheduleRepo) Get(_ context.Context, id string) (*Schedule, error) {
+func (r *stubScheduleRepo) Get(_ context.Context, _, id string) (*Schedule, error) {
 	sc, ok := r.schedules[id]
 	if !ok {
 		return nil, errors.New("not found")
 	}
 	return sc, nil
 }
-func (r *stubScheduleRepo) List(_ context.Context) ([]*Schedule, error) {
+func (r *stubScheduleRepo) List(_ context.Context, _ string) ([]*Schedule, error) {
 	out := make([]*Schedule, 0, len(r.schedules))
 	for _, sc := range r.schedules {
 		out = append(out, sc)
@@ -50,31 +52,37 @@ func (r *stubScheduleRepo) List(_ context.Context) ([]*Schedule, error) {
 func (r *stubScheduleRepo) ListDue(_ context.Context, _ time.Time) ([]*Schedule, error) {
 	return nil, nil
 }
-func (r *stubScheduleRepo) UpdateRun(_ context.Context, _ string, _, _ time.Time) error {
+func (r *stubScheduleRepo) UpdateRun(_ context.Context, _, _ string, _, _ time.Time) error {
 	return nil
 }
-func (r *stubScheduleRepo) SetEnabled(_ context.Context, id string, enabled bool) error {
+func (r *stubScheduleRepo) SetEnabled(_ context.Context, _, id string, enabled bool) error {
 	if sc, ok := r.schedules[id]; ok {
 		sc.Enabled = enabled
 	}
 	return nil
 }
-func (r *stubScheduleRepo) Delete(_ context.Context, id string) error {
+func (r *stubScheduleRepo) Delete(_ context.Context, _, id string) error {
 	delete(r.schedules, id)
 	return nil
 }
 
 type stubRunRepo struct{}
 
-func (r stubRunRepo) Create(context.Context, *run.Run) error        { return nil }
-func (r stubRunRepo) Get(context.Context, string) (*run.Run, error) { return nil, nil }
-func (r stubRunRepo) List(_ context.Context, _ run.RunFilter) ([]*run.Run, error) {
+func (r stubRunRepo) Create(context.Context, *run.Run) error { return nil }
+func (r stubRunRepo) Get(context.Context, string, string) (*run.Run, error) {
+	return nil, nil
+}
+func (r stubRunRepo) List(_ context.Context, _ string, _ run.RunFilter) ([]*run.Run, error) {
 	return []*run.Run{}, nil
 }
-func (r stubRunRepo) UpdateStatus(context.Context, string, string, *time.Time) error { return nil }
-func (r stubRunRepo) MarkRunning(context.Context, string, time.Time) error           { return nil }
-func (r stubRunRepo) Delete(context.Context, string) error                           { return nil }
-func (r stubRunRepo) GetLatestSuccessful(context.Context, string) (*run.Run, error)  { return nil, nil }
+func (r stubRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
+	return nil
+}
+func (r stubRunRepo) MarkRunning(context.Context, string, string, time.Time) error { return nil }
+func (r stubRunRepo) Delete(context.Context, string, string) error                 { return nil }
+func (r stubRunRepo) GetLatestSuccessful(context.Context, string, string) (*run.Run, error) {
+	return nil, nil
+}
 
 // --- helpers ---
 
@@ -91,7 +99,12 @@ func newTestRouter(repo *stubScheduleRepo, extraDeps ...func(*HandlerDeps)) *gin
 		fn(&deps)
 	}
 	router := gin.New()
-	NewHandler(deps).RegisterRoutes(router.Group(""))
+	injectProjCtx := func(c *gin.Context) {
+		ctx := project.WithContext(c.Request.Context(), project.Context{ID: "test-proj", Role: security.ProjectRoleAdmin})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+	NewHandler(deps).RegisterRoutes(router.Group("", injectProjCtx))
 	return router
 }
 
@@ -241,14 +254,12 @@ func TestDeleteSchedule(t *testing.T) {
 	}
 }
 
-func TestListSchedules_OwnerFilter(t *testing.T) {
+func TestListSchedules_All(t *testing.T) {
 	repo := newStubScheduleRepo()
-	repo.schedules["sch-a"] = &Schedule{ID: "sch-a", OwnerID: "user-1"}
-	repo.schedules["sch-b"] = &Schedule{ID: "sch-b", OwnerID: "user-2"}
+	repo.schedules["sch-a"] = &Schedule{ID: "sch-a"}
+	repo.schedules["sch-b"] = &Schedule{ID: "sch-b"}
 
-	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.OwnerID = func(_ *http.Request) string { return "user-1" }
-	})
+	router := newTestRouter(repo)
 
 	rec := doJSON(router, http.MethodGet, "/schedules", nil)
 
@@ -257,11 +268,8 @@ func TestListSchedules_OwnerFilter(t *testing.T) {
 	}
 	var out []*Schedule
 	_ = json.NewDecoder(rec.Body).Decode(&out)
-	if len(out) != 1 {
-		t.Fatalf("expected 1 schedule for user-1, got %d", len(out))
-	}
-	if out[0].ID != "sch-a" {
-		t.Errorf("expected sch-a, got %s", out[0].ID)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 schedules, got %d", len(out))
 	}
 }
 
@@ -298,149 +306,5 @@ func TestListScheduleRuns(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "[") {
 		t.Errorf("expected JSON array in response, got: %s", body)
-	}
-}
-
-// ── hook tests ────────────────────────────────────────────────────────────────
-
-type stubScheduleHooks struct {
-	beforeCreate func(ctx context.Context, r *http.Request, yaml string) error
-	beforeList   func(ctx context.Context, r *http.Request) (ScheduleFilter, error)
-	beforeGet    func(ctx context.Context, r *http.Request, id string) error
-}
-
-func (h *stubScheduleHooks) BeforeCreateSchedule(ctx context.Context, r *http.Request, yaml string) error {
-	if h.beforeCreate != nil {
-		return h.beforeCreate(ctx, r, yaml)
-	}
-	return nil
-}
-func (h *stubScheduleHooks) BeforeListSchedules(ctx context.Context, r *http.Request) (ScheduleFilter, error) {
-	if h.beforeList != nil {
-		return h.beforeList(ctx, r)
-	}
-	return ScheduleFilter{}, nil
-}
-func (h *stubScheduleHooks) BeforeGetSchedule(ctx context.Context, r *http.Request, id string) error {
-	if h.beforeGet != nil {
-		return h.beforeGet(ctx, r, id)
-	}
-	return nil
-}
-
-func TestBeforeCreateSchedule_Blocks(t *testing.T) {
-	repo := newStubScheduleRepo()
-	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.Hooks = &stubScheduleHooks{
-			beforeCreate: func(_ context.Context, _ *http.Request, _ string) error {
-				return errors.New("not allowed")
-			},
-		}
-	})
-
-	rec := doJSON(router, http.MethodPost, "/schedules", map[string]any{
-		"type": "immediate",
-		"yaml": "metadata:\n  name: x\nspec:\n  steps: []",
-	})
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body)
-	}
-}
-
-func TestBeforeListSchedules_OwnerFilter(t *testing.T) {
-	repo := newStubScheduleRepo()
-	repo.schedules["sch-a"] = &Schedule{ID: "sch-a", OwnerID: "user-1"}
-	repo.schedules["sch-b"] = &Schedule{ID: "sch-b", OwnerID: "user-2"}
-
-	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.Hooks = &stubScheduleHooks{
-			beforeList: func(_ context.Context, _ *http.Request) (ScheduleFilter, error) {
-				return ScheduleFilter{OwnerID: "user-2"}, nil
-			},
-		}
-	})
-
-	rec := doJSON(router, http.MethodGet, "/schedules", nil)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	var out []*Schedule
-	_ = json.NewDecoder(rec.Body).Decode(&out)
-	if len(out) != 1 || out[0].ID != "sch-b" {
-		t.Errorf("expected only sch-b (user-2), got %+v", out)
-	}
-}
-
-func TestBeforeListSchedules_Error(t *testing.T) {
-	repo := newStubScheduleRepo()
-	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.Hooks = &stubScheduleHooks{
-			beforeList: func(_ context.Context, _ *http.Request) (ScheduleFilter, error) {
-				return ScheduleFilter{}, errors.New("auth error")
-			},
-		}
-	})
-
-	rec := doJSON(router, http.MethodGet, "/schedules", nil)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-}
-
-func TestBeforeGetSchedule_BlocksGet(t *testing.T) {
-	repo := newStubScheduleRepo()
-	repo.schedules["sch-1"] = &Schedule{ID: "sch-1"}
-	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.Hooks = &stubScheduleHooks{
-			beforeGet: func(_ context.Context, _ *http.Request, _ string) error {
-				return errors.New("forbidden")
-			},
-		}
-	})
-
-	rec := doJSON(router, http.MethodGet, "/schedules/sch-1", nil)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-}
-
-func TestBeforeGetSchedule_BlocksDelete(t *testing.T) {
-	repo := newStubScheduleRepo()
-	repo.schedules["sch-1"] = &Schedule{ID: "sch-1"}
-	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.Hooks = &stubScheduleHooks{
-			beforeGet: func(_ context.Context, _ *http.Request, _ string) error {
-				return errors.New("forbidden")
-			},
-		}
-	})
-
-	rec := doJSON(router, http.MethodDelete, "/schedules/sch-1", nil)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rec.Code)
-	}
-	if _, ok := repo.schedules["sch-1"]; !ok {
-		t.Error("schedule should not be deleted when hook blocks")
-	}
-}
-
-func TestBeforeGetSchedule_PassesID(t *testing.T) {
-	repo := newStubScheduleRepo()
-	repo.schedules["sch-42"] = &Schedule{ID: "sch-42"}
-	gotID := ""
-	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.Hooks = &stubScheduleHooks{
-			beforeGet: func(_ context.Context, _ *http.Request, id string) error {
-				gotID = id
-				return nil
-			},
-		}
-	})
-
-	doJSON(router, http.MethodGet, "/schedules/sch-42", nil)
-	if gotID != "sch-42" {
-		t.Errorf("BeforeGetSchedule called with %q, want sch-42", gotID)
 	}
 }

@@ -18,5 +18,5 @@ type Driver interface {
 }
 
 type StatusSyncer interface {
-	SyncStatus(ctx context.Context, services []*Service, apply func(name, status string)) error
+	SyncStatus(ctx context.Context, services []*Service, apply func(projectID, name, status string)) error
 }

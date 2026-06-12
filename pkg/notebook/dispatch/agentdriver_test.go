@@ -32,7 +32,7 @@ func (r *recordingAgentRPC) SendRPC(_ context.Context, agentID, method string, p
 		res.Endpoint = "tunnel://agent-1/nb/demo"
 	case iagent.MethodNotebookSyncStatus:
 		res := result.(*notebook.WorkerSyncStatusResponse)
-		res.Statuses = map[string]string{"demo": notebook.StatusRunning}
+		res.Statuses = map[string]string{"project-a:demo": notebook.StatusRunning}
 	}
 	return nil
 }
@@ -72,7 +72,7 @@ func TestAgentDriverStartUsesVolumeAgent(t *testing.T) {
 	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
 
-	nb, err := driver.Start(context.Background(), spec, &notebook.NotebookVolume{ID: "vol-1", WorkerID: "agent-1", WorkDir: notebook.ContainerWorkDir}, "metadata:\n  name: demo\n")
+	nb, err := driver.Start(context.Background(), spec, &notebook.NotebookVolume{ProjectID: "project-a", ID: "vol-1", WorkerID: "agent-1", WorkDir: notebook.ContainerWorkDir}, "metadata:\n  name: demo\n")
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
@@ -84,6 +84,13 @@ func TestAgentDriverStartUsesVolumeAgent(t *testing.T) {
 	}
 	if rpc.calls[0].Method != iagent.MethodNotebookStart {
 		t.Fatalf("method = %q", rpc.calls[0].Method)
+	}
+	payload, ok := rpc.calls[0].Payload.(notebook.WorkerStartRequest)
+	if !ok || payload.ProjectID != "project-a" {
+		t.Fatalf("start payload = %#v", rpc.calls[0].Payload)
+	}
+	if nb.ProjectID != "project-a" {
+		t.Fatalf("project id = %q", nb.ProjectID)
 	}
 }
 
@@ -127,7 +134,7 @@ func TestAgentDriverStartDoesNotFallbackForExplicitPlacement(t *testing.T) {
 func TestAgentDriverStopAndDeprovision(t *testing.T) {
 	driver, rpc := newAgentNotebookDriver()
 
-	if err := driver.Stop(context.Background(), &notebook.NotebookServer{Name: "demo", WorkerID: "agent-1"}); err != nil {
+	if err := driver.Stop(context.Background(), &notebook.NotebookServer{ProjectID: "project-a", Name: "demo", WorkerID: "agent-1"}); err != nil {
 		t.Fatalf("Stop returned error: %v", err)
 	}
 	if err := driver.DeprovisionVolume(context.Background(), &notebook.NotebookVolume{ID: "vol-1", WorkerID: "agent-1"}); err != nil {
@@ -135,6 +142,10 @@ func TestAgentDriverStopAndDeprovision(t *testing.T) {
 	}
 	if rpc.calls[0].Method != iagent.MethodNotebookStop {
 		t.Fatalf("first method = %q", rpc.calls[0].Method)
+	}
+	payload, ok := rpc.calls[0].Payload.(notebook.WorkerStopRequest)
+	if !ok || payload.ProjectID != "project-a" || payload.Name != "demo" {
+		t.Fatalf("stop payload = %#v", rpc.calls[0].Payload)
 	}
 	if rpc.calls[1].Method != iagent.MethodNotebookDeprovision {
 		t.Fatalf("second method = %q", rpc.calls[1].Method)
@@ -152,16 +163,16 @@ func TestAgentDriverSyncStatusSkipsDisconnectedAgent(t *testing.T) {
 	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{}, repo)
 
 	applied := false
-	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "old-agent", Status: notebook.StatusRunning}}, func(name, status string) {
+	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{Name: "demo", WorkerID: "old-agent", Status: notebook.StatusRunning}}, func(_, name, status string) {
 		applied = true
-		_ = repo.SetStatus(context.Background(), name, status)
+		_ = repo.SetStatus(context.Background(), "", name, status)
 	}); err != nil {
 		t.Fatalf("SyncStatus returned error: %v", err)
 	}
 	if applied {
 		t.Fatal("apply was called for offline agent; expected no-op")
 	}
-	nb, _ := repo.Get(context.Background(), "demo")
+	nb, _ := repo.Get(context.Background(), "", "demo")
 	if nb.Status != notebook.StatusRunning {
 		t.Fatalf("status changed to %q; want unchanged %q", nb.Status, notebook.StatusRunning)
 	}
@@ -169,7 +180,7 @@ func TestAgentDriverSyncStatusSkipsDisconnectedAgent(t *testing.T) {
 
 func TestAgentDriverSyncStatus(t *testing.T) {
 	repo := newFakeRepo()
-	if err := repo.Create(context.Background(), &notebook.NotebookServer{Name: "demo", WorkerID: "agent-1", Status: notebook.StatusStarting}); err != nil {
+	if err := repo.Create(context.Background(), &notebook.NotebookServer{ProjectID: "project-a", Name: "demo", WorkerID: "agent-1", Status: notebook.StatusStarting}); err != nil {
 		t.Fatalf("create repo record: %v", err)
 	}
 	reg := iagent.NewRegistry()
@@ -178,15 +189,16 @@ func TestAgentDriverSyncStatus(t *testing.T) {
 	driver := NewAgentDriver(iagent.NewRouter(reg), rpc, repo)
 
 	if err := driver.SyncStatus(context.Background(), []*notebook.NotebookServer{{
-		Name:     "demo",
-		WorkerID: "agent-1",
-		Endpoint: "tunnel://agent-1?target=127.0.0.1:18888",
-	}}, func(name, status string) {
-		_ = repo.SetStatus(context.Background(), name, status)
+		ProjectID: "project-a",
+		Name:      "demo",
+		WorkerID:  "agent-1",
+		Endpoint:  "tunnel://agent-1?target=127.0.0.1:18888",
+	}}, func(projectID, name, status string) {
+		_ = repo.SetStatus(context.Background(), projectID, name, status)
 	}); err != nil {
 		t.Fatalf("SyncStatus returned error: %v", err)
 	}
-	nb, _ := repo.Get(context.Background(), "demo")
+	nb, _ := repo.Get(context.Background(), "project-a", "demo")
 	if nb.Status != notebook.StatusRunning {
 		t.Fatalf("status = %q, want running", nb.Status)
 	}

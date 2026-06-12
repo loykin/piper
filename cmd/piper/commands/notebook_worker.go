@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	notebookworker "github.com/piper/piper/pkg/notebook/worker"
 )
@@ -62,6 +63,7 @@ func newNotebookWorkerCmd() *cobra.Command {
 
 			w := notebookworker.New(notebookworker.Config{
 				AgentAddr:     agentAddr,
+				WorkerToken:   viper.GetString("worker.token"),
 				NotebooksRoot: notebooksRoot,
 				PortRange:     portRange,
 				Mode:          mode,

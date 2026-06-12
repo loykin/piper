@@ -25,6 +25,7 @@ import (
 // Config holds configuration for a notebook worker agent.
 type Config struct {
 	AgentAddr     string // gRPC address of master agent server, e.g. "master:9090"
+	WorkerToken   string // bearer token sent in gRPC authorization metadata (matches server.worker_token)
 	NotebooksRoot string // base directory for notebook work dirs (default: "./notebooks")
 	PortRange     string // "START-END", e.g. "8888-9900"
 	Mode          string // process | docker
@@ -48,9 +49,22 @@ type Worker struct {
 }
 
 type localNotebook struct {
-	name string
-	port int
-	gen  uint64 // incremented on each start to distinguish stale OnExit callbacks
+	projectID string // composite key prefix; empty for single-tenant workers
+	name      string
+	port      int
+	gen       uint64 // incremented on each start to distinguish stale OnExit callbacks
+}
+
+// notebookKey returns the composite map key "projectID:name" used in in-memory maps.
+func notebookKey(projectID, name string) string { return projectID + ":" + name }
+
+// runtimeName returns a name safe for process supervisors and Docker containers.
+// Uses "__" separator since ":" is invalid in many runtime contexts.
+func runtimeName(projectID, name string) string {
+	if projectID == "" {
+		return name
+	}
+	return projectID + "__" + name
 }
 
 // New creates a new Worker.
@@ -63,6 +77,7 @@ func New(cfg Config) *Worker {
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		AgentAddr:    cfg.AgentAddr,
 		AgentID:      cfg.ID,
+		WorkerToken:  cfg.WorkerToken,
 		Kind:         iagent.KindBareMetal,
 		Mode:         cfg.Mode,
 		Hostname:     cfg.Hostname,
@@ -85,7 +100,7 @@ func New(cfg Config) *Worker {
 	_ = grpcagent.RegisterJSON(d, iagent.MethodNotebookProvisionVolume, w.provisionVolume)
 	_ = grpcagent.RegisterJSON(d, iagent.MethodNotebookStart, w.startNotebook)
 	_ = grpcagent.RegisterJSON(d, iagent.MethodNotebookStop, func(ctx context.Context, req notebook.WorkerStopRequest) (any, error) {
-		return nil, w.stopNotebook(ctx, req.Name)
+		return nil, w.stopNotebook(ctx, req)
 	})
 	_ = grpcagent.RegisterJSON(d, iagent.MethodNotebookDeprovision, func(ctx context.Context, req notebook.WorkerDeprovisionVolumeRequest) (any, error) {
 		return nil, w.deprovisionVolume(ctx, req)
@@ -140,6 +155,9 @@ func (w *Worker) provisionVolume(_ context.Context, req notebook.WorkerProvision
 }
 
 func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartRequest) (*notebook.WorkerStartResponse, error) {
+	if req.ProjectID == "" {
+		return nil, fmt.Errorf("project_id is required")
+	}
 	var spec notebook.Notebook
 	if err := yaml.Unmarshal([]byte(req.YAML), &spec); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
@@ -148,18 +166,19 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 	if name == "" {
 		return nil, fmt.Errorf("metadata.name is required")
 	}
+	key := notebookKey(req.ProjectID, name)
 
 	if recoverable, ok := w.runtime.(targetedRecoveryRuntime); ok {
 		w.mu.Lock()
-		_, active := w.notebooks[name]
+		_, active := w.notebooks[key]
 		w.mu.Unlock()
 		if !active {
-			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{Name: name}); err != nil {
+			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{ProjectID: req.ProjectID, Name: name}); err != nil {
 				return nil, err
 			}
 		}
 		w.mu.Lock()
-		_, active = w.notebooks[name]
+		_, active = w.notebooks[key]
 		w.mu.Unlock()
 		if active {
 			return nil, fmt.Errorf("notebook %q is already active", name)
@@ -187,30 +206,30 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 	// Register the notebook entry before starting so that an OnExit callback that
 	// fires before runtime.Start returns cannot race with the post-start registration.
 	w.mu.Lock()
-	if _, exists := w.notebooks[name]; exists {
+	if _, exists := w.notebooks[key]; exists {
 		w.mu.Unlock()
 		w.releasePort(port)
 		return nil, fmt.Errorf("notebook %q is already active", name)
 	}
 	w.nextGen++
 	gen := w.nextGen
-	delete(w.terminal, name)
-	w.notebooks[name] = &localNotebook{name: name, port: port, gen: gen}
+	delete(w.terminal, key)
+	w.notebooks[key] = &localNotebook{projectID: req.ProjectID, name: name, port: port, gen: gen}
 	w.mu.Unlock()
 
 	go func() {
 		if err := os.MkdirAll(workDir, 0755); err != nil {
 			slog.Error("notebook worker: cannot create work dir", "name", name, "err", err)
 			w.mu.Lock()
-			current := w.notebooks[name] != nil && w.notebooks[name].gen == gen
+			current := w.notebooks[key] != nil && w.notebooks[key].gen == gen
 			if current {
-				delete(w.notebooks, name)
-				w.terminal[name] = notebook.StatusFailed
+				delete(w.notebooks, key)
+				w.terminal[key] = notebook.StatusFailed
 			}
 			w.mu.Unlock()
 			w.releasePort(port)
 			if current {
-				w.pushStatus(name, notebook.StatusFailed, "", workDir, "", 0, "")
+				w.pushStatus(req.ProjectID, name, notebook.StatusFailed, "", workDir, "", 0, "")
 			}
 			return
 		}
@@ -219,51 +238,54 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		if mode == "" {
 			mode = RuntimeProcess
 		}
-		logRuntimeStart(mode, name, workDir, port)
+		// rn is the runtime-level name. It uses "__" as separator (not ":") because
+		// process supervisors and Docker container names forbid colons.
+		rn := runtimeName(req.ProjectID, name)
+		logRuntimeStart(mode, rn, workDir, port)
 		started, err := w.runtime.Start(context.Background(), RuntimeStartRequest{
-			Name:    name,
-			Spec:    spec,
-			WorkDir: workDir,
-			Port:    port,
-			Token:   token,
-			BaseURL: baseURL,
+			Name:         rn,
+			ProjectID:    req.ProjectID,
+			NotebookName: name,
+			Spec:         spec,
+			WorkDir:      workDir,
+			Port:         port,
+			Token:        token,
+			BaseURL:      baseURL,
 			OnExit: func(status string) {
 				slog.Info("notebook runtime exited", "name", name, "status", status)
 				w.mu.Lock()
-				nb := w.notebooks[name]
+				nb := w.notebooks[key]
 				current := nb != nil && nb.gen == gen
 				if current {
-					delete(w.notebooks, name)
-					w.terminal[name] = status
+					delete(w.notebooks, key)
+					w.terminal[key] = status
 				}
 				w.mu.Unlock()
-				// Always release this start's port regardless of generation.
-				// State/status updates are only pushed for the current generation.
 				w.releasePort(port)
 				if current {
-					w.pushStatus(name, status, "", "", "", 0, "")
+					w.pushStatus(req.ProjectID, name, status, "", "", "", 0, "")
 				}
 			},
 		})
 		if err != nil {
 			slog.Error("notebook worker: start failed", "name", name, "err", err)
 			w.mu.Lock()
-			current := w.notebooks[name] != nil && w.notebooks[name].gen == gen
+			current := w.notebooks[key] != nil && w.notebooks[key].gen == gen
 			if current {
-				delete(w.notebooks, name)
-				w.terminal[name] = notebook.StatusFailed
+				delete(w.notebooks, key)
+				w.terminal[key] = notebook.StatusFailed
 			}
 			w.mu.Unlock()
 			w.releasePort(port)
 			if current {
-				w.pushStatus(name, notebook.StatusFailed, "", workDir, "", 0, "")
+				w.pushStatus(req.ProjectID, name, notebook.StatusFailed, "", workDir, "", 0, "")
 			}
 			return
 		}
 
 		// Guard against a fast exit that already fired OnExit before we get here.
 		w.mu.Lock()
-		nb := w.notebooks[name]
+		nb := w.notebooks[key]
 		w.mu.Unlock()
 		if nb == nil || nb.gen != gen {
 			return
@@ -275,7 +297,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			statusToken = token
 		}
 
-		w.pushStatus(name, notebook.StatusRunning, endpoint, workDir, statusToken, started.PID, started.EnvPath)
+		w.pushStatus(req.ProjectID, name, notebook.StatusRunning, endpoint, workDir, statusToken, started.PID, started.EnvPath)
 	}()
 
 	return &notebook.WorkerStartResponse{
@@ -285,18 +307,24 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 	}, nil
 }
 
-func (w *Worker) stopNotebook(_ context.Context, name string) error {
+func (w *Worker) stopNotebook(_ context.Context, req notebook.WorkerStopRequest) error {
+	if req.ProjectID == "" {
+		return fmt.Errorf("project_id is required")
+	}
+	name := req.Name
+	key := notebookKey(req.ProjectID, name)
+
 	w.mu.Lock()
-	nb, ok := w.notebooks[name]
+	nb, ok := w.notebooks[key]
 	w.mu.Unlock()
 
 	if !ok {
 		if recoverable, recoverableOK := w.runtime.(targetedRecoveryRuntime); recoverableOK {
-			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{Name: name}); err != nil {
+			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{ProjectID: req.ProjectID, Name: name}); err != nil {
 				return err
 			}
 			w.mu.Lock()
-			nb, ok = w.notebooks[name]
+			nb, ok = w.notebooks[key]
 			w.mu.Unlock()
 		}
 	}
@@ -304,17 +332,15 @@ func (w *Worker) stopNotebook(_ context.Context, name string) error {
 		return nil
 	}
 
-	// Stop runtime first. Clean up local state only after success so that
-	// a failed stop leaves the notebook in a recoverable, tracked state.
-	if err := w.runtime.Stop(context.Background(), nb.name); err != nil {
+	if err := w.runtime.Stop(context.Background(), runtimeName(nb.projectID, nb.name)); err != nil {
 		return err
 	}
 
 	w.mu.Lock()
-	current := w.notebooks[name] != nil && w.notebooks[name].gen == nb.gen
+	current := w.notebooks[key] != nil && w.notebooks[key].gen == nb.gen
 	if current {
-		delete(w.notebooks, name)
-		w.terminal[name] = notebook.StatusStopped
+		delete(w.notebooks, key)
+		w.terminal[key] = notebook.StatusStopped
 	}
 	w.mu.Unlock()
 	w.releasePort(nb.port)
@@ -370,9 +396,11 @@ func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequ
 	statuses := make(map[string]string, len(req.Targets))
 	for _, target := range req.Targets {
 		name := target.Name
+		key := notebookKey(target.ProjectID, name)
+
 		w.mu.Lock()
-		terminal := w.terminal[name]
-		activeNotebook := w.notebooks[name]
+		terminal := w.terminal[key]
+		activeNotebook := w.notebooks[key]
 		active := activeNotebook != nil
 		if active && activeNotebook.port == 0 && target.Port > 0 {
 			activeNotebook.port = target.Port
@@ -380,7 +408,7 @@ func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequ
 		}
 		w.mu.Unlock()
 		if terminal != "" {
-			statuses[name] = terminal
+			statuses[key] = terminal
 			continue
 		}
 
@@ -391,20 +419,21 @@ func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequ
 				}
 			}
 		}
-		statuses[name] = w.runtime.Status(name)
+		statuses[key] = w.runtime.Status(runtimeName(target.ProjectID, name))
 	}
 	return notebook.WorkerSyncStatusResponse{Statuses: statuses}, nil
 }
 
-func (w *Worker) pushStatus(name, status, endpoint, workDir, token string, pid int, env string) {
+func (w *Worker) pushStatus(projectID, name, status, endpoint, workDir, token string, pid int, env string) {
 	if err := w.client.SendPush(iagent.MethodNotebookStatusUpdate, notebook.WorkerStatusUpdate{
-		Name:     name,
-		Status:   status,
-		Endpoint: endpoint,
-		WorkDir:  workDir,
-		Token:    token,
-		PID:      pid,
-		Env:      env,
+		ProjectID: projectID,
+		Name:      name,
+		Status:    status,
+		Endpoint:  endpoint,
+		WorkDir:   workDir,
+		Token:     token,
+		PID:       pid,
+		Env:       env,
 	}); err != nil {
 		slog.Warn("notebook worker: status push failed", "name", name, "status", status, "err", err)
 	}
@@ -499,11 +528,12 @@ func (w *Worker) recoverContainers(ctx context.Context) {
 		return
 	}
 	onRecovered := func(rec recoveredRuntime) func(status string) {
+		key := notebookKey(rec.ProjectID, rec.Name)
 		w.mu.Lock()
 		w.nextGen++
 		gen := w.nextGen
-		delete(w.terminal, rec.Name)
-		w.notebooks[rec.Name] = &localNotebook{name: rec.Name, port: rec.Port, gen: gen}
+		delete(w.terminal, key)
+		w.notebooks[key] = &localNotebook{projectID: rec.ProjectID, name: rec.Name, port: rec.Port, gen: gen}
 		if rec.Port > 0 {
 			w.reservedPorts[rec.Port] = struct{}{}
 		}
@@ -511,28 +541,29 @@ func (w *Worker) recoverContainers(ctx context.Context) {
 
 		return func(status string) {
 			w.mu.Lock()
-			nb := w.notebooks[rec.Name]
+			nb := w.notebooks[key]
 			current := nb != nil && nb.gen == gen
 			if current {
-				delete(w.notebooks, rec.Name)
-				w.terminal[rec.Name] = status
+				delete(w.notebooks, key)
+				w.terminal[key] = status
 			}
 			w.mu.Unlock()
 			w.releasePort(rec.Port)
 			if current {
-				w.pushStatus(rec.Name, status, "", "", "", 0, "")
+				w.pushStatus(rec.ProjectID, rec.Name, status, "", "", "", 0, "")
 			}
 		}
 	}
-	onTerminal := func(name, status string) {
+	onTerminal := func(rec recoveredRuntime, status string) {
+		key := notebookKey(rec.ProjectID, rec.Name)
 		w.mu.Lock()
-		_, active := w.notebooks[name]
+		_, active := w.notebooks[key]
 		if !active {
-			w.terminal[name] = status
+			w.terminal[key] = status
 		}
 		w.mu.Unlock()
 		if !active {
-			w.pushStatus(name, status, "", "", "", 0, "")
+			w.pushStatus(rec.ProjectID, rec.Name, status, "", "", "", 0, "")
 		}
 	}
 
@@ -546,38 +577,39 @@ func (w *Worker) recoverProcessTarget(runtime targetedRecoveryRuntime, target no
 	if target.Name == "" {
 		return nil
 	}
+	key := notebookKey(target.ProjectID, target.Name)
 
 	w.mu.Lock()
 	w.nextGen++
 	gen := w.nextGen
-	delete(w.terminal, target.Name)
-	recoveredNotebook := &localNotebook{name: target.Name, port: target.Port, gen: gen}
-	w.notebooks[target.Name] = recoveredNotebook
+	delete(w.terminal, key)
+	recoveredNotebook := &localNotebook{projectID: target.ProjectID, name: target.Name, port: target.Port, gen: gen}
+	w.notebooks[key] = recoveredNotebook
 	if target.Port > 0 {
 		w.reservedPorts[target.Port] = struct{}{}
 	}
 	w.mu.Unlock()
 
-	running, err := runtime.RecoverTarget(target.Name, target.Port, func(status string) {
+	running, err := runtime.RecoverTarget(runtimeName(target.ProjectID, target.Name), target.Port, func(status string) {
 		w.mu.Lock()
-		nb := w.notebooks[target.Name]
+		nb := w.notebooks[key]
 		current := nb != nil && nb.gen == gen
 		port := recoveredNotebook.port
 		if current {
-			delete(w.notebooks, target.Name)
-			w.terminal[target.Name] = status
+			delete(w.notebooks, key)
+			w.terminal[key] = status
 		}
 		w.mu.Unlock()
 		w.releasePort(port)
 		if current {
-			w.pushStatus(target.Name, status, "", "", "", 0, "")
+			w.pushStatus(target.ProjectID, target.Name, status, "", "", "", 0, "")
 		}
 	})
 	if err != nil {
 		w.mu.Lock()
 		port := recoveredNotebook.port
-		if nb := w.notebooks[target.Name]; nb != nil && nb.gen == gen {
-			delete(w.notebooks, target.Name)
+		if nb := w.notebooks[key]; nb != nil && nb.gen == gen {
+			delete(w.notebooks, key)
 		}
 		w.mu.Unlock()
 		w.releasePort(port)
@@ -586,8 +618,8 @@ func (w *Worker) recoverProcessTarget(runtime targetedRecoveryRuntime, target no
 	if !running {
 		w.mu.Lock()
 		port := recoveredNotebook.port
-		if nb := w.notebooks[target.Name]; nb != nil && nb.gen == gen {
-			delete(w.notebooks, target.Name)
+		if nb := w.notebooks[key]; nb != nil && nb.gen == gen {
+			delete(w.notebooks, key)
 		}
 		w.mu.Unlock()
 		w.releasePort(port)

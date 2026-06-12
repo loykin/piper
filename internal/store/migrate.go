@@ -15,6 +15,13 @@ var sqliteMigrationsFS embed.FS
 //go:embed migrations/postgres/*.sql
 var postgresMigrationsFS embed.FS
 
+// Migrate runs all pending database migrations for the given driver.
+// This is exported so that admin CLI commands (e.g. piper user) can bootstrap
+// a fresh database before operating on it.
+func Migrate(ctx context.Context, db *sqlx.DB, driver string) error {
+	return migrate(ctx, db, driver)
+}
+
 func migrate(ctx context.Context, db *sqlx.DB, driver string) error {
 	var fs embed.FS
 	var dir, dialect string

@@ -35,13 +35,14 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	task := testTask(t, "jobs")
 
 	handle, err := drv.Start(context.Background(), task, pdriver.ExecSpec{
-		RuntimeKey: "worker-1-run-1-train-a1",
-		Image:      "python:3.12", // pre-resolved by the worker layer
-		Namespace:  "jobs",        // pre-resolved by the worker layer
-		MasterURL:  "http://master:8080",
-		Token:      "token",
-		StorageURL: "s3://bucket",
-		Env:        []string{"PIPER_GIT_USER=test-user"},
+		RuntimeKey:   "worker-1-run-1-train-a1",
+		Image:        "python:3.12", // pre-resolved by the worker layer
+		Namespace:    "jobs",        // pre-resolved by the worker layer
+		MasterURL:    "http://master:8080",
+		WorkerToken:  "worker-token",
+		StorageToken: "storage-token",
+		StorageURL:   "s3://bucket",
+		Env:          []string{"PIPER_GIT_USER=test-user"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +65,8 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	for _, want := range []string{
 		"--report-mode=file",
 		"--master=http://master:8080",
-		"--token=token",
+		"--worker-token=worker-token",
+		"--storage-token=storage-token",
 		"--storage-url=s3://bucket",
 		"--result-file=/dev/termination-log",
 	} {

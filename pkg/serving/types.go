@@ -1,26 +1,34 @@
 package serving
 
+import "github.com/piper/piper/pkg/manifest"
+
 // ModelService is the top-level structure for a piper ModelService YAML definition.
 type ModelService struct {
-	APIVersion string           `yaml:"apiVersion"`
-	Kind       string           `yaml:"kind"`
-	Metadata   Metadata         `yaml:"metadata"`
-	Spec       ModelServiceSpec `yaml:"spec"`
-}
-
-type Metadata struct {
-	Name string `yaml:"name"`
+	manifest.TypeMeta `yaml:",inline"`
+	Metadata          manifest.ObjectMeta `yaml:"metadata"`
+	Spec              ModelServiceSpec    `yaml:"spec"`
 }
 
 type ModelServiceSpec struct {
-	Model   ModelRef    `yaml:"model"`
-	Runtime RuntimeSpec `yaml:"runtime"`
-	K8s     K8sSpec     `yaml:"k8s"`
+	Options manifest.SpecOptions `yaml:"options,omitempty"`
+	Model   ModelRef             `yaml:"model"`
+	Run     ModelServiceRun      `yaml:"run"`
+	Driver  manifest.DriverSpec  `yaml:"driver"`
+}
+
+// ModelServiceRun describes the serving process itself ("what to run").
+// Separated from Driver ("where/how to run") to keep concerns clean.
+type ModelServiceRun struct {
+	Command    []string `yaml:"command"`
+	Port       int      `yaml:"port"`
+	HealthPath string   `yaml:"health_path,omitempty"` // readiness check path (default: "/")
 }
 
 type ModelRef struct {
 	// FromArtifact references an artifact produced by a Pipeline run.
 	FromArtifact *ArtifactRef `yaml:"from_artifact"`
+	// FromURI references an external model location, e.g. file://, s3://, http://.
+	FromURI string `yaml:"from_uri"`
 }
 
 // ArtifactRef identifies a specific artifact from a Pipeline step.
@@ -29,21 +37,4 @@ type ArtifactRef struct {
 	Step     string `yaml:"step"`     // step name
 	Artifact string `yaml:"artifact"` // outputs[].name
 	Run      string `yaml:"run"`      // "latest" | <run-id>
-}
-
-// RuntimeSpec describes the serving process to launch.
-type RuntimeSpec struct {
-	Image      string   `yaml:"image"`
-	Command    []string `yaml:"command"`
-	Port       int      `yaml:"port"`
-	Mode       string   `yaml:"mode"`        // "local" | "k8s"
-	HealthPath string   `yaml:"health_path"` // HTTP path for readiness check (default: "/")
-}
-
-// K8sSpec holds Kubernetes-specific deployment options.
-type K8sSpec struct {
-	Namespace       string            `yaml:"namespace"`
-	Replicas        int               `yaml:"replicas"`
-	Resources       map[string]string `yaml:"resources"`         // cpu, memory, gpu
-	ImagePullPolicy string            `yaml:"image_pull_policy"` // Always | IfNotPresent | Never (default: Always)
 }

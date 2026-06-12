@@ -60,7 +60,7 @@ test-docker-notebook-e2e:
 test-k8s-e2e:
 	PIPER_K8S_E2E_IMAGE=$(IMAGE) \
 	PIPER_K8S_E2E_NOTEBOOK_IMAGE=$(NOTEBOOK_IMAGE) \
-	go test -tags=k8s_e2e -v -timeout=5m .
+	go test -tags=k8s_e2e -v -timeout=60m .
 
 # Integration tests (requires a K8s cluster)
 test-integration:

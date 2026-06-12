@@ -46,7 +46,7 @@ func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 	})
 
 	applyK8sE2EAgentManifests(t, ns, image, "jupyter/minimal-notebook:latest")
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
@@ -150,7 +150,7 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 			})
 
 			applyK8sE2EAgentManifests(t, ns, image, "jupyter/minimal-notebook:latest")
-			kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+			waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 			kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 			kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 			kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
@@ -209,7 +209,7 @@ func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
 	})
 
 	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
@@ -367,8 +367,6 @@ data:
         secret_key: anypassword
         bucket: piper-artifacts
         use_ssl: false
-    k8s:
-      worker: true
     serving:
       worker: true
     notebook_k8s:
@@ -719,6 +717,26 @@ func dumpK8sE2EDebug(t *testing.T, ns string) {
 	}
 }
 
+func waitK8sE2EDeployment(t *testing.T, ns, name string, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+10*time.Second)
+	defer cancel()
+	out, err := kubectlContext(
+		ctx,
+		nil,
+		"-n", ns,
+		"rollout", "status",
+		"deployment/"+name,
+		"--timeout="+timeout.String(),
+	)
+	if err == nil {
+		return
+	}
+	t.Logf("deployment/%s rollout failed: %v\n%s", name, err, out)
+	dumpK8sE2EDebug(t, ns)
+	t.Fatalf("deployment/%s did not become ready within %s", name, timeout)
+}
+
 // ── Notebook K8s E2E ─────────────────────────────────────────────────────────
 
 // TestK8sE2E_NotebookLifecycle verifies the full notebook lifecycle against a
@@ -754,7 +772,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 	})
 
 	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
@@ -893,7 +911,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	})
 
 	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-server", "--timeout=90s")
+	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")

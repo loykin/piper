@@ -31,6 +31,10 @@ import (
 
 const e2eBucket = "piper-e2e"
 
+// e2eProjectID is the default project used in all e2e tests.
+// newE2EServer creates this project automatically.
+const e2eProjectID = "e2e"
+
 // newE2EServer starts an in-process piper server and returns the Piper instance
 // and the test HTTP server. Both are closed/stopped via t.Cleanup.
 //
@@ -59,8 +63,30 @@ func newE2EServer(t *testing.T) (*Piper, *testutil.Server) {
 	p.cfg.Server.AgentAddr = agentAddr
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
+
+	// Ensure the default e2e project exists before any test runs.
+	createE2EProject(t, srv.URL)
+
 	return p, srv
 }
+
+// createE2EProject creates the default e2e project via the API.
+func createE2EProject(t *testing.T, serverURL string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"id": e2eProjectID, "name": "E2E"})
+	resp, err := http.Post(serverURL+"/api/projects", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("create e2e project: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create e2e project status = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// e2eBase returns the project-scoped API base for the default e2e project.
+func e2eBase() string { return "/api/projects/" + e2eProjectID }
 
 func startE2EAgentServer(t *testing.T, p *Piper) string {
 	t.Helper()
@@ -275,7 +301,8 @@ func findE2EPollingWorker(t *testing.T, serverURL string) string {
 func postRun(t *testing.T, serverURL, yaml string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": yaml})
-	resp, err := http.Post(serverURL+"/runs", "application/json", bytes.NewReader(body))
+	url := serverURL + e2eBase() + "/runs"
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,12 +323,12 @@ func postRun(t *testing.T, serverURL, yaml string) string {
 	return result.RunID
 }
 
-// waitRunStatus polls GET /runs/{id} until run.status matches wantStatus or timeout.
+// waitRunStatus polls GET /projects/:project/runs/{id} until run.status matches wantStatus or timeout.
 func waitRunStatus(t *testing.T, serverURL, runID, wantStatus string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/runs/" + runID)
+		resp, err := http.Get(serverURL + e2eBase() + "/runs/" + runID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -375,6 +402,7 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	p.cfg.Server.AgentAddr = agentAddr
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
+	createE2EProject(t, srv.URL)
 
 	startE2EWorker(t, p.cfg.Server.AgentAddr, srv.URL)
 	startE2EServingWorker(t, srv.URL, p.cfg.Server.AgentAddr, "serving-agent")
@@ -438,7 +466,7 @@ spec:
 	waitRunStatus(t, srv.URL, runID, "running", 10*time.Second)
 
 	// Cancel via API
-	resp, err := http.Post(srv.URL+"/runs/"+runID+"/cancel", "application/json", nil)
+	resp, err := http.Post(srv.URL+e2eBase()+"/runs/"+runID+"/cancel", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +496,7 @@ spec:
 	runID := postRun(t, srv.URL, yaml)
 	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
 
-	resp, err := http.Get(fmt.Sprintf("%s/runs/%s/metrics?step=train", srv.URL, runID))
+	resp, err := http.Get(fmt.Sprintf("%s%s/runs/%s/metrics?step=train", srv.URL, e2eBase(), runID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,6 +656,7 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Serv
 	p.cfg.Server.AgentAddr = agentAddr
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
+	createE2EProject(t, srv.URL)
 	return p, srv
 }
 
@@ -656,6 +685,7 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 	p.cfg.Server.AgentAddr = agentAddr
 	srv := testutil.NewIPv4Server(t, p.Handler(nil))
 	t.Cleanup(func() { _ = p.Close() })
+	createE2EProject(t, srv.URL)
 	return p, srv
 }
 
@@ -663,7 +693,7 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 func postService(t *testing.T, serverURL, yaml string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": yaml})
-	resp, err := http.Post(serverURL+"/serving", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(serverURL+e2eBase()+"/serving", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +710,7 @@ func waitServiceRunID(t *testing.T, serverURL, serviceName, wantRunID string, ti
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/serving/" + serviceName)
+		resp, err := http.Get(serverURL + e2eBase() + "/serving/" + serviceName)
 		if err != nil {
 			time.Sleep(200 * time.Millisecond)
 			continue
@@ -702,7 +732,7 @@ func getE2EService(t *testing.T, serverURL, serviceName string) struct {
 	WorkerID string `json:"worker_id"`
 } {
 	t.Helper()
-	resp, err := http.Get(serverURL + "/serving/" + serviceName)
+	resp, err := http.Get(serverURL + e2eBase() + "/serving/" + serviceName)
 	if err != nil {
 		t.Fatal(err)
 	}

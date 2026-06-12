@@ -65,11 +65,11 @@ func runAgentExec() int {
 	}
 
 	r, err := agentpkg.New(agentpkg.Config{
-		MasterURL:  masterURL,
-		Token:      token,
-		OutputDir:  outputDir,
-		InputDir:   inputDir,
-		StorageURL: storageURL,
+		MasterURL:   masterURL,
+		WorkerToken: token,
+		OutputDir:   outputDir,
+		InputDir:    inputDir,
+		StorageURL:  storageURL,
 	})
 	if err != nil {
 		return 1

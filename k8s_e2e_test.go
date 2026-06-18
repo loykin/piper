@@ -274,7 +274,7 @@ spec:
 	const nbName = "worker-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbName, nbImage)
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
-	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 8*time.Minute) {
+	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("worker-mode notebook %s did not reach running", nbName)
 	}
@@ -613,6 +613,7 @@ func hasK8sE2ECapabilities(got, want []string) bool {
 }
 
 const k8sE2EProjectID = "e2e"
+const k8sE2ENotebookReadyTimeout = 4 * time.Minute
 
 func k8sE2EProjectBase() string { return "/api/projects/" + k8sE2EProjectID }
 
@@ -799,7 +800,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	t.Logf("notebook %s created, waiting for running...", nbName)
-	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 8*time.Minute) {
+	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("notebook %s did not reach running", nbName)
 	}
@@ -865,7 +866,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 
 	// Restart.
 	k8sE2ENotebookAction(t, serverURL, nbName, "start")
-	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 5*time.Minute) {
+	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("notebook %s did not reach running after restart", nbName)
 	}
@@ -935,7 +936,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 
 	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbImage)
 	k8sE2EPostNotebook(t, serverURL, nb1YAML, "")
-	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-1", "running", 8*time.Minute) {
+	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-1", "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("first notebook did not reach running")
 	}
@@ -959,7 +960,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	// Second notebook reuses the same PVC.
 	nb2YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-2\nspec:\n  driver:\n    image: %s\n", nbImage)
 	k8sE2EPostNotebook(t, serverURL, nb2YAML, volID)
-	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-2", "running", 5*time.Minute) {
+	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-2", "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("second notebook (volume reuse) did not reach running")
 	}
@@ -990,13 +991,19 @@ func waitK8sE2ENotebookStatus(t *testing.T, serverURL, name, want string, timeou
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
+	lastStatus := ""
+	lastBody := ""
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(serverURL + k8sE2EProjectBase() + "/notebooks/" + name) //nolint:noctx
 		if err == nil {
-			var result map[string]any
-			_ = json.NewDecoder(resp.Body).Decode(&result)
+			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			if status, _ := result["status"].(string); status == want {
+			lastBody = string(body)
+			var result map[string]any
+			_ = json.Unmarshal(body, &result)
+			status, _ := result["status"].(string)
+			lastStatus = status
+			if status == want {
 				return true
 			} else if status == "failed" {
 				t.Logf("notebook %s reached terminal status 'failed'", name)
@@ -1005,6 +1012,7 @@ func waitK8sE2ENotebookStatus(t *testing.T, serverURL, name, want string, timeou
 		}
 		time.Sleep(2 * time.Second)
 	}
+	t.Logf("notebook %s did not reach %q within %s; last status=%q body=%s", name, want, timeout, lastStatus, lastBody)
 	return false
 }
 

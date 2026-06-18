@@ -269,10 +269,7 @@ spec:
     k8s:
       image: alpine:3.20
 `)
-	if out := kubectl(t, "-n", ns, "get", "deploy,svc", "worker-serving", "--no-headers"); !strings.Contains(out, "worker-serving") {
-		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("expected worker-created serving Deployment/Service, got:\n%s", out)
-	}
+	waitK8sE2EServingResources(t, ns, "worker-serving", 2*time.Minute)
 
 	const nbName = "worker-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbName, nbImage)
@@ -974,7 +971,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 func k8sE2EPostNotebook(t *testing.T, serverURL, notebookYAML, volumeID string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": notebookYAML, "volume_id": volumeID})
-	resp, err := http.Post(serverURL+"/notebooks", "application/json", bytes.NewReader(body)) //nolint:noctx
+	resp, err := http.Post(serverURL+k8sE2EProjectBase()+"/notebooks", "application/json", bytes.NewReader(body)) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -990,7 +987,7 @@ func waitK8sE2ENotebookStatus(t *testing.T, serverURL, name, want string, timeou
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(serverURL + "/notebooks/" + name) //nolint:noctx
+		resp, err := client.Get(serverURL + k8sE2EProjectBase() + "/notebooks/" + name) //nolint:noctx
 		if err == nil {
 			var result map[string]any
 			_ = json.NewDecoder(resp.Body).Decode(&result)
@@ -1009,7 +1006,7 @@ func waitK8sE2ENotebookStatus(t *testing.T, serverURL, name, want string, timeou
 
 func k8sE2EGetNotebook(t *testing.T, serverURL, name string) map[string]any {
 	t.Helper()
-	resp, err := http.Get(serverURL + "/notebooks/" + name) //nolint:noctx
+	resp, err := http.Get(serverURL + k8sE2EProjectBase() + "/notebooks/" + name) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1023,7 +1020,7 @@ func k8sE2EGetNotebook(t *testing.T, serverURL, name string) map[string]any {
 
 func k8sE2ENotebookAction(t *testing.T, serverURL, name, action string) {
 	t.Helper()
-	resp, err := http.Post(serverURL+"/notebooks/"+name+"/"+action, "application/json", nil) //nolint:noctx
+	resp, err := http.Post(serverURL+k8sE2EProjectBase()+"/notebooks/"+name+"/"+action, "application/json", nil) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1036,7 +1033,7 @@ func k8sE2ENotebookAction(t *testing.T, serverURL, name, action string) {
 
 func k8sE2EDeleteNotebook(t *testing.T, serverURL, name string) {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodDelete, serverURL+"/notebooks/"+name, nil) //nolint:noctx
+	req, _ := http.NewRequest(http.MethodDelete, serverURL+k8sE2EProjectBase()+"/notebooks/"+name, nil) //nolint:noctx
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -1050,7 +1047,7 @@ func k8sE2EDeleteNotebook(t *testing.T, serverURL, name string) {
 
 func k8sE2EPurgeVolume(t *testing.T, serverURL, volumeID string) {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodDelete, serverURL+"/notebook-volumes/"+volumeID, nil) //nolint:noctx
+	req, _ := http.NewRequest(http.MethodDelete, serverURL+k8sE2EProjectBase()+"/notebook-volumes/"+volumeID, nil) //nolint:noctx
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -1060,4 +1057,18 @@ func k8sE2EPurgeVolume(t *testing.T, serverURL, volumeID string) {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("DELETE /notebook-volumes/%s status=%d: %s", volumeID, resp.StatusCode, b)
 	}
+}
+
+func waitK8sE2EServingResources(t *testing.T, ns, name string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := kubectlContext(context.Background(), nil, "-n", ns, "get", "deploy,svc", name, "--no-headers")
+		if err == nil && strings.Contains(out, name) {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	dumpK8sE2EDebug(t, ns)
+	t.Fatalf("serving resources for %q not created within %s", name, timeout)
 }

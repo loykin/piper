@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useProjectId } from '@/lib/projectContext'
 import { Download, RefreshCw, Save, Trash2 } from 'lucide-react'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -152,22 +152,20 @@ export default function StoragePage() {
 
   if (loading) {
     return (
-      <DataPage>
-        <DataPage.Content>
+      <DataBodyTemplate title="Storage">
+        <DataBodyTemplate.Body>
           <p className="text-sm text-muted-foreground">Loading…</p>
-        </DataPage.Content>
-      </DataPage>
+        </DataBodyTemplate.Body>
+      </DataBodyTemplate>
     )
   }
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Storage"
-          description="Manage artifact storage configuration and browse stored objects."
-        />
-        <DataPage.Actions>
+    <DataBodyTemplate
+      title="Storage"
+      description="Manage artifact storage configuration and browse stored objects."
+      actions={
+        <>
           <Badge variant={statusVariant(status)}>{status}</Badge>
           {restartRequired && <Badge variant="outline">Restart required</Badge>}
           <Button variant="outline" size="sm" onClick={() => void handleRefresh()} disabled={refreshing || !storage || !enabled}>
@@ -178,13 +176,12 @@ export default function StoragePage() {
             <Save className="mr-2 size-4" />
             {saving ? 'Saving…' : 'Save'}
           </Button>
-        </DataPage.Actions>
-      </DataPage.Header>
-
-      <DataPage.Content>
-        <DataPage.Group surface="bordered" className="mb-4">
-          <DataPage.GroupHeader title="Artifact Store Config" className="px-4 pt-3" />
-          <div className="px-4 pb-4 space-y-4 text-sm">
+        </>
+      }
+    >
+      <DataBodyTemplate.Body>
+        <DataBodyTemplate.Group variant="bordered" title="Artifact Store Config">
+          <div className="space-y-4 text-sm">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <p className="text-xs text-muted-foreground">Enabled</p>
@@ -241,11 +238,10 @@ export default function StoragePage() {
               <p className="mt-1">Changing these values writes the persisted storage config. Restart the server to apply it to the running store.</p>
             </div>
           </div>
-        </DataPage.Group>
+        </DataBodyTemplate.Group>
 
-        <DataPage.Group surface="bordered">
-          <DataPage.GroupHeader title="Upload Object" className="px-4 pt-3" />
-          <div className="px-4 pb-4 space-y-3">
+        <DataBodyTemplate.Group variant="bordered" title="Upload Object">
+          <div className="space-y-3">
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-2">
                 <span className="text-xs text-muted-foreground">Object key</span>
@@ -283,30 +279,28 @@ export default function StoragePage() {
               </p>
             </div>
           </div>
-        </DataPage.Group>
+        </DataBodyTemplate.Group>
 
-        <DataPage.Group surface="bordered">
-          <div className="flex items-center justify-between gap-3 px-4 pt-3">
-            <div>
-              <h3 className="text-sm font-medium">Stored Objects</h3>
-              <p className="text-xs text-muted-foreground">Browse and download stored artifacts from the active object store.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Input
-                value={prefix}
-                onChange={e => setPrefix(e.target.value)}
-                placeholder="prefix filter"
-                className="w-52"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void handleRefresh()
-                  }
-                }}
-              />
-            </div>
-          </div>
-          <div className="px-4 pb-4 pt-3">
+        <DataBodyTemplate.Group
+          variant="bordered"
+          title="Stored Objects"
+          description="Browse and download stored artifacts from the active object store."
+          actions={
+            <Input
+              value={prefix}
+              onChange={e => setPrefix(e.target.value)}
+              placeholder="prefix filter"
+              className="w-52"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void handleRefresh()
+                }
+              }}
+            />
+          }
+        >
+          <div>
             {!enabled ? (
               <div className="rounded-md border bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
                 Object storage is disabled or unavailable. Save and restart the server to browse stored objects.
@@ -361,8 +355,8 @@ export default function StoragePage() {
               </div>
             )}
           </div>
-        </DataPage.Group>
-      </DataPage.Content>
-    </DataPage>
+        </DataBodyTemplate.Group>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

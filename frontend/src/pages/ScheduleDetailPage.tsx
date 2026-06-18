@@ -2,7 +2,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useProjectId } from '@/lib/projectContext'
 import { Power, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { DetailBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
 import RunDAG from '@/shared/components/RunDAG'
@@ -64,35 +64,33 @@ export default function ScheduleDetailPage() {
 
   if (loading) {
     return (
-      <DataPage>
-        <DataPage.Content>
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </DataPage.Content>
-      </DataPage>
+      <DetailBodyTemplate title="Loading…">
+        <DetailBodyTemplate.Section>
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        </DetailBodyTemplate.Section>
+      </DetailBodyTemplate>
     )
   }
 
   if (!schedule) {
     return (
-      <DataPage>
-        <DataPage.Content>
+      <DetailBodyTemplate title="Not Found">
+        <DetailBodyTemplate.Section>
           <p className="text-sm text-muted-foreground">Schedule not found.</p>
-        </DataPage.Content>
-      </DataPage>
+        </DetailBodyTemplate.Section>
+      </DetailBodyTemplate>
     )
   }
 
   const isCron = schedule.schedule_type === 'cron'
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          breadcrumb={<Link to={`/projects/${projectId}/schedules`} className="hover:text-foreground transition-colors">← Schedules</Link>}
-          title={schedule.name}
-          description={`${TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type} schedule`}
-        />
-        <DataPage.Actions>
+    <DetailBodyTemplate
+      eyebrow={<Link to={`/projects/${projectId}/schedules`} className="hover:text-foreground transition-colors">← Schedules</Link>}
+      title={schedule.name}
+      description={`${TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type} schedule`}
+      actions={
+        <div className="flex items-center gap-0.5">
           {isCron && (
             <IconButton icon={<Power />} label={schedule.enabled ? 'Disable' : 'Enable'}
               onClick={() => toggleSchedule({ id: schedule.id, enabled: !schedule.enabled })}
@@ -105,88 +103,80 @@ export default function ScheduleDetailPage() {
               deleteSchedule(schedule.id, { onSuccess: () => navigate(`/projects/${projectId}/schedules`) })
             }}
             className="text-destructive hover:bg-destructive/10" />
-        </DataPage.Actions>
-      </DataPage.Header>
-
-      <DataPage.Content>
-        <DataPage.Group surface="bordered" className="mb-4">
-          <div className="p-4">
-            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {isCron && (
-                <div>
-                  <dt className="text-xs text-muted-foreground">Cron Expression</dt>
-                  <dd className="mt-1 font-mono text-sm">{schedule.cron_expr || '-'}</dd>
-                </div>
-              )}
-              {schedule.schedule_type === 'once' && (
-                <div>
-                  <dt className="text-xs text-muted-foreground">Scheduled At</dt>
-                  <dd className="mt-1 text-sm">{new Date(schedule.next_run_at).toLocaleString()}</dd>
-                </div>
-              )}
-              <div>
-                <dt className="text-xs text-muted-foreground">Status</dt>
-                <dd className="mt-1 text-sm">
-                  {schedule.enabled ? (isCron ? 'Active' : 'Waiting') : (schedule.schedule_type === 'cron' ? 'Disabled' : 'Done')}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Last Run</dt>
-                <dd className="mt-1 text-sm">
-                  {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '-'}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Created</dt>
-                <dd className="mt-1 text-sm">{new Date(schedule.created_at).toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Total Runs</dt>
-                <dd className="mt-1 text-sm font-semibold">{runs.length}</dd>
-              </div>
-            </dl>
-          </div>
-        </DataPage.Group>
-
-        <DataPage.Group surface="bordered" className="mb-4">
-          <RunDAG
-            pipelineYaml={schedule.pipeline_yaml}
-            steps={[]}
-            selected={null}
-            onSelectStep={() => {}}
-          />
-        </DataPage.Group>
-
-        <DataPage.Group surface="none" className="mb-4">
-          <DataPage.GroupHeader title="Run History" className="px-4 pt-3" />
-          {runs.length === 0 ? (
-            <div className="px-4 py-8 text-sm text-muted-foreground">
-              {schedule.schedule_type === 'immediate' ? 'Running...' : 'No runs yet.'}
+        </div>
+      }
+    >
+      <DetailBodyTemplate.Section title="Details" surface="bordered">
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {isCron && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Cron Expression</dt>
+              <dd className="mt-1 font-mono text-sm">{schedule.cron_expr || '-'}</dd>
             </div>
-          ) : (
-            <DataPage.GroupBody className="[&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-              <DataGrid
-                data={runs}
-                columns={runColumns}
-                tableWidthMode="fill-last"
-                rowHeight={44}
-                pagination={{ pageSize: 10 }}
-                footer={(table) => (
-                  <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                    <span>{runs.length} results</span>
-                    <DataGridPaginationCompact table={table} />
-                  </div>
-                )}
-              />
-            </DataPage.GroupBody>
           )}
-        </DataPage.Group>
+          {schedule.schedule_type === 'once' && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Scheduled At</dt>
+              <dd className="mt-1 text-sm">{new Date(schedule.next_run_at).toLocaleString()}</dd>
+            </div>
+          )}
+          <div>
+            <dt className="text-xs text-muted-foreground">Status</dt>
+            <dd className="mt-1 text-sm">
+              {schedule.enabled ? (isCron ? 'Active' : 'Waiting') : (schedule.schedule_type === 'cron' ? 'Disabled' : 'Done')}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Last Run</dt>
+            <dd className="mt-1 text-sm">
+              {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '-'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Created</dt>
+            <dd className="mt-1 text-sm">{new Date(schedule.created_at).toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Total Runs</dt>
+            <dd className="mt-1 text-sm font-semibold">{runs.length}</dd>
+          </div>
+        </dl>
+      </DetailBodyTemplate.Section>
 
-        <DataPage.Group surface="bordered">
-          <DataPage.GroupHeader title="Pipeline YAML" className="px-4 pt-3" />
-          <pre className="overflow-x-auto px-4 pb-4 text-xs leading-6 text-muted-foreground">{schedule.pipeline_yaml || '(empty)'}</pre>
-        </DataPage.Group>
-      </DataPage.Content>
-    </DataPage>
+      <DetailBodyTemplate.Section surface="bordered">
+        <RunDAG
+          pipelineYaml={schedule.pipeline_yaml}
+          steps={[]}
+          selected={null}
+          onSelectStep={() => {}}
+        />
+      </DetailBodyTemplate.Section>
+
+      <DetailBodyTemplate.Section title="Run History" surface="plain">
+        {runs.length === 0 ? (
+          <p className="py-4 text-sm text-muted-foreground">
+            {schedule.schedule_type === 'immediate' ? 'Running...' : 'No runs yet.'}
+          </p>
+        ) : (
+          <DataGrid
+            data={runs}
+            columns={runColumns}
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            pagination={{ pageSize: 10 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{runs.length} results</span>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
+        )}
+      </DetailBodyTemplate.Section>
+
+      <DetailBodyTemplate.Section title="Pipeline YAML" surface="bordered">
+        <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">{schedule.pipeline_yaml || '(empty)'}</pre>
+      </DetailBodyTemplate.Section>
+    </DetailBodyTemplate>
   )
 }

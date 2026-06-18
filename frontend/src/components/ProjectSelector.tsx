@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -84,20 +85,22 @@ export function ProjectSelector() {
               side="right"
               sideOffset={4}
             >
-              <DropdownMenuLabel>Projects</DropdownMenuLabel>
-              {projects.map(project => (
-                <DropdownMenuItem
-                  key={project.id}
-                  onClick={() => handleSelect(project.id)}
-                  className="gap-2 p-2"
-                >
-                  <div className="flex size-6 items-center justify-center rounded-sm border">
-                    <FolderKanban className="size-3.5" />
-                  </div>
-                  <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                  {project.id === projectId && <Check className="size-4" />}
-                </DropdownMenuItem>
-              ))}
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Projects</DropdownMenuLabel>
+                {projects.map(project => (
+                  <DropdownMenuItem
+                    key={project.id}
+                    onClick={() => handleSelect(project.id)}
+                    className="gap-2 p-2"
+                  >
+                    <div className="flex size-6 items-center justify-center rounded-sm border">
+                      <FolderKanban className="size-3.5" />
+                    </div>
+                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                    {project.id === projectId && <Check className="size-4" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setOpen(true)} className="gap-2 p-2">
                 <div className="flex size-6 items-center justify-center rounded-sm border bg-background">

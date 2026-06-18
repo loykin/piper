@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
+import { Button } from '@/components/ui/button'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { listRuns, listArtifacts, type Run, type StepArtifacts } from '@/features/runs/api'
 import type { Service } from '@/features/serving/api'
@@ -660,25 +661,18 @@ export default function ServicesPage() {
   ]
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Services"
-          description="Model serving endpoints deployed from pipeline artifacts."
-        />
-        {!showDeploy && (
-          <DataPage.Actions>
-            <button type="button" onClick={() => setShowDeploy(true)}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
-              Deploy Service
-            </button>
-          </DataPage.Actions>
-        )}
-      </DataPage.Header>
-
-      <DataPage.Content>
+    <DataBodyTemplate
+      title="Services"
+      description="Model serving endpoints deployed from pipeline artifacts."
+      actions={
+        !showDeploy ? (
+          <Button size="sm" onClick={() => setShowDeploy(true)}>Deploy Service</Button>
+        ) : undefined
+      }
+    >
+      <DataBodyTemplate.Body>
         {showDeploy && (
-          <div className="mb-[var(--dk-page-padding-y)]">
+          <div className="mb-4">
             <DeployPanel
               form={deployForm} setForm={setDeployForm}
               tab={deployTab} setTab={setDeployTab}
@@ -700,25 +694,21 @@ export default function ServicesPage() {
             </p>
           </div>
         ) : (
-          <DataPage.Group surface="none" className="h-full">
-            <DataPage.GroupBody className="h-full [&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-              <DataGrid
-                data={services}
-                columns={columns}
-                tableWidthMode="fill-last"
-                rowHeight={48}
-                pagination={{ pageSize: 20 }}
-                footer={(table) => (
-                  <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                    <span>{services.length} results</span>
-                    <DataGridPaginationCompact table={table} />
-                  </div>
-                )}
-              />
-            </DataPage.GroupBody>
-          </DataPage.Group>
+          <DataGrid
+            data={services}
+            columns={columns}
+            tableWidthMode="fill-last"
+            rowHeight={48}
+            pagination={{ pageSize: 20 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{services.length} results</span>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
         )}
-      </DataPage.Content>
-    </DataPage>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

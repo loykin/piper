@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { ArrowUpDown } from 'lucide-react'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useRuns, runKeys } from '@/features/runs/hooks'
@@ -116,33 +116,26 @@ export default function ExperimentDetailPage() {
   }, [paramKeys, metricCols, metricsById, sort])
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title={experiment}
-          description={`${runs.length} run${runs.length !== 1 ? 's' : ''} · click a metric column header to sort`}
-        />
-      </DataPage.Header>
-      <DataPage.Content>
+    <DataBodyTemplate
+      title={experiment}
+      description={`${runs.length} run${runs.length !== 1 ? 's' : ''} · click a metric column header to sort`}
+    >
+      <DataBodyTemplate.Body>
         {isLoading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading…</div>
         ) : runs.length === 0 ? (
           <div className="py-8 text-sm text-muted-foreground">No runs in this experiment.</div>
         ) : (
-          <DataPage.Group surface="none" className="h-full">
-            <DataPage.GroupBody className="h-full [&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-              <DataGrid
-                data={runs}
-                columns={columns}
-                tableWidthMode="fill-last"
-                rowHeight={44}
-                rowCursor
-                onRowClick={(row) => navigate(`/runs/${row.id}`)}
-              />
-            </DataPage.GroupBody>
-          </DataPage.Group>
+          <DataGrid
+            data={runs}
+            columns={columns}
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => navigate(`/runs/${row.id}`)}
+          />
         )}
-      </DataPage.Content>
-    </DataPage>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

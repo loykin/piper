@@ -158,7 +158,7 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runtime was not started")
 	}
-	if rt.req.BaseURL != "/notebooks/demo/proxy/" {
+	if rt.req.BaseURL != "/projects/project-a/notebooks/demo/proxy/" {
 		t.Fatalf("base url = %q", rt.req.BaseURL)
 	}
 	if rt.req.Token == "" {

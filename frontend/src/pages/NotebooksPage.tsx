@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectId } from '@/lib/projectContext'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { getNotebookColumns } from '@/features/notebooks/columns'
 import {
@@ -39,18 +39,14 @@ export default function NotebooksPage() {
   )
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Notebooks"
-          description="Jupyter notebook servers. Click Open to launch in a new tab."
-        />
-        <DataPage.Actions>
-          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
-        </DataPage.Actions>
-      </DataPage.Header>
-
-      <DataPage.Content>
+    <DataBodyTemplate
+      title="Notebooks"
+      description="Jupyter notebook servers. Click Open to launch in a new tab."
+      actions={
+        <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
+      }
+    >
+      <DataBodyTemplate.Body>
         {isLoading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading…</div>
         ) : notebooks.length === 0 ? (
@@ -63,36 +59,32 @@ export default function NotebooksPage() {
             )}
           </div>
         ) : (
-          <DataPage.Group surface="none" className="h-full">
-            <DataPage.GroupBody className="h-full [&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-              <DataGrid
-                data={notebooks}
-                columns={columns}
-                tableWidthMode="fill-last"
-                rowHeight={44}
-                pagination={{ pageSize: 20 }}
-                footer={(table) => (
-                  <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                    <span>{notebooks.length} servers</span>
-                    {releasedVolumes.length > 0 && (
-                      <Button
-                        type="button"
-                        variant="link"
-                        size="sm"
-                        className="h-auto p-0 text-xs"
-                        onClick={() => navigate(`/projects/${projectId}/notebooks/create?volume=${releasedVolumes[0].id}`)}
-                      >
-                        {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
-                      </Button>
-                    )}
-                    <DataGridPaginationCompact table={table} />
-                  </div>
+          <DataGrid
+            data={notebooks}
+            columns={columns}
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            pagination={{ pageSize: 20 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{notebooks.length} servers</span>
+                {releasedVolumes.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-xs"
+                    onClick={() => navigate(`/projects/${projectId}/notebooks/create?volume=${releasedVolumes[0].id}`)}
+                  >
+                    {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
+                  </Button>
                 )}
-              />
-            </DataPage.GroupBody>
-          </DataPage.Group>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
         )}
-      </DataPage.Content>
-    </DataPage>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

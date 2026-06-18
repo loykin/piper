@@ -16,10 +16,12 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut } from 'lucide-react'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck } from 'lucide-react'
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
 import { AuthProvider, useAuth } from '@/features/auth/context'
+import { useState } from 'react'
 
 const LoginPage             = lazy(() => import('@/pages/LoginPage'))
 const RunDetailPage         = lazy(() => import('@/pages/RunDetailPage'))
@@ -45,6 +47,13 @@ function navItems(projectId: string) {
   const base = `/projects/${projectId}`
   return [
     {
+      label: 'Development',
+      items: [
+        { id: 'notebooks',        label: 'Notebooks', icon: BookOpen,  to: `${base}/notebooks` },
+        { id: 'notebook-volumes', label: 'Volumes',   icon: HardDrive, to: `${base}/notebook-volumes` },
+      ],
+    },
+    {
       label: 'Pipelines',
       items: [
         { id: 'pipelines',   label: 'Templates',   icon: GitBranch,     to: `${base}/pipelines` },
@@ -58,13 +67,6 @@ function navItems(projectId: string) {
       items: [
         { id: 'serving',         label: 'Serving',  icon: Server,  to: `${base}/serving` },
         { id: 'serving-history', label: 'History',  icon: History, to: `${base}/serving/history` },
-      ],
-    },
-    {
-      label: 'Development',
-      items: [
-        { id: 'notebooks',        label: 'Notebooks', icon: BookOpen,  to: `${base}/notebooks` },
-        { id: 'notebook-volumes', label: 'Volumes',   icon: HardDrive, to: `${base}/notebook-volumes` },
       ],
     },
     {
@@ -84,18 +86,18 @@ function AppSidebar() {
   const { user, capabilities, logout } = useAuth()
   const groups = navItems(projectId)
 
+  const [isDark, setIsDark] = useState(() =>
+    document.documentElement.classList.contains('dark')
+  )
+
+  function toggleDark(checked: boolean) {
+    setIsDark(checked)
+    document.documentElement.classList.toggle('dark', checked)
+  }
+
   return (
     <>
       <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1">
-          <div className="flex h-7 w-7 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground">
-            P
-          </div>
-          <div>
-            <p className="text-sm font-semibold leading-none">piper</p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">Pipeline Control</p>
-          </div>
-        </div>
         <div className="px-1 pt-1">
           <ProjectSelector />
         </div>
@@ -131,34 +133,60 @@ function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        {user && (
-          <div className="flex items-center justify-between px-2 py-1">
-            <div className="min-w-0">
-              <p className="truncate text-xs font-medium">{user.email}</p>
-              {user.system_admin && (
-                <p className="text-[11px] text-muted-foreground">admin</p>
-              )}
-            </div>
-            <button
-              onClick={() => { void logout().then(() => navigate('/login')) }}
-              className="ml-2 shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
-              title="Sign out"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-        {!user && capabilities?.authentication && capabilities.login_mode !== '' && (
-          <div className="px-2 py-1">
-            <button
-              onClick={() => navigate('/login')}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Sign in
-            </button>
-          </div>
-        )}
-        <div className="px-2 pb-1 text-xs text-muted-foreground">v0.1.0</div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="w-full">
+                  <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-xs font-semibold">
+                      {user.email.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="truncate text-sm font-medium">{user.email}</p>
+                      {user.system_admin && (
+                        <p className="truncate text-xs text-muted-foreground">System Admin</p>
+                      )}
+                    </div>
+                    <ChevronsUpDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
+                  </SidebarMenuButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start" className="w-56">
+                  <DropdownMenuLabel className="font-normal">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="truncate text-sm font-medium">{user.email}</span>
+                      {user.system_admin && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <ShieldCheck className="h-3 w-3" /> System Admin
+                        </span>
+                      )}
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem
+                    checked={isDark}
+                    onCheckedChange={toggleDark}
+                  >
+                    {isDark ? <Moon className="mr-2 h-4 w-4" /> : <Sun className="mr-2 h-4 w-4" />}
+                    Dark mode
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => { void logout().then(() => navigate('/login')) }}
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : capabilities?.authentication && capabilities.login_mode !== '' ? (
+              <SidebarMenuButton onClick={() => navigate('/login')}>
+                Sign in
+              </SidebarMenuButton>
+            ) : null}
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
     </>
   )

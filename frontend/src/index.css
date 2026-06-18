@@ -1,9 +1,11 @@
 @import "tailwindcss";
+@import "@loykin/designkit/styles";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
-@source "../node_modules/@loykin/designkit/dist";
+@source "../node_modules/@loykin/designkit/dist/index.js";
+@source "../node_modules/@loykin/gridkit/dist/index.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -161,3 +163,5 @@
   --sidebar-border: oklch(1 0 0 / 7%);
   --sidebar-ring: oklch(0.585 0.195 264);
 }
+
+@import "@loykin/gridkit/styles";

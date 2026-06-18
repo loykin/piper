@@ -1,7 +1,7 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useProjectId } from '@/lib/projectContext'
 import { RefreshCw, Square, Trash2 } from 'lucide-react'
-import { DataPage } from '@loykin/designkit'
+import { DetailBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useService, useStopService, useRestartService } from '@/features/serving/hooks'
@@ -16,21 +16,21 @@ export default function ServingDetailPage() {
 
   if (isLoading) {
     return (
-      <DataPage>
-        <DataPage.Content>
+      <DetailBodyTemplate title="Loading…">
+        <DetailBodyTemplate.Section>
           <p className="text-sm text-muted-foreground">Loading…</p>
-        </DataPage.Content>
-      </DataPage>
+        </DetailBodyTemplate.Section>
+      </DetailBodyTemplate>
     )
   }
 
   if (!service) {
     return (
-      <DataPage>
-        <DataPage.Content>
+      <DetailBodyTemplate title="Not Found">
+        <DetailBodyTemplate.Section>
           <p className="text-sm text-muted-foreground">Service not found.</p>
-        </DataPage.Content>
-      </DataPage>
+        </DetailBodyTemplate.Section>
+      </DetailBodyTemplate>
     )
   }
 
@@ -50,15 +50,13 @@ export default function ServingDetailPage() {
   }
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          breadcrumb={<Link to={`/projects/${projectId}/serving`} className="hover:text-foreground transition-colors">← Serving</Link>}
-          title={service.name}
-          description="ModelService deployment"
-        />
-        <DataPage.Actions>
-          <StatusBadge status={service.status} />
+    <DetailBodyTemplate
+      eyebrow={<Link to={`/projects/${projectId}/serving`} className="hover:text-foreground transition-colors">← Serving</Link>}
+      title={service.name}
+      description="ModelService deployment"
+      status={<StatusBadge status={service.status} />}
+      actions={
+        <div className="flex items-center gap-0.5">
           {service.status === 'running' && (
             <IconButton icon={<RefreshCw />} label="Restart" onClick={handleRestart} />
           )}
@@ -70,67 +68,62 @@ export default function ServingDetailPage() {
             <IconButton icon={<Trash2 />} label="Delete" onClick={handleDelete}
               className="text-destructive hover:bg-destructive/10" />
           )}
-        </DataPage.Actions>
-      </DataPage.Header>
-
-      <DataPage.Content>
-        <DataPage.Group surface="bordered" className="mb-4">
-          <div className="p-4">
-            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              <div>
-                <dt className="text-xs text-muted-foreground">Endpoint</dt>
-                <dd className="mt-1">
-                  {service.endpoint ? (
-                    <a href={service.endpoint} target="_blank" rel="noreferrer"
-                      className="font-mono text-sm text-primary hover:underline">
-                      {service.endpoint}
-                    </a>
-                  ) : <span className="text-sm text-muted-foreground">—</span>}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Artifact</dt>
-                <dd className="mt-1 font-mono text-sm">{service.artifact || '—'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Namespace</dt>
-                <dd className="mt-1 text-sm">{service.namespace || 'local'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Source Run</dt>
-                <dd className="mt-1 text-sm">
-                  {service.run_id ? (
-                    <Link to={`/runs/${service.run_id}`} className="font-mono text-primary hover:underline">
-                      {service.run_id}
-                    </Link>
-                  ) : '—'}
-                </dd>
-              </div>
-              {service.pid > 0 && (
-                <div>
-                  <dt className="text-xs text-muted-foreground">PID</dt>
-                  <dd className="mt-1 font-mono text-sm">{service.pid}</dd>
-                </div>
-              )}
-              <div>
-                <dt className="text-xs text-muted-foreground">Deployed</dt>
-                <dd className="mt-1 text-sm">{new Date(service.created_at).toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Updated</dt>
-                <dd className="mt-1 text-sm">{new Date(service.updated_at).toLocaleString()}</dd>
-              </div>
-            </dl>
+        </div>
+      }
+    >
+      <DetailBodyTemplate.Section title="Details" surface="bordered">
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div>
+            <dt className="text-xs text-muted-foreground">Endpoint</dt>
+            <dd className="mt-1">
+              {service.endpoint ? (
+                <a href={service.endpoint} target="_blank" rel="noreferrer"
+                  className="font-mono text-sm text-primary hover:underline">
+                  {service.endpoint}
+                </a>
+              ) : <span className="text-sm text-muted-foreground">—</span>}
+            </dd>
           </div>
-        </DataPage.Group>
+          <div>
+            <dt className="text-xs text-muted-foreground">Artifact</dt>
+            <dd className="mt-1 font-mono text-sm">{service.artifact || '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Namespace</dt>
+            <dd className="mt-1 text-sm">{service.namespace || 'local'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Source Run</dt>
+            <dd className="mt-1 text-sm">
+              {service.run_id ? (
+                <Link to={`/runs/${service.run_id}`} className="font-mono text-primary hover:underline">
+                  {service.run_id}
+                </Link>
+              ) : '—'}
+            </dd>
+          </div>
+          {service.pid > 0 && (
+            <div>
+              <dt className="text-xs text-muted-foreground">PID</dt>
+              <dd className="mt-1 font-mono text-sm">{service.pid}</dd>
+            </div>
+          )}
+          <div>
+            <dt className="text-xs text-muted-foreground">Deployed</dt>
+            <dd className="mt-1 text-sm">{new Date(service.created_at).toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Updated</dt>
+            <dd className="mt-1 text-sm">{new Date(service.updated_at).toLocaleString()}</dd>
+          </div>
+        </dl>
+      </DetailBodyTemplate.Section>
 
-        <DataPage.Group surface="bordered">
-          <DataPage.GroupHeader title="Service YAML" className="px-4 pt-3" />
-          <pre className="overflow-x-auto px-4 pb-4 text-xs leading-6 text-muted-foreground">
-            {service.yaml || '(empty)'}
-          </pre>
-        </DataPage.Group>
-      </DataPage.Content>
-    </DataPage>
+      <DetailBodyTemplate.Section title="Service YAML" surface="bordered">
+        <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">
+          {service.yaml || '(empty)'}
+        </pre>
+      </DetailBodyTemplate.Section>
+    </DetailBodyTemplate>
   )
 }

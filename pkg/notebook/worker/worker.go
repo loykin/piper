@@ -200,7 +200,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 	}
 
 	token := uuid.New().String()
-	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", name)
+	baseURL := fmt.Sprintf("/projects/%s/notebooks/%s/proxy/", req.ProjectID, name)
 	target := fmt.Sprintf("127.0.0.1:%d", port)
 
 	// Register the notebook entry before starting so that an OnExit callback that

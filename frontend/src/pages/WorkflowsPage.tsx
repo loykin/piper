@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useProjectId } from '@/lib/projectContext'
 import { ArrowRight, Power, Plus, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { scheduleColumns } from '@/features/schedules/columns'
@@ -50,21 +50,18 @@ export default function WorkflowsPage() {
   const columns = [...scheduleColumns, actionColumn]
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Schedules"
-          description="Manage cron and one-time pipeline schedules."
-        />
-        <DataPage.Actions>
-          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/create`)}>
-            <Plus size={14} className="mr-1.5" /> Create
-          </Button>
-        </DataPage.Actions>
-      </DataPage.Header>
-      <DataPage.Content>
+    <DataBodyTemplate
+      title="Schedules"
+      description="Manage cron and one-time pipeline schedules."
+      actions={
+        <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/create`)}>
+          <Plus size={14} className="mr-1.5" /> Create
+        </Button>
+      }
+    >
+      <DataBodyTemplate.Body>
         {isError && (
-          <div className="mb-[var(--dk-page-padding-y)] rounded border border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+          <div className="mb-4 rounded border border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
             Failed to load schedules.
           </div>
         )}
@@ -73,27 +70,23 @@ export default function WorkflowsPage() {
         ) : schedules.length === 0 ? (
           <div className="py-8 text-sm text-muted-foreground">No schedules yet. Create one to start.</div>
         ) : (
-          <DataPage.Group surface="none" className="h-full">
-            <DataPage.GroupBody className="h-full [&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-              <DataGrid
-                data={schedules}
-                columns={columns}
-                tableWidthMode="fill-last"
-                rowHeight={44}
-                rowCursor
-                onRowClick={(row) => navigate(`/projects/${projectId}/schedules/${row.id}`)}
-                pagination={{ pageSize: 20 }}
-                footer={(table) => (
-                  <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                    <span>{schedules.length} results</span>
-                    <DataGridPaginationCompact table={table} />
-                  </div>
-                )}
-              />
-            </DataPage.GroupBody>
-          </DataPage.Group>
+          <DataGrid
+            data={schedules}
+            columns={columns}
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => navigate(`/projects/${projectId}/schedules/${row.id}`)}
+            pagination={{ pageSize: 20 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{schedules.length} results</span>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
         )}
-      </DataPage.Content>
-    </DataPage>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

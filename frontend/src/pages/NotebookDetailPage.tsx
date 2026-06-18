@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ExternalLink, RefreshCw, Square, Trash2 } from 'lucide-react'
-import { DataPage } from '@loykin/designkit'
+import { DetailBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import {
@@ -48,21 +48,21 @@ export default function NotebookDetailPage() {
 
   if (loading) {
     return (
-      <DataPage>
-        <DataPage.Content>
+      <DetailBodyTemplate title="Loading…">
+        <DetailBodyTemplate.Section>
           <p className="text-sm text-muted-foreground">Loading…</p>
-        </DataPage.Content>
-      </DataPage>
+        </DetailBodyTemplate.Section>
+      </DetailBodyTemplate>
     )
   }
 
   if (!notebook) {
     return (
-      <DataPage>
-        <DataPage.Content>
+      <DetailBodyTemplate title="Not Found">
+        <DetailBodyTemplate.Section>
           <p className="text-sm text-muted-foreground">Notebook not found.</p>
-        </DataPage.Content>
-      </DataPage>
+        </DetailBodyTemplate.Section>
+      </DetailBodyTemplate>
     )
   }
 
@@ -82,15 +82,13 @@ export default function NotebookDetailPage() {
   }
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          breadcrumb={<Link to={`/projects/${projectId}/notebooks`} className="hover:text-foreground transition-colors">← Notebooks</Link>}
-          title={notebook.name}
-          description="Notebook server detail and workspace status"
-        />
-        <DataPage.Actions>
-          <StatusBadge status={notebook.status} />
+    <DetailBodyTemplate
+      eyebrow={<Link to={`/projects/${projectId}/notebooks`} className="hover:text-foreground transition-colors">← Notebooks</Link>}
+      title={notebook.name}
+      description="Notebook server detail and workspace status"
+      status={<StatusBadge status={notebook.status} />}
+      actions={
+        <div className="flex items-center gap-1">
           {notebook.status === 'running' && (
             <a
               href={notebookProxyURL(projectId, notebook.name)}
@@ -109,31 +107,26 @@ export default function NotebookDetailPage() {
             <IconButton icon={<RefreshCw />} label="Start" disabled={busy} onClick={handleStart} />
           )}
           <IconButton icon={<Trash2 />} label="Delete" disabled={busy} onClick={handleDelete} className="text-muted-foreground hover:text-destructive" />
-        </DataPage.Actions>
-      </DataPage.Header>
+        </div>
+      }
+    >
+      <DetailBodyTemplate.Section title="Details" surface="bordered">
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div><dt className="text-xs text-muted-foreground">Status</dt><dd className="mt-1"><StatusBadge status={notebook.status} /></dd></div>
+          <div><dt className="text-xs text-muted-foreground">Worker</dt><dd className="mt-1 text-sm">{notebook.worker_id || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Endpoint</dt><dd className="mt-1 font-mono text-xs">{notebook.endpoint || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Env</dt><dd className="mt-1 font-mono text-xs">{notebook.env || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Image</dt><dd className="mt-1 font-mono text-xs">{notebook.image || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Work Dir</dt><dd className="mt-1 font-mono text-xs">{notebook.work_dir || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Volume</dt><dd className="mt-1 font-mono text-xs">{notebook.volume_id || '—'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Created</dt><dd className="mt-1 text-sm">{new Date(notebook.created_at).toLocaleString()}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">Updated</dt><dd className="mt-1 text-sm">{new Date(notebook.updated_at).toLocaleString()}</dd></div>
+        </dl>
+      </DetailBodyTemplate.Section>
 
-      <DataPage.Content>
-        <DataPage.Group surface="bordered" className="mb-4">
-          <div className="p-4">
-            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              <div><dt className="text-xs text-muted-foreground">Status</dt><dd className="mt-1"><StatusBadge status={notebook.status} /></dd></div>
-              <div><dt className="text-xs text-muted-foreground">Worker</dt><dd className="mt-1 text-sm">{notebook.worker_id || '—'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Endpoint</dt><dd className="mt-1 font-mono text-xs">{notebook.endpoint || '—'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Env</dt><dd className="mt-1 font-mono text-xs">{notebook.env || '—'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Image</dt><dd className="mt-1 font-mono text-xs">{notebook.image || '—'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Work Dir</dt><dd className="mt-1 font-mono text-xs">{notebook.work_dir || '—'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Volume</dt><dd className="mt-1 font-mono text-xs">{notebook.volume_id || '—'}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Created</dt><dd className="mt-1 text-sm">{new Date(notebook.created_at).toLocaleString()}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Updated</dt><dd className="mt-1 text-sm">{new Date(notebook.updated_at).toLocaleString()}</dd></div>
-            </dl>
-          </div>
-        </DataPage.Group>
-
-        <DataPage.Group surface="bordered" className="mb-4">
-          <DataPage.GroupHeader title="Notebook YAML" className="px-4 pt-3" />
-          <YamlMirror value={notebook.yaml || ''} readOnly className="min-h-[16rem]" />
-        </DataPage.Group>
-      </DataPage.Content>
-    </DataPage>
+      <DetailBodyTemplate.Section title="Notebook YAML" surface="bordered">
+        <YamlMirror value={notebook.yaml || ''} readOnly className="min-h-[16rem]" />
+      </DetailBodyTemplate.Section>
+    </DetailBodyTemplate>
   )
 }

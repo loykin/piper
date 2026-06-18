@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
 import { useRuns } from '@/features/runs/hooks'
 import type { Run } from '@/features/runs/types'
 
@@ -56,33 +56,26 @@ export default function ExperimentsPage() {
   ], [])
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Experiments"
-          description="Grouped sweep runs. Click an experiment to compare runs by params and metrics."
-        />
-      </DataPage.Header>
-      <DataPage.Content>
+    <DataBodyTemplate
+      title="Experiments"
+      description="Grouped sweep runs. Click an experiment to compare runs by params and metrics."
+    >
+      <DataBodyTemplate.Body>
         {isLoading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading…</div>
         ) : experiments.length === 0 ? (
           <div className="py-8 text-sm text-muted-foreground">No experiments yet. Submit a sweep via POST /runs/sweep.</div>
         ) : (
-          <DataPage.Group surface="none" className="h-full">
-            <DataPage.GroupBody className="h-full [&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-              <DataGrid
-                data={experiments}
-                columns={columns}
-                tableWidthMode="fill-last"
-                rowHeight={44}
-                rowCursor
-                onRowClick={(row) => navigate(`/experiments/${encodeURIComponent(row.name)}`)}
-              />
-            </DataPage.GroupBody>
-          </DataPage.Group>
+          <DataGrid
+            data={experiments}
+            columns={columns}
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => navigate(`/experiments/${encodeURIComponent(row.name)}`)}
+          />
         )}
-      </DataPage.Content>
-    </DataPage>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

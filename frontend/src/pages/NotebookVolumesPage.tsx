@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
 import { getNotebookVolumeColumns } from '@/features/notebooks/columns'
 import { useNotebookVolumes, useNotebookWorkers, usePurgeVolume } from '@/features/notebooks/hooks'
 import type { NotebookVolume } from '@/features/notebooks/api'
@@ -34,14 +34,11 @@ export default function NotebookVolumesPage() {
   )
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Notebook Volumes"
-          description="Persistent storage for notebook servers. Volumes survive server deletion."
-        />
-      </DataPage.Header>
-      <DataPage.Content>
+    <DataBodyTemplate
+      title="Notebook Volumes"
+      description="Persistent storage for notebook servers. Volumes survive server deletion."
+    >
+      <DataBodyTemplate.Body>
         {isLoading ? (
           <div className="py-8 text-sm text-muted-foreground">Loading…</div>
         ) : volumes.length === 0 ? (
@@ -52,25 +49,21 @@ export default function NotebookVolumesPage() {
             </p>
           </div>
         ) : (
-          <DataPage.Group surface="none" className="h-full">
-            <DataPage.GroupBody className="h-full [&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-              <DataGrid
-                data={volumes}
-                columns={columns}
-                tableWidthMode="fill-last"
-                rowHeight={44}
-                pagination={{ pageSize: 20 }}
-                footer={(table) => (
-                  <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                    <span>{volumes.length} volumes</span>
-                    <DataGridPaginationCompact table={table} />
-                  </div>
-                )}
-              />
-            </DataPage.GroupBody>
-          </DataPage.Group>
+          <DataGrid
+            data={volumes}
+            columns={columns}
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            pagination={{ pageSize: 20 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{volumes.length} volumes</span>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
         )}
-      </DataPage.Content>
-    </DataPage>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

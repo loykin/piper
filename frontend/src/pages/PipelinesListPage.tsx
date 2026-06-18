@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useProjectId } from '@/lib/projectContext'
 import { CalendarClock, Play, Plus, Trash2, X } from 'lucide-react'
-import { DataPage } from '@loykin/designkit'
+import { DataBodyTemplate } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { usePipelines, useDeletePipeline, useRunPipeline } from '@/features/pipelines/hooks'
@@ -70,20 +70,16 @@ export default function PipelinesListPage() {
   }, new Map())
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Pipeline Templates"
-          description="Each submit creates a new versioned snapshot. Deploy to schedule or run on demand."
-        />
-        <DataPage.Actions>
-          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
-            <Plus size={14} className="mr-1.5" /> New Pipeline
-          </Button>
-        </DataPage.Actions>
-      </DataPage.Header>
-
-      <DataPage.Content>
+    <DataBodyTemplate
+      title="Pipeline Templates"
+      description="Each submit creates a new versioned snapshot. Deploy to schedule or run on demand."
+      actions={
+        <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
+          <Plus size={14} className="mr-1.5" /> New Pipeline
+        </Button>
+      }
+    >
+      <DataBodyTemplate.Body>
         {loadError && <p className="mb-4 text-sm text-destructive">Failed to load pipeline templates.</p>}
         {actionError && (
           <div className="mb-4 flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -102,58 +98,56 @@ export default function PipelinesListPage() {
             </Button>
           </div>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-4">
             {Array.from(grouped.entries()).map(([name, rows]) => (
-              <DataPage.Group key={name} surface="bordered">
-                <DataPage.GroupHeader
-                  title={name}
-                  description={`${rows.length} submission${rows.length !== 1 ? 's' : ''}`}
-                  className="px-4 pt-3"
-                />
-                <div className="px-4 pb-4">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-muted-foreground">
-                        <th className="py-2 text-left font-medium">ID</th>
-                        <th className="py-2 text-left font-medium">Snapshot</th>
-                        <th className="py-2 text-left font-medium">Volume</th>
-                        <th className="py-2 text-left font-medium">Submitted</th>
-                        <th className="py-2 text-right font-medium">Actions</th>
+              <DataBodyTemplate.Group
+                key={name}
+                variant="bordered"
+                title={name}
+                description={`${rows.length} submission${rows.length !== 1 ? 's' : ''}`}
+              >
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 text-left font-medium">ID</th>
+                      <th className="py-2 text-left font-medium">Snapshot</th>
+                      <th className="py-2 text-left font-medium">Volume</th>
+                      <th className="py-2 text-left font-medium">Submitted</th>
+                      <th className="py-2 text-right font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(t => (
+                      <tr key={t.id} className="border-b border-border/40 last:border-0">
+                        <td className="py-2 font-mono text-foreground">{t.id.slice(0, 8)}…</td>
+                        <td className="py-2 font-mono text-muted-foreground">{t.snapshot_id.slice(0, 8)}…</td>
+                        <td className="py-2 text-muted-foreground">{t.volume_id || '—'}</td>
+                        <td className="py-2 text-muted-foreground" title={t.created_at}>{relativeTime(t.created_at)}</td>
+                        <td className="py-2">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <IconButton icon={<Play />} label="Run" onClick={() => void handleRun(t)} />
+                            <IconButton
+                              icon={<CalendarClock />}
+                              label="Deploy to schedule"
+                              onClick={() => openDeploy(t)}
+                            />
+                            <IconButton
+                              icon={<Trash2 />}
+                              label="Delete"
+                              onClick={() => void handleDelete(t)}
+                              className="text-destructive hover:bg-destructive/10"
+                            />
+                          </div>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map(t => (
-                        <tr key={t.id} className="border-b border-border/40 last:border-0">
-                          <td className="py-2 font-mono text-foreground">{t.id.slice(0, 8)}…</td>
-                          <td className="py-2 font-mono text-muted-foreground">{t.snapshot_id.slice(0, 8)}…</td>
-                          <td className="py-2 text-muted-foreground">{t.volume_id || '—'}</td>
-                          <td className="py-2 text-muted-foreground" title={t.created_at}>{relativeTime(t.created_at)}</td>
-                          <td className="py-2">
-                            <div className="flex items-center justify-end gap-0.5">
-                              <IconButton icon={<Play />} label="Run" onClick={() => void handleRun(t)} />
-                              <IconButton
-                                icon={<CalendarClock />}
-                                label="Deploy to schedule"
-                                onClick={() => openDeploy(t)}
-                              />
-                              <IconButton
-                                icon={<Trash2 />}
-                                label="Delete"
-                                onClick={() => void handleDelete(t)}
-                                className="text-destructive hover:bg-destructive/10"
-                              />
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </DataPage.Group>
+                    ))}
+                  </tbody>
+                </table>
+              </DataBodyTemplate.Group>
             ))}
           </div>
         )}
-      </DataPage.Content>
+      </DataBodyTemplate.Body>
 
       <DeployModal
         template={deployTarget}
@@ -165,6 +159,6 @@ export default function PipelinesListPage() {
         onDeployed={() => navigate(`/projects/${projectId}/schedules`)}
         error={actionError}
       />
-    </DataPage>
+    </DataBodyTemplate>
   )
 }

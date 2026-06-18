@@ -5,7 +5,7 @@ import {
   Code2, FileCode2, FolderOpen, HardDrive, Plus, BookOpen, Trash2, Upload, X,
 } from 'lucide-react'
 import {
-  DataPage, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  DataBodyTemplate, DataPage, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
@@ -650,14 +650,11 @@ export default function PipelineEditorPage() {
 
   if (!setupDone) {
     return (
-      <DataPage>
-        <DataPage.Header>
-          <DataPage.TitleBlock
-            title="New Pipeline"
-            description="A pipeline uses exactly one source workspace. Lock it in before you start editing."
-          />
-        </DataPage.Header>
-        <DataPage.Content>
+      <DataBodyTemplate
+        title="New Pipeline"
+        description="A pipeline uses exactly one source workspace. Lock it in before you start editing."
+      >
+        <DataBodyTemplate.Body>
           <div className="mx-auto max-w-md space-y-5 py-16">
             <div>
               <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Pipeline Name</label>
@@ -699,27 +696,25 @@ export default function PipelineEditorPage() {
               Start Editing →
             </Button>
           </div>
-        </DataPage.Content>
-      </DataPage>
+        </DataBodyTemplate.Body>
+      </DataBodyTemplate>
     )
   }
 
   return (
-    <DataPage>
-      <DataPage.Header>
-        <DataPage.TitleBlock
-          title="Pipeline Editor"
-          description="Build a Piper Pipeline YAML from a source workspace, a task canvas, and a separate YAML tab."
-        />
-        <DataPage.Actions>
+    <DataBodyTemplate
+      title="Pipeline Editor"
+      description="Build a Piper Pipeline YAML from a source workspace, a task canvas, and a separate YAML tab."
+      actions={
+        <>
           <Button variant="outline" size="sm" onClick={validateNow}>Validate</Button>
           <Button size="sm" onClick={handleSubmit} disabled={submitting}>
             <Upload size={14} className="mr-1.5" /> Submit
           </Button>
-        </DataPage.Actions>
-      </DataPage.Header>
-
-      <DataPage.Content>
+        </>
+      }
+    >
+      <DataBodyTemplate.Body>
         <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5">
           <HardDrive size={14} className="shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
@@ -1037,7 +1032,6 @@ export default function PipelineEditorPage() {
           </TabsContent>
         </Tabs>
 
-      </DataPage.Content>
 
       {/* Submit modal */}
       {submitModalOpen && (
@@ -1078,6 +1072,7 @@ export default function PipelineEditorPage() {
           </div>
         </div>
       )}
-    </DataPage>
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
   )
 }

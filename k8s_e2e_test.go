@@ -269,7 +269,7 @@ spec:
     k8s:
       image: alpine:3.20
 `)
-	waitK8sE2EServingResources(t, ns, "worker-serving", 2*time.Minute)
+	waitK8sE2EServingResources(t, ns, k8sE2EServingResourceName("worker-serving"), 2*time.Minute)
 
 	const nbName = "worker-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    image: %s\n", nbName, nbImage)
@@ -615,6 +615,10 @@ func hasK8sE2ECapabilities(got, want []string) bool {
 const k8sE2EProjectID = "e2e"
 
 func k8sE2EProjectBase() string { return "/api/projects/" + k8sE2EProjectID }
+
+func k8sE2EServingResourceName(name string) string {
+	return k8sE2EProjectID + "--" + name
+}
 
 func k8sE2ECreateProject(t *testing.T, serverURL string) {
 	t.Helper()

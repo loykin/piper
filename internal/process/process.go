@@ -25,6 +25,10 @@ type ProcessSpec struct {
 	// Sets CUDA_VISIBLE_DEVICES and ROCR_VISIBLE_DEVICES.
 	// Empty string leaves the host defaults unchanged.
 	GPUs string
+	// LogFile redirects stdout and stderr of the process to this file path.
+	// The file and its parent directory are created if they do not exist.
+	// Empty means no redirection (inherit parent's stdout/stderr).
+	LogFile string
 }
 
 // WaitReady polls url until it returns a non-5xx response or the timeout

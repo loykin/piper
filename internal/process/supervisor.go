@@ -3,6 +3,8 @@ package process
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -127,8 +129,27 @@ func NewProcessSupervisor() *ProcessSupervisor {
 
 // Start launches a process and tracks its lifecycle under spec.Name.
 // If a process with the same name is already running it is stopped first.
+// When spec.LogFile is set, stdout and stderr are redirected to that file.
 func (s *ProcessSupervisor) Start(spec ProcessSpec, onExit ExitHandler) (pid int, endpoint string, err error) {
 	args := ExpandArgs(spec.Command, spec.Env)
+
+	if spec.LogFile != "" {
+		if mkErr := os.MkdirAll(filepath.Dir(spec.LogFile), 0o755); mkErr != nil {
+			return 0, "", fmt.Errorf("create log dir for %q: %w", spec.LogFile, mkErr)
+		}
+		// Truncate (>) rather than append (>>) so that a restarted process starts
+		// with a fresh log file. freader always reads from offset 0 on a new
+		// collector, so appending would re-deliver old lines on every restart.
+		// Using `"$@"` with `--` correctly handles args that contain spaces or quotes.
+		args = append([]string{"sh", "-c", `"$@" > "$PIPER_LOG_FILE" 2>&1`, "--"}, args...)
+		// Copy Env to avoid mutating the caller's map.
+		newEnv := make(map[string]string, len(spec.Env)+1)
+		for k, v := range spec.Env {
+			newEnv[k] = v
+		}
+		newEnv["PIPER_LOG_FILE"] = spec.LogFile
+		spec.Env = newEnv
+	}
 
 	env := make([]string, 0, len(spec.Env)+2)
 	for k, v := range spec.Env {

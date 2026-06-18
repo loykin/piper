@@ -228,13 +228,13 @@ func TestNotebookSyncStatusReportsReadyStatefulSet(t *testing.T) {
 	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
 	resp, err := a.syncNotebookStatus(context.Background(), notebook.WorkerSyncStatusRequest{
-		Targets: []notebook.WorkerSyncStatusTarget{{Name: "demo"}},
+		Targets: []notebook.WorkerSyncStatusTarget{{ProjectID: "project-a", Name: "demo"}},
 	})
 	if err != nil {
 		t.Fatalf("syncNotebookStatus returned error: %v", err)
 	}
-	if resp.Statuses["demo"] != "running" {
-		t.Fatalf("status = %q, want running", resp.Statuses["demo"])
+	if resp.Statuses["project-a:demo"] != "running" {
+		t.Fatalf("status = %q, want running", resp.Statuses["project-a:demo"])
 	}
 }
 
@@ -249,7 +249,10 @@ func TestObserveOnceReportsStateChanges(t *testing.T) {
 				"piper.io/workload-kind":       "notebook",
 				"piper.io/workload-id":         "demo",
 			},
-			Annotations: map[string]string{"piper.io/workload-id": "demo"},
+			Annotations: map[string]string{
+				"piper.io/project-id":  "project-a",
+				"piper.io/workload-id": "demo",
+			},
 		},
 		Spec: appsv1.StatefulSetSpec{Replicas: &replicas},
 		Status: appsv1.StatefulSetStatus{
@@ -269,7 +272,7 @@ func TestObserveOnceReportsStateChanges(t *testing.T) {
 
 	a.observeOnce(context.Background())
 	a.observeOnce(context.Background())
-	if len(updates) != 1 || updates[0].Name != "demo" || updates[0].Status != notebook.StatusRunning {
+	if len(updates) != 1 || updates[0].ProjectID != "project-a" || updates[0].Name != "demo" || updates[0].Status != notebook.StatusRunning {
 		t.Fatalf("updates = %#v, want one running update", updates)
 	}
 

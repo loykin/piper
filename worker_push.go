@@ -9,6 +9,8 @@ import (
 	"time"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/internal/logsink"
+	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/notebook"
 	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
@@ -24,12 +26,36 @@ type pipelineResultAcker interface {
 	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
 }
 
-func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, pipelineQueue pipelineStatusQueue, acker pipelineResultAcker) func(ctx context.Context, agentID, method string, payload []byte) {
+func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, pipelineQueue pipelineStatusQueue, acker pipelineResultAcker, logs logstore.LogStore) func(ctx context.Context, agentID, method string, payload []byte) {
 	return func(ctx context.Context, agentID, method string, payload []byte) {
 		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		switch method {
+		case iagent.MethodLogAppend:
+			if logs == nil {
+				return
+			}
+			var req logsink.LogAppendPush
+			if err := json.Unmarshal(payload, &req); err != nil {
+				slog.Warn("log append push unmarshal failed", "agent_id", agentID, "err", err)
+				return
+			}
+			lines := make([]*logstore.Line, 0, len(req.Lines))
+			for _, l := range req.Lines {
+				lines = append(lines, &logstore.Line{
+					ProjectID: req.ProjectID,
+					RunID:     req.RunID,
+					StepName:  req.StepName,
+					Ts:        l.Ts,
+					Stream:    l.Stream,
+					Line:      l.Text,
+				})
+			}
+			if err := logs.Append(lines); err != nil {
+				slog.Warn("log append push write failed", "agent_id", agentID, "run_id", req.RunID, "err", err)
+			}
+			_ = pushCtx
 		case iagent.MethodNotebookStatusUpdate:
 			if err := handleNotebookStatusPush(pushCtx, agentID, payload, nbMgr); err != nil {
 				slog.Warn("notebook status push failed", "agent_id", agentID, "err", err)

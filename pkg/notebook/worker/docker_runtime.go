@@ -161,6 +161,9 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 			delete(r.containers, req.Name)
 		}
 		r.mu.Unlock()
+		if req.LogSink != nil {
+			req.LogSink.Stop()
+		}
 		if req.OnExit != nil {
 			req.OnExit(status)
 		}

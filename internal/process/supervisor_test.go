@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,6 +231,39 @@ func TestProcessSupervisorStatusWhileRunning(t *testing.T) {
 	}
 	if status == "stopped" || status == "failed" {
 		t.Fatalf("status = %q, expected running/starting", status)
+	}
+}
+
+func TestProcessSupervisorLogFileRedirectsOutput(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "sub", "process.log")
+
+	s := NewProcessSupervisor()
+	exitCh := make(chan string, 1)
+	_, _, err := s.Start(ProcessSpec{
+		Name:    "log-redirect",
+		Command: []string{"sh", "-c", "echo hello-from-process; echo second-line"},
+		LogFile: logFile,
+	}, func(status string) { exitCh <- status })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	select {
+	case <-exitCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("process did not exit in time")
+	}
+
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{"hello-from-process", "second-line"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("log file = %q, want to contain %q", content, want)
+		}
 	}
 }
 

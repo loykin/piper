@@ -19,6 +19,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -242,6 +243,9 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		// process supervisors and Docker container names forbid colons.
 		rn := runtimeName(req.ProjectID, name)
 		logRuntimeStart(mode, rn, workDir, port)
+		// Create the sink before Start so we can stop it on start error.
+		// The runtime's OnExit wrapper calls sink.Stop() on process exit.
+		nbSink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
 		started, err := w.runtime.Start(context.Background(), RuntimeStartRequest{
 			Name:         rn,
 			ProjectID:    req.ProjectID,
@@ -251,6 +255,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			Port:         port,
 			Token:        token,
 			BaseURL:      baseURL,
+			LogSink:      nbSink,
 			OnExit: func(status string) {
 				slog.Info("notebook runtime exited", "name", name, "status", status)
 				w.mu.Lock()
@@ -268,6 +273,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			},
 		})
 		if err != nil {
+			nbSink.Stop()
 			slog.Error("notebook worker: start failed", "name", name, "err", err)
 			w.mu.Lock()
 			current := w.notebooks[key] != nil && w.notebooks[key].gen == gen

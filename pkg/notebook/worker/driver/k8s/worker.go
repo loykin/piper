@@ -117,6 +117,9 @@ func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.Worke
 }
 
 func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequest) (*notebook.WorkerStartResponse, error) {
+	if req.ProjectID == "" {
+		return nil, fmt.Errorf("project_id is required")
+	}
 	if req.VolumeID == "" {
 		return nil, fmt.Errorf("volume_id is required")
 	}
@@ -212,6 +215,7 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	}
 
 	ann := k8smeta.WorkloadAnnotations(spec.Metadata.Name)
+	ann[k8smeta.AnnotationProjectID] = req.ProjectID
 	ann[k8smeta.AnnotationVolumeID] = req.VolumeID
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -245,6 +249,7 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 				if existing.Annotations == nil {
 					existing.Annotations = make(map[string]string)
 				}
+				existing.Annotations[k8smeta.AnnotationProjectID] = req.ProjectID
 				existing.Annotations[k8smeta.AnnotationVolumeID] = req.VolumeID
 				_, err = a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{})
 				return err
@@ -312,10 +317,11 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSync
 	statuses := make(map[string]string, len(req.Targets))
 	for _, target := range req.Targets {
 		name := target.Name
+		key := notebookStatusKey(target.ProjectID, name)
 		sts, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).Get(ctx, notebookWorkloadName(name), metav1.GetOptions{})
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
-				statuses[name] = notebook.StatusFailed
+				statuses[key] = notebook.StatusFailed
 			}
 			continue
 		}
@@ -325,9 +331,9 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSync
 		}
 		switch {
 		case sts.Status.ReadyReplicas >= 1:
-			statuses[name] = notebook.StatusRunning
+			statuses[key] = notebook.StatusRunning
 		case sts.Status.ReadyReplicas == 0 && desired == 0:
-			statuses[name] = notebook.StatusStopped
+			statuses[key] = notebook.StatusStopped
 		}
 	}
 	return notebook.WorkerSyncStatusResponse{Statuses: statuses}, nil
@@ -402,11 +408,15 @@ func (a *Worker) observeOnce(ctx context.Context) {
 		if name == "" {
 			continue
 		}
+		projectID := sts.Annotations[k8smeta.AnnotationProjectID]
+		if projectID == "" {
+			continue
+		}
 		status := observedStatefulSetStatus(sts)
 		if status == "" || !a.statusChanged(name, status) {
 			continue
 		}
-		_ = a.cfg.ReportStatus(notebook.WorkerStatusUpdate{Name: name, Status: status})
+		_ = a.cfg.ReportStatus(notebook.WorkerStatusUpdate{ProjectID: projectID, Name: name, Status: status})
 	}
 
 	// Remove viewer pods that conflict with active notebooks.
@@ -479,6 +489,10 @@ func notebookPVCName(volumeID string) string {
 		clean = clean[:12]
 	}
 	return "piper-nb-vol-" + clean
+}
+
+func notebookStatusKey(projectID, name string) string {
+	return projectID + ":" + name
 }
 
 // piperDataVolume is the fixed name for the piper-managed PVC volume and mount.

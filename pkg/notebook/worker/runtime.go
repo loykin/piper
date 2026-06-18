@@ -9,7 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/loykin/freader"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/process"
 	"github.com/piper/piper/pkg/notebook"
 )
@@ -57,6 +61,7 @@ type RuntimeStartRequest struct {
 	Token        string
 	BaseURL      string
 	OnExit       func(status string)
+	LogSink      logsink.LogSink
 }
 
 type StartedNotebook struct {
@@ -70,6 +75,8 @@ type StartedNotebook struct {
 type processRuntime struct {
 	supervisor *process.ProcessSupervisor
 	pidDir     string
+	mu         sync.Mutex
+	collectors map[string]func() // runtime name -> freader stop function
 }
 
 func newProcessRuntime(notebooksRoot string) *processRuntime {
@@ -80,6 +87,7 @@ func newProcessRuntime(notebooksRoot string) *processRuntime {
 	return &processRuntime{
 		supervisor: process.NewProcessSupervisor(),
 		pidDir:     filepath.Join(absRoot, ".piper", "processes"),
+		collectors: make(map[string]func()),
 	}
 }
 
@@ -126,6 +134,30 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		command = []string{"sh", "-lc", script}
 	}
 
+	var logFile string
+	if req.LogSink != nil {
+		logFile = filepath.Join(req.WorkDir, ".piper", "logs", req.Name+".log")
+		if mkErr := os.MkdirAll(filepath.Dir(logFile), 0o755); mkErr != nil {
+			return nil, fmt.Errorf("create log dir for %q: %w", req.Name, mkErr)
+		}
+		// Truncate before starting the collector. supervisor.Start also truncates
+		// via '>', but there is a window between collector start and process start
+		// where freader could read stale bytes from a previous run.
+		f, mkErr := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if mkErr != nil {
+			req.LogSink.Stop()
+			return nil, fmt.Errorf("truncate log file for %q: %w", req.Name, mkErr)
+		}
+		_ = f.Close()
+		// Register the collector before starting the process to eliminate the
+		// race where a fast-exiting process fires OnExit before we store the
+		// stop function — which would leak the collector goroutine.
+		stop := StartLogCollector(logFile, "nb:"+req.NotebookName, "runtime", req.LogSink)
+		r.mu.Lock()
+		r.collectors[req.Name] = stop
+		r.mu.Unlock()
+	}
+
 	pid, endpoint, err := r.supervisor.Start(process.ProcessSpec{
 		Name:    req.Name,
 		Command: command,
@@ -133,12 +165,34 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		Port:    req.Port,
 		GPUs:    gpus,
 		PIDFile: r.pidFile(req.Name),
+		LogFile: logFile,
 	}, func(status string) {
+		r.mu.Lock()
+		stop := r.collectors[req.Name]
+		delete(r.collectors, req.Name)
+		r.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
+		if req.LogSink != nil {
+			req.LogSink.Stop()
+		}
 		if req.OnExit != nil {
 			req.OnExit(status)
 		}
 	})
 	if err != nil {
+		// Process failed to start: clean up the pre-registered collector and sink.
+		r.mu.Lock()
+		stop := r.collectors[req.Name]
+		delete(r.collectors, req.Name)
+		r.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
+		if req.LogSink != nil {
+			req.LogSink.Stop()
+		}
 		return nil, err
 	}
 
@@ -214,6 +268,33 @@ func prepareProcessEnv(specEnv, workDir string, bootstrap bool) (bin string, ext
 
 func logRuntimeStart(mode, name, workDir string, port int) {
 	slog.Info("notebook runtime starting", "mode", mode, "name", name, "work_dir", workDir, "port", port)
+}
+
+// StartLogCollector starts a freader Collector that watches logFile and forwards
+// each collected line to sink. Returns a stop function that halts the collector.
+// Exported for use by other worker packages (e.g. serving worker).
+//
+// Lines are labelled "combined" because stdout and stderr are merged into a
+// single file via the shell redirect added by ProcessSupervisor.
+func StartLogCollector(logFile, runID, stepName string, sink logsink.LogSink) func() {
+	cfg := freader.Config{
+		WorkerCount:         1,
+		PollInterval:        200 * time.Millisecond,
+		Separator:           "\n",
+		FingerprintStrategy: freader.FingerprintStrategyDeviceAndInode,
+		Include:             []string{logFile},
+		StoreOffsets:        false,
+		OnEventFunc: func(e freader.LineEvent) {
+			sink.Append(runID, stepName, "combined", e.Line, e.Ts)
+		},
+	}
+	collector, err := freader.NewCollector(cfg)
+	if err != nil {
+		slog.Warn("log collector: cannot create", "log_file", logFile, "err", err)
+		return func() {}
+	}
+	collector.Start()
+	return func() { collector.Stop() }
 }
 
 func ensureVenv(venvPath string, bootstrap bool) error {

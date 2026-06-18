@@ -21,4 +21,6 @@ const (
 	MethodPipelineResultAck  = "pipeline.task_result_ack"
 
 	MethodFSListFiles = "fs.list_files"
+
+	MethodLogAppend = "log.append"
 )

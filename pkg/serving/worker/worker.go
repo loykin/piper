@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -14,7 +16,9 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/process"
+	notebookworker "github.com/piper/piper/pkg/notebook/worker"
 	"github.com/piper/piper/pkg/serving"
 )
 
@@ -43,6 +47,7 @@ type Worker struct {
 	supervisor *process.ProcessSupervisor
 	mu         sync.Mutex
 	services   map[string]*serviceRecord // only active (not-yet-exited) services
+	collectors map[string]func()         // service key -> freader stop function
 	nextGen    uint64
 }
 
@@ -63,6 +68,7 @@ func New(cfg Config) *Worker {
 		client:     client,
 		supervisor: process.NewProcessSupervisor(),
 		services:   make(map[string]*serviceRecord),
+		collectors: make(map[string]func()),
 	}
 
 	d := client.Dispatcher()
@@ -142,6 +148,10 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	if svc.Spec.Driver.Process != nil {
 		gpus = svc.Spec.Driver.Process.GPUs
 	}
+
+	logFile := filepath.Join(os.TempDir(), "piper-serving", rn+".log")
+	sink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
+
 	spec := process.ProcessSpec{
 		Name:       rn,
 		Command:    rt.Command,
@@ -149,22 +159,62 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		Port:       rt.Port,
 		HealthPath: rt.HealthPath,
 		GPUs:       gpus,
+		LogFile:    logFile,
 	}
 
 	endpoint := fmt.Sprintf("http://localhost:%d", rt.Port)
 	gen, err := w.reserveService(key, endpoint)
 	if err != nil {
+		sink.Stop()
 		return nil, err
 	}
 
+	// Create the log directory and truncate the file before starting the collector
+	// so freader never sees stale bytes from a previous deployment, and so the
+	// collector is registered before the process starts (eliminating the race where
+	// a fast-exiting process fires OnExit before w.collectors[key] is populated).
+	if mkErr := os.MkdirAll(filepath.Dir(logFile), 0o755); mkErr != nil {
+		w.removeService(key, gen)
+		sink.Stop()
+		return nil, fmt.Errorf("create log dir for %q: %w", name, mkErr)
+	}
+	f, mkErr := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if mkErr != nil {
+		w.removeService(key, gen)
+		sink.Stop()
+		return nil, fmt.Errorf("truncate log file for %q: %w", name, mkErr)
+	}
+	_ = f.Close()
+	collectorStop := notebookworker.StartLogCollector(logFile, "svc:"+name, "runtime", sink)
+	w.mu.Lock()
+	w.collectors[key] = collectorStop
+	w.mu.Unlock()
+
 	_, startedEndpoint, err := w.supervisor.Start(spec, func(status string) {
 		slog.Info("serving process exited", "name", name, "status", status)
+		w.mu.Lock()
+		stop := w.collectors[key]
+		delete(w.collectors, key)
+		w.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
+		sink.Stop()
 		if removed, finalStatus := w.completeService(key, gen, status); removed {
 			w.pushStatus(req.ProjectID, name, finalStatus, "")
 		}
 	})
 	if err != nil {
+		// Clean up the pre-registered collector and sink.
+		w.mu.Lock()
+		stop := w.collectors[key]
+		delete(w.collectors, key)
+		w.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
 		w.removeService(key, gen)
+		sink.Stop()
 		return nil, err
 	}
 	endpoint = startedEndpoint

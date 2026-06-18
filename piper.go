@@ -181,7 +181,7 @@ func New(cfg Config) (*Piper, error) {
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
-	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv))
+	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv, repos.Log))
 	// On agent (re)connect: sync notebook status so master DB catches up on any
 	// state changes that occurred while the connection was down.
 	grpcSrv.SetConnectHandler(func(agentID string) {

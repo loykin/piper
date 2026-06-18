@@ -53,6 +53,7 @@ func TestNotebookStartCreatesStatefulSetAndService(t *testing.T) {
 	})
 
 	resp, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
+		ProjectID: "test-project",
 		YAML: `
 metadata:
   name: My Notebook
@@ -113,6 +114,7 @@ func TestNotebookStartPrepWrapsContainerCommand(t *testing.T) {
 	})
 
 	_, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
+		ProjectID: "test-project",
 		YAML: `
 metadata:
   name: prep notebook
@@ -200,8 +202,9 @@ func TestNotebookStartUpdatesExistingStatefulSet(t *testing.T) {
 	})
 
 	if _, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
-		YAML:     "metadata:\n  name: demo\nspec: {}\n",
-		VolumeID: "vol-demo",
+		ProjectID: "test-project",
+		YAML:      "metadata:\n  name: demo\nspec: {}\n",
+		VolumeID:  "vol-demo",
 	}); err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
 	}

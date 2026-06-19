@@ -1,4 +1,4 @@
-package notebookworker
+package docker
 
 import (
 	"context"
@@ -15,7 +15,9 @@ import (
 
 	dockerclient "github.com/moby/moby/client"
 
+	dockerinfra "github.com/piper/piper/internal/docker"
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/notebook/worker/driver"
 )
 
 func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
@@ -27,7 +29,7 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	cli, err := newDockerClient()
+	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		t.Fatalf("docker client: %v", err)
 	}
@@ -38,7 +40,7 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 		t.Skipf("Docker image %q is not available locally; pull it before running this e2e: %v", image, err)
 	}
 
-	rt, err := newDockerRuntimeWithClient(DockerConfig{Image: image, Network: "bridge"}, "docker-e2e-agent", cli)
+	rt, err := NewWithClient(Config{Image: image, Network: "bridge"}, "docker-e2e-agent", cli)
 	if err != nil {
 		t.Fatalf("docker runtime: %v", err)
 	}
@@ -50,13 +52,14 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 	var spec notebook.Notebook
 	spec.Metadata.Name = name
 
-	started, err := rt.Start(ctx, RuntimeStartRequest{
-		Name:    name,
-		Spec:    spec,
-		WorkDir: workDir,
-		Port:    port,
-		Token:   token,
-		BaseURL: "/notebooks/" + name + "/proxy/",
+	started, err := rt.Start(ctx, driver.StartRequest{
+		RuntimeName: name,
+		Name:        name,
+		Spec:        spec,
+		WorkDir:     workDir,
+		Port:        port,
+		Token:       token,
+		BaseURL:     "/notebooks/" + name + "/proxy/",
 	})
 	if err != nil {
 		t.Fatalf("start docker notebook: %v", err)
@@ -120,11 +123,11 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	}
 	waitDockerNotebookStatus(t, childState.Endpoint+"/notebooks/"+name+"/proxy/api/status?token=crash-token")
 
-	cli, err := newDockerClient()
+	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := newDockerRuntimeWithClient(DockerConfig{Image: image, Network: "bridge"}, workerID, cli)
+	recovered, err := NewWithClient(Config{Image: image, Network: "bridge"}, workerID, cli)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,12 +137,12 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 		_ = recovered.KillAll(cleanupCtx)
 	})
 
-	recoveredCh := make(chan recoveredRuntime, 1)
+	recoveredCh := make(chan driver.RecoveredHandle, 1)
 	exitCh := make(chan string, 1)
-	if err := recovered.Recover(ctx, func(rec recoveredRuntime) func(string) {
+	if err := recovered.Recover(ctx, func(rec driver.RecoveredHandle) func(string) {
 		recoveredCh <- rec
 		return func(status string) { exitCh <- status }
-	}, func(_ recoveredRuntime, status string) {
+	}, func(_ driver.RecoveredHandle, status string) {
 		exitCh <- status
 	}); err != nil {
 		t.Fatalf("recover containers: %v", err)
@@ -160,14 +163,15 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 
 	restartPort := freeDockerE2EPort(t)
 	restartExit := make(chan string, 1)
-	started, err := recovered.Start(ctx, RuntimeStartRequest{
-		Name:    name,
-		Spec:    notebook.Notebook{},
-		WorkDir: workDir,
-		Port:    restartPort,
-		Token:   "restart-token",
-		BaseURL: "/notebooks/" + name + "/proxy/",
-		OnExit:  func(status string) { restartExit <- status },
+	started, err := recovered.Start(ctx, driver.StartRequest{
+		RuntimeName: name,
+		Name:        name,
+		Spec:        notebook.Notebook{},
+		WorkDir:     workDir,
+		Port:        restartPort,
+		Token:       "restart-token",
+		BaseURL:     "/notebooks/" + name + "/proxy/",
+		OnExit:      func(status string) { restartExit <- status },
 	})
 	if err != nil {
 		t.Fatalf("restart notebook: %v", err)
@@ -180,14 +184,15 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 
 	finalPort := freeDockerE2EPort(t)
 	finalExit := make(chan string, 1)
-	final, err := recovered.Start(ctx, RuntimeStartRequest{
-		Name:    name,
-		Spec:    notebook.Notebook{},
-		WorkDir: workDir,
-		Port:    finalPort,
-		Token:   "final-token",
-		BaseURL: "/notebooks/" + name + "/proxy/",
-		OnExit:  func(status string) { finalExit <- status },
+	final, err := recovered.Start(ctx, driver.StartRequest{
+		RuntimeName: name,
+		Name:        name,
+		Spec:        notebook.Notebook{},
+		WorkDir:     workDir,
+		Port:        finalPort,
+		Token:       "final-token",
+		BaseURL:     "/notebooks/" + name + "/proxy/",
+		OnExit:      func(status string) { finalExit <- status },
 	})
 	if err != nil {
 		t.Fatalf("start after notebook crash: %v", err)
@@ -213,21 +218,22 @@ func TestDockerRuntimeE2E_CrashHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cli, err := newDockerClient()
+	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt, err := newDockerRuntimeWithClient(DockerConfig{Image: image, Network: "bridge"}, workerID, cli)
+	rt, err := NewWithClient(Config{Image: image, Network: "bridge"}, workerID, cli)
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := rt.Start(context.Background(), RuntimeStartRequest{
-		Name:    name,
-		Spec:    notebook.Notebook{},
-		WorkDir: workDir,
-		Port:    port,
-		Token:   "crash-token",
-		BaseURL: "/notebooks/" + name + "/proxy/",
+	started, err := rt.Start(context.Background(), driver.StartRequest{
+		RuntimeName: name,
+		Name:        name,
+		Spec:        notebook.Notebook{},
+		WorkDir:     workDir,
+		Port:        port,
+		Token:       "crash-token",
+		BaseURL:     "/notebooks/" + name + "/proxy/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +259,7 @@ func requireDockerNotebookE2E(t *testing.T) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cli, err := newDockerClient()
+	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		t.Fatalf("docker client: %v", err)
 	}

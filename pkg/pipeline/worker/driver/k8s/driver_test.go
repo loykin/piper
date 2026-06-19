@@ -18,7 +18,20 @@ import (
 	"github.com/piper/piper/pkg/pipeline"
 	agentpkg "github.com/piper/piper/pkg/pipeline/worker/agent"
 	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
+	"github.com/piper/piper/pkg/pipeline/worker/driver/drivertest"
 )
+
+var _ pdriver.Driver = (*Driver)(nil)
+
+func TestK8sDriverContract(t *testing.T) {
+	drivertest.RunContract(t, func() pdriver.Driver {
+		d, err := New(Config{WorkerID: "contract-test", K8sClient: fake.NewSimpleClientset()})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		return d
+	})
+}
 
 func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	client := fake.NewSimpleClientset()

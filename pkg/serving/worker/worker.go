@@ -7,8 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,8 +16,10 @@ import (
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/process"
-	notebookworker "github.com/piper/piper/pkg/notebook/worker"
 	"github.com/piper/piper/pkg/serving"
+	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
+	servingdocker "github.com/piper/piper/pkg/serving/worker/driver/docker"
+	servingprocess "github.com/piper/piper/pkg/serving/worker/driver/process"
 )
 
 // Config holds configuration for a serving worker agent.
@@ -29,6 +29,8 @@ type Config struct {
 	GPUs        []string
 	Hostname    string
 	ID          string // UUID; caller must generate
+	Mode        string // process | docker; empty means process
+	Docker      DockerConfig
 }
 
 // serviceRecord holds the worker-observed state of an active service.
@@ -42,33 +44,40 @@ type serviceRecord struct {
 
 // Worker manages bare-metal serving workloads and reports their state.
 type Worker struct {
-	cfg        Config
-	client     *grpcagent.Client
-	supervisor *process.ProcessSupervisor
-	mu         sync.Mutex
-	services   map[string]*serviceRecord // only active (not-yet-exited) services
-	collectors map[string]func()         // service key -> freader stop function
-	nextGen    uint64
+	cfg      Config
+	client   *grpcagent.Client
+	driver   servingdriver.Driver
+	mu       sync.Mutex
+	services map[string]*serviceRecord // only active (not-yet-exited) services
+	nextGen  uint64
 }
 
 // New creates a new Worker.
 func New(cfg Config) *Worker {
+	drv, err := newDriver(cfg)
+	if err != nil {
+		drv = &failingDriver{err: err}
+	}
+	mode := cfg.Mode
+	if mode == "" {
+		mode = servingdriver.ModeProcess
+	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		AgentAddr:    cfg.AgentAddr,
 		AgentID:      cfg.ID,
 		WorkerToken:  cfg.WorkerToken,
 		Kind:         iagent.KindBareMetal,
+		Mode:         mode,
 		Hostname:     cfg.Hostname,
 		GPUs:         cfg.GPUs,
 		Capabilities: []string{iagent.CapabilityServing},
 	})
 
 	w := &Worker{
-		cfg:        cfg,
-		client:     client,
-		supervisor: process.NewProcessSupervisor(),
-		services:   make(map[string]*serviceRecord),
-		collectors: make(map[string]func()),
+		cfg:      cfg,
+		client:   client,
+		driver:   drv,
+		services: make(map[string]*serviceRecord),
 	}
 
 	d := client.Dispatcher()
@@ -84,8 +93,36 @@ func New(cfg Config) *Worker {
 	return w
 }
 
+func newDriver(cfg Config) (servingdriver.Driver, error) {
+	switch cfg.Mode {
+	case "", servingdriver.ModeProcess:
+		return servingprocess.New(servingprocess.Config{WorkerID: cfg.ID}), nil
+	case servingdriver.ModeDocker:
+		dockerCfg := cfg.Docker
+		dockerCfg.WorkerID = cfg.ID
+		return servingdocker.New(dockerCfg)
+	default:
+		return nil, fmt.Errorf("unsupported serving worker mode %q", cfg.Mode)
+	}
+}
+
+type failingDriver struct{ err error }
+
+func (d *failingDriver) Deploy(_ context.Context, req servingdriver.DeployRequest) (string, error) {
+	if req.LogSink != nil {
+		req.LogSink.Stop()
+	}
+	return "", d.err
+}
+func (d *failingDriver) Stop(context.Context, string) error { return d.err }
+func (d *failingDriver) Status(context.Context, string) string {
+	return serving.StatusStopped
+}
+func (d *failingDriver) KillAll(context.Context) error { return d.err }
+
 // Run connects to the master via gRPC and serves until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
+	w.recoverServices(ctx)
 	err := w.client.Run(ctx)
 	w.shutdown()
 	return err
@@ -149,75 +186,40 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		gpus = svc.Spec.Driver.Process.GPUs
 	}
 
-	logFile := filepath.Join(os.TempDir(), "piper-serving", rn+".log")
-	sink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
-
-	spec := process.ProcessSpec{
-		Name:       rn,
-		Command:    rt.Command,
-		Env:        map[string]string{"PIPER_MODEL_DIR": modelDir, "PIPER_SERVICE_NAME": name},
-		Port:       rt.Port,
-		HealthPath: rt.HealthPath,
-		GPUs:       gpus,
-		LogFile:    logFile,
+	var image string
+	if svc.Spec.Driver.Docker != nil {
+		image = svc.Spec.Driver.Docker.Image
 	}
 
 	endpoint := fmt.Sprintf("http://localhost:%d", rt.Port)
 	gen, err := w.reserveService(key, endpoint)
 	if err != nil {
-		sink.Stop()
 		return nil, err
 	}
 
-	// Create the log directory and truncate the file before starting the collector
-	// so freader never sees stale bytes from a previous deployment, and so the
-	// collector is registered before the process starts (eliminating the race where
-	// a fast-exiting process fires OnExit before w.collectors[key] is populated).
-	if mkErr := os.MkdirAll(filepath.Dir(logFile), 0o755); mkErr != nil {
-		w.removeService(key, gen)
-		sink.Stop()
-		return nil, fmt.Errorf("create log dir for %q: %w", name, mkErr)
-	}
-	f, mkErr := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if mkErr != nil {
-		w.removeService(key, gen)
-		sink.Stop()
-		return nil, fmt.Errorf("truncate log file for %q: %w", name, mkErr)
-	}
-	_ = f.Close()
-	collectorStop := notebookworker.StartLogCollector(logFile, "svc:"+name, "runtime", sink)
-	w.mu.Lock()
-	w.collectors[key] = collectorStop
-	w.mu.Unlock()
-
-	_, startedEndpoint, err := w.supervisor.Start(spec, func(status string) {
-		slog.Info("serving process exited", "name", name, "status", status)
-		w.mu.Lock()
-		stop := w.collectors[key]
-		delete(w.collectors, key)
-		w.mu.Unlock()
-		if stop != nil {
-			stop()
-		}
-		sink.Stop()
-		if removed, finalStatus := w.completeService(key, gen, status); removed {
-			w.pushStatus(req.ProjectID, name, finalStatus, "")
-		}
+	sink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
+	endpoint, err = w.driver.Deploy(context.Background(), servingdriver.DeployRequest{
+		ProjectID:   req.ProjectID,
+		Name:        name,
+		RuntimeName: rn,
+		Image:       image,
+		Command:     rt.Command,
+		Env:         map[string]string{"PIPER_MODEL_DIR": modelDir, "PIPER_SERVICE_NAME": name},
+		Port:        rt.Port,
+		HealthPath:  rt.HealthPath,
+		GPUs:        gpus,
+		LogSink:     sink,
+		OnExit: func(status string) {
+			slog.Info("serving runtime exited", "name", name, "status", status)
+			if removed, finalStatus := w.completeService(key, gen, status); removed {
+				w.pushStatus(req.ProjectID, name, finalStatus, "")
+			}
+		},
 	})
 	if err != nil {
-		// Clean up the pre-registered collector and sink.
-		w.mu.Lock()
-		stop := w.collectors[key]
-		delete(w.collectors, key)
-		w.mu.Unlock()
-		if stop != nil {
-			stop()
-		}
 		w.removeService(key, gen)
-		sink.Stop()
 		return nil, err
 	}
-	endpoint = startedEndpoint
 
 	if !w.isCurrentService(key, gen) {
 		return &deployResponse{Endpoint: endpoint}, nil
@@ -233,8 +235,8 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 			// Keep the service tracked while stopping. The exit override makes the
 			// OnExit callback report "failed" instead of the stop signal result.
 			if w.failService(key, gen) {
-				if stopErr := w.supervisor.Stop(rn); stopErr != nil {
-					slog.Warn("serving process stop after health failure failed", "name", name, "err", stopErr)
+				if stopErr := w.driver.Stop(context.Background(), rn); stopErr != nil {
+					slog.Warn("serving runtime stop after health failure failed", "name", name, "err", stopErr)
 					w.pushStatus(req.ProjectID, name, serving.StatusFailed, "")
 				}
 			}
@@ -322,11 +324,13 @@ func (w *Worker) completeService(name string, gen uint64, status string) (bool, 
 
 func (w *Worker) stop(_ context.Context, key, rn string) error {
 	_ = key // key is for services map; rn is the runtime process name
-	return w.supervisor.Stop(rn)
+	return w.driver.Stop(context.Background(), rn)
 }
 
 func (w *Worker) shutdown() {
-	_ = w.supervisor.KillAll()
+	if err := w.driver.KillAll(context.Background()); err != nil {
+		slog.Warn("serving worker cleanup failed", "err", err)
+	}
 }
 
 func (w *Worker) pushStatus(projectID, name, status, endpoint string) {
@@ -340,9 +344,46 @@ func (w *Worker) pushStatus(projectID, name, status, endpoint string) {
 	}
 }
 
+// recoverServices delegates native discovery to the selected driver and
+// restores the worker state machine for running workloads.
+func (w *Worker) recoverServices(ctx context.Context) {
+	recoverable, ok := w.driver.(servingdriver.Recoverable)
+	if !ok {
+		return
+	}
+	onRecovered := func(handle servingdriver.RecoveredHandle) func(string) {
+		key := serviceKey(handle.ProjectID, handle.Name)
+		endpoint := fmt.Sprintf("http://localhost:%d", handle.Port)
+		w.mu.Lock()
+		w.nextGen++
+		gen := w.nextGen
+		w.services[key] = &serviceRecord{status: serving.StatusRunning, endpoint: endpoint, gen: gen}
+		w.mu.Unlock()
+		slog.Info("serving worker: recovered service", "name", handle.Name, "port", handle.Port)
+		w.pushStatus(handle.ProjectID, handle.Name, serving.StatusRunning, endpoint)
+		return func(status string) {
+			if removed, finalStatus := w.completeService(key, gen, status); removed {
+				w.pushStatus(handle.ProjectID, handle.Name, finalStatus, "")
+			}
+		}
+	}
+	onTerminal := func(handle servingdriver.RecoveredHandle, status string) {
+		key := serviceKey(handle.ProjectID, handle.Name)
+		w.mu.Lock()
+		_, active := w.services[key]
+		w.mu.Unlock()
+		if !active {
+			w.pushStatus(handle.ProjectID, handle.Name, status, "")
+		}
+	}
+	if err := recoverable.Recover(ctx, onRecovered, onTerminal); err != nil {
+		slog.Warn("serving worker: driver recovery failed", "err", err)
+	}
+}
+
 // syncStatus answers a master sync request using the worker's own services map
-// as the single source of truth. supervisor is not queried here — it is the
-// process engine, not the state store.
+// as the single source of truth. The driver is the execution engine, not the
+// state store.
 func (w *Worker) syncStatus(_ context.Context, req serving.WorkerSyncStatusRequest) (serving.WorkerSyncStatusResponse, error) {
 	statuses := make(map[string]string, len(req.Services))
 	w.mu.Lock()

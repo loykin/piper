@@ -393,7 +393,7 @@ func TestStorageObjectUpload(t *testing.T) {
 
 func TestLegacyWorkerPollingRoutesAreNotMounted(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
-	router := p.newRouter(nil).(*gin.Engine)
+	router := p.newRouter(nil, nil).(*gin.Engine)
 	for _, route := range []struct {
 		method string
 		path   string
@@ -529,7 +529,7 @@ func TestAuth_ContextInjectedToDownstreamHooks(t *testing.T) {
 			},
 		},
 	})
-	router := p.newRouter(nil)
+	router := p.newRouter(nil, nil)
 	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: "test", Name: "Test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +553,7 @@ func TestAuth_RejectsOnError(t *testing.T) {
 			Authorizer: &testSecurityProvider{},
 		},
 	})
-	router := p.newRouter(nil)
+	router := p.newRouter(nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/projects", nil)
 	rec := httptest.NewRecorder()
@@ -612,7 +612,7 @@ func TestAuthCapabilitiesControlRouteRegistration(t *testing.T) {
 			UserDirectory: testUserDirectory{},
 		},
 	})
-	router := p.newRouter(nil).(*gin.Engine)
+	router := p.newRouter(nil, nil).(*gin.Engine)
 
 	if !hasRoute(router, http.MethodGet, "/api/capabilities") {
 		t.Fatal("capabilities route was not registered")
@@ -704,7 +704,7 @@ func TestWorkerRouteBypassesUserAuthentication(t *testing.T) {
 			Authorizer:    provider,
 		},
 	})
-	router := p.newRouter(nil)
+	router := p.newRouter(nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/tasks/missing/done", strings.NewReader(`{"attempt":1}`))
 	req.Header.Set("Authorization", "Bearer worker-secret")

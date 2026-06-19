@@ -1,13 +1,33 @@
-package notebookworker
+package process
 
 import (
 	"testing"
 
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/notebook/worker/driver"
+	"github.com/piper/piper/pkg/notebook/worker/driver/drivertest"
 )
 
+var _ driver.Driver = (*Driver)(nil)
+var _ driver.Recoverable = (*Driver)(nil)
+
+func TestProcessDriverContract(t *testing.T) {
+	root := t.TempDir()
+	drivertest.RunContract(t, func() driver.Driver { return New(root) })
+}
+
+func TestProcessRecoverableContract(t *testing.T) {
+	root := t.TempDir()
+	drivertest.RunRecoverableContract(t, func() interface {
+		driver.Driver
+		driver.Recoverable
+	} {
+		return New(root)
+	})
+}
+
 func TestProcessNotebookCommandUsesCanonicalArgs(t *testing.T) {
-	req := RuntimeStartRequest{
+	req := driver.StartRequest{
 		BaseURL: "/notebooks/demo/proxy/",
 		WorkDir: "/work/demo",
 		Port:    18888,

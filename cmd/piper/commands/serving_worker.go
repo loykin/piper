@@ -19,6 +19,9 @@ func newServingWorkerCmd() *cobra.Command {
 		Short: "Start a serving worker agent on this node",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentAddr, _ := cmd.Flags().GetString("agent-addr")
+			mode, _ := cmd.Flags().GetString("mode")
+			dockerImage, _ := cmd.Flags().GetString("docker-image")
+			dockerNetwork, _ := cmd.Flags().GetString("docker-network")
 			gpusStr, _ := cmd.Flags().GetString("gpus")
 			hostname, _ := cmd.Flags().GetString("hostname")
 			id, _ := cmd.Flags().GetString("id")
@@ -50,12 +53,20 @@ func newServingWorkerCmd() *cobra.Command {
 				GPUs:        gpus,
 				Hostname:    hostname,
 				ID:          id,
+				Mode:        mode,
+				Docker: servingworker.DockerConfig{
+					Image:   dockerImage,
+					Network: dockerNetwork,
+				},
 			})
 			return w.Run(ctx)
 		},
 	}
 
 	cmd.Flags().String("agent-addr", "", "piper master gRPC agent address, e.g. master:9090 (required)")
+	cmd.Flags().String("mode", "process", "serving runtime: process or docker")
+	cmd.Flags().String("docker-image", "", "default serving image for docker mode")
+	cmd.Flags().String("docker-network", "bridge", "Docker network for serving containers")
 	cmd.Flags().String("gpus", "", "comma-separated GPU device indices (e.g. 0,1)")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("id", "", "worker ID (default: stable serving-<hostname>)")

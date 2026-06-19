@@ -5,7 +5,75 @@ import (
 	"testing"
 
 	"github.com/piper/piper/pkg/serving"
+	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
 )
+
+type captureDriver struct {
+	req       servingdriver.DeployRequest
+	endpoint  string
+	recovered *servingdriver.RecoveredHandle
+}
+
+func (d *captureDriver) Deploy(_ context.Context, req servingdriver.DeployRequest) (string, error) {
+	d.req = req
+	if req.LogSink != nil {
+		req.LogSink.Stop()
+	}
+	if req.OnExit != nil {
+		req.OnExit(serving.StatusStopped)
+	}
+	return d.endpoint, nil
+}
+func (*captureDriver) Stop(context.Context, string) error    { return nil }
+func (*captureDriver) Status(context.Context, string) string { return serving.StatusStopped }
+func (*captureDriver) KillAll(context.Context) error         { return nil }
+func (d *captureDriver) Recover(_ context.Context, onRecovered func(servingdriver.RecoveredHandle) func(string), _ func(servingdriver.RecoveredHandle, string)) error {
+	if d.recovered != nil {
+		_ = onRecovered(*d.recovered)
+	}
+	return nil
+}
+
+func TestServingWorkerBuildsDriverRequest(t *testing.T) {
+	drv := &captureDriver{endpoint: "http://127.0.0.1:18080"}
+	w := New(Config{ID: "test-id"})
+	w.driver = drv
+	payload := `apiVersion: piper/v1
+kind: ModelService
+metadata:
+  name: demo
+spec:
+  run:
+    command: ["serve", "--port", "18080"]
+    port: 18080
+    health_path: /ready
+  driver:
+    docker:
+      image: model:test
+`
+	if _, err := w.deploy(context.Background(), deployRequest{ProjectID: "project-a", YAML: payload, LocalPath: "/models/demo"}); err != nil {
+		t.Fatal(err)
+	}
+	if drv.req.RuntimeName != "project-a__demo" || drv.req.Name != "demo" {
+		t.Fatalf("driver names = runtime %q, name %q", drv.req.RuntimeName, drv.req.Name)
+	}
+	if drv.req.Image != "model:test" || drv.req.Env["PIPER_MODEL_DIR"] != "/models/demo" {
+		t.Fatalf("driver request = %#v", drv.req)
+	}
+}
+
+func TestServingWorkerRecoversThroughDriver(t *testing.T) {
+	handle := servingdriver.RecoveredHandle{ProjectID: "project-a", Name: "demo", RuntimeName: "project-a__demo", Port: 18080}
+	w := New(Config{ID: "test-id"})
+	w.driver = &captureDriver{recovered: &handle}
+	w.recoverServices(context.Background())
+	w.mu.Lock()
+	rec := w.services[serviceKey(handle.ProjectID, handle.Name)]
+	w.mu.Unlock()
+	if rec == nil || rec.status != serving.StatusRunning || rec.endpoint != "http://localhost:18080" {
+		t.Fatalf("recovered service = %#v", rec)
+	}
+}
 
 func TestServingWorker_DeployEmptyCommand(t *testing.T) {
 	w := New(Config{ID: "test-id"})
@@ -20,6 +88,18 @@ spec:
 	_, err := w.deploy(context.Background(), deployRequest{ProjectID: "project-a", YAML: yamlPayload})
 	if err == nil {
 		t.Fatal("expected error for empty command")
+	}
+}
+
+func TestNewDriverRejectsUnsupportedMode(t *testing.T) {
+	if _, err := newDriver(Config{ID: "test-id", Mode: "unknown"}); err == nil {
+		t.Fatal("expected unsupported mode error")
+	}
+}
+
+func TestNewDockerDriverRequiresStableWorkerID(t *testing.T) {
+	if _, err := newDriver(Config{Mode: servingdriver.ModeDocker}); err == nil {
+		t.Fatal("expected stable worker ID error")
 	}
 }
 

@@ -21,6 +21,9 @@ import (
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/pkg/notebook"
+	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
+	notebookdocker "github.com/piper/piper/pkg/notebook/worker/driver/docker"
+	notebookprocess "github.com/piper/piper/pkg/notebook/worker/driver/process"
 )
 
 // Config holds configuration for a notebook worker agent.
@@ -39,7 +42,7 @@ type Config struct {
 // Worker is the notebook worker agent.
 type Worker struct {
 	cfg           Config
-	runtime       Runtime
+	driver        notebookdriver.Driver
 	client        *grpcagent.Client
 	portAllocator func() (int, error)
 	mu            sync.Mutex
@@ -68,11 +71,15 @@ func runtimeName(projectID, name string) string {
 	return projectID + "__" + name
 }
 
+func logRuntimeStart(mode, name, workDir string, port int) {
+	slog.Info("notebook runtime starting", "mode", mode, "name", name, "work_dir", workDir, "port", port)
+}
+
 // New creates a new Worker.
 func New(cfg Config) *Worker {
-	runtime, err := newRuntime(cfg)
+	drv, err := newDriver(cfg)
 	if err != nil {
-		runtime = &failingRuntime{err: err}
+		drv = &failingDriver{err: err}
 	}
 
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
@@ -88,7 +95,7 @@ func New(cfg Config) *Worker {
 
 	w := &Worker{
 		cfg:           cfg,
-		runtime:       runtime,
+		driver:        drv,
 		client:        client,
 		portAllocator: nil,
 		notebooks:     make(map[string]*localNotebook),
@@ -112,31 +119,31 @@ func New(cfg Config) *Worker {
 	return w
 }
 
-func newRuntime(cfg Config) (Runtime, error) {
+func newDriver(cfg Config) (notebookdriver.Driver, error) {
 	switch cfg.Mode {
 	case "", RuntimeProcess:
-		return newProcessRuntime(cfg.NotebooksRoot), nil
+		return notebookprocess.New(cfg.NotebooksRoot), nil
 	case RuntimeDocker:
-		return newDockerRuntime(cfg.Docker, cfg.ID)
+		return notebookdocker.New(cfg.Docker, cfg.ID)
 	default:
 		return nil, fmt.Errorf("unsupported notebook worker mode %q", cfg.Mode)
 	}
 }
 
-type failingRuntime struct{ err error }
+type failingDriver struct{ err error }
 
-func (r *failingRuntime) Start(context.Context, RuntimeStartRequest) (*StartedNotebook, error) {
+func (r *failingDriver) Start(context.Context, notebookdriver.StartRequest) (*notebookdriver.StartedHandle, error) {
 	return nil, r.err
 }
-func (r *failingRuntime) Stop(context.Context, string) error { return r.err }
-func (r *failingRuntime) KillAll(context.Context) error      { return r.err }
-func (r *failingRuntime) Status(string) string               { return notebook.StatusStopped }
+func (r *failingDriver) Stop(context.Context, string) error    { return r.err }
+func (r *failingDriver) KillAll(context.Context) error         { return r.err }
+func (r *failingDriver) Status(context.Context, string) string { return notebook.StatusStopped }
 
 // Run connects to the master via gRPC and serves until ctx is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
 	w.recoverContainers(ctx)
 	defer func() {
-		if err := w.runtime.KillAll(context.Background()); err != nil {
+		if err := w.driver.KillAll(context.Background()); err != nil {
 			slog.Warn("notebook worker cleanup failed", "err", err)
 		}
 	}()
@@ -168,23 +175,6 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		return nil, fmt.Errorf("metadata.name is required")
 	}
 	key := notebookKey(req.ProjectID, name)
-
-	if recoverable, ok := w.runtime.(targetedRecoveryRuntime); ok {
-		w.mu.Lock()
-		_, active := w.notebooks[key]
-		w.mu.Unlock()
-		if !active {
-			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{ProjectID: req.ProjectID, Name: name}); err != nil {
-				return nil, err
-			}
-		}
-		w.mu.Lock()
-		_, active = w.notebooks[key]
-		w.mu.Unlock()
-		if active {
-			return nil, fmt.Errorf("notebook %q is already active", name)
-		}
-	}
 
 	port, err := w.pickPort()
 	if err != nil {
@@ -246,16 +236,16 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		// Create the sink before Start so we can stop it on start error.
 		// The runtime's OnExit wrapper calls sink.Stop() on process exit.
 		nbSink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
-		started, err := w.runtime.Start(context.Background(), RuntimeStartRequest{
-			Name:         rn,
-			ProjectID:    req.ProjectID,
-			NotebookName: name,
-			Spec:         spec,
-			WorkDir:      workDir,
-			Port:         port,
-			Token:        token,
-			BaseURL:      baseURL,
-			LogSink:      nbSink,
+		started, err := w.driver.Start(context.Background(), notebookdriver.StartRequest{
+			RuntimeName: rn,
+			ProjectID:   req.ProjectID,
+			Name:        name,
+			Spec:        spec,
+			WorkDir:     workDir,
+			Port:        port,
+			Token:       token,
+			BaseURL:     baseURL,
+			LogSink:     nbSink,
 			OnExit: func(status string) {
 				slog.Info("notebook runtime exited", "name", name, "status", status)
 				w.mu.Lock()
@@ -325,20 +315,13 @@ func (w *Worker) stopNotebook(_ context.Context, req notebook.WorkerStopRequest)
 	w.mu.Unlock()
 
 	if !ok {
-		if recoverable, recoverableOK := w.runtime.(targetedRecoveryRuntime); recoverableOK {
-			if err := w.recoverProcessTarget(recoverable, notebook.WorkerSyncStatusTarget{ProjectID: req.ProjectID, Name: name}); err != nil {
-				return err
-			}
-			w.mu.Lock()
-			nb, ok = w.notebooks[key]
-			w.mu.Unlock()
-		}
-	}
-	if !ok {
+		// Best-effort stop: the notebook may be running but not in our map after
+		// a recovery miss. Ignore the error — if it's already stopped, Stop is a no-op.
+		_ = w.driver.Stop(context.Background(), runtimeName(req.ProjectID, name))
 		return nil
 	}
 
-	if err := w.runtime.Stop(context.Background(), runtimeName(nb.projectID, nb.name)); err != nil {
+	if err := w.driver.Stop(context.Background(), runtimeName(nb.projectID, nb.name)); err != nil {
 		return err
 	}
 
@@ -418,14 +401,7 @@ func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequ
 			continue
 		}
 
-		if !active {
-			if recoverable, ok := w.runtime.(targetedRecoveryRuntime); ok {
-				if err := w.recoverProcessTarget(recoverable, target); err != nil {
-					return notebook.WorkerSyncStatusResponse{}, err
-				}
-			}
-		}
-		statuses[key] = w.runtime.Status(runtimeName(target.ProjectID, name))
+		statuses[key] = w.driver.Status(context.Background(), runtimeName(target.ProjectID, name))
 	}
 	return notebook.WorkerSyncStatusResponse{Statuses: statuses}, nil
 }
@@ -526,14 +502,15 @@ func parsePortRange(s string) (int, int, error) {
 	return start, end, nil
 }
 
-// recoverContainers reconnects to Docker containers running from a previous
-// worker instance. Process recovery is target-driven during status sync.
+// recoverContainers reconnects to workloads running from a previous worker
+// instance. Drivers that implement notebookdriver.Recoverable perform their own
+// native discovery (PID files, container labels, K8s label selectors).
 func (w *Worker) recoverContainers(ctx context.Context) {
-	recoverable, ok := w.runtime.(recoverableRuntime)
+	recoverable, ok := w.driver.(notebookdriver.Recoverable)
 	if !ok {
 		return
 	}
-	onRecovered := func(rec recoveredRuntime) func(status string) {
+	onRecovered := func(rec notebookdriver.RecoveredHandle) func(status string) {
 		key := notebookKey(rec.ProjectID, rec.Name)
 		w.mu.Lock()
 		w.nextGen++
@@ -560,7 +537,7 @@ func (w *Worker) recoverContainers(ctx context.Context) {
 			}
 		}
 	}
-	onTerminal := func(rec recoveredRuntime, status string) {
+	onTerminal := func(rec notebookdriver.RecoveredHandle, status string) {
 		key := notebookKey(rec.ProjectID, rec.Name)
 		w.mu.Lock()
 		_, active := w.notebooks[key]
@@ -574,63 +551,7 @@ func (w *Worker) recoverContainers(ctx context.Context) {
 	}
 
 	if err := recoverable.Recover(ctx, onRecovered, onTerminal); err != nil {
-		slog.Warn("notebook worker: runtime recovery failed", "err", err)
+		slog.Warn("notebook worker: driver recovery failed", "err", err)
 		return
 	}
-}
-
-func (w *Worker) recoverProcessTarget(runtime targetedRecoveryRuntime, target notebook.WorkerSyncStatusTarget) error {
-	if target.Name == "" {
-		return nil
-	}
-	key := notebookKey(target.ProjectID, target.Name)
-
-	w.mu.Lock()
-	w.nextGen++
-	gen := w.nextGen
-	delete(w.terminal, key)
-	recoveredNotebook := &localNotebook{projectID: target.ProjectID, name: target.Name, port: target.Port, gen: gen}
-	w.notebooks[key] = recoveredNotebook
-	if target.Port > 0 {
-		w.reservedPorts[target.Port] = struct{}{}
-	}
-	w.mu.Unlock()
-
-	running, err := runtime.RecoverTarget(runtimeName(target.ProjectID, target.Name), target.Port, func(status string) {
-		w.mu.Lock()
-		nb := w.notebooks[key]
-		current := nb != nil && nb.gen == gen
-		port := recoveredNotebook.port
-		if current {
-			delete(w.notebooks, key)
-			w.terminal[key] = status
-		}
-		w.mu.Unlock()
-		w.releasePort(port)
-		if current {
-			w.pushStatus(target.ProjectID, target.Name, status, "", "", "", 0, "")
-		}
-	})
-	if err != nil {
-		w.mu.Lock()
-		port := recoveredNotebook.port
-		if nb := w.notebooks[key]; nb != nil && nb.gen == gen {
-			delete(w.notebooks, key)
-		}
-		w.mu.Unlock()
-		w.releasePort(port)
-		return fmt.Errorf("recover notebook %q: %w", target.Name, err)
-	}
-	if !running {
-		w.mu.Lock()
-		port := recoveredNotebook.port
-		if nb := w.notebooks[key]; nb != nil && nb.gen == gen {
-			delete(w.notebooks, key)
-		}
-		w.mu.Unlock()
-		w.releasePort(port)
-		return nil
-	}
-
-	return nil
 }

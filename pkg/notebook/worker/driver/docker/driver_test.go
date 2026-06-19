@@ -1,7 +1,8 @@
-package notebookworker
+package docker
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,9 +13,38 @@ import (
 	"github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
 
+	dockerinfra "github.com/piper/piper/internal/docker"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/notebook/worker/driver"
+	"github.com/piper/piper/pkg/notebook/worker/driver/drivertest"
 )
+
+var _ driver.Driver = (*Driver)(nil)
+var _ driver.Recoverable = (*Driver)(nil)
+
+func TestDockerDriverContract(t *testing.T) {
+	drivertest.RunContract(t, func() driver.Driver {
+		d, err := NewWithClient(Config{}, "worker-test", &fakeDockerClient{})
+		if err != nil {
+			t.Fatalf("NewWithClient: %v", err)
+		}
+		return d
+	})
+}
+
+func TestDockerRecoverableContract(t *testing.T) {
+	drivertest.RunRecoverableContract(t, func() interface {
+		driver.Driver
+		driver.Recoverable
+	} {
+		d, err := NewWithClient(Config{}, "worker-test", &fakeDockerClient{})
+		if err != nil {
+			t.Fatalf("NewWithClient: %v", err)
+		}
+		return d
+	})
+}
 
 func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	root := t.TempDir()
@@ -22,7 +52,7 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	if err := os.Mkdir(datasets, 0755); err != nil {
 		t.Fatal(err)
 	}
-	rt, err := newDockerRuntimeWithClient(DockerConfig{
+	rt, err := NewWithClient(Config{
 		Image:   "jupyter/scipy-notebook:latest",
 		Network: "bridge",
 		CPUs:    "2",
@@ -31,7 +61,7 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 		ExtraArgs: []string{
 			"--ServerApp.disable_check_xsrf=true",
 		},
-		Volumes: []DockerVolume{{
+		Volumes: []Volume{{
 			Name:          "datasets",
 			HostPath:      datasets,
 			ContainerPath: "/mnt/datasets",
@@ -58,13 +88,14 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 		},
 	}
 
-	opts, err := rt.containerCreateOptions(RuntimeStartRequest{
-		Name:    "analysis",
-		Spec:    spec,
-		WorkDir: t.TempDir(),
-		Port:    18888,
-		Token:   "",
-		BaseURL: "/notebooks/analysis/proxy/",
+	opts, err := rt.containerCreateOptions(driver.StartRequest{
+		RuntimeName: "analysis",
+		Name:        "analysis",
+		Spec:        spec,
+		WorkDir:     t.TempDir(),
+		Port:        18888,
+		Token:       "",
+		BaseURL:     "/notebooks/analysis/proxy/",
 	})
 	if err != nil {
 		t.Fatalf("container options: %v", err)
@@ -105,7 +136,7 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 }
 
 func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {
-	rt, err := newDockerRuntimeWithClient(DockerConfig{}, "test-agent", &fakeDockerClient{})
+	rt, err := NewWithClient(Config{}, "test-agent", &fakeDockerClient{})
 	if err != nil {
 		t.Fatalf("new runtime: %v", err)
 	}
@@ -115,20 +146,21 @@ func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {
 		Volumes: []string{"host-root"},
 	}
 
-	if _, err := rt.containerCreateOptions(RuntimeStartRequest{
-		Name:    "analysis",
-		Spec:    spec,
-		WorkDir: t.TempDir(),
-		Port:    18888,
-		Token:   "",
-		BaseURL: "/notebooks/analysis/proxy/",
+	if _, err := rt.containerCreateOptions(driver.StartRequest{
+		RuntimeName: "analysis",
+		Name:        "analysis",
+		Spec:        spec,
+		WorkDir:     t.TempDir(),
+		Port:        18888,
+		Token:       "",
+		BaseURL:     "/notebooks/analysis/proxy/",
 	}); err == nil {
 		t.Fatal("expected unallowed volume error")
 	}
 }
 
 func TestDockerRuntimePrepWrapsLaunchCommand(t *testing.T) {
-	rt, err := newDockerRuntimeWithClient(DockerConfig{Image: "jupyter/scipy-notebook:latest"}, "test-agent", &fakeDockerClient{})
+	rt, err := NewWithClient(Config{Image: "jupyter/scipy-notebook:latest"}, "test-agent", &fakeDockerClient{})
 	if err != nil {
 		t.Fatalf("new runtime: %v", err)
 	}
@@ -141,13 +173,14 @@ func TestDockerRuntimePrepWrapsLaunchCommand(t *testing.T) {
 		},
 	}
 
-	opts, err := rt.containerCreateOptions(RuntimeStartRequest{
-		Name:    "analysis",
-		Spec:    spec,
-		WorkDir: t.TempDir(),
-		Port:    18888,
-		Token:   "",
-		BaseURL: "/notebooks/analysis/proxy/",
+	opts, err := rt.containerCreateOptions(driver.StartRequest{
+		RuntimeName: "analysis",
+		Name:        "analysis",
+		Spec:        spec,
+		WorkDir:     t.TempDir(),
+		Port:        18888,
+		Token:       "",
+		BaseURL:     "/notebooks/analysis/proxy/",
 	})
 	if err != nil {
 		t.Fatalf("container options: %v", err)
@@ -182,7 +215,7 @@ func TestNewDockerClientUsesDockerDesktopSocketWhenPresent(t *testing.T) {
 	if info, err := os.Stat(socket); err != nil || info.IsDir() {
 		t.Skip("Docker Desktop socket not present")
 	}
-	cli, err := newDockerClient()
+	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		t.Fatalf("newDockerClient: %v", err)
 	}
@@ -205,7 +238,7 @@ func TestDockerGPUResources(t *testing.T) {
 			},
 		},
 	}
-	all, err := dockerResources(DockerConfig{}, allDS)
+	all, err := dockerResources(Config{}, allDS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +259,7 @@ func TestDockerGPUResources(t *testing.T) {
 			},
 		},
 	}
-	selected, err := dockerResources(DockerConfig{}, selectedDS)
+	selected, err := dockerResources(Config{}, selectedDS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +283,7 @@ func TestDockerRecoverRegistersBeforeWatching(t *testing.T) {
 			Ports: []container.PortSummary{{PrivatePort: 8888, PublicPort: 18888, Type: "tcp"}},
 		}},
 	}
-	rt, err := newDockerRuntimeWithClient(DockerConfig{}, "worker-1", cli)
+	rt, err := NewWithClient(Config{}, "worker-1", cli)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,13 +294,13 @@ func TestDockerRecoverRegistersBeforeWatching(t *testing.T) {
 			t.Error("ContainerWait attached before worker registration")
 		}
 	}
-	if err := rt.Recover(context.Background(), func(rec recoveredRuntime) func(string) {
+	if err := rt.Recover(context.Background(), func(rec driver.RecoveredHandle) func(string) {
 		registered = true
 		if rec.ProjectID != "project-a" || rec.Name != "demo" || rec.RuntimeName != "project-a__demo" || rec.Port != 18888 {
 			t.Fatalf("recovered = %#v", rec)
 		}
 		return func(string) {}
-	}, func(recoveredRuntime, string) {}); err != nil {
+	}, func(driver.RecoveredHandle, string) {}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -280,16 +313,16 @@ func TestDockerRecoverOnlyUsesCurrentWorkerContainers(t *testing.T) {
 			}},
 		},
 	}
-	rt, err := newDockerRuntimeWithClient(DockerConfig{}, "worker-1", cli)
+	rt, err := NewWithClient(Config{}, "worker-1", cli)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var exits []string
-	if err := rt.Recover(context.Background(), func(recoveredRuntime) func(string) {
+	if err := rt.Recover(context.Background(), func(driver.RecoveredHandle) func(string) {
 		t.Fatal("another worker's container should not be recovered")
 		return func(string) {}
-	}, func(rec recoveredRuntime, status string) {
+	}, func(rec driver.RecoveredHandle, status string) {
 		exits = append(exits, rec.Name+":"+status)
 	}); err != nil {
 		t.Fatal(err)
@@ -303,7 +336,7 @@ func TestDockerRecoverOnlyUsesCurrentWorkerContainers(t *testing.T) {
 }
 
 func TestDockerRuntimeRequiresWorkerID(t *testing.T) {
-	if _, err := newDockerRuntimeWithClient(DockerConfig{}, "", &fakeDockerClient{}); err == nil {
+	if _, err := NewWithClient(Config{}, "", &fakeDockerClient{}); err == nil {
 		t.Fatal("expected empty worker ID to be rejected")
 	}
 }
@@ -332,6 +365,10 @@ func (f *fakeDockerClient) ContainerRemove(context.Context, string, dockerclient
 
 func (f *fakeDockerClient) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
 	return dockerclient.ContainerListResult{}, nil
+}
+
+func (f *fakeDockerClient) ContainerLogs(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 
 func (f *fakeDockerClient) ContainerWait(context.Context, string, dockerclient.ContainerWaitOptions) dockerclient.ContainerWaitResult {
@@ -369,6 +406,10 @@ func (f *recoveryDockerClient) ContainerRemove(_ context.Context, id string, _ d
 func (f *recoveryDockerClient) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
 	return dockerclient.ContainerListResult{Items: f.items}, nil
 }
+func (f *recoveryDockerClient) ContainerLogs(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
 func (f *recoveryDockerClient) ContainerWait(context.Context, string, dockerclient.ContainerWaitOptions) dockerclient.ContainerWaitResult {
 	if f.onWait != nil {
 		f.onWait()

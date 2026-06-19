@@ -1,8 +1,9 @@
-package notebookworker
+package process
 
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,100 +11,71 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/loykin/freader"
-	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/process"
+	"github.com/piper/piper/internal/processlog"
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/notebook/worker/driver"
+	driverinternal "github.com/piper/piper/pkg/notebook/worker/driver/internal"
 )
 
-const (
-	RuntimeProcess = "process"
-	RuntimeDocker  = "docker"
-)
-
-type Runtime interface {
-	Start(ctx context.Context, req RuntimeStartRequest) (*StartedNotebook, error)
-	Stop(ctx context.Context, name string) error
-	KillAll(ctx context.Context) error
-	Status(name string) string
+// processMeta stores the workload identity alongside the PID file so that a
+// restarting worker can map from a PID file back to its project and notebook name.
+type processMeta struct {
+	ProjectID   string `json:"project_id"`
+	Name        string `json:"name"`
+	RuntimeName string `json:"runtime_name"`
+	Port        int    `json:"port"`
 }
 
-type recoveredRuntime struct {
-	ProjectID   string
-	Name        string
-	RuntimeName string
-	Port        int
-}
-
-// recoverableRuntime is implemented only by runtimes whose external engine can
-// survive a worker restart and be reattached, such as Docker.
-type recoverableRuntime interface {
-	Recover(
-		ctx context.Context,
-		onRecovered func(recoveredRuntime) func(status string),
-		onTerminal func(recoveredRuntime, string),
-	) error
-}
-
-type targetedRecoveryRuntime interface {
-	RecoverTarget(name string, port int, onExit func(status string)) (bool, error)
-}
-
-type RuntimeStartRequest struct {
-	Name         string
-	ProjectID    string
-	NotebookName string
-	Spec         notebook.Notebook
-	WorkDir      string
-	Port         int
-	Token        string
-	BaseURL      string
-	OnExit       func(status string)
-	LogSink      logsink.LogSink
-}
-
-type StartedNotebook struct {
-	Endpoint    string
-	PID         int
-	Token       string
-	EnvPath     string
-	ContainerID string
-}
-
-type processRuntime struct {
+type Driver struct {
 	supervisor *process.ProcessSupervisor
 	pidDir     string
 	mu         sync.Mutex
 	collectors map[string]func() // runtime name -> freader stop function
 }
 
-func newProcessRuntime(notebooksRoot string) *processRuntime {
+func New(notebooksRoot string) *Driver {
 	if notebooksRoot == "" {
 		notebooksRoot = "notebooks"
 	}
 	absRoot, _ := filepath.Abs(notebooksRoot)
-	return &processRuntime{
+	return &Driver{
 		supervisor: process.NewProcessSupervisor(),
 		pidDir:     filepath.Join(absRoot, ".piper", "processes"),
 		collectors: make(map[string]func()),
 	}
 }
 
-func (r *processRuntime) pidFile(name string) string {
+func (r *Driver) pidFile(name string) string {
 	sum := sha256.Sum256([]byte(name))
 	return filepath.Join(r.pidDir, fmt.Sprintf("%x.pid", sum[:16]))
 }
 
-func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
+func (r *Driver) metaFile(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return filepath.Join(r.pidDir, fmt.Sprintf("%x.meta.json", sum[:16]))
+}
+
+func (r *Driver) writeMeta(name string, meta processMeta) error {
+	if err := os.MkdirAll(r.pidDir, 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(r.metaFile(name), data, 0o644)
+}
+
+func (r *Driver) Start(_ context.Context, req driver.StartRequest) (*driver.StartedHandle, error) {
 	var env, gpus string
 	if req.Spec.Spec.Driver.Process != nil {
 		env = req.Spec.Spec.Driver.Process.Env
 		gpus = req.Spec.Spec.Driver.Process.GPUs
 	}
 
-	prepSteps, err := prepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendProcess)
+	prepSteps, err := driverinternal.PrepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendProcess)
 	if err != nil {
 		return nil, err
 	}
@@ -134,42 +106,61 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		command = []string{"sh", "-lc", script}
 	}
 
+	// Write meta file for crash recovery before starting the process.
+	meta := processMeta{
+		ProjectID:   req.ProjectID,
+		Name:        req.Name,
+		RuntimeName: req.RuntimeName,
+		Port:        req.Port,
+	}
+	if err := r.writeMeta(req.RuntimeName, meta); err != nil {
+		if req.LogSink != nil {
+			req.LogSink.Stop()
+		}
+		return nil, fmt.Errorf("write process meta for %q: %w", req.RuntimeName, err)
+	}
+
 	var logFile string
 	if req.LogSink != nil {
-		logFile = filepath.Join(req.WorkDir, ".piper", "logs", req.Name+".log")
+		logFile = filepath.Join(req.WorkDir, ".piper", "logs", req.RuntimeName+".log")
 		if mkErr := os.MkdirAll(filepath.Dir(logFile), 0o755); mkErr != nil {
-			return nil, fmt.Errorf("create log dir for %q: %w", req.Name, mkErr)
+			_ = os.Remove(r.metaFile(req.RuntimeName))
+			req.LogSink.Stop()
+			return nil, fmt.Errorf("create log dir for %q: %w", req.RuntimeName, mkErr)
 		}
 		// Truncate before starting the collector. supervisor.Start also truncates
 		// via '>', but there is a window between collector start and process start
 		// where freader could read stale bytes from a previous run.
 		f, mkErr := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if mkErr != nil {
+			_ = os.Remove(r.metaFile(req.RuntimeName))
 			req.LogSink.Stop()
-			return nil, fmt.Errorf("truncate log file for %q: %w", req.Name, mkErr)
+			return nil, fmt.Errorf("truncate log file for %q: %w", req.RuntimeName, mkErr)
 		}
 		_ = f.Close()
 		// Register the collector before starting the process to eliminate the
 		// race where a fast-exiting process fires OnExit before we store the
 		// stop function — which would leak the collector goroutine.
-		stop := StartLogCollector(logFile, "nb:"+req.NotebookName, "runtime", req.LogSink)
+		stop := processlog.StartCollector(logFile, "nb:"+req.Name, "runtime", req.LogSink)
 		r.mu.Lock()
-		r.collectors[req.Name] = stop
+		r.collectors[req.RuntimeName] = stop
 		r.mu.Unlock()
 	}
 
+	metaPath := r.metaFile(req.RuntimeName)
 	pid, endpoint, err := r.supervisor.Start(process.ProcessSpec{
-		Name:    req.Name,
+		Name:    req.RuntimeName,
 		Command: command,
 		Dir:     req.WorkDir,
 		Port:    req.Port,
 		GPUs:    gpus,
-		PIDFile: r.pidFile(req.Name),
+		PIDFile: r.pidFile(req.RuntimeName),
 		LogFile: logFile,
 	}, func(status string) {
+		_ = os.Remove(metaPath)
 		r.mu.Lock()
-		stop := r.collectors[req.Name]
-		delete(r.collectors, req.Name)
+		stop := r.collectors[req.RuntimeName]
+		delete(r.collectors, req.RuntimeName)
 		r.mu.Unlock()
 		if stop != nil {
 			stop()
@@ -182,10 +173,11 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		}
 	})
 	if err != nil {
-		// Process failed to start: clean up the pre-registered collector and sink.
+		// Process failed to start: clean up the pre-registered collector, sink, and meta file.
+		_ = os.Remove(metaPath)
 		r.mu.Lock()
-		stop := r.collectors[req.Name]
-		delete(r.collectors, req.Name)
+		stop := r.collectors[req.RuntimeName]
+		delete(r.collectors, req.RuntimeName)
 		r.mu.Unlock()
 		if stop != nil {
 			stop()
@@ -196,27 +188,76 @@ func (r *processRuntime) Start(_ context.Context, req RuntimeStartRequest) (*Sta
 		return nil, err
 	}
 
-	return &StartedNotebook{Endpoint: endpoint, PID: pid, Token: req.Token, EnvPath: envPath}, nil
+	return &driver.StartedHandle{Endpoint: endpoint, PID: pid, Token: req.Token, EnvPath: envPath}, nil
 }
 
-func (r *processRuntime) RecoverTarget(name string, port int, onExit func(status string)) (bool, error) {
-	_, running, err := r.supervisor.Recover(process.ProcessSpec{
-		Name:    name,
-		Port:    port,
-		PIDFile: r.pidFile(name),
-	}, onExit)
-	return running, err
+// Recover scans the PID metadata directory for notebooks left from a previous
+// worker instance. For each found workload the process liveness is validated
+// using its PID file; living processes are re-attached, dead ones are reported
+// as terminal so the master receives an up-to-date stopped status.
+func (r *Driver) Recover(_ context.Context, onRecovered func(driver.RecoveredHandle) func(string), onTerminal func(driver.RecoveredHandle, string)) error {
+	entries, err := os.ReadDir(r.pidDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta.json") {
+			continue
+		}
+		metaPath := filepath.Join(r.pidDir, entry.Name())
+		data, readErr := os.ReadFile(metaPath)
+		if readErr != nil {
+			_ = os.Remove(metaPath)
+			continue
+		}
+		var meta processMeta
+		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
+			_ = os.Remove(metaPath)
+			continue
+		}
+		rec := driver.RecoveredHandle{
+			ProjectID:   meta.ProjectID,
+			Name:        meta.Name,
+			RuntimeName: meta.RuntimeName,
+			Port:        meta.Port,
+		}
+		var onExit func(string)
+		onExitReady := make(chan struct{})
+		_, running, recoverErr := r.supervisor.Recover(process.ProcessSpec{
+			Name:    meta.RuntimeName,
+			Port:    meta.Port,
+			PIDFile: r.pidFile(meta.RuntimeName),
+		}, func(status string) {
+			_ = os.Remove(metaPath)
+			<-onExitReady
+			if onExit != nil {
+				onExit(status)
+			}
+		})
+		if recoverErr != nil || !running {
+			_ = os.Remove(metaPath)
+			close(onExitReady)
+			onTerminal(rec, notebook.StatusStopped)
+			continue
+		}
+		onExit = onRecovered(rec)
+		close(onExitReady)
+	}
+	return nil
 }
 
-func (r *processRuntime) Stop(_ context.Context, name string) error {
+func (r *Driver) Stop(_ context.Context, name string) error {
 	return r.supervisor.Stop(name)
 }
 
-func (r *processRuntime) KillAll(_ context.Context) error {
+func (r *Driver) KillAll(_ context.Context) error {
 	return r.supervisor.KillAll()
 }
 
-func (r *processRuntime) Status(name string) string {
+func (r *Driver) Status(_ context.Context, name string) string {
 	if status, ok := r.supervisor.Status(name); ok {
 		return status
 	}
@@ -266,37 +307,6 @@ func prepareProcessEnv(specEnv, workDir string, bootstrap bool) (bin string, ext
 	return "", nil, "", fmt.Errorf("jupyter not found in venv %q after setup", venvPath)
 }
 
-func logRuntimeStart(mode, name, workDir string, port int) {
-	slog.Info("notebook runtime starting", "mode", mode, "name", name, "work_dir", workDir, "port", port)
-}
-
-// StartLogCollector starts a freader Collector that watches logFile and forwards
-// each collected line to sink. Returns a stop function that halts the collector.
-// Exported for use by other worker packages (e.g. serving worker).
-//
-// Lines are labelled "combined" because stdout and stderr are merged into a
-// single file via the shell redirect added by ProcessSupervisor.
-func StartLogCollector(logFile, runID, stepName string, sink logsink.LogSink) func() {
-	cfg := freader.Config{
-		WorkerCount:         1,
-		PollInterval:        200 * time.Millisecond,
-		Separator:           "\n",
-		FingerprintStrategy: freader.FingerprintStrategyDeviceAndInode,
-		Include:             []string{logFile},
-		StoreOffsets:        false,
-		OnEventFunc: func(e freader.LineEvent) {
-			sink.Append(runID, stepName, "combined", e.Line, e.Ts)
-		},
-	}
-	collector, err := freader.NewCollector(cfg)
-	if err != nil {
-		slog.Warn("log collector: cannot create", "log_file", logFile, "err", err)
-		return func() {}
-	}
-	collector.Start()
-	return func() { collector.Stop() }
-}
-
 func ensureVenv(venvPath string, bootstrap bool) error {
 	python := filepath.Join(venvPath, "bin", "python")
 	if _, err := os.Stat(python); err != nil {
@@ -333,11 +343,4 @@ func hasVenvCommand(venvPath, name string) bool {
 
 func hasPythonModule(python, module string) bool {
 	return exec.Command(python, "-c", "import "+module).Run() == nil
-}
-
-func prepareStepsForBackend(spec *notebook.NotebookPrepareSpec, backend string) ([]notebook.NotebookPrepareStep, error) {
-	if spec == nil {
-		return nil, nil
-	}
-	return spec.StepsForBackend(backend)
 }

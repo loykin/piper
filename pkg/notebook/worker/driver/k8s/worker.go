@@ -1,6 +1,7 @@
 package notebookworker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/notebook"
 	"k8s.io/client-go/kubernetes"
@@ -38,16 +40,27 @@ type Config struct {
 	// Merged before the per-notebook pod_template (defaults lose on conflict).
 	PodDefaults  corev1.PodTemplateSpec
 	ReportStatus func(notebook.WorkerStatusUpdate) error
+	// LogClient enables pod log streaming. When set, running notebook pods
+	// forward stdout/stderr to the master log store.
+	LogClient logsink.PushClient
 }
 
 type Worker struct {
 	cfg        Config
 	statusMu   sync.Mutex
 	lastStatus map[string]string
+	logMu      sync.Mutex
+	logGens    map[string]uint64             // workload key -> generation counter for the active log stream
+	logCancels map[string]context.CancelFunc // workload key -> cancel function for PodLogs stream
 }
 
 func New(cfg Config) *Worker {
-	return &Worker{cfg: cfg, lastStatus: make(map[string]string)}
+	return &Worker{
+		cfg:        cfg,
+		lastStatus: make(map[string]string),
+		logGens:    make(map[string]uint64),
+		logCancels: make(map[string]context.CancelFunc),
+	}
 }
 
 func Register(dispatcher Dispatcher, cfg Config) *Worker {
@@ -285,6 +298,15 @@ func (a *Worker) stopNotebook(ctx context.Context, req notebook.WorkerStopReques
 	if req.Name == "" {
 		return fmt.Errorf("name is required")
 	}
+	// Cancel any active log stream for this notebook.
+	key := notebookStatusKey(req.ProjectID, req.Name)
+	a.logMu.Lock()
+	if cancel, ok := a.logCancels[key]; ok {
+		cancel()
+		delete(a.logCancels, key)
+	}
+	a.logMu.Unlock()
+
 	ns := a.notebookNamespace()
 	name := notebookWorkloadName(req.Name)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -417,6 +439,17 @@ func (a *Worker) observeOnce(ctx context.Context) {
 			continue
 		}
 		_ = a.cfg.ReportStatus(notebook.WorkerStatusUpdate{ProjectID: projectID, Name: name, Status: status})
+		if status == notebook.StatusRunning {
+			a.ensureNotebookLogStream(ctx, projectID, name, sts)
+		} else {
+			key := notebookStatusKey(projectID, name)
+			a.logMu.Lock()
+			if cancel, ok := a.logCancels[key]; ok {
+				cancel()
+				delete(a.logCancels, key)
+			}
+			a.logMu.Unlock()
+		}
 	}
 
 	// Remove viewer pods that conflict with active notebooks.
@@ -441,6 +474,55 @@ func (a *Worker) statusChanged(name, status string) bool {
 	}
 	a.lastStatus[name] = status
 	return true
+}
+
+// ensureNotebookLogStream starts a PodLogs stream for a running notebook if
+// one is not already active. The stream forwards each line to the master log
+// store via LogClient. A no-op when LogClient is not configured.
+func (a *Worker) ensureNotebookLogStream(ctx context.Context, projectID, name string, sts *appsv1.StatefulSet) {
+	if a.cfg.LogClient == nil {
+		return
+	}
+	key := notebookStatusKey(projectID, name)
+	a.logMu.Lock()
+	if _, active := a.logCancels[key]; active {
+		a.logMu.Unlock()
+		return
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	a.logGens[key]++
+	gen := a.logGens[key]
+	a.logCancels[key] = cancel
+	a.logMu.Unlock()
+
+	ns := a.notebookNamespace()
+	podName := sts.Name + "-0" // StatefulSet pod naming convention
+	sink := logsink.NewGRPCLogSink(projectID, a.cfg.LogClient)
+	runID := "nb:" + name
+
+	go func() {
+		defer func() {
+			sink.Stop()
+			a.logMu.Lock()
+			if a.logGens[key] == gen {
+				delete(a.logCancels, key)
+			}
+			a.logMu.Unlock()
+		}()
+		req := a.cfg.Client.CoreV1().Pods(ns).GetLogs(podName, &corev1.PodLogOptions{
+			Container: "notebook",
+			Follow:    true,
+		})
+		rc, err := req.Stream(streamCtx)
+		if err != nil {
+			return
+		}
+		defer func() { _ = rc.Close() }()
+		sc := bufio.NewScanner(rc)
+		for sc.Scan() {
+			sink.Append(runID, "runtime", "combined", sc.Text(), time.Now())
+		}
+	}()
 }
 
 func observedStatefulSetStatus(sts *appsv1.StatefulSet) string {

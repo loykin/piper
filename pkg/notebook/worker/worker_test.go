@@ -6,24 +6,25 @@ import (
 	"time"
 
 	"github.com/piper/piper/pkg/notebook"
+	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
 )
 
 type conformanceRuntime struct {
-	req     RuntimeStartRequest
+	req     notebookdriver.StartRequest
 	started chan struct{}
 }
 
-func (r *conformanceRuntime) Start(_ context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
+func (r *conformanceRuntime) Start(_ context.Context, req notebookdriver.StartRequest) (*notebookdriver.StartedHandle, error) {
 	r.req = req
 	if r.started != nil {
 		close(r.started)
 	}
-	return &StartedNotebook{Endpoint: "http://localhost:18888", PID: 123}, nil
+	return &notebookdriver.StartedHandle{Endpoint: "http://localhost:18888", PID: 123}, nil
 }
 
 func (r *conformanceRuntime) Stop(context.Context, string) error { return nil }
 func (r *conformanceRuntime) KillAll(context.Context) error      { return nil }
-func (r *conformanceRuntime) Status(name string) string {
+func (r *conformanceRuntime) Status(_ context.Context, name string) string {
 	if name == "running-nb" {
 		return notebook.StatusRunning
 	}
@@ -34,47 +35,66 @@ type recoveryRuntime struct {
 	onExit func(status string)
 }
 
-func (r *recoveryRuntime) Start(context.Context, RuntimeStartRequest) (*StartedNotebook, error) {
+func (r *recoveryRuntime) Start(context.Context, notebookdriver.StartRequest) (*notebookdriver.StartedHandle, error) {
 	return nil, nil
 }
-func (r *recoveryRuntime) Stop(context.Context, string) error { return nil }
-func (r *recoveryRuntime) KillAll(context.Context) error      { return nil }
-func (r *recoveryRuntime) Status(string) string               { return notebook.StatusStopped }
+func (r *recoveryRuntime) Stop(context.Context, string) error    { return nil }
+func (r *recoveryRuntime) KillAll(context.Context) error         { return nil }
+func (r *recoveryRuntime) Status(context.Context, string) string { return notebook.StatusStopped }
 func (r *recoveryRuntime) Recover(
 	_ context.Context,
-	onRecovered func(recoveredRuntime) func(status string),
-	_ func(recoveredRuntime, string),
+	onRecovered func(notebookdriver.RecoveredHandle) func(status string),
+	_ func(notebookdriver.RecoveredHandle, string),
 ) error {
-	r.onExit = onRecovered(recoveredRuntime{ProjectID: "project-a", Name: "demo", RuntimeName: "project-a__demo", Port: 18888})
+	r.onExit = onRecovered(notebookdriver.RecoveredHandle{ProjectID: "project-a", Name: "demo", RuntimeName: "project-a__demo", Port: 18888})
 	return nil
 }
 
 type targetRecoveryRuntime struct {
-	name    string
-	port    int
-	running bool
-	onExit  func(status string)
+	projectID    string
+	notebookName string
+	runtimeName  string
+	port         int
+	running      bool
+	onExit       func(status string)
 }
 
-func (r *targetRecoveryRuntime) Start(context.Context, RuntimeStartRequest) (*StartedNotebook, error) {
+func (r *targetRecoveryRuntime) Start(context.Context, notebookdriver.StartRequest) (*notebookdriver.StartedHandle, error) {
 	return nil, nil
 }
-func (r *targetRecoveryRuntime) Stop(context.Context, string) error {
-	r.running = false
+func (r *targetRecoveryRuntime) Stop(_ context.Context, name string) error {
+	if name == r.runtimeName {
+		r.running = false
+	}
 	return nil
 }
 func (r *targetRecoveryRuntime) KillAll(context.Context) error { return nil }
-func (r *targetRecoveryRuntime) Status(name string) string {
-	if r.running && name == r.name {
+func (r *targetRecoveryRuntime) Status(_ context.Context, name string) string {
+	if r.running && name == r.runtimeName {
 		return notebook.StatusRunning
 	}
 	return notebook.StatusStopped
 }
-func (r *targetRecoveryRuntime) RecoverTarget(name string, port int, onExit func(status string)) (bool, error) {
-	r.name = name
-	r.port = port
-	r.onExit = onExit
-	return r.running, nil
+func (r *targetRecoveryRuntime) Recover(
+	_ context.Context,
+	onRecovered func(notebookdriver.RecoveredHandle) func(status string),
+	onTerminal func(notebookdriver.RecoveredHandle, string),
+) error {
+	if r.runtimeName == "" {
+		return nil
+	}
+	rec := notebookdriver.RecoveredHandle{
+		ProjectID:   r.projectID,
+		Name:        r.notebookName,
+		RuntimeName: r.runtimeName,
+		Port:        r.port,
+	}
+	if r.running {
+		r.onExit = onRecovered(rec)
+	} else {
+		onTerminal(rec, notebook.StatusStopped)
+	}
+	return nil
 }
 
 func TestNotebookWorker_StartInvalidYAML(t *testing.T) {
@@ -95,7 +115,7 @@ kind: NotebookServer
 metadata:
   name: ""
 spec:
-  runtime:
+  driver:
     port: 8888
 `
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
@@ -114,7 +134,7 @@ kind: NotebookServer
 metadata:
   name: test-nb
 spec:
-  runtime:
+  driver:
     port: 8888
 `
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
@@ -132,7 +152,7 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 	rt := &conformanceRuntime{started: make(chan struct{})}
 	workDir := t.TempDir()
 	w := New(Config{ID: "agent-1", PortRange: "18888-18888"})
-	w.runtime = rt
+	w.driver = rt
 	w.portAllocator = func() (int, error) { return 18888, nil }
 
 	resp, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
@@ -177,7 +197,7 @@ func TestNotebookWorker_StopNonExistent(t *testing.T) {
 func TestNotebookWorker_RejectsDuplicateActiveNotebook(t *testing.T) {
 	rt := &conformanceRuntime{started: make(chan struct{})}
 	w := New(Config{ID: "nb-test-id", PortRange: "18888-18889"})
-	w.runtime = rt
+	w.driver = rt
 	ports := []int{18888, 18889}
 	w.portAllocator = func() (int, error) {
 		port := ports[0]
@@ -222,7 +242,7 @@ func TestNotebookWorker_ProvisionVolumeEmptyID(t *testing.T) {
 
 func TestNotebookWorker_SyncStatus(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
-	w.runtime = &conformanceRuntime{}
+	w.driver = &conformanceRuntime{}
 
 	resp, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
 		Targets: []notebook.WorkerSyncStatusTarget{
@@ -244,7 +264,7 @@ func TestNotebookWorker_SyncStatus(t *testing.T) {
 
 func TestNotebookWorker_SyncStatusUsesRecoveredTerminalState(t *testing.T) {
 	w := New(Config{ID: "nb-test-id"})
-	w.runtime = &conformanceRuntime{}
+	w.driver = &conformanceRuntime{}
 	w.terminal[":failed-nb"] = notebook.StatusFailed // composite key: ""+":" +"failed-nb"
 
 	resp, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
@@ -259,9 +279,15 @@ func TestNotebookWorker_SyncStatusUsesRecoveredTerminalState(t *testing.T) {
 }
 
 func TestNotebookWorker_SyncStatusRecoversProcessTarget(t *testing.T) {
-	rt := &targetRecoveryRuntime{running: true}
+	rt := &targetRecoveryRuntime{
+		notebookName: "recover-me",
+		runtimeName:  "recover-me",
+		port:         18888,
+		running:      true,
+	}
 	w := New(Config{ID: "nb-test-id"})
-	w.runtime = rt
+	w.driver = rt
+	w.recoverContainers(context.Background())
 
 	resp, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
 		Targets: []notebook.WorkerSyncStatusTarget{{Name: "recover-me", Port: 18888}},
@@ -270,14 +296,11 @@ func TestNotebookWorker_SyncStatusRecoversProcessTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resp.Statuses[":recover-me"] != notebook.StatusRunning {
-		t.Fatalf("status = %q", resp.Statuses[":recover-me"])
-	}
-	if rt.name != "recover-me" || rt.port != 18888 {
-		t.Fatalf("recover target = (%q, %d)", rt.name, rt.port)
+		t.Fatalf("status = %q, want running", resp.Statuses[":recover-me"])
 	}
 
 	w.mu.Lock()
-	nb := w.notebooks[":recover-me"] // composite key with empty projectID
+	nb := w.notebooks[":recover-me"]
 	_, reserved := w.reservedPorts[18888]
 	w.mu.Unlock()
 	if nb == nil || nb.port != 18888 || !reserved {
@@ -286,89 +309,115 @@ func TestNotebookWorker_SyncStatusRecoversProcessTarget(t *testing.T) {
 }
 
 func TestNotebookWorker_RecoveryUsesProjectRuntimeName(t *testing.T) {
-	rt := &targetRecoveryRuntime{running: true}
+	rt := &targetRecoveryRuntime{
+		projectID:    "project-a",
+		notebookName: "recover-me",
+		runtimeName:  "project-a__recover-me",
+		port:         18888,
+		running:      true,
+	}
 	w := New(Config{ID: "nb-test-id"})
-	w.runtime = rt
+	w.driver = rt
+	w.recoverContainers(context.Background())
 
-	if err := w.recoverProcessTarget(rt, notebook.WorkerSyncStatusTarget{
-		ProjectID: "project-a",
-		Name:      "recover-me",
-		Port:      18888,
-	}); err != nil {
+	w.mu.Lock()
+	nb := w.notebooks["project-a:recover-me"]
+	w.mu.Unlock()
+	if nb == nil {
+		t.Fatal("recovered notebook not registered under project-scoped key")
+	}
+	// Verify stop uses the project-qualified runtime name.
+	if err := w.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "project-a", Name: "recover-me"}); err != nil {
 		t.Fatal(err)
 	}
-	if rt.name != "project-a__recover-me" {
-		t.Fatalf("runtime name = %q, want project-a__recover-me", rt.name)
+	if rt.running {
+		t.Fatal("runtime was not stopped via project-qualified runtime name")
 	}
 }
 
 func TestNotebookWorker_RecoveryReleasesPortLearnedAfterAttach(t *testing.T) {
-	rt := &targetRecoveryRuntime{running: true}
-	w := New(Config{ID: "nb-test-id"})
-	w.runtime = rt
-
-	if err := w.recoverProcessTarget(rt, notebook.WorkerSyncStatusTarget{Name: "recover-me"}); err != nil {
-		t.Fatal(err)
+	rt := &targetRecoveryRuntime{
+		notebookName: "recover-me",
+		runtimeName:  "recover-me",
+		port:         18888,
+		running:      true,
 	}
-	if _, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
-		Targets: []notebook.WorkerSyncStatusTarget{{Name: "recover-me", Port: 18888}},
-	}); err != nil {
-		t.Fatal(err)
+	w := New(Config{ID: "nb-test-id"})
+	w.driver = rt
+	w.recoverContainers(context.Background())
+
+	w.mu.Lock()
+	_, reserved := w.reservedPorts[18888]
+	w.mu.Unlock()
+	if !reserved {
+		t.Fatal("recovered port was not reserved at startup")
 	}
 
 	rt.onExit(notebook.StatusStopped)
 
 	w.mu.Lock()
 	_, active := w.notebooks[":recover-me"]
-	_, reserved := w.reservedPorts[18888]
+	_, portReserved := w.reservedPorts[18888]
 	w.mu.Unlock()
 	if active {
 		t.Fatal("exited recovered notebook is still active")
 	}
-	if reserved {
-		t.Fatal("port learned after recovery was not released on exit")
+	if portReserved {
+		t.Fatal("port was not released on exit")
 	}
 }
 
 func TestNotebookWorker_StopRecoversProcessBeforeSync(t *testing.T) {
-	rt := &targetRecoveryRuntime{running: true}
+	rt := &targetRecoveryRuntime{
+		runtimeName: "project-a__recover-me",
+		running:     true,
+	}
 	w := New(Config{ID: "nb-test-id"})
-	w.runtime = rt
+	w.driver = rt
 
 	if err := w.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "project-a", Name: "recover-me"}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.running {
-		t.Fatal("recovered process was not stopped")
+		t.Fatal("runtime stop was not called for untracked notebook")
 	}
 
 	w.mu.Lock()
 	_, active := w.notebooks["project-a:recover-me"]
 	terminal := w.terminal["project-a:recover-me"]
 	w.mu.Unlock()
-	if active || terminal != notebook.StatusStopped {
-		t.Fatalf("active=%v terminal=%q", active, terminal)
+	// Untracked notebooks are not registered in terminal; master queries status on demand.
+	if active || terminal != "" {
+		t.Fatalf("active=%v terminal=%q, want active=false terminal=\"\"", active, terminal)
 	}
 }
 
 func TestNotebookWorker_StartRejectsRecoveredProcessBeforeSync(t *testing.T) {
-	rt := &targetRecoveryRuntime{running: true}
+	rt := &targetRecoveryRuntime{
+		projectID:    "project-a",
+		notebookName: "recover-me",
+		runtimeName:  "project-a__recover-me",
+		port:         18888,
+		running:      true,
+	}
 	w := New(Config{ID: "nb-test-id"})
-	w.runtime = rt
+	w.driver = rt
+	w.recoverContainers(context.Background())
 
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
 		ProjectID: "project-a",
 		YAML:      "metadata:\n  name: recover-me\n",
+		WorkDir:   t.TempDir(),
 	})
 	if err == nil {
-		t.Fatal("expected duplicate start to reject the recovered process")
+		t.Fatal("expected duplicate start to reject the already-recovered process")
 	}
 }
 
 func TestNotebookWorker_RecoveredExitCannotRemoveNewGeneration(t *testing.T) {
 	rt := &recoveryRuntime{}
 	w := New(Config{ID: "nb-test-id"})
-	w.runtime = rt
+	w.driver = rt
 	w.recoverContainers(context.Background())
 
 	w.mu.Lock()

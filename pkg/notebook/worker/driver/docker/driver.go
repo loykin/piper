@@ -1,4 +1,4 @@
-package notebookworker
+package docker
 
 import (
 	"context"
@@ -18,8 +18,11 @@ import (
 	network_ "github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
 
+	dockerinfra "github.com/piper/piper/internal/docker"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/notebook/worker/driver"
+	driverinternal "github.com/piper/piper/pkg/notebook/worker/driver/internal"
 )
 
 const (
@@ -31,7 +34,7 @@ const (
 	dockerWorkerLabel   = "piper.worker-id"
 )
 
-type DockerConfig struct {
+type Config struct {
 	Image        string
 	Network      string
 	CPUs         string
@@ -40,36 +43,26 @@ type DockerConfig struct {
 	ReadOnlyRoot bool
 	Tmpfs        []string
 	User         string
-	Volumes      []DockerVolume
+	Volumes      []Volume
 	ExtraArgs    []string
 }
 
-type DockerVolume struct {
+type Volume struct {
 	Name          string
 	HostPath      string
 	ContainerPath string
 	ReadOnly      bool
 }
 
-type dockerAPI interface {
-	ContainerCreate(ctx context.Context, options dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error)
-	ContainerInspect(ctx context.Context, containerID string, options dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error)
-	ContainerStart(ctx context.Context, containerID string, options dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error)
-	ContainerStop(ctx context.Context, containerID string, options dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error)
-	ContainerRemove(ctx context.Context, containerID string, options dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error)
-	ContainerList(ctx context.Context, options dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error)
-	ContainerWait(ctx context.Context, containerID string, options dockerclient.ContainerWaitOptions) dockerclient.ContainerWaitResult
-}
-
-type dockerRuntime struct {
+type Driver struct {
 	workerID   string
-	cfg        DockerConfig
-	client     dockerAPI
+	cfg        Config
+	client     dockerinfra.API
 	mu         sync.Mutex
 	containers map[string]string // name -> containerID cache; Docker daemon is source of truth
 }
 
-func newDockerRuntime(cfg DockerConfig, workerID string) (*dockerRuntime, error) {
+func New(cfg Config, workerID string) (*Driver, error) {
 	if workerID == "" {
 		return nil, fmt.Errorf("docker notebook runtime requires a stable worker ID")
 	}
@@ -77,11 +70,11 @@ func newDockerRuntime(cfg DockerConfig, workerID string) (*dockerRuntime, error)
 	if err != nil {
 		return nil, err
 	}
-	cli, err := newDockerClient()
+	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		return nil, err
 	}
-	return &dockerRuntime{
+	return &Driver{
 		workerID:   workerID,
 		cfg:        normalized,
 		client:     cli,
@@ -89,20 +82,7 @@ func newDockerRuntime(cfg DockerConfig, workerID string) (*dockerRuntime, error)
 	}, nil
 }
 
-func newDockerClient() (*dockerclient.Client, error) {
-	if os.Getenv("DOCKER_HOST") != "" {
-		return dockerclient.New(dockerclient.FromEnv)
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		desktopSock := filepath.Join(home, ".docker", "run", "docker.sock")
-		if info, statErr := os.Stat(desktopSock); statErr == nil && !info.IsDir() {
-			return dockerclient.New(dockerclient.FromEnv, dockerclient.WithHost("unix://"+desktopSock))
-		}
-	}
-	return dockerclient.New(dockerclient.FromEnv)
-}
-
-func newDockerRuntimeWithClient(cfg DockerConfig, workerID string, cli dockerAPI) (*dockerRuntime, error) {
+func NewWithClient(cfg Config, workerID string, cli dockerinfra.API) (*Driver, error) {
 	if workerID == "" {
 		return nil, fmt.Errorf("docker notebook runtime requires a stable worker ID")
 	}
@@ -110,15 +90,15 @@ func newDockerRuntimeWithClient(cfg DockerConfig, workerID string, cli dockerAPI
 	if err != nil {
 		return nil, err
 	}
-	return &dockerRuntime{workerID: workerID, cfg: normalized, client: cli, containers: make(map[string]string)}, nil
+	return &Driver{workerID: workerID, cfg: normalized, client: cli, containers: make(map[string]string)}, nil
 }
 
-func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*StartedNotebook, error) {
+func (r *Driver) Start(ctx context.Context, req driver.StartRequest) (*driver.StartedHandle, error) {
 	options, err := r.containerCreateOptions(req)
 	if err != nil {
 		return nil, err
 	}
-	existing, err := r.findManagedContainer(ctx, req.Name)
+	existing, err := r.findManagedContainer(ctx, req.RuntimeName)
 	if err != nil {
 		return nil, err
 	}
@@ -137,8 +117,15 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 	}
 
 	r.mu.Lock()
-	r.containers[req.Name] = created.ID
+	r.containers[req.RuntimeName] = created.ID
 	r.mu.Unlock()
+
+	// Stream container logs to the LogSink. The goroutine owns the sink's
+	// lifetime: it calls Stop() after the stream closes so that all buffered
+	// lines are flushed before the sink is torn down.
+	if req.LogSink != nil {
+		go dockerinfra.StreamLogs(r.client, created.ID, "nb:"+req.Name, "runtime", req.LogSink)
+	}
 
 	wait := r.client.ContainerWait(context.Background(), created.ID, dockerclient.ContainerWaitOptions{
 		Condition: container.WaitConditionNotRunning,
@@ -157,13 +144,10 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 		}
 		_ = r.removeContainer(context.Background(), created.ID)
 		r.mu.Lock()
-		if r.containers[req.Name] == created.ID {
-			delete(r.containers, req.Name)
+		if r.containers[req.RuntimeName] == created.ID {
+			delete(r.containers, req.RuntimeName)
 		}
 		r.mu.Unlock()
-		if req.LogSink != nil {
-			req.LogSink.Stop()
-		}
 		if req.OnExit != nil {
 			req.OnExit(status)
 		}
@@ -171,10 +155,10 @@ func (r *dockerRuntime) Start(ctx context.Context, req RuntimeStartRequest) (*St
 
 	endpoint := fmt.Sprintf("http://localhost:%d", req.Port)
 	slog.Info("notebook docker container started", "name", req.Name, "container_id", created.ID, "endpoint", endpoint)
-	return &StartedNotebook{Endpoint: endpoint, ContainerID: created.ID}, nil
+	return &driver.StartedHandle{Endpoint: endpoint, ContainerID: created.ID}, nil
 }
 
-func (r *dockerRuntime) Stop(ctx context.Context, name string) error {
+func (r *Driver) Stop(ctx context.Context, name string) error {
 	r.mu.Lock()
 	id, ok := r.containers[name]
 	if ok {
@@ -187,7 +171,7 @@ func (r *dockerRuntime) Stop(ctx context.Context, name string) error {
 			return err
 		}
 		if len(ids) == 0 {
-			return fmt.Errorf("notebook not found")
+			return nil
 		}
 		id = ids[0]
 	}
@@ -198,7 +182,7 @@ func (r *dockerRuntime) Stop(ctx context.Context, name string) error {
 	return nil
 }
 
-func (r *dockerRuntime) KillAll(ctx context.Context) error {
+func (r *Driver) KillAll(ctx context.Context) error {
 	ids, err := r.findManagedContainer(ctx, "")
 	if err != nil {
 		return err
@@ -225,8 +209,8 @@ func (r *dockerRuntime) KillAll(ctx context.Context) error {
 	return nil
 }
 
-func (r *dockerRuntime) Status(name string) string {
-	items, err := r.listManagedContainers(context.Background(), name)
+func (r *Driver) Status(ctx context.Context, name string) string {
+	items, err := r.listManagedContainers(ctx, name)
 	if err != nil {
 		r.mu.Lock()
 		_, tracked := r.containers[name]
@@ -249,10 +233,10 @@ func (r *dockerRuntime) Status(name string) string {
 
 // Recover reconnects to containers left running by a previous worker instance.
 // onRecovered is called synchronously before the exit watcher is attached.
-func (r *dockerRuntime) Recover(
+func (r *Driver) Recover(
 	ctx context.Context,
-	onRecovered func(recoveredRuntime) func(status string),
-	onTerminal func(recoveredRuntime, string),
+	onRecovered func(driver.RecoveredHandle) func(status string),
+	onTerminal func(driver.RecoveredHandle, string),
 ) error {
 	items, err := r.listManagedContainers(ctx, "")
 	if err != nil {
@@ -264,7 +248,7 @@ func (r *dockerRuntime) Recover(
 		if name == "" || runtimeName == "" {
 			continue
 		}
-		rec := recoveredRuntime{
+		rec := driver.RecoveredHandle{
 			ProjectID:   item.Labels[dockerProjectLabel],
 			Name:        name,
 			RuntimeName: runtimeName,
@@ -305,6 +289,7 @@ func (r *dockerRuntime) Recover(
 				r.mu.Unlock()
 				onExit(status)
 			}(runtimeName, id)
+
 		} else {
 			status := r.containerExitStatus(ctx, id)
 			if err := r.removeContainer(ctx, id); err != nil {
@@ -316,7 +301,7 @@ func (r *dockerRuntime) Recover(
 	return nil
 }
 
-func (r *dockerRuntime) containerExitStatus(ctx context.Context, id string) string {
+func (r *Driver) containerExitStatus(ctx context.Context, id string) string {
 	result, err := r.client.ContainerInspect(ctx, id, dockerclient.ContainerInspectOptions{})
 	if err == nil && result.Container.State != nil && result.Container.State.ExitCode == 0 {
 		return notebook.StatusStopped
@@ -333,7 +318,7 @@ func dockerHostPort(item container.Summary) int {
 	return 0
 }
 
-func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerclient.ContainerCreateOptions, error) {
+func (r *Driver) containerCreateOptions(req driver.StartRequest) (dockerclient.ContainerCreateOptions, error) {
 	ds := req.Spec.Spec.Driver.Docker // per-notebook overrides (may be nil)
 
 	image := r.cfg.Image
@@ -343,7 +328,7 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 	if image == "" {
 		return dockerclient.ContainerCreateOptions{}, fmt.Errorf("docker image is required")
 	}
-	containerName := dockerContainerName(req.Name)
+	containerName := dockerContainerName(req.RuntimeName)
 
 	// Merge tmpfs: server-level defaults, overridden by per-notebook spec.
 	tmpfsPaths := r.cfg.Tmpfs
@@ -387,18 +372,14 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 		readOnly = ds.ReadOnly
 	}
 
-	notebookName := req.NotebookName
-	if notebookName == "" {
-		notebookName = req.Name
-	}
 	labels := map[string]string{
 		dockerManagedLabel:  "true",
-		dockerNotebookLabel: notebookName,
+		dockerNotebookLabel: req.Name,
 		dockerProjectLabel:  req.ProjectID,
-		dockerRuntimeLabel:  req.Name,
+		dockerRuntimeLabel:  req.RuntimeName,
 		dockerWorkerLabel:   r.workerID,
 	}
-	prepSteps, err := prepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendDocker)
+	prepSteps, err := driverinternal.PrepareStepsForBackend(req.Spec.Spec.Prepare, notebook.PrepareBackendDocker)
 	if err != nil {
 		return dockerclient.ContainerCreateOptions{}, err
 	}
@@ -439,7 +420,7 @@ func (r *dockerRuntime) containerCreateOptions(req RuntimeStartRequest) (dockerc
 	}, nil
 }
 
-func (r *dockerRuntime) removeContainer(ctx context.Context, id string) error {
+func (r *Driver) removeContainer(ctx context.Context, id string) error {
 	_, err := r.client.ContainerRemove(ctx, id, dockerclient.ContainerRemoveOptions{Force: true})
 	if err == nil {
 		return nil
@@ -451,7 +432,7 @@ func (r *dockerRuntime) removeContainer(ctx context.Context, id string) error {
 	return err
 }
 
-func (r *dockerRuntime) listManagedContainers(ctx context.Context, name string) ([]container.Summary, error) {
+func (r *Driver) listManagedContainers(ctx context.Context, name string) ([]container.Summary, error) {
 	filters := dockerclient.Filters{}.Add("label", dockerManagedLabel+"=true")
 	if name != "" {
 		filters = filters.Add("label", dockerRuntimeLabel+"="+name)
@@ -464,7 +445,7 @@ func (r *dockerRuntime) listManagedContainers(ctx context.Context, name string) 
 	return list.Items, nil
 }
 
-func (r *dockerRuntime) findManagedContainer(ctx context.Context, name string) ([]string, error) {
+func (r *Driver) findManagedContainer(ctx context.Context, name string) ([]string, error) {
 	items, err := r.listManagedContainers(ctx, name)
 	if err != nil {
 		return nil, err
@@ -481,9 +462,9 @@ type dockerResourceSpec struct {
 	shmSize   int64
 }
 
-// dockerResources merges server-level DockerConfig with per-notebook DriverDockerSpec.
+// dockerResources merges server-level Config with per-notebook DriverDockerSpec.
 // Per-notebook values override server-level defaults when set.
-func dockerResources(cfg DockerConfig, ds *manifest.DriverDockerSpec) (dockerResourceSpec, error) {
+func dockerResources(cfg Config, ds *manifest.DriverDockerSpec) (dockerResourceSpec, error) {
 	var out dockerResourceSpec
 
 	// Memory: per-notebook mem_limit overrides server-level memory.
@@ -538,13 +519,13 @@ func dockerResources(cfg DockerConfig, ds *manifest.DriverDockerSpec) (dockerRes
 			if !isGPU {
 				continue
 			}
-			driver := dev.Driver
-			if driver == "" {
-				driver = "nvidia"
+			devDriver := dev.Driver
+			if devDriver == "" {
+				devDriver = "nvidia"
 			}
 			if len(dev.DeviceIDs) > 0 {
 				out.resources.DeviceRequests = append(out.resources.DeviceRequests, container.DeviceRequest{
-					Driver:       driver,
+					Driver:       devDriver,
 					DeviceIDs:    dev.DeviceIDs,
 					Capabilities: [][]string{{"gpu"}},
 				})
@@ -558,7 +539,7 @@ func dockerResources(cfg DockerConfig, ds *manifest.DriverDockerSpec) (dockerRes
 					count = n
 				}
 				out.resources.DeviceRequests = append(out.resources.DeviceRequests, container.DeviceRequest{
-					Driver:       driver,
+					Driver:       devDriver,
 					Count:        count,
 					Capabilities: [][]string{{"gpu"}},
 				})
@@ -569,7 +550,7 @@ func dockerResources(cfg DockerConfig, ds *manifest.DriverDockerSpec) (dockerRes
 	return out, nil
 }
 
-func dockerMounts(workDir string, vols []DockerVolume) ([]mount.Mount, error) {
+func dockerMounts(workDir string, vols []Volume) ([]mount.Mount, error) {
 	absWorkDir, err := filepath.Abs(workDir)
 	if err != nil {
 		return nil, fmt.Errorf("invalid work_dir: %w", err)
@@ -595,15 +576,15 @@ func dockerMounts(workDir string, vols []DockerVolume) ([]mount.Mount, error) {
 	return mounts, nil
 }
 
-func selectDockerVolumes(allowlist []DockerVolume, names []string) ([]DockerVolume, error) {
+func selectDockerVolumes(allowlist []Volume, names []string) ([]Volume, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
-	byName := make(map[string]DockerVolume, len(allowlist))
+	byName := make(map[string]Volume, len(allowlist))
 	for _, vol := range allowlist {
 		byName[vol.Name] = vol
 	}
-	out := make([]DockerVolume, 0, len(names))
+	out := make([]Volume, 0, len(names))
 	seen := map[string]bool{}
 	for _, name := range names {
 		if seen[name] {
@@ -619,7 +600,7 @@ func selectDockerVolumes(allowlist []DockerVolume, names []string) ([]DockerVolu
 	return out, nil
 }
 
-func normalizeDockerConfig(cfg DockerConfig) (DockerConfig, error) {
+func normalizeDockerConfig(cfg Config) (Config, error) {
 	if cfg.Image == "" {
 		cfg.Image = "jupyter/scipy-notebook:latest"
 	}

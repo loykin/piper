@@ -163,6 +163,7 @@ func New(cfg Config) *Worker {
 				ReportStatus: func(update notebook.WorkerStatusUpdate) error {
 					return client.SendPush(iagent.MethodNotebookStatusUpdate, update)
 				},
+				LogClient: client,
 			})
 		}
 		if domainEnabled(cfg.K8s, iagent.CapabilityServing) {
@@ -174,6 +175,7 @@ func New(cfg Config) *Worker {
 				ReportStatus: func(update serving.WorkerStatusUpdate) error {
 					return client.SendPush(iagent.MethodServingStatusUpdate, update)
 				},
+				LogClient: client,
 			})
 		}
 		if domainEnabled(cfg.K8s, iagent.CapabilityPipeline) {

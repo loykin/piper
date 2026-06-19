@@ -75,6 +75,11 @@ func New(cfg Config) (*Driver, error) {
 	}, nil
 }
 
+// NewWithClient creates a Driver with an injected Docker client. Intended for testing.
+func NewWithClient(cfg Config, cli dockerclient.APIClient) *Driver {
+	return &Driver{cfg: cfg, client: cli, active: make(map[string]string)}
+}
+
 // Close releases the Docker client resources held by the driver.
 func (d *Driver) Close() error {
 	return d.client.Close()

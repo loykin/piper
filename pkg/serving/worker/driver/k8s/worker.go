@@ -1,6 +1,7 @@
 package servingworker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/process"
 	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/manifest"
@@ -31,6 +33,8 @@ type Config struct {
 	Client       kubernetes.Interface
 	Namespace    string
 	ReportStatus func(serving.WorkerStatusUpdate) error
+	// LogClient enables pod log streaming for serving deployments.
+	LogClient logsink.PushClient
 }
 
 type Worker struct {
@@ -38,6 +42,9 @@ type Worker struct {
 	statusMu   sync.Mutex
 	lastStatus map[string]string
 	namespaces map[string]struct{}
+	logMu      sync.Mutex
+	logGens    map[string]uint64
+	logCancels map[string]context.CancelFunc
 }
 
 func New(cfg Config) *Worker {
@@ -45,6 +52,8 @@ func New(cfg Config) *Worker {
 		cfg:        cfg,
 		lastStatus: make(map[string]string),
 		namespaces: make(map[string]struct{}),
+		logGens:    make(map[string]uint64),
+		logCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -334,6 +343,17 @@ func (a *Worker) observeOnce(ctx context.Context) {
 				Name:      name,
 				Status:    status,
 			})
+			if status == serving.StatusRunning {
+				a.ensureServingLogStream(ctx, projectID, name, deployment)
+			} else {
+				key := servingKey(projectID, name)
+				a.logMu.Lock()
+				if cancel, ok := a.logCancels[key]; ok {
+					cancel()
+					delete(a.logCancels, key)
+				}
+				a.logMu.Unlock()
+			}
 		}
 	}
 }
@@ -374,15 +394,74 @@ func observedDeploymentStatus(deployment *appsv1.Deployment) string {
 	if deployment.Spec.Replicas != nil {
 		desired = *deployment.Spec.Replicas
 	}
+	if desired == 0 {
+		return serving.StatusStopped
+	}
 	for _, condition := range deployment.Status.Conditions {
 		if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {
 			return serving.StatusFailed
 		}
 	}
-	if desired > 0 && deployment.Status.ReadyReplicas >= desired {
+	if deployment.Status.ReadyReplicas >= desired {
 		return serving.StatusRunning
 	}
 	return serving.StatusStarting
+}
+
+// ensureServingLogStream starts a PodLogs stream for the first running pod of a
+// serving Deployment. It is a no-op when LogClient is not configured or when a
+// stream for the same key is already active.
+func (a *Worker) ensureServingLogStream(ctx context.Context, projectID, name string, deployment *appsv1.Deployment) {
+	if a.cfg.LogClient == nil {
+		return
+	}
+	key := servingKey(projectID, name)
+	a.logMu.Lock()
+	if _, active := a.logCancels[key]; active {
+		a.logMu.Unlock()
+		return
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	a.logGens[key]++
+	gen := a.logGens[key]
+	a.logCancels[key] = cancel
+	a.logMu.Unlock()
+
+	sink := logsink.NewGRPCLogSink(projectID, a.cfg.LogClient)
+	ns := deployment.Namespace
+	labelSelector := metav1.FormatLabelSelector(deployment.Spec.Selector)
+	runID := "svc:" + name
+
+	go func() {
+		defer func() {
+			sink.Stop()
+			a.logMu.Lock()
+			if a.logGens[key] == gen {
+				delete(a.logCancels, key)
+			}
+			a.logMu.Unlock()
+		}()
+		pods, err := a.cfg.Client.CoreV1().Pods(ns).List(streamCtx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err != nil || len(pods.Items) == 0 {
+			return
+		}
+		podName := pods.Items[0].Name
+		req := a.cfg.Client.CoreV1().Pods(ns).GetLogs(podName, &corev1.PodLogOptions{
+			Container: "serving",
+			Follow:    true,
+		})
+		rc, err := req.Stream(streamCtx)
+		if err != nil {
+			return
+		}
+		defer func() { _ = rc.Close() }()
+		sc := bufio.NewScanner(rc)
+		for sc.Scan() {
+			sink.Append(runID, "runtime", "combined", sc.Text(), time.Now())
+		}
+	}()
 }
 
 func (a *Worker) servingNamespace() string {

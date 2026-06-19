@@ -1,10 +1,11 @@
 //go:build !windows
 
-package notebookworker
+package process
 
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/notebook/worker/driver"
 )
 
 func TestProcessRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
@@ -29,7 +31,7 @@ func TestProcessRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	name := "process-crash-recover"
-	port := freeDockerE2EPort(t)
+	port := freeProcessE2EPort(t)
 	stateFile := filepath.Join(root, "started.json")
 
 	executable, err := os.Executable()
@@ -64,16 +66,20 @@ func TestProcessRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	}
 	waitProcessNotebookStatus(t, childState.Endpoint+"/notebooks/"+name+"/proxy/api/status")
 
-	recovered := newProcessRuntime(root)
+	recovered := New(root)
 	t.Cleanup(func() { _ = recovered.KillAll(context.Background()) })
 	recoveredExit := make(chan string, 1)
-	running, err := recovered.RecoverTarget(name, port, func(status string) {
-		recoveredExit <- status
-	})
-	if err != nil {
+	foundRunning := false
+	if err := recovered.Recover(ctx, func(rec driver.RecoveredHandle) func(string) {
+		if rec.Name != name {
+			return func(string) {}
+		}
+		foundRunning = true
+		return func(status string) { recoveredExit <- status }
+	}, func(driver.RecoveredHandle, string) {}); err != nil {
 		t.Fatalf("recover process notebook: %v", err)
 	}
-	if !running {
+	if !foundRunning {
 		t.Fatal("process notebook was not recovered")
 	}
 	if err := recovered.Stop(ctx, name); err != nil {
@@ -81,7 +87,7 @@ func TestProcessRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	}
 	waitProcessExitStatus(t, recoveredExit, notebook.StatusStopped)
 
-	restartPort := freeDockerE2EPort(t)
+	restartPort := freeProcessE2EPort(t)
 	restartExit := make(chan string, 1)
 	started, err := recovered.Start(ctx, processE2EStartRequest(name, envRoot, workDir, restartPort, func(status string) {
 		restartExit <- status
@@ -96,7 +102,7 @@ func TestProcessRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	}
 	waitProcessExitStatus(t, restartExit, notebook.StatusFailed)
 
-	finalPort := freeDockerE2EPort(t)
+	finalPort := freeProcessE2EPort(t)
 	finalExit := make(chan string, 1)
 	final, err := recovered.Start(ctx, processE2EStartRequest(name, envRoot, workDir, finalPort, func(status string) {
 		finalExit <- status
@@ -125,7 +131,7 @@ func TestProcessRuntimeE2E_CrashHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rt := newProcessRuntime(root)
+	rt := New(root)
 	started, err := rt.Start(context.Background(), processE2EStartRequest(name, envRoot, workDir, port, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -142,19 +148,30 @@ func TestProcessRuntimeE2E_CrashHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-func processE2EStartRequest(name, envRoot, workDir string, port int, onExit func(string)) RuntimeStartRequest {
+func processE2EStartRequest(name, envRoot, workDir string, port int, onExit func(string)) driver.StartRequest {
 	var spec notebook.Notebook
 	spec.Metadata.Name = name
 	spec.Spec.Driver.Process = &manifest.DriverProcessSpec{Env: envRoot}
-	return RuntimeStartRequest{
-		Name:    name,
-		Spec:    spec,
-		WorkDir: workDir,
-		Port:    port,
-		Token:   "",
-		BaseURL: "/notebooks/" + name + "/proxy/",
-		OnExit:  onExit,
+	return driver.StartRequest{
+		RuntimeName: name,
+		Name:        name,
+		Spec:        spec,
+		WorkDir:     workDir,
+		Port:        port,
+		Token:       "",
+		BaseURL:     "/notebooks/" + name + "/proxy/",
+		OnExit:      onExit,
 	}
+}
+
+func freeProcessE2EPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate port: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	return ln.Addr().(*net.TCPAddr).Port
 }
 
 func requireProcessNotebookE2E(t *testing.T) string {

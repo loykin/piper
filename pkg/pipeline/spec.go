@@ -98,7 +98,8 @@ type Run struct {
 type Artifact struct {
 	Name string `yaml:"name"`
 	Path string `yaml:"path"`
-	From string `yaml:"from"` // "stepName/outputName"
+	From string `yaml:"from"`           // "stepName/outputName"
+	Type string `yaml:"type,omitempty"` // viewer hint: tensorboard, html, table, image
 }
 
 // ApplyDefaults returns a copy of the pipeline with defaults.driver merged into

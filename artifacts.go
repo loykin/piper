@@ -20,6 +20,7 @@ type artifactFile struct {
 
 type artifactEntry struct {
 	Name  string         `json:"name"`
+	Type  string         `json:"type,omitempty"` // viewer hint from pipeline YAML
 	Files []artifactFile `json:"files"`
 }
 

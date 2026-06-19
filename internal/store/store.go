@@ -19,6 +19,7 @@ import (
 	"github.com/piper/piper/pkg/schedule"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/template"
+	"github.com/piper/piper/pkg/viewer"
 )
 
 // Repos holds all repository implementations for the selected driver.
@@ -28,6 +29,7 @@ type Repos struct {
 	Run              run.Repository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
+	Viewer           viewer.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
 	NotebookVolume   notebook.VolumeRepository
@@ -60,23 +62,6 @@ type ExternalReposConfig struct {
 	DeleteRun func(ctx context.Context, projectID, id string) error
 	// Close is called when Repos.Close() is invoked. May be nil.
 	Close func() error
-}
-
-func NewExternalRepos(cfg ExternalReposConfig) *Repos {
-	return &Repos{
-		Project:          cfg.Project,
-		Run:              cfg.Run,
-		Step:             cfg.Step,
-		Schedule:         cfg.Schedule,
-		Serving:          cfg.Serving,
-		Notebook:         cfg.Notebook,
-		NotebookVolume:   cfg.NotebookVolume,
-		PipelineTemplate: cfg.PipelineTemplate,
-		Log:              cfg.Log,
-		Metric:           cfg.Metric,
-		closeFunc:        cfg.Close,
-		deleteRun:        cfg.DeleteRun,
-	}
 }
 
 // Open opens a SQLite file and returns Repos with all repositories wired.
@@ -138,6 +123,7 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			Notebook:         sqlite.NewNotebookRepo(db),
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(db),
 			PipelineTemplate: sqlite.NewPipelineRepo(db),
+			Viewer:           sqlite.NewViewerRepo(db),
 			Log:              logstore.NewSQLite(db.DB),
 			Metric:           logstore.NewSQLite(db.DB),
 			db:               db,
@@ -154,6 +140,7 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			Notebook:         postgres.NewNotebookRepo(db),
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(db),
 			PipelineTemplate: postgres.NewPipelineRepo(db),
+			Viewer:           postgres.NewViewerRepo(db),
 			Log:              logstore.NewPostgres(db.DB),
 			Metric:           logstore.NewPostgres(db.DB),
 			db:               db,

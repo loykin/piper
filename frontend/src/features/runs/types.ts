@@ -50,6 +50,7 @@ export interface ArtifactFile {
 
 export interface ArtifactEntry {
   name: string
+  type?: string  // viewer hint: tensorboard, html, table, image
   files: ArtifactFile[]
 }
 

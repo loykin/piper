@@ -29,6 +29,9 @@ import (
 	"github.com/piper/piper/pkg/storage"
 	"github.com/piper/piper/pkg/template"
 	"github.com/piper/piper/pkg/ui"
+	"github.com/piper/piper/pkg/viewer"
+	viewerhtml "github.com/piper/piper/pkg/viewer/driver/html"
+	viewertb "github.com/piper/piper/pkg/viewer/driver/tensorboard"
 )
 
 const maxRequestBodyBytes int64 = 1 << 20
@@ -55,7 +58,29 @@ type ServeOption struct {
 // Supports both HTTP and HTTPS. Library users can call this directly or
 // mount it on their own server using Handler().
 func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
-	handler := p.newRouter(opt.Extra)
+	// Build the viewer manager once and share it between the cleanup loop and the HTTP handler.
+	viewerMgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
+	viewerMgr.RegisterDriver(viewertb.New())
+	viewerMgr.RegisterDriver(viewerhtml.New())
+
+	// Mark viewers left in starting/running from a previous run as failed.
+	viewerMgr.MarkStaleFailed(ctx)
+
+	// TTL cleanup: stop expired viewers every 5 minutes.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				viewerMgr.CleanupExpired(ctx)
+			}
+		}
+	}()
+
+	handler := p.newRouter(opt.Extra, viewerMgr)
 
 	// Apply middleware chain (Config.Hooks.Middleware)
 	for i := len(p.cfg.Hooks.Middleware) - 1; i >= 0; i-- {
@@ -141,7 +166,7 @@ func (p *Piper) serveGRPCAgents(ctx context.Context, addr string) {
 }
 
 // newRouter builds the Gin router wired with all domain handlers.
-func (p *Piper) newRouter(extra http.Handler) http.Handler {
+func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -307,6 +332,11 @@ func (p *Piper) newRouter(extra http.Handler) http.Handler {
 	notebookHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 	notebookHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
+	// Viewer domain (artifact viewer: TensorBoard, HTML, etc.)
+	viewerHandler := viewer.NewHandler(viewerMgr, p.repos.Viewer)
+	viewerHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+	viewerHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+
 	// Pipeline template domain
 	template.NewHandler(template.HandlerDeps{
 		Templates: p.repos.PipelineTemplate,
@@ -371,7 +401,10 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 //
 //	mux.Handle("/piper/", http.StripPrefix("/piper", p.Handler(nil)))
 func (p *Piper) Handler(extra http.Handler) http.Handler {
-	return p.newRouter(extra)
+	mgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
+	mgr.RegisterDriver(viewertb.New())
+	mgr.RegisterDriver(viewerhtml.New())
+	return p.newRouter(extra, mgr)
 }
 
 // ── responseRecorder ────────────────────────────────────────────────────────
@@ -857,11 +890,46 @@ func (a *piperArtifacts) List(ctx context.Context, runID string) ([]any, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	// Enrich artifact entries with viewer type hints from the pipeline YAML.
+	typeHints := a.artifactTypeHints(ctx, runID)
+	for i := range result {
+		for j := range result[i].Artifacts {
+			key := result[i].Step + "/" + result[i].Artifacts[j].Name
+			if t, ok := typeHints[key]; ok {
+				result[i].Artifacts[j].Type = t
+			}
+		}
+	}
+
 	out := make([]any, len(result))
 	for i, v := range result {
 		out[i] = v
 	}
 	return out, nil
+}
+
+// artifactTypeHints parses the run's stored pipeline YAML and returns a map of
+// "stepName/artifactName" → viewer type for all outputs that declare a type.
+func (a *piperArtifacts) artifactTypeHints(ctx context.Context, runID string) map[string]string {
+	pctx, _ := project.FromContext(ctx)
+	r, err := a.p.repos.Run.Get(ctx, pctx.ID, runID)
+	if err != nil || r.PipelineYAML == "" {
+		return nil
+	}
+	pl, err := a.p.Parse([]byte(r.PipelineYAML))
+	if err != nil {
+		return nil
+	}
+	hints := make(map[string]string)
+	for _, step := range pl.Spec.Steps {
+		for _, out := range step.Outputs {
+			if out.Type != "" {
+				hints[step.Name+"/"+out.Name] = out.Type
+			}
+		}
+	}
+	return hints
 }
 
 func (a *piperArtifacts) ServeDownload(w http.ResponseWriter, r *http.Request, runID, step, rest string) {

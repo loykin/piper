@@ -4,13 +4,44 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { DataPage } from '@loykin/designkit'
 import { artifactDownloadURL } from '../api'
-import type { ArtifactFile, StepArtifacts } from '../types'
+import { useOpenViewer } from '@/features/viewers/hooks'
+import type { ArtifactFile, ArtifactEntry, StepArtifacts } from '../types'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+const viewerLabel: Record<string, string> = {
+  tensorboard: 'Open TensorBoard',
+  html:        'Open Report',
+  table:       'Preview Table',
+  image:       'View Image',
+}
+
+interface OpenButtonProps {
+  runId: string
+  step: string
+  art: ArtifactEntry
+}
+
+function OpenButton({ runId, step, art }: OpenButtonProps) {
+  const label = viewerLabel[art.type ?? ''] ?? `Open ${art.type}`
+  const { mutate, isPending } = useOpenViewer(runId, step, art.name)
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={isPending}
+      onClick={() => mutate({ type: art.type! })}
+      className="h-6 px-2 text-xs"
+    >
+      {isPending ? 'Opening…' : label}
+    </Button>
+  )
 }
 
 interface ArtifactPanelProps {
@@ -48,6 +79,7 @@ export function ArtifactPanel({ runId, artifacts }: ArtifactPanelProps) {
                   <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">{sa.step}</span>
                   <span className="text-sm font-medium text-foreground">{art.name}</span>
                   <span className="text-xs text-muted-foreground">({art.files.length} file{art.files.length !== 1 ? 's' : ''})</span>
+                  {art.type ? <OpenButton runId={runId} step={sa.step} art={art} /> : null}
                 </div>
                 <div className="space-y-1">
                   {art.files.map((f) => (

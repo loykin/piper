@@ -64,7 +64,7 @@ spec: {}
 	if err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
 	}
-	wantEndpoint := "tunnel://worker-1?target=piper-nb-my-notebook.notebooks.svc.cluster.local:8888"
+	wantEndpoint := "tunnel://worker-1?target=piper-nb-test-project-my-notebook.notebooks.svc.cluster.local:8888"
 	if resp.Endpoint != wantEndpoint {
 		t.Fatalf("endpoint = %q, want %q", resp.Endpoint, wantEndpoint)
 	}
@@ -74,7 +74,7 @@ spec: {}
 	if resp.WorkDir != notebook.ContainerWorkDir {
 		t.Fatalf("work dir = %q", resp.WorkDir)
 	}
-	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-my-notebook", metav1.GetOptions{})
+	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-test-project-my-notebook", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get statefulset: %v", err)
 	}
@@ -94,7 +94,7 @@ spec: {}
 	if sts.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "piper-nb-vol-volabc" {
 		t.Fatalf("claim name = %q", sts.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName)
 	}
-	svc, err := client.CoreV1().Services("notebooks").Get(context.Background(), "piper-nb-my-notebook", metav1.GetOptions{})
+	svc, err := client.CoreV1().Services("notebooks").Get(context.Background(), "piper-nb-test-project-my-notebook", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get service: %v", err)
 	}
@@ -130,7 +130,7 @@ spec:
 	if err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
 	}
-	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-prep-notebook", metav1.GetOptions{})
+	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-test-project-prep-notebook", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get statefulset: %v", err)
 	}
@@ -149,17 +149,17 @@ spec:
 func TestNotebookStopScalesStatefulSetToZero(t *testing.T) {
 	replicas := int32(1)
 	client := fake.NewSimpleClientset(&appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-demo", Namespace: "notebooks"},
+		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-test-project-demo", Namespace: "notebooks"},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: &replicas,
 		},
 	})
 	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
 
-	if err := a.stopNotebook(context.Background(), notebook.WorkerStopRequest{Name: "demo"}); err != nil {
+	if err := a.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "test-project", Name: "demo"}); err != nil {
 		t.Fatalf("stopNotebook returned error: %v", err)
 	}
-	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-demo", metav1.GetOptions{})
+	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-test-project-demo", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get statefulset: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestNotebookDeprovisionDeletesPVC(t *testing.T) {
 
 func TestNotebookStartUpdatesExistingStatefulSet(t *testing.T) {
 	client := fake.NewSimpleClientset(&appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-demo", Namespace: "notebooks"},
+		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-test-project-demo", Namespace: "notebooks"},
 		Spec: appsv1.StatefulSetSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
@@ -208,7 +208,7 @@ func TestNotebookStartUpdatesExistingStatefulSet(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
 	}
-	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-demo", metav1.GetOptions{})
+	sts, err := client.AppsV1().StatefulSets("notebooks").Get(context.Background(), "piper-nb-test-project-demo", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get statefulset: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestNotebookStartUpdatesExistingStatefulSet(t *testing.T) {
 func TestNotebookSyncStatusReportsReadyStatefulSet(t *testing.T) {
 	replicas := int32(1)
 	client := fake.NewSimpleClientset(&appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-demo", Namespace: "notebooks"},
+		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-project-a-demo", Namespace: "notebooks"},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: &replicas,
 		},
@@ -292,5 +292,62 @@ func TestObserveOnceReportsStateChanges(t *testing.T) {
 	a.observeOnce(context.Background())
 	if len(updates) != 2 || updates[1].Status != notebook.StatusStopped {
 		t.Fatalf("updates = %#v, want stopped transition", updates)
+	}
+}
+
+func TestNotebookK8sProjectIsolation(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	a := New(Config{
+		WorkerID:    "worker-1",
+		ClusterName: "gpu-a",
+		Client:      client,
+		Namespace:   "notebooks",
+		Image:       "jupyter/minimal-notebook:latest",
+	})
+	ctx := context.Background()
+
+	// Start the same notebook name from two different projects.
+	if _, err := a.startNotebook(ctx, notebook.WorkerStartRequest{
+		ProjectID: "project-a",
+		YAML:      "metadata:\n  name: training\nspec: {}\n",
+		VolumeID:  "vol-a",
+	}); err != nil {
+		t.Fatalf("project-a start: %v", err)
+	}
+	if _, err := a.startNotebook(ctx, notebook.WorkerStartRequest{
+		ProjectID: "project-b",
+		YAML:      "metadata:\n  name: training\nspec: {}\n",
+		VolumeID:  "vol-b",
+	}); err != nil {
+		t.Fatalf("project-b start: %v", err)
+	}
+
+	// Both StatefulSets must exist with distinct names.
+	if _, err := client.AppsV1().StatefulSets("notebooks").Get(ctx, "piper-nb-project-a-training", metav1.GetOptions{}); err != nil {
+		t.Fatalf("project-a StatefulSet missing: %v", err)
+	}
+	if _, err := client.AppsV1().StatefulSets("notebooks").Get(ctx, "piper-nb-project-b-training", metav1.GetOptions{}); err != nil {
+		t.Fatalf("project-b StatefulSet missing: %v", err)
+	}
+
+	// Stop project-a — must NOT affect project-b.
+	if err := a.stopNotebook(ctx, notebook.WorkerStopRequest{ProjectID: "project-a", Name: "training"}); err != nil {
+		t.Fatalf("project-a stop: %v", err)
+	}
+
+	stsA, err := client.AppsV1().StatefulSets("notebooks").Get(ctx, "piper-nb-project-a-training", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get project-a StatefulSet: %v", err)
+	}
+	if stsA.Spec.Replicas == nil || *stsA.Spec.Replicas != 0 {
+		t.Fatalf("project-a replicas = %v, want 0", stsA.Spec.Replicas)
+	}
+
+	stsB, err := client.AppsV1().StatefulSets("notebooks").Get(ctx, "piper-nb-project-b-training", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get project-b StatefulSet: %v", err)
+	}
+	if stsB.Spec.Replicas == nil || *stsB.Spec.Replicas != 1 {
+		t.Fatalf("project-b replicas = %v, want 1 (unaffected by project-a stop)", stsB.Spec.Replicas)
 	}
 }

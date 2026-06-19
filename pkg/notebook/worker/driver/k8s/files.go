@@ -150,7 +150,7 @@ func (a *Worker) listFilesViaJupyter(ctx context.Context, req notebook.FSListFil
 
 	ns := a.notebookNamespace()
 	client := newJupyterContentsClient()
-	svcHost := jupyterServiceHost(req.Notebook, ns)
+	svcHost := jupyterServiceHost(req.ProjectID, req.Notebook, ns)
 	baseURL := jupyterBaseURL(req.Notebook)
 
 	maxFiles := req.MaxFiles

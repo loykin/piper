@@ -152,8 +152,8 @@ func (c *jupyterContentsClient) fetchDirectory(ctx context.Context, svcHost, bas
 }
 
 // jupyterServiceHost returns the in-cluster DNS address for the notebook service.
-func jupyterServiceHost(notebookName, namespace string) string {
-	safeName := notebookWorkloadName(notebookName)
+func jupyterServiceHost(projectID, notebookName, namespace string) string {
+	safeName := notebookWorkloadName(projectID, notebookName)
 	return fmt.Sprintf("%s.%s.svc.cluster.local:8888", safeName, namespace)
 }
 

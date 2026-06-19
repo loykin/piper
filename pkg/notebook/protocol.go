@@ -2,13 +2,14 @@ package notebook
 
 // FSListFilesRequest is sent from the master to a worker to list files under a directory.
 type FSListFilesRequest struct {
-	VolumeID string   `json:"volume_id,omitempty"`
-	WorkDir  string   `json:"work_dir,omitempty"`
-	Notebook string   `json:"notebook,omitempty"` // notebook server name for Jupyter Contents API
-	Token    string   `json:"token,omitempty"`    // Jupyter token for running notebooks
-	Path     string   `json:"path,omitempty"`     // subpath within volume root
-	Ext      []string `json:"ext,omitempty"`      // e.g. [".py", ".ipynb"]; empty = all files
-	MaxFiles int      `json:"max_files,omitempty"`
+	ProjectID string   `json:"project_id,omitempty"`
+	VolumeID  string   `json:"volume_id,omitempty"`
+	WorkDir   string   `json:"work_dir,omitempty"`
+	Notebook  string   `json:"notebook,omitempty"` // notebook server name for Jupyter Contents API
+	Token     string   `json:"token,omitempty"`    // Jupyter token for running notebooks
+	Path      string   `json:"path,omitempty"`     // subpath within volume root
+	Ext       []string `json:"ext,omitempty"`      // e.g. [".py", ".ipynb"]; empty = all files
+	MaxFiles  int      `json:"max_files,omitempty"`
 }
 
 // FSAccessState describes the accessibility of the volume at query time.

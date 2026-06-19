@@ -145,7 +145,7 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	}
 
 	ns := a.notebookNamespace()
-	name := notebookWorkloadName(spec.Metadata.Name)
+	name := notebookWorkloadName(req.ProjectID, spec.Metadata.Name)
 	labels := a.k8sLabels("notebook", spec.Metadata.Name)
 	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", spec.Metadata.Name)
 	token := uuid.NewString()
@@ -308,7 +308,7 @@ func (a *Worker) stopNotebook(ctx context.Context, req notebook.WorkerStopReques
 	a.logMu.Unlock()
 
 	ns := a.notebookNamespace()
-	name := notebookWorkloadName(req.Name)
+	name := notebookWorkloadName(req.ProjectID, req.Name)
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
@@ -340,7 +340,7 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSync
 	for _, target := range req.Targets {
 		name := target.Name
 		key := notebookStatusKey(target.ProjectID, name)
-		sts, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).Get(ctx, notebookWorkloadName(name), metav1.GetOptions{})
+		sts, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).Get(ctx, notebookWorkloadName(target.ProjectID, name), metav1.GetOptions{})
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
 				statuses[key] = notebook.StatusFailed
@@ -561,8 +561,8 @@ func (a *Worker) k8sLabels(kind, id string) map[string]string {
 	return k8smeta.WorkloadLabels(a.cfg.ClusterName, kind, id)
 }
 
-func notebookWorkloadName(name string) string {
-	return "piper-nb-" + k8smeta.SafeName(name)
+func notebookWorkloadName(projectID, name string) string {
+	return "piper-nb-" + k8smeta.SafeName(projectID) + "-" + k8smeta.SafeName(name)
 }
 
 func notebookPVCName(volumeID string) string {

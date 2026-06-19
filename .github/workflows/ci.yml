@@ -94,6 +94,49 @@ jobs:
           PIPER_NOTEBOOK_PROCESS_E2E_ENV=/tmp/piper-jupyter-e2e \
             go test ./pkg/notebook/worker -run '^TestProcessRuntimeE2E_' -v -count=1 -timeout=6m
 
+  docker-serving-e2e:
+    name: Docker Serving E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Pull serving image
+        run: docker pull python:3.12-slim
+
+      - name: Run Docker serving e2e
+        run: |
+          PIPER_SERVING_DOCKER_E2E_IMAGE=python:3.12-slim \
+            go test ./pkg/serving/worker/driver/docker/ \
+              -run '^TestServingDockerE2E_DeployStopCrashRecover$' \
+              -v -count=1 -timeout=5m
+
+  process-serving-e2e:
+    name: Process Serving E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run process serving e2e
+        run: |
+          PIPER_SERVING_PROCESS_E2E=1 \
+            go test ./pkg/serving/worker/driver/process/ \
+              -run '^TestServingProcessE2E_DeployStopCrashRecover$' \
+              -v -count=1 -timeout=5m
+
   examples-e2e:
     name: Examples E2E
     runs-on: ubuntu-latest
@@ -242,6 +285,8 @@ jobs:
       - binary-e2e
       - docker-notebook-e2e
       - process-notebook-e2e
+      - docker-serving-e2e
+      - process-serving-e2e
       - examples-e2e
       - frontend-e2e
       - k8s-e2e

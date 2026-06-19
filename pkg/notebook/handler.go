@@ -254,13 +254,14 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 	// Route through gRPC when the volume is owned by a specific remote worker.
 	if vol.WorkerID != "" && h.deps.RPCSender != nil {
 		req := FSListFilesRequest{
-			VolumeID: vol.ID,
-			WorkDir:  vol.WorkDir,
-			Notebook: nbName,
-			Token:    nbToken,
-			Path:     c.Query("path"),
-			Ext:      extList,
-			MaxFiles: 500,
+			ProjectID: currentProjectID(c),
+			VolumeID:  vol.ID,
+			WorkDir:   vol.WorkDir,
+			Notebook:  nbName,
+			Token:     nbToken,
+			Path:      c.Query("path"),
+			Ext:       extList,
+			MaxFiles:  500,
 		}
 		var resp FSListFilesResponse
 		if err := h.deps.RPCSender.SendRPC(c.Request.Context(), vol.WorkerID, iagent.MethodFSListFiles, req, &resp); err != nil {

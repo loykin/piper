@@ -9,7 +9,7 @@
 #
 # Run:
 #   piper server --config piper.yaml
-#   piper k8s-worker --master=http://piper-server:8080 --cluster=dev --pipeline-worker-image=piper/piper:latest --default-image=alpine:3.20
+#   piper k8s-worker --master-url=http://piper-server:8080 --cluster=dev --pipeline-worker-image=piper/piper:latest --default-image=alpine:3.20
 
 apiVersion: piper/v1
 kind: Pipeline

@@ -5,11 +5,12 @@ import (
 	"os"
 	"time"
 
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/spf13/cobra"
 )
 
-func newRunCmd(factory PiperFactory) *cobra.Command {
+func newRunCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [pipeline.yaml]",
 		Short: "run a pipeline locally",
@@ -33,15 +34,15 @@ func newRunCmd(factory PiperFactory) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("output-dir", "./piper-outputs", "root directory for step outputs")
-	cmd.Flags().Int("retries", 2, "max retries per step")
-	cmd.Flags().Duration("retry-delay", 5*time.Second, "delay between retries")
+	cmd.Flags().String("output-dir", "", "root directory for step outputs")
+	cmd.Flags().Int("retries", 0, "max retries per step")
+	cmd.Flags().Duration("retry-delay", 0*time.Second, "delay between retries")
 	cmd.Flags().Int("concurrency", 0, "max parallel steps (0 = unlimited)")
 
-	mustBindPFlag("run.output_dir", cmd.Flags().Lookup("output-dir"))
-	mustBindPFlag("run.retries", cmd.Flags().Lookup("retries"))
-	mustBindPFlag("run.retry_delay", cmd.Flags().Lookup("retry-delay"))
-	mustBindPFlag("run.concurrency", cmd.Flags().Lookup("concurrency"))
+	loader.MustBindFlag("server.run.output_dir", cmd.Flags().Lookup("output-dir"))
+	loader.MustBindFlag("server.run.retries", cmd.Flags().Lookup("retries"))
+	loader.MustBindFlag("server.run.retry_delay", cmd.Flags().Lookup("retry-delay"))
+	loader.MustBindFlag("server.run.concurrency", cmd.Flags().Lookup("concurrency"))
 
 	return cmd
 }

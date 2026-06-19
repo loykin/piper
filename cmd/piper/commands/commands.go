@@ -2,45 +2,46 @@
 // External apps can add piper commands to their own CLI.
 //
 //	import pipercmd "github.com/piper/piper/cmd/piper/commands"
+//	import cliconfig "github.com/piper/piper/cmd/piper/config"
 //
-//	// Embed with the standard piper factory:
-//	rootCmd.AddCommand(pipercmd.Commands(pipercmd.NewPiper)...)
+//	loader := cliconfig.NewLoader()
 //
-//	// Or inject a custom factory to override Piper construction:
-//	rootCmd.AddCommand(pipercmd.Commands(func() (*piper.Piper, error) {
+//	// Inject a factory to override Piper construction:
+//	rootCmd.AddCommand(pipercmd.Commands(loader, func() (*piper.Piper, error) {
 //	    return piper.New(myCustomConfig())
 //	})...)
 //
 //	// Result:
 //	// voyager pipeline run train.yaml
 //	// voyager pipeline server
-//	// voyager pipeline worker --master ...
+//	// voyager pipeline worker --master-url ...
 package commands
 
 import (
 	piper "github.com/piper/piper"
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
 )
 
 // PiperFactory is a function that creates a fully configured Piper instance.
-// It is called from within RunE, after cobra has parsed all flags and the
-// config file has been loaded, so viper values are always fully initialized.
+// It is called from within RunE after the canonical loader has read all sources.
 type PiperFactory func() (*piper.Piper, error)
 
 // Commands returns piper's cobra commands.
-// Pass factory=NewPiper for the standard CLI binary; pass a custom factory
-// when embedding piper commands in another application.
-func Commands(factory PiperFactory) []*cobra.Command {
+// Pass one loader per command tree. The factory may construct the standard
+// Piper instance or an embedding application's custom instance.
+func Commands(loader *cliconfig.Loader, factory PiperFactory) []*cobra.Command {
 	return []*cobra.Command{
-		newRunCmd(factory),
+		newRunCmd(loader, factory),
 		newParseCmd(),
-		newServerCmd(factory),
-		newWorkerCmd(),
+		newServerCmd(loader, factory),
+		newWorkerCmd(loader),
 		newAgentCmd(),
-		newK8sWorkerCmd(),
-		newServingWorkerCmd(),
-		newNotebookWorkerCmd(),
+		newK8sWorkerCmd(loader),
+		newServingWorkerCmd(loader),
+		newNotebookWorkerCmd(loader),
 		newInternalCmd(),
-		newUserCmd(),
+		newUserCmd(loader),
+		newConfigCmd(loader),
 	}
 }

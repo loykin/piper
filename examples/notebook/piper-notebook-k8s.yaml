@@ -3,27 +3,36 @@
 # (equivalent to a Kubeflow PodDefault). Per-notebook spec.k8s.pod_template
 # is merged on top; piper required fields are always applied last.
 
-notebook_k8s:
-  worker: false           # true = delegate to a standalone k8s-worker process
-  namespace: ml-notebooks
-  worker_image: jupyter/minimal-notebook:latest
-  storage_class: standard
-  storage_size: 10Gi
+version: 1
+workers:
+  common:
+    master_url: http://piper-server:8080
+    agent_addr: piper-server:9090
+  k8s:
+    cluster: production
+    namespaces: [ml-notebooks]
+    enabled: [notebook]
+    in_cluster: true
+    notebook:
+      namespace: ml-notebooks
+      image: jupyter/minimal-notebook:latest
+      storage_class: standard
+      storage_size: 10Gi
 
-  pod_defaults:
-    metadata:
-      labels:
-        managed-by: piper
-    spec:
-      nodeSelector:
-        accelerator: gpu
-      tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule
-      containers:
-        - name: notebook
-          resources:
-            requests:
-              cpu: "2"
-              memory: 4Gi
+      pod_defaults:
+        metadata:
+          labels:
+            managed-by: piper
+        spec:
+          nodeSelector:
+            accelerator: gpu
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+          containers:
+            - name: notebook
+              resources:
+                requests:
+                  cpu: "2"
+                  memory: 4Gi

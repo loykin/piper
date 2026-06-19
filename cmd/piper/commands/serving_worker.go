@@ -4,37 +4,28 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	servingworker "github.com/piper/piper/pkg/serving/worker"
 )
 
-func newServingWorkerCmd() *cobra.Command {
+func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serving-worker",
 		Short: "Start a serving worker agent on this node",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			agentAddr, _ := cmd.Flags().GetString("agent-addr")
-			mode, _ := cmd.Flags().GetString("mode")
-			dockerImage, _ := cmd.Flags().GetString("docker-image")
-			dockerNetwork, _ := cmd.Flags().GetString("docker-network")
-			gpusStr, _ := cmd.Flags().GetString("gpus")
-			hostname, _ := cmd.Flags().GetString("hostname")
-			id, _ := cmd.Flags().GetString("id")
-
-			var gpus []string
-			if gpusStr != "" {
-				for _, g := range strings.Split(gpusStr, ",") {
-					if t := strings.TrimSpace(g); t != "" {
-						gpus = append(gpus, t)
-					}
-				}
+			root, err := loader.Load()
+			if err != nil {
+				return err
 			}
-
+			if err := cliconfig.ValidateServing(root); err != nil {
+				return err
+			}
+			c, common := root.Workers.Serving, root.Workers.Common
+			hostname, id := common.Hostname, c.ID
 			if hostname == "" {
 				if h, err := os.Hostname(); err == nil {
 					hostname = h
@@ -48,15 +39,15 @@ func newServingWorkerCmd() *cobra.Command {
 			defer cancel()
 
 			w := servingworker.New(servingworker.Config{
-				AgentAddr:   agentAddr,
-				WorkerToken: viper.GetString("worker.token"),
-				GPUs:        gpus,
+				AgentAddr:   common.AgentAddr,
+				WorkerToken: common.WorkerToken,
+				GPUs:        c.GPUs,
 				Hostname:    hostname,
 				ID:          id,
-				Mode:        mode,
+				Mode:        c.Mode,
 				Docker: servingworker.DockerConfig{
-					Image:   dockerImage,
-					Network: dockerNetwork,
+					Image:   c.Docker.Image,
+					Network: c.Docker.Network,
 				},
 			})
 			return w.Run(ctx)
@@ -64,13 +55,23 @@ func newServingWorkerCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String("agent-addr", "", "piper master gRPC agent address, e.g. master:9090 (required)")
-	cmd.Flags().String("mode", "process", "serving runtime: process or docker")
+	cmd.Flags().String("mode", "", "serving runtime: process or docker")
 	cmd.Flags().String("docker-image", "", "default serving image for docker mode")
-	cmd.Flags().String("docker-network", "bridge", "Docker network for serving containers")
-	cmd.Flags().String("gpus", "", "comma-separated GPU device indices (e.g. 0,1)")
+	cmd.Flags().String("docker-network", "", "Docker network for serving containers")
+	cmd.Flags().StringSlice("gpus", nil, "GPU device indices")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("id", "", "worker ID (default: stable serving-<hostname>)")
-	_ = cmd.MarkFlagRequired("agent-addr")
+	cmd.Flags().String("worker-token", "", "worker token for gRPC authorization")
+	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
+	loader.MustBindFlag("workers.common.agent_addr", cmd.Flags().Lookup("agent-addr"))
+	loader.MustBindFlag("workers.serving.mode", cmd.Flags().Lookup("mode"))
+	loader.MustBindFlag("workers.serving.docker.image", cmd.Flags().Lookup("docker-image"))
+	loader.MustBindFlag("workers.serving.docker.network", cmd.Flags().Lookup("docker-network"))
+	loader.MustBindFlag("workers.serving.gpus", cmd.Flags().Lookup("gpus"))
+	loader.MustBindFlag("workers.common.hostname", cmd.Flags().Lookup("hostname"))
+	loader.MustBindFlag("workers.serving.id", cmd.Flags().Lookup("id"))
+	loader.MustBindFlag("workers.common.worker_token", cmd.Flags().Lookup("worker-token"))
+	loader.MustBindFlag("workers.common.storage_token", cmd.Flags().Lookup("storage-token"))
 
 	return cmd
 }

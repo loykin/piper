@@ -2,49 +2,31 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	notebookworker "github.com/piper/piper/pkg/notebook/worker"
 )
 
-func newNotebookWorkerCmd() *cobra.Command {
+func newNotebookWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "notebook-worker",
 		Short: "Start a notebook worker agent on this node",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			agentAddr, _ := cmd.Flags().GetString("agent-addr")
-			notebooksRoot, _ := cmd.Flags().GetString("notebooks-root")
-			portRange, _ := cmd.Flags().GetString("port-range")
-			mode, _ := cmd.Flags().GetString("mode")
-			dockerImage, _ := cmd.Flags().GetString("docker-image")
-			dockerNetwork, _ := cmd.Flags().GetString("docker-network")
-			dockerCPUs, _ := cmd.Flags().GetString("docker-cpus")
-			dockerMemory, _ := cmd.Flags().GetString("docker-memory")
-			dockerShmSize, _ := cmd.Flags().GetString("docker-shm-size")
-			dockerReadOnlyRoot, _ := cmd.Flags().GetBool("docker-read-only-root")
-			dockerUser, _ := cmd.Flags().GetString("docker-user")
-			dockerTmpfs, _ := cmd.Flags().GetStringArray("docker-tmpfs")
-			dockerVolumeSpecs, _ := cmd.Flags().GetStringArray("docker-volume")
-			dockerExtraArgs, _ := cmd.Flags().GetStringArray("docker-extra-arg")
-			gpusStr, _ := cmd.Flags().GetString("gpus")
-			hostname, _ := cmd.Flags().GetString("hostname")
-			id, _ := cmd.Flags().GetString("id")
-
-			var gpus []string
-			if gpusStr != "" {
-				for _, g := range strings.Split(gpusStr, ",") {
-					if t := strings.TrimSpace(g); t != "" {
-						gpus = append(gpus, t)
-					}
-				}
+			root, err := loader.Load()
+			if err != nil {
+				return err
 			}
+			if err := cliconfig.ValidateNotebook(root); err != nil {
+				return err
+			}
+			c, common := root.Workers.Notebook, root.Workers.Common
+			hostname, id, mode := common.Hostname, c.ID, c.Mode
 			if hostname == "" {
 				if h, err := os.Hostname(); err == nil {
 					hostname = h
@@ -53,33 +35,33 @@ func newNotebookWorkerCmd() *cobra.Command {
 			if id == "" {
 				id = stableWorkerID("notebook", hostname, effectiveNotebookMode(mode))
 			}
-			dockerVolumes, err := parseNotebookDockerVolumes(dockerVolumeSpecs)
-			if err != nil {
-				return err
+			dockerVolumes := make([]notebookworker.DockerVolume, len(c.Docker.Volumes))
+			for i, v := range c.Docker.Volumes {
+				dockerVolumes[i] = notebookworker.DockerVolume{Name: v.Name, HostPath: v.HostPath, ContainerPath: v.ContainerPath, ReadOnly: v.ReadOnly}
 			}
 
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
 			w := notebookworker.New(notebookworker.Config{
-				AgentAddr:     agentAddr,
-				WorkerToken:   viper.GetString("worker.token"),
-				NotebooksRoot: notebooksRoot,
-				PortRange:     portRange,
+				AgentAddr:     common.AgentAddr,
+				WorkerToken:   common.WorkerToken,
+				NotebooksRoot: c.NotebooksRoot,
+				PortRange:     c.PortRange,
 				Mode:          mode,
 				Docker: notebookworker.DockerConfig{
-					Image:        dockerImage,
-					Network:      dockerNetwork,
-					CPUs:         dockerCPUs,
-					Memory:       dockerMemory,
-					ShmSize:      dockerShmSize,
-					ReadOnlyRoot: dockerReadOnlyRoot,
-					User:         dockerUser,
-					Tmpfs:        dockerTmpfs,
+					Image:        c.Docker.Image,
+					Network:      c.Docker.Network,
+					CPUs:         c.Docker.CPUs,
+					Memory:       c.Docker.Memory,
+					ShmSize:      c.Docker.ShmSize,
+					ReadOnlyRoot: c.Docker.ReadOnlyRoot,
+					User:         c.Docker.User,
+					Tmpfs:        c.Docker.Tmpfs,
 					Volumes:      dockerVolumes,
-					ExtraArgs:    dockerExtraArgs,
+					ExtraArgs:    c.Docker.ExtraArgs,
 				},
-				GPUs:     gpus,
+				GPUs:     c.GPUs,
 				Hostname: hostname,
 				ID:       id,
 			})
@@ -99,49 +81,34 @@ func newNotebookWorkerCmd() *cobra.Command {
 	cmd.Flags().Bool("docker-read-only-root", false, "run notebook containers with a read-only root filesystem")
 	cmd.Flags().String("docker-user", "", "Docker container user, e.g. 1000:100")
 	cmd.Flags().StringArray("docker-tmpfs", nil, "Docker tmpfs mount path; repeatable")
-	cmd.Flags().StringArray("docker-volume", nil, "allowed Docker volume name=host_path:container_path[:ro|rw]; repeatable")
+	cmd.Flags().String("docker-volumes", "", "Docker volumes as a JSON array")
 	cmd.Flags().StringArray("docker-extra-arg", nil, "extra Jupyter start argument for Docker mode; repeatable")
-	cmd.Flags().String("gpus", "", "comma-separated GPU device indices (e.g. 0,1)")
+	cmd.Flags().StringSlice("gpus", nil, "GPU device indices")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("id", "", "worker ID (default: stable notebook-<hostname>-<mode>)")
-	_ = cmd.MarkFlagRequired("agent-addr")
+	cmd.Flags().String("worker-token", "", "worker token for gRPC authorization")
+	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
+	loader.MustBindFlag("workers.common.agent_addr", cmd.Flags().Lookup("agent-addr"))
+	loader.MustBindFlag("workers.notebook.notebooks_root", cmd.Flags().Lookup("notebooks-root"))
+	loader.MustBindFlag("workers.notebook.port_range", cmd.Flags().Lookup("port-range"))
+	loader.MustBindFlag("workers.notebook.mode", cmd.Flags().Lookup("mode"))
+	loader.MustBindFlag("workers.notebook.docker.image", cmd.Flags().Lookup("docker-image"))
+	loader.MustBindFlag("workers.notebook.docker.network", cmd.Flags().Lookup("docker-network"))
+	loader.MustBindFlag("workers.notebook.docker.cpus", cmd.Flags().Lookup("docker-cpus"))
+	loader.MustBindFlag("workers.notebook.docker.memory", cmd.Flags().Lookup("docker-memory"))
+	loader.MustBindFlag("workers.notebook.docker.shm_size", cmd.Flags().Lookup("docker-shm-size"))
+	loader.MustBindFlag("workers.notebook.docker.read_only_root", cmd.Flags().Lookup("docker-read-only-root"))
+	loader.MustBindFlag("workers.notebook.docker.user", cmd.Flags().Lookup("docker-user"))
+	loader.MustBindFlag("workers.notebook.docker.tmpfs", cmd.Flags().Lookup("docker-tmpfs"))
+	loader.MustBindFlag("workers.notebook.docker.volumes", cmd.Flags().Lookup("docker-volumes"))
+	loader.MustBindFlag("workers.notebook.docker.extra_args", cmd.Flags().Lookup("docker-extra-arg"))
+	loader.MustBindFlag("workers.notebook.gpus", cmd.Flags().Lookup("gpus"))
+	loader.MustBindFlag("workers.common.hostname", cmd.Flags().Lookup("hostname"))
+	loader.MustBindFlag("workers.notebook.id", cmd.Flags().Lookup("id"))
+	loader.MustBindFlag("workers.common.worker_token", cmd.Flags().Lookup("worker-token"))
+	loader.MustBindFlag("workers.common.storage_token", cmd.Flags().Lookup("storage-token"))
 
 	return cmd
-}
-
-func parseNotebookDockerVolumes(items []string) ([]notebookworker.DockerVolume, error) {
-	if len(items) == 0 {
-		return nil, nil
-	}
-	out := make([]notebookworker.DockerVolume, 0, len(items))
-	for _, item := range items {
-		name, rest, ok := strings.Cut(item, "=")
-		if !ok || strings.TrimSpace(name) == "" {
-			return nil, fmt.Errorf("invalid --docker-volume %q: expected name=host_path:container_path[:ro|rw]", item)
-		}
-		parts := strings.Split(rest, ":")
-		if len(parts) < 2 || len(parts) > 3 {
-			return nil, fmt.Errorf("invalid --docker-volume %q: expected name=host_path:container_path[:ro|rw]", item)
-		}
-		readOnly := true
-		if len(parts) == 3 {
-			switch parts[2] {
-			case "ro":
-				readOnly = true
-			case "rw":
-				readOnly = false
-			default:
-				return nil, fmt.Errorf("invalid --docker-volume %q: mode must be ro or rw", item)
-			}
-		}
-		out = append(out, notebookworker.DockerVolume{
-			Name:          strings.TrimSpace(name),
-			HostPath:      parts[0],
-			ContainerPath: parts[1],
-			ReadOnly:      readOnly,
-		})
-	}
-	return out, nil
 }
 
 func effectiveNotebookMode(mode string) string {

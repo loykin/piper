@@ -10,8 +10,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"golang.org/x/term"
 	_ "modernc.org/sqlite"
 
@@ -23,15 +23,15 @@ import (
 )
 
 // newUserCmd returns the `piper user` sub-command group.
-func newUserCmd() *cobra.Command {
+func newUserCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "user",
 		Short: "Manage piper users",
 	}
 	cmd.AddCommand(
-		newUserCreateCmd(),
-		newUserListCmd(),
-		newUserDeleteCmd(),
+		newUserCreateCmd(loader),
+		newUserListCmd(loader),
+		newUserDeleteCmd(loader),
 	)
 	return cmd
 }
@@ -39,8 +39,12 @@ func newUserCmd() *cobra.Command {
 // openAuthProvider opens the configured database and returns an auth.Provider.
 // It opens the DB directly — no Piper instance is created — so background
 // goroutines, migrations, and queue loops are not started.
-func openAuthProvider() (*auth.Provider, func() error, error) {
-	driver := viper.GetString("db.driver")
+func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, error) {
+	cfg, loadErr := loader.Load()
+	if loadErr != nil {
+		return nil, nil, loadErr
+	}
+	driver := cfg.Server.DB.Driver
 	if driver == "" {
 		driver = "sqlite"
 	}
@@ -51,15 +55,15 @@ func openAuthProvider() (*auth.Provider, func() error, error) {
 	)
 	switch driver {
 	case "postgres":
-		dsn := viper.GetString("db.dsn")
+		dsn := cfg.Server.DB.DSN
 		if dsn == "" {
 			return nil, nil, fmt.Errorf("db.dsn is required for postgres")
 		}
 		rawDB, err = sql.Open("postgres", dsn)
 	default:
-		dbFile := viper.GetString("db.path")
+		dbFile := cfg.Server.DB.Path
 		if dbFile == "" {
-			outputDir := viper.GetString("run.output_dir")
+			outputDir := cfg.Server.Run.OutputDir
 			if outputDir == "" {
 				outputDir = "./piper-outputs"
 			}
@@ -90,7 +94,7 @@ func openAuthProvider() (*auth.Provider, func() error, error) {
 	if err := storemod.Migrate(context.Background(), db, driver); err != nil {
 		return nil, nil, fmt.Errorf("migrate: %w", err)
 	}
-	signingKey := viper.GetString("server.auth_signing_key")
+	signingKey := cfg.Server.AuthSigningKey
 	if signingKey == "" {
 		signingKey = "cli-placeholder" // CLI only needs user management, not token issuing
 	}
@@ -115,7 +119,7 @@ func openAuthProvider() (*auth.Provider, func() error, error) {
 	return provider, closeDB, nil
 }
 
-func newUserCreateCmd() *cobra.Command {
+func newUserCreateCmd(loader *cliconfig.Loader) *cobra.Command {
 	var email string
 	var admin bool
 
@@ -141,7 +145,7 @@ Example:
 				return fmt.Errorf("password must be at least 8 characters")
 			}
 
-			provider, closeDB, err := openAuthProvider()
+			provider, closeDB, err := openAuthProvider(loader)
 			if err != nil {
 				return err
 			}
@@ -164,12 +168,12 @@ Example:
 	return cmd
 }
 
-func newUserListCmd() *cobra.Command {
+func newUserListCmd(loader *cliconfig.Loader) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all users",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			provider, closeDB, err := openAuthProvider()
+			provider, closeDB, err := openAuthProvider(loader)
 			if err != nil {
 				return err
 			}
@@ -196,13 +200,13 @@ func newUserListCmd() *cobra.Command {
 	}
 }
 
-func newUserDeleteCmd() *cobra.Command {
+func newUserDeleteCmd(loader *cliconfig.Loader) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a user and revoke all sessions",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			provider, closeDB, err := openAuthProvider()
+			provider, closeDB, err := openAuthProvider(loader)
 			if err != nil {
 				return err
 			}

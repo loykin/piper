@@ -1,367 +1,89 @@
 package commands
 
 import (
-	"bytes"
 	"fmt"
-	"os"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 	piper "github.com/piper/piper"
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/piper/piper/internal/store/postgres"
 	sqlitestore "github.com/piper/piper/internal/store/sqlite"
 	"github.com/piper/piper/pkg/auth"
 	"github.com/piper/piper/pkg/security"
-	"github.com/spf13/viper"
-	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
-// configFile mirrors the piper.yaml file structure exactly.
-// Parsed with KnownFields(true) on startup to catch unknown or misspelled keys.
-type configFile struct {
-	Run            runSection            `yaml:"run"             mapstructure:"run"`
-	Source         sourceSection         `yaml:"source"          mapstructure:"source"`
-	Storage        storageSection        `yaml:"storage"         mapstructure:"storage"`
-	Server         serverSection         `yaml:"server"          mapstructure:"server"`
-	Retention      retentionSection      `yaml:"retention"       mapstructure:"retention"`
-	Schedule       scheduleSection       `yaml:"schedule"        mapstructure:"schedule"`
-	Serving        servingSection        `yaml:"serving"         mapstructure:"serving"`
-	Log            logSection            `yaml:"log"             mapstructure:"log"`
-	DB             dbSection             `yaml:"db"              mapstructure:"db"`
-	NotebookWorker notebookWorkerSection `yaml:"notebook_worker" mapstructure:"notebook_worker"`
-	NotebookK8s    notebookK8sSection    `yaml:"notebook_k8s"    mapstructure:"notebook_k8s"`
-}
-
-type storageSection struct {
-	URL      string `yaml:"url"      mapstructure:"url"`
-	Disabled bool   `yaml:"disabled" mapstructure:"disabled"`
-	Token    string `yaml:"token"    mapstructure:"token"`
-}
-
-type runSection struct {
-	OutputDir   string        `yaml:"output_dir"   mapstructure:"output_dir"`
-	Retries     *int          `yaml:"retries"      mapstructure:"retries"`
-	RetryDelay  time.Duration `yaml:"retry_delay"  mapstructure:"retry_delay"`
-	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`
-}
-
-type sourceSection struct {
-	S3  s3Section  `yaml:"s3"  mapstructure:"s3"`
-	Git gitSection `yaml:"git" mapstructure:"git"`
-}
-
-type s3Section struct {
-	Endpoint  string `yaml:"endpoint"   mapstructure:"endpoint"`
-	AccessKey string `yaml:"access_key" mapstructure:"access_key"`
-	SecretKey string `yaml:"secret_key" mapstructure:"secret_key"`
-	Bucket    string `yaml:"bucket"     mapstructure:"bucket"`
-	UseSSL    bool   `yaml:"use_ssl"    mapstructure:"use_ssl"`
-}
-
-type gitSection struct {
-	Token string `yaml:"token" mapstructure:"token"`
-	User  string `yaml:"user"  mapstructure:"user"`
-}
-
-type serverSection struct {
-	Addr           string     `yaml:"addr"             mapstructure:"addr"`
-	AgentAddr      string     `yaml:"agent_addr"       mapstructure:"agent_addr"`
-	WorkerToken    string     `yaml:"worker_token"     mapstructure:"worker_token"`
-	AuthSigningKey string     `yaml:"auth_signing_key" mapstructure:"auth_signing_key"`
-	TLS            tlsSection `yaml:"tls"              mapstructure:"tls"`
-}
-
-type tlsSection struct {
-	Enabled  bool   `yaml:"enabled"   mapstructure:"enabled"`
-	CertFile string `yaml:"cert_file" mapstructure:"cert_file"`
-	KeyFile  string `yaml:"key_file"  mapstructure:"key_file"`
-}
-
-type retentionSection struct {
-	RunTTL      time.Duration `yaml:"run_ttl"      mapstructure:"run_ttl"`
-	ArtifactTTL time.Duration `yaml:"artifact_ttl" mapstructure:"artifact_ttl"`
-}
-
-type scheduleSection struct {
-	MisfirePolicy      string        `yaml:"misfire_policy"       mapstructure:"misfire_policy"`
-	MisfireGracePeriod time.Duration `yaml:"misfire_grace_period" mapstructure:"misfire_grace_period"`
-}
-
-type servingSection struct {
-	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
-	Worker   bool   `yaml:"worker"    mapstructure:"worker"`
-}
-
-type logSection struct {
-	Format string `yaml:"format" mapstructure:"format"`
-}
-
-type dbSection struct {
-	Driver string `yaml:"driver" mapstructure:"driver"`
-	DSN    string `yaml:"dsn"    mapstructure:"dsn"`
-	Path   string `yaml:"path"   mapstructure:"path"`
-}
-
-type notebookWorkerSection struct {
-	NotebooksRoot string                      `yaml:"notebooks_root" mapstructure:"notebooks_root"`
-	PortRange     string                      `yaml:"port_range"     mapstructure:"port_range"`
-	Mode          string                      `yaml:"mode"           mapstructure:"mode"`
-	Docker        notebookWorkerDockerSection `yaml:"docker" mapstructure:"docker"`
-}
-
-type notebookWorkerDockerSection struct {
-	Image        string                       `yaml:"image"          mapstructure:"image"`
-	Network      string                       `yaml:"network"        mapstructure:"network"`
-	CPUs         string                       `yaml:"cpus"           mapstructure:"cpus"`
-	Memory       string                       `yaml:"memory"         mapstructure:"memory"`
-	ShmSize      string                       `yaml:"shm_size"       mapstructure:"shm_size"`
-	ReadOnlyRoot bool                         `yaml:"read_only_root" mapstructure:"read_only_root"`
-	Tmpfs        []string                     `yaml:"tmpfs"          mapstructure:"tmpfs"`
-	User         string                       `yaml:"user"           mapstructure:"user"`
-	Volumes      []notebookWorkerDockerVolume `yaml:"volumes"        mapstructure:"volumes"`
-	ExtraArgs    []string                     `yaml:"extra_args"     mapstructure:"extra_args"`
-}
-
-type notebookWorkerDockerVolume struct {
-	Name          string `yaml:"name"           mapstructure:"name"`
-	HostPath      string `yaml:"host_path"      mapstructure:"host_path"`
-	ContainerPath string `yaml:"container_path" mapstructure:"container_path"`
-	ReadOnly      bool   `yaml:"read_only"      mapstructure:"read_only"`
-}
-
-type notebookK8sSection struct {
-	Worker       bool   `yaml:"worker"        mapstructure:"worker"`
-	Namespace    string `yaml:"namespace"     mapstructure:"namespace"`
-	WorkerImage  string `yaml:"worker_image"  mapstructure:"worker_image"`
-	StorageClass string `yaml:"storage_class" mapstructure:"storage_class"`
-	StorageSize  string `yaml:"storage_size"  mapstructure:"storage_size"`
-	// PodDefaults is parsed as raw map to allow native k8s JSON/YAML field names.
-	// Conversion to corev1.PodTemplateSpec happens in toConfig() via sigs.k8s.io/yaml.
-	PodDefaults map[string]interface{} `yaml:"pod_defaults"  mapstructure:"pod_defaults"`
-}
-
-// StrictParseConfigFile parses the YAML file at path with KnownFields(true)
-// to detect unknown or misspelled keys. Returns nil if the file does not exist.
-func StrictParseConfigFile(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read config file: %w", err)
-	}
-	var cf configFile
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-	if err := dec.Decode(&cf); err != nil {
-		return fmt.Errorf("config file %s: %w", path, err)
-	}
-	return nil
-}
-
-// toConfig converts the configFile (populated from viper) into a piper.Config.
-func (c *configFile) toConfig() piper.Config {
-	maxRetries := -1 // negative → piper.New applies default
-	if c.Run.Retries != nil {
-		maxRetries = *c.Run.Retries
-	}
-	return piper.Config{
-		OutputDir:   c.Run.OutputDir,
-		MaxRetries:  maxRetries,
-		RetryDelay:  c.Run.RetryDelay,
-		Concurrency: c.Run.Concurrency,
-		Auth:        piper.AuthConfig{Trusted: true},
-		Git: piper.GitConfig{
-			Token: c.Source.Git.Token,
-			User:  c.Source.Git.User,
-		},
-		S3: piper.S3Config{
-			Endpoint:  c.Source.S3.Endpoint,
-			AccessKey: c.Source.S3.AccessKey,
-			SecretKey: c.Source.S3.SecretKey,
-			Bucket:    c.Source.S3.Bucket,
-			UseSSL:    c.Source.S3.UseSSL,
-		},
-		Storage: piper.StorageConfig{
-			URL:      c.Storage.URL,
-			Disabled: c.Storage.Disabled,
-			Token:    c.Storage.Token,
-		},
-		Server: piper.ServerConfig{
-			Addr:        c.Server.Addr,
-			AgentAddr:   c.Server.AgentAddr,
-			WorkerToken: c.Server.WorkerToken,
-			TLS: piper.TLSConfig{
-				Enabled:  c.Server.TLS.Enabled,
-				CertFile: c.Server.TLS.CertFile,
-				KeyFile:  c.Server.TLS.KeyFile,
-			},
-		},
-		Retention: piper.RetentionConfig{
-			RunTTL:      c.Retention.RunTTL,
-			ArtifactTTL: c.Retention.ArtifactTTL,
-		},
-		Schedule: piper.ScheduleConfig{
-			MisfirePolicy:      c.Schedule.MisfirePolicy,
-			MisfireGracePeriod: c.Schedule.MisfireGracePeriod,
-		},
-		Serving: piper.ServingConfig{
-			ModelDir: c.Serving.ModelDir,
-			Worker:   c.Serving.Worker,
-		},
-		DBDriver: c.DB.Driver,
-		DBDSN:    c.DB.DSN,
-		DBPath:   c.DB.Path,
-		NotebookWorker: piper.NotebookWorkerConfig{
-			NotebooksRoot: c.NotebookWorker.NotebooksRoot,
-			PortRange:     c.NotebookWorker.PortRange,
-			Mode:          c.NotebookWorker.Mode,
-			Docker: piper.NotebookWorkerDockerConfig{
-				Image:        c.NotebookWorker.Docker.Image,
-				Network:      c.NotebookWorker.Docker.Network,
-				CPUs:         c.NotebookWorker.Docker.CPUs,
-				Memory:       c.NotebookWorker.Docker.Memory,
-				ShmSize:      c.NotebookWorker.Docker.ShmSize,
-				ReadOnlyRoot: c.NotebookWorker.Docker.ReadOnlyRoot,
-				Tmpfs:        c.NotebookWorker.Docker.Tmpfs,
-				User:         c.NotebookWorker.Docker.User,
-				Volumes:      notebookWorkerDockerVolumes(c.NotebookWorker.Docker.Volumes),
-				ExtraArgs:    c.NotebookWorker.Docker.ExtraArgs,
-			},
-		},
-		NotebookK8s: piper.NotebookK8sConfig{
-			Worker:       c.NotebookK8s.Worker,
-			Namespace:    c.NotebookK8s.Namespace,
-			WorkerImage:  c.NotebookK8s.WorkerImage,
-			StorageClass: c.NotebookK8s.StorageClass,
-			StorageSize:  c.NotebookK8s.StorageSize,
-			PodDefaults:  parsePodDefaults(c.NotebookK8s.PodDefaults),
-		},
-	}
-}
-
-// buildConfig loads viper state into a configFile, converts it to piper.Config,
-// and validates the result.
-func buildConfig() (piper.Config, error) {
-	var cf configFile
-	if err := viper.Unmarshal(&cf); err != nil {
-		return piper.Config{}, fmt.Errorf("config: %w", err)
-	}
-	cfg := cf.toConfig()
-	if err := cfg.Validate(); err != nil {
-		return piper.Config{}, err
-	}
-	return cfg, nil
-}
-
-// NewPiper creates a Piper instance from the current viper state.
-// When server.auth_signing_key is set, the built-in auth capabilities are
-// created after Piper opens its repositories.
-// Exported so that library users can pass it to Commands() as the factory.
-func NewPiper() (*piper.Piper, error) {
-	cfg, err := buildConfig()
+// NewPiper builds the library-facing server config from the canonical CLI config.
+func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
+	root, err := loader.Load()
 	if err != nil {
 		return nil, err
 	}
-	signingKey := viper.GetString("server.auth_signing_key")
-	if signingKey != "" {
-		cfg.Auth = piper.AuthConfig{
-			Factory: func(deps piper.AuthDependencies) (piper.AuthConfig, error) {
-				if deps.DB == nil {
-					return piper.AuthConfig{}, fmt.Errorf("auth_signing_key requires a database (db_path or db_dsn)")
-				}
-				db := sqlx.NewDb(deps.DB, deps.Driver)
-				var (
-					users    auth.UserRepository
-					members  security.ProjectMemberRepository
-					sessions auth.SessionRepository
-				)
-				if deps.Driver == "postgres" {
-					users = postgres.NewUserRepo(db)
-					members = postgres.NewMemberRepo(db)
-					sessions = postgres.NewSessionRepo(db)
-				} else {
-					users = sqlitestore.NewUserRepo(db)
-					members = sqlitestore.NewMemberRepo(db)
-					sessions = sqlitestore.NewSessionRepo(db)
-				}
-				provider := auth.New(auth.Config{SigningKey: []byte(signingKey)}, users, members, sessions)
-				return piper.AuthConfig{
-					LoginRoutes:          auth.NewHandler(provider, provider, deps.SecureCookies),
-					Authenticator:        provider,
-					Authorizer:           provider,
-					UserDirectory:        provider,
-					UserManager:          provider,
-					ProjectMemberManager: provider,
-				}, nil
-			}}
-	} else {
+	if err := cliconfig.ValidateServer(root); err != nil {
+		return nil, err
+	}
+	serverPodDefaults, err := parsePodDefaults(root.Server.Notebook.K8s.PodDefaults)
+	if err != nil {
+		return nil, fmt.Errorf("config: server.notebook.k8s.pod_defaults: %w", err)
+	}
+
+	cfg := piper.Config{
+		OutputDir: root.Server.Run.OutputDir, MaxRetries: root.Server.Run.Retries,
+		RetryDelay: root.Server.Run.RetryDelay, Concurrency: root.Server.Run.Concurrency,
+		Git:     piper.GitConfig{User: root.Source.Git.User, Token: root.Source.Git.Token},
+		Storage: piper.StorageConfig{URL: root.Storage.URL, Disabled: root.Storage.Disabled, Token: root.Storage.Token},
+		Server: piper.ServerConfig{Addr: root.Server.HTTPAddr, AgentAddr: root.Server.AgentAddr, WorkerToken: root.Server.WorkerToken,
+			TLS: piper.TLSConfig{Enabled: root.Server.TLS.Enabled, CertFile: root.Server.TLS.CertFile, KeyFile: root.Server.TLS.KeyFile}},
+		Retention: piper.RetentionConfig{RunTTL: root.Server.Retention.RunTTL, ArtifactTTL: root.Server.Retention.ArtifactTTL},
+		Schedule:  piper.ScheduleConfig{MisfirePolicy: root.Server.Schedule.MisfirePolicy, MisfireGracePeriod: root.Server.Schedule.MisfireGracePeriod},
+		Serving:   piper.ServingConfig{ModelDir: root.Server.Serving.ModelDir, Worker: root.Server.Serving.Delegate},
+		DBDriver:  root.Server.DB.Driver, DBDSN: root.Server.DB.DSN, DBPath: root.Server.DB.Path,
+		NotebookWorker: piper.NotebookWorkerConfig{
+			NotebooksRoot: root.Workers.Notebook.NotebooksRoot, PortRange: root.Workers.Notebook.PortRange, Mode: root.Workers.Notebook.Mode,
+			Docker: piper.NotebookWorkerDockerConfig{Image: root.Workers.Notebook.Docker.Image, Network: root.Workers.Notebook.Docker.Network, CPUs: root.Workers.Notebook.Docker.CPUs, Memory: root.Workers.Notebook.Docker.Memory, ShmSize: root.Workers.Notebook.Docker.ShmSize, ReadOnlyRoot: root.Workers.Notebook.Docker.ReadOnlyRoot, Tmpfs: root.Workers.Notebook.Docker.Tmpfs, User: root.Workers.Notebook.Docker.User, ExtraArgs: root.Workers.Notebook.Docker.ExtraArgs},
+		},
+		NotebookK8s: piper.NotebookK8sConfig{Worker: root.Server.Notebook.Delegate, Namespace: root.Server.Notebook.K8s.Namespace, WorkerImage: root.Server.Notebook.K8s.Image, StorageClass: root.Server.Notebook.K8s.StorageClass, StorageSize: root.Server.Notebook.K8s.StorageSize, PodDefaults: serverPodDefaults},
+	}
+	for _, v := range root.Workers.Notebook.Docker.Volumes {
+		cfg.NotebookWorker.Docker.Volumes = append(cfg.NotebookWorker.Docker.Volumes, piper.NotebookWorkerDockerVolume{Name: v.Name, HostPath: v.HostPath, ContainerPath: v.ContainerPath, ReadOnly: v.ReadOnly})
+	}
+
+	signingKey := root.Server.AuthSigningKey
+	if signingKey == "" {
 		cfg.Auth = piper.AuthConfig{Trusted: true}
+	} else {
+		cfg.Auth = piper.AuthConfig{Factory: func(deps piper.AuthDependencies) (piper.AuthConfig, error) {
+			if deps.DB == nil {
+				return piper.AuthConfig{}, fmt.Errorf("server.auth_signing_key requires a database")
+			}
+			db := sqlx.NewDb(deps.DB, deps.Driver)
+			var users auth.UserRepository
+			var members security.ProjectMemberRepository
+			var sessions auth.SessionRepository
+			if deps.Driver == "postgres" {
+				users, members, sessions = postgres.NewUserRepo(db), postgres.NewMemberRepo(db), postgres.NewSessionRepo(db)
+			} else {
+				users, members, sessions = sqlitestore.NewUserRepo(db), sqlitestore.NewMemberRepo(db), sqlitestore.NewSessionRepo(db)
+			}
+			provider := auth.New(auth.Config{SigningKey: []byte(signingKey)}, users, members, sessions)
+			return piper.AuthConfig{LoginRoutes: auth.NewHandler(provider, provider, deps.SecureCookies), Authenticator: provider, Authorizer: provider, UserDirectory: provider, UserManager: provider, ProjectMemberManager: provider}, nil
+		}}
 	}
 	return piper.New(cfg)
 }
 
-// resolveStorageURLFromViper derives the storage URL for workers/embedded workers.
-// Priority: storage.url > source.s3.* (backward compat with pre-blobstore configs).
-func resolveStorageURLFromViper() string {
-	if viper.GetBool("storage.disabled") {
-		return ""
-	}
-	if u := viper.GetString("storage.url"); u != "" {
-		return u
-	}
-	bucket := viper.GetString("source.s3.bucket")
-	if bucket == "" {
-		return ""
-	}
-	scheme := "http"
-	if viper.GetBool("source.s3.use_ssl") {
-		scheme = "https"
-	}
-	q := "s3ForcePathStyle=true"
-	if ak := viper.GetString("source.s3.access_key"); ak != "" {
-		q += "&accessKey=" + ak
-	}
-	if sk := viper.GetString("source.s3.secret_key"); sk != "" {
-		q += "&secretKey=" + sk
-	}
-	if ep := viper.GetString("source.s3.endpoint"); ep != "" {
-		q += "&endpoint=" + scheme + "://" + ep
-	}
-	return "s3://" + bucket + "?" + q
-}
-
-// parsePodDefaults converts the raw map (from yaml.v3 or viper) to corev1.PodTemplateSpec
-// by round-tripping through JSON using sigs.k8s.io/yaml, which honours k8s json struct tags.
-func parsePodDefaults(raw map[string]interface{}) corev1.PodTemplateSpec {
+func parsePodDefaults(raw map[string]any) (corev1.PodTemplateSpec, error) {
 	if len(raw) == 0 {
-		return corev1.PodTemplateSpec{}
+		return corev1.PodTemplateSpec{}, nil
 	}
 	data, err := sigsyaml.Marshal(raw)
 	if err != nil {
-		return corev1.PodTemplateSpec{}
+		return corev1.PodTemplateSpec{}, err
 	}
-	var pt corev1.PodTemplateSpec
-	if err := sigsyaml.Unmarshal(data, &pt); err != nil {
-		return corev1.PodTemplateSpec{}
+	var out corev1.PodTemplateSpec
+	if err := sigsyaml.UnmarshalStrict(data, &out); err != nil {
+		return corev1.PodTemplateSpec{}, err
 	}
-	return pt
-}
-
-func notebookWorkerDockerVolumes(items []notebookWorkerDockerVolume) []piper.NotebookWorkerDockerVolume {
-	if len(items) == 0 {
-		return nil
-	}
-	out := make([]piper.NotebookWorkerDockerVolume, len(items))
-	for i, item := range items {
-		out[i] = piper.NotebookWorkerDockerVolume{
-			Name:          item.Name,
-			HostPath:      item.HostPath,
-			ContainerPath: item.ContainerPath,
-			ReadOnly:      item.ReadOnly,
-		}
-	}
-	return out
+	return out, nil
 }

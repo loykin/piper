@@ -1,58 +1,42 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
+	piper "github.com/piper/piper"
 	pipercmd "github.com/piper/piper/cmd/piper/commands"
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 )
 
 var cfgFile string
+var loader = cliconfig.NewLoader()
 
 var rootCmd = &cobra.Command{
 	Use:   "piper",
 	Short: "lightweight ML pipeline orchestrator",
+	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		loader.SetConfigFile(cfgFile)
+		cfg, err := loader.Load()
+		if err != nil {
+			return err
+		}
+		initLogger(cfg.Log.Format)
+		return nil
+	},
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $HOME/.piper.yaml)")
-	rootCmd.PersistentFlags().String("log-format", "text", "log format: text | json")
-	mustBindPFlag("log.format", rootCmd.PersistentFlags().Lookup("log-format"))
+	rootCmd.PersistentFlags().String("log-format", "", "log format: text | json")
+	loader.MustBindFlag("log.format", rootCmd.PersistentFlags().Lookup("log-format"))
 }
 
-func initConfig() {
-	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
-	} else {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			viper.AddConfigPath(home)
-		}
-		viper.AddConfigPath(".")
-		viper.SetConfigName(".piper")
-		viper.SetConfigType("yaml")
-	}
-	viper.AutomaticEnv()
-	if err := viper.ReadInConfig(); err == nil {
-		used := viper.ConfigFileUsed()
-		_, _ = fmt.Fprintln(os.Stderr, "using config:", used)
-		if err := pipercmd.StrictParseConfigFile(used); err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, "config error:", err)
-			os.Exit(1)
-		}
-	}
-	initLogger()
-}
-
-func initLogger() {
+func initLogger(format string) {
 	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
 	var handler slog.Handler
-	if viper.GetString("log.format") == "json" {
+	if format == "json" {
 		handler = slog.NewJSONHandler(os.Stderr, opts)
 	} else {
 		handler = slog.NewTextHandler(os.Stderr, opts)
@@ -61,17 +45,9 @@ func initLogger() {
 }
 
 func main() {
-	rootCmd.AddCommand(pipercmd.Commands(pipercmd.NewPiper)...)
+	factory := func() (*piper.Piper, error) { return pipercmd.NewPiper(loader) }
+	rootCmd.AddCommand(pipercmd.Commands(loader, factory)...)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
-	}
-}
-
-func mustBindPFlag(key string, flag *pflag.Flag) {
-	if flag == nil {
-		panic(fmt.Sprintf("mustBindPFlag: flag for key %q is nil", key))
-	}
-	if err := viper.BindPFlag(key, flag); err != nil {
-		panic(fmt.Sprintf("mustBindPFlag(%q): %v", key, err))
 	}
 }

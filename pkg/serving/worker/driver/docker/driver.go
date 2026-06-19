@@ -33,13 +33,18 @@ type Config struct {
 	Network  string // docker network name (default: "bridge")
 }
 
+type containerState struct {
+	id     string
+	stopCh chan struct{} // closed when Stop is called intentionally
+}
+
 // Driver manages serving containers via the Docker API.
 type Driver struct {
 	workerID   string
 	cfg        Config
 	client     dockerinfra.API
 	mu         sync.Mutex
-	containers map[string]string // runtimeName -> containerID
+	containers map[string]*containerState // runtimeName -> state
 }
 
 // New creates a Driver connected to the local Docker daemon.
@@ -64,7 +69,7 @@ func NewWithClient(cfg Config, cli dockerinfra.API) (*Driver, error) {
 	if cfg.Network == "" {
 		cfg.Network = "bridge"
 	}
-	return &Driver{workerID: cfg.WorkerID, cfg: cfg, client: cli, containers: make(map[string]string)}, nil
+	return &Driver{workerID: cfg.WorkerID, cfg: cfg, client: cli, containers: make(map[string]*containerState)}, nil
 }
 
 // Deploy starts a serving container and attaches an exit watcher. The caller
@@ -147,8 +152,9 @@ func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint
 		return "", fmt.Errorf("docker serving: start container: %w", startErr)
 	}
 
+	state := &containerState{id: created.ID, stopCh: make(chan struct{})}
 	d.mu.Lock()
-	d.containers[req.RuntimeName] = created.ID
+	d.containers[req.RuntimeName] = state
 	d.mu.Unlock()
 
 	endpoint = fmt.Sprintf("http://localhost:%d", req.Port)
@@ -165,16 +171,24 @@ func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint
 		select {
 		case waitErr := <-wait.Error:
 			if waitErr != nil {
-				status = serving.StatusFailed
+				select {
+				case <-state.stopCh:
+				default:
+					status = serving.StatusFailed
+				}
 			}
 		case result := <-wait.Result:
-			if result.StatusCode != 0 {
-				status = serving.StatusFailed
+			select {
+			case <-state.stopCh:
+			default:
+				if result.StatusCode != 0 {
+					status = serving.StatusFailed
+				}
 			}
 		}
 		_, _ = d.client.ContainerRemove(context.Background(), created.ID, dockerclient.ContainerRemoveOptions{Force: true})
 		d.mu.Lock()
-		if d.containers[req.RuntimeName] == created.ID {
+		if cs, ok := d.containers[req.RuntimeName]; ok && cs.id == created.ID {
 			delete(d.containers, req.RuntimeName)
 		}
 		d.mu.Unlock()
@@ -190,13 +204,17 @@ func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint
 // Stop stops and removes the serving container for the given runtime name.
 func (d *Driver) Stop(ctx context.Context, runtimeName string) error {
 	d.mu.Lock()
-	id, ok := d.containers[runtimeName]
+	state, ok := d.containers[runtimeName]
 	if ok {
+		close(state.stopCh)
 		delete(d.containers, runtimeName)
 	}
 	d.mu.Unlock()
 
-	if !ok {
+	var id string
+	if ok {
+		id = state.id
+	} else {
 		ids, listErr := d.findManagedContainers(ctx, runtimeName)
 		if listErr != nil {
 			return listErr
@@ -261,33 +279,42 @@ func (d *Driver) Recover(
 		}
 		id := item.ID
 		if item.State == container.StateRunning || item.State == container.StateRestarting {
+			state := &containerState{id: id, stopCh: make(chan struct{})}
 			d.mu.Lock()
-			d.containers[rn] = id
+			d.containers[rn] = state
 			d.mu.Unlock()
 			onExit := onRecovered(rec)
 			wait := d.client.ContainerWait(context.Background(), id, dockerclient.ContainerWaitOptions{
 				Condition: container.WaitConditionNotRunning,
 			})
-			go func(rn, containerID string) {
+			go func(rn, containerID string, state *containerState) {
 				status := serving.StatusStopped
 				select {
 				case waitErr := <-wait.Error:
 					if waitErr != nil {
-						status = serving.StatusFailed
+						select {
+						case <-state.stopCh:
+						default:
+							status = serving.StatusFailed
+						}
 					}
 				case result := <-wait.Result:
-					if result.StatusCode != 0 {
-						status = serving.StatusFailed
+					select {
+					case <-state.stopCh:
+					default:
+						if result.StatusCode != 0 {
+							status = serving.StatusFailed
+						}
 					}
 				}
 				_, _ = d.client.ContainerRemove(context.Background(), containerID, dockerclient.ContainerRemoveOptions{Force: true})
 				d.mu.Lock()
-				if d.containers[rn] == containerID {
+				if cs, ok := d.containers[rn]; ok && cs.id == containerID {
 					delete(d.containers, rn)
 				}
 				d.mu.Unlock()
 				onExit(status)
-			}(rn, id)
+			}(rn, id, state)
 		} else {
 			status := serving.StatusStopped
 			if result, inspectErr := d.client.ContainerInspect(ctx, id, dockerclient.ContainerInspectOptions{}); inspectErr == nil {
@@ -306,10 +333,10 @@ func (d *Driver) Recover(
 func (d *Driver) KillAll(ctx context.Context) error {
 	ids, listErr := d.findManagedContainers(ctx, "")
 	d.mu.Lock()
-	for _, id := range d.containers {
-		ids = append(ids, id)
+	for _, state := range d.containers {
+		ids = append(ids, state.id)
 	}
-	d.containers = make(map[string]string)
+	d.containers = make(map[string]*containerState)
 	d.mu.Unlock()
 
 	seen := make(map[string]bool)

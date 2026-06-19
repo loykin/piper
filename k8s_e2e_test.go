@@ -817,7 +817,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 
 	// Restart only the worker. The notebook StatefulSet belongs to Kubernetes,
 	// so worker reconnect must not recreate or terminate the notebook pod.
-	podName := "piper-nb-" + nbName + "-0"
+	podName := "piper-nb-" + k8sE2EProjectID + "-" + nbName + "-0"
 	podUID := strings.TrimSpace(kubectl(t, "-n", ns, "get", "pod", podName, "-o", "jsonpath={.metadata.uid}"))
 	kubectl(t, "-n", ns, "rollout", "restart", "deployment/piper-k8s-worker")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")

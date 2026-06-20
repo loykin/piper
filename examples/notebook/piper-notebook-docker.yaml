@@ -1,24 +1,17 @@
 # piper.yaml snippet — bare-metal Docker notebook worker configuration.
 
-version: 1
+version: 2
 workers:
   common:
-    agent_addr: localhost:9090
+    master_url: http://localhost:8080
   notebook:
     mode: docker
     notebooks_root: /data/notebooks
     port_range: "8888-9900"
 
     docker:
-      image: jupyter/scipy-notebook:latest
       network: bridge
-      cpus: "4"
-      memory: "8g"
-      shm_size: "1g"
-      read_only_root: false
-      user: "1000"
-
-    # Named volumes that notebooks may reference in spec.docker.volumes.
+      # Host mount allowlist; workload resource settings belong in the manifest.
       volumes:
         - name: datasets
           host_path: /mnt/datasets

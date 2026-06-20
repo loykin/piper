@@ -13,8 +13,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,8 +28,6 @@ import (
 
 // Config holds Runner configuration.
 type Config struct {
-	MasterURL    string
-	WorkerToken  string
 	StorageToken string
 	OutputDir    string // local output root directory
 	InputDir     string // local input root directory
@@ -48,9 +44,8 @@ type Config struct {
 
 // Runner executes a single task.
 type Runner struct {
-	cfg    Config
-	client *http.Client
-	store  storage.Store // nil means local filesystem only (no artifact transfer)
+	cfg   Config
+	store storage.Store // nil means local filesystem only (no artifact transfer)
 	// cleanWorkdir is true when artifacts are stored remotely and local dirs are transient.
 	cleanWorkdir bool
 }
@@ -65,8 +60,7 @@ func New(cfg Config) (*Runner, error) {
 	}
 
 	r := &Runner{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 10 * time.Second},
+		cfg: cfg,
 	}
 
 	if cfg.StorageURL != "" {
@@ -119,19 +113,10 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 		defer func() { _ = logFile.Close() }()
 	}
 
-	// Log collector
-	logger := newBatchLogger(r, task.ProjectID, task.RunID, task.StepName, logFile)
-
-	// Periodically flush logs to master while the task is running
-	flushCtx, stopFlush := context.WithCancel(ctx)
-	go logger.flushLoop(flushCtx)
+	logger := newLineLogger(logFile)
 
 	// Execute the command
 	execErr := r.execute(ctx, &step, task, stepOutputDir, logger)
-
-	// Stop the flush loop and do a final flush
-	stopFlush()
-	logger.flush(ctx)
 
 	// Upload output artifacts to the store (on success)
 	if execErr == nil && r.store != nil && len(step.Outputs) > 0 {
@@ -141,57 +126,25 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 		}
 	}
 
-	// Report .metrics.json if present and step succeeded
-	if execErr == nil {
-		r.reportFinalMetrics(ctx, task.ProjectID, task.RunID, step.Name, stepOutputDir)
-	}
-
 	if execErr != nil {
 		return r.failedResult(task, execErr, startedAt)
 	}
-	return r.doneResult(task, startedAt)
+	result := r.doneResult(task, startedAt)
+	result.Metrics = readFinalMetrics(task.RunID, step.Name, stepOutputDir)
+	return result
 }
 
-// reportFinalMetrics reads .metrics.json from the step output dir and POSTs it to master.
-func (r *Runner) reportFinalMetrics(ctx context.Context, projectID, runID, stepName, outputDir string) {
-	if r.cfg.MasterURL == "" {
-		return
-	}
+func readFinalMetrics(runID, stepName, outputDir string) map[string]float64 {
 	data, err := os.ReadFile(filepath.Join(outputDir, ".metrics.json"))
 	if err != nil {
-		return // file not present — normal
+		return nil
 	}
 	var vals map[string]float64
 	if err := json.Unmarshal(data, &vals); err != nil || len(vals) == 0 {
 		slog.Warn("metrics.json parse failed or empty", "run_id", runID, "step", stepName, "err", err)
-		return
+		return nil
 	}
-	payload, _ := json.Marshal(vals)
-	endpoint := workerRunURL(r.cfg.MasterURL, projectID, runID, stepName, "final-metrics")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	r.setAuth(req)
-	resp, err := r.client.Do(req)
-	if err != nil {
-		slog.Warn("final metrics report failed", "run_id", runID, "step", stepName, "err", err)
-		return
-	}
-	_ = resp.Body.Close()
-}
-
-// Report posts the TaskResult to the master via HTTP.
-// No-op when MasterURL is not configured.
-func (r *Runner) Report(result proto.TaskResult) {
-	r.report(result.TaskID, result.Status, taskResult{
-		WorkerID:  result.WorkerID,
-		StartedAt: result.StartedAt,
-		EndedAt:   result.EndedAt,
-		Error:     result.Error,
-		Attempt:   result.Attempt,
-	})
+	return vals
 }
 
 // ─── Execution ────────────────────────────────────────────────────────────────
@@ -201,7 +154,7 @@ func (r *Runner) execute(
 	step *pipeline.Step,
 	task *proto.Task,
 	outputDir string,
-	logger *batchLogger,
+	logger *lineLogger,
 ) error {
 	// io.Writer that intercepts stdout/stderr line by line
 	stdoutW := &lineWriter{stream: "stdout", logger: logger, tee: os.Stdout}
@@ -232,10 +185,11 @@ func (r *Runner) execute(
 	return err
 }
 
-// lineWriter implements io.Writer and writes to batchLogger line by line.
+// lineWriter writes complete lines locally while teeing stdout/stderr to the
+// parent worker process, which owns remote log delivery.
 type lineWriter struct {
 	stream string
-	logger *batchLogger
+	logger *lineLogger
 	tee    io.Writer
 	buf    []byte
 }
@@ -265,98 +219,26 @@ func (w *lineWriter) Close() {
 	w.logger.append(w.stream, line)
 }
 
-// ─── Batch logging ────────────────────────────────────────────────────────────
-
-type logEntry struct {
-	Ts     time.Time `json:"ts"`
-	Stream string    `json:"stream"`
-	Line   string    `json:"line"`
+type lineLogger struct {
+	mu   sync.Mutex
+	file *os.File
 }
 
-type batchLogger struct {
-	mu        sync.Mutex
-	entries   []logEntry
-	r         *Runner
-	projectID string
-	runID     string
-	stepName  string
-	file      *os.File
-}
+func newLineLogger(file *os.File) *lineLogger { return &lineLogger{file: file} }
 
-const logFlushInterval = 2 * time.Second
-
-func newBatchLogger(r *Runner, projectID, runID, stepName string, file *os.File) *batchLogger {
-	return &batchLogger{r: r, projectID: projectID, runID: runID, stepName: stepName, file: file}
-}
-
-// flushLoop sends buffered logs to the master every logFlushInterval.
-// Run in a goroutine; cancel ctx to stop.
-func (l *batchLogger) flushLoop(ctx context.Context) {
-	ticker := time.NewTicker(logFlushInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			l.flush(ctx)
-		}
-	}
-}
-
-func (l *batchLogger) append(stream, line string) {
+func (l *lineLogger) append(stream, line string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.entries = append(l.entries, logEntry{Ts: time.Now(), Stream: stream, Line: line})
 	if l.file != nil {
 		_, _ = fmt.Fprintf(l.file, "[%s] %s\n", stream, line)
 	}
 }
 
-func (l *batchLogger) flush(ctx context.Context) {
-	l.mu.Lock()
-	entries := l.entries
-	l.entries = nil
-	l.mu.Unlock()
-
-	if len(entries) == 0 || l.r.cfg.MasterURL == "" {
-		return
-	}
-
-	data, err := json.Marshal(entries)
-	if err != nil {
-		slog.Warn("log marshal error", "err", err)
-		return
-	}
-
-	endpoint := workerRunURL(l.r.cfg.MasterURL, l.projectID, l.runID, l.stepName, "logs")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(data))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	l.r.setAuth(req)
-
-	resp, err := l.r.client.Do(req)
-	if err != nil {
-		slog.Warn("log flush failed", "err", err)
-		return
-	}
-	_ = resp.Body.Close()
-}
-
 // ─── Reporting ────────────────────────────────────────────────────────────────
-
-type taskResult struct {
-	Error     string    `json:"error,omitempty"`
-	WorkerID  string    `json:"worker_id,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at"`
-	Attempt   int       `json:"attempt"`
-}
 
 func (r *Runner) doneResult(task *proto.Task, startedAt time.Time) proto.TaskResult {
 	return proto.TaskResult{
+		ProjectID: task.ProjectID,
 		TaskID:    task.ID,
 		WorkerID:  task.WorkerID,
 		Status:    proto.TaskStatusDone,
@@ -369,6 +251,7 @@ func (r *Runner) doneResult(task *proto.Task, startedAt time.Time) proto.TaskRes
 func (r *Runner) failedResult(task *proto.Task, err error, startedAt time.Time) proto.TaskResult {
 	slog.Error("task failed", "task_id", task.ID, "err", err)
 	return proto.TaskResult{
+		ProjectID: task.ProjectID,
 		TaskID:    task.ID,
 		WorkerID:  task.WorkerID,
 		Status:    proto.TaskStatusFailed,
@@ -377,48 +260,6 @@ func (r *Runner) failedResult(task *proto.Task, err error, startedAt time.Time) 
 		EndedAt:   time.Now(),
 		Attempt:   task.Attempt,
 	}
-}
-
-func (r *Runner) report(taskID, status string, result taskResult) {
-	if r.cfg.MasterURL == "" {
-		return
-	}
-	data, err := json.Marshal(result)
-	if err != nil {
-		return
-	}
-	endpoint := fmt.Sprintf("%s/api/tasks/%s/%s", r.cfg.MasterURL, taskID, status)
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(data))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	r.setAuth(req)
-
-	resp, err := r.client.Do(req)
-	if err != nil {
-		slog.Error("report error", "task_id", taskID, "status", status, "err", err)
-		return
-	}
-	_ = resp.Body.Close()
-	slog.Info("task reported", "task_id", taskID, "status", status)
-}
-
-func (r *Runner) setAuth(req *http.Request) {
-	if r.cfg.WorkerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+r.cfg.WorkerToken)
-	}
-}
-
-func workerRunURL(masterURL, projectID, runID, stepName, action string) string {
-	return fmt.Sprintf(
-		"%s/api/projects/%s/runs/%s/steps/%s/%s",
-		strings.TrimRight(masterURL, "/"),
-		url.PathEscape(projectID),
-		url.PathEscape(runID),
-		url.PathEscape(stepName),
-		action,
-	)
 }
 
 // ─── Artifact transfer ────────────────────────────────────────────────────────

@@ -63,7 +63,7 @@ func requireBinary(t *testing.T) string {
 // The test verifies the full CLI path:
 //  1. Write a real piper.yaml with S3 credentials.
 //  2. Start `piper server --config piper.yaml` as a subprocess.
-//  3. Start `piper worker --config piper.yaml --master …` as a subprocess.
+//  3. Start `piper worker --config piper.yaml --master-url …` as a subprocess.
 //  4. Submit a pipeline that produces an output artifact.
 //  5. Assert that the artifact appears in fake-S3.
 //
@@ -89,9 +89,7 @@ func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
 	// The server's SQLite DB lands at workDir/piper-outputs/piper.db (default).
 	workDir := t.TempDir()
 	serverPort := freeLocalPort(t)
-	agentPort := freeLocalPort(t)
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", serverPort)
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
 
 	configPath := filepath.Join(workDir, "piper.yaml")
 	writeBinaryE2EFile(t, configPath, fmt.Sprintf(`
@@ -105,10 +103,10 @@ source:
 `, s3Endpoint, bucket))
 
 	// ── Server subprocess ─────────────────────────────────────────────────────
-	// Pass --addr and --agent-addr explicitly: server.addr in the config file is
+	// Pass --addr explicitly: server.addr in the config file is
 	// ignored because buildConfig() runs before initConfig() loads the YAML.
 	listenAddr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	srvCmd := exec.Command(binary, "server", "--config", configPath, "--addr", listenAddr, "--agent-addr", agentAddr)
+	srvCmd := exec.Command(binary, "server", "--config", configPath, "--addr", listenAddr)
 	srvCmd.Dir = workDir
 	srvCmd.Stdout = os.Stdout
 	srvCmd.Stderr = os.Stderr
@@ -123,8 +121,8 @@ source:
 	binaryE2ECreateProject(t, serverURL, "e2e")
 
 	// ── Worker subprocess ─────────────────────────────────────────────────────
-	// --master and --agent-addr are required; S3 credentials come from the config file.
-	wrkCmd := exec.Command(binary, "worker", "--config", configPath, "--master", serverURL, "--agent-addr", agentAddr)
+	// The worker opens one outbound tunnel; S3 credentials come from the config file.
+	wrkCmd := exec.Command(binary, "worker", "--config", configPath, "--master-url", serverURL)
 	wrkCmd.Dir = workDir
 	wrkCmd.Stdout = os.Stdout
 	wrkCmd.Stderr = os.Stderr

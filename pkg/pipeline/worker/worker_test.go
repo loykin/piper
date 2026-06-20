@@ -9,7 +9,7 @@ import (
 
 func TestNewWorker_defaultsApplied(t *testing.T) {
 	w, err := worker.New(worker.Config{
-		Agent: worker.AgentConfig{Addr: "localhost:9090", ID: "test-worker"},
+		Agent: worker.AgentConfig{MasterURL: "http://localhost:8080", ID: "test-worker"},
 	})
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
@@ -17,9 +17,8 @@ func TestNewWorker_defaultsApplied(t *testing.T) {
 	_ = w
 }
 
-func TestNewWorker_missingAgentAddr(t *testing.T) {
-	// AgentAddr is required; grpcagent.NewClient validates it on Run, not New.
-	// New() itself should succeed even without AgentAddr (validated at connect time).
+func TestNewWorker_missingMasterURL(t *testing.T) {
+	// MasterURL is validated when the tunnel connects, not by New.
 	_, err := worker.New(worker.Config{Agent: worker.AgentConfig{ID: "test-worker"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

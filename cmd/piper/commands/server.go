@@ -39,20 +39,28 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			addr, agentAddr := root.Server.HTTPAddr, root.Server.AgentAddr
+			addr := root.Server.HTTPAddr
 			local, localConcurrency := root.Server.Local.Enabled, root.Workers.Pipeline.Concurrency
 
 			if !local {
-				return p.Serve(ctx, piper.ServeOption{Addr: addr, AgentAddr: agentAddr})
+				return p.Serve(ctx, piper.ServeOption{Addr: addr})
 			}
 
 			// Embedded local pipeline worker: connects to the local gRPC agent server.
 			hostname, _ := os.Hostname()
-			localAgentAddr := p.Config().Server.AgentAddr
-			if localAgentAddr == "" {
-				localAgentAddr = ":9090"
+			localMaster := localMasterURL(addr)
+			pipelineID, err := loadOrCreateWorkerID(root.Workers.Common.StateDir, "local-pipeline")
+			if err != nil {
+				return err
 			}
-			localAgentConnAddr := localAgentConnURL(localAgentAddr)
+			servingID, err := loadOrCreateWorkerID(root.Workers.Common.StateDir, "local-serving")
+			if err != nil {
+				return err
+			}
+			notebookID, err := loadOrCreateWorkerID(root.Workers.Common.StateDir, "local-notebook")
+			if err != nil {
+				return err
+			}
 
 			workerToken := p.Config().Server.WorkerToken
 			if root.Workers.Common.WorkerToken != "" {
@@ -65,15 +73,14 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 
 			wCfg := worker.Config{
 				Agent: worker.AgentConfig{
-					Addr:        localAgentConnAddr,
+					MasterURL:   localMaster,
 					WorkerToken: workerToken,
-					ID:          worker.NewID("local"),
+					ID:          pipelineID,
+					Labels:      root.Workers.Common.Labels,
 					Label:       root.Workers.Pipeline.Label,
 					Concurrency: localConcurrency,
 				},
 				Store: worker.StoreConfig{
-					MasterURL:    localMasterURL(addr),
-					WorkerToken:  workerToken,
 					StorageToken: storageToken,
 					OutputDir:    root.Workers.Pipeline.OutputDir,
 					StorageURL:   root.Storage.URL,
@@ -82,7 +89,7 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 				},
 				Runtime:   worker.RuntimeType(root.Workers.Pipeline.Runtime),
 				Baremetal: worker.BaremetalConfig{MetaDir: root.Workers.Pipeline.MetaDir},
-				Docker:    worker.DockerConfig{DefaultImage: root.Workers.Pipeline.Docker.DefaultImage, Network: root.Workers.Pipeline.Docker.Network},
+				Docker:    worker.DockerConfig{Network: root.Workers.Pipeline.Docker.Network},
 			}
 			var w *worker.Worker
 			if root.Server.Local.Pipeline {
@@ -91,24 +98,25 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 					return fmt.Errorf("embedded worker: %w", err)
 				}
 			}
-			slog.Info("embedded local worker enabled", "agent_addr", localAgentConnAddr, "concurrency", localConcurrency)
+			slog.Info("embedded local worker enabled", "master_url", localMaster, "concurrency", localConcurrency)
 
 			sw := servingworker.New(servingworker.Config{
-				AgentAddr:   localAgentConnAddr,
+				MasterURL:   localMaster,
 				WorkerToken: workerToken,
 				Hostname:    hostname,
-				ID:          stableWorkerID("serving", hostname, "local"),
+				ID:          servingID,
+				Labels:      root.Workers.Common.Labels,
 				GPUs:        root.Workers.Serving.GPUs,
 				Mode:        root.Workers.Serving.Mode,
-				Docker:      servingworker.DockerConfig{Image: root.Workers.Serving.Docker.Image, Network: root.Workers.Serving.Docker.Network},
+				Docker:      servingworker.DockerConfig{Network: root.Workers.Serving.Docker.Network},
 			})
 
-			notebookMode := effectiveNotebookMode(p.Config().NotebookWorker.Mode)
 			nw := notebookworker.New(notebookworker.Config{
-				AgentAddr:     localAgentConnAddr,
+				MasterURL:     localMaster,
 				WorkerToken:   workerToken,
 				Hostname:      hostname,
-				ID:            stableWorkerID("notebook", hostname, notebookMode, "local"),
+				ID:            notebookID,
+				Labels:        root.Workers.Common.Labels,
 				NotebooksRoot: p.Config().NotebookWorker.NotebooksRoot,
 				PortRange:     p.Config().NotebookWorker.PortRange,
 				Mode:          p.Config().NotebookWorker.Mode,
@@ -118,7 +126,7 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 
 			eg, gctx := errgroup.WithContext(ctx)
 			eg.Go(func() error {
-				return p.Serve(gctx, piper.ServeOption{Addr: addr, AgentAddr: localAgentAddr})
+				return p.Serve(gctx, piper.ServeOption{Addr: addr})
 			})
 			if root.Server.Local.Pipeline {
 				eg.Go(func() error { return w.Run(gctx) })
@@ -134,7 +142,6 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 	}
 
 	cmd.Flags().String("addr", "", "listen address (default :8080)")
-	cmd.Flags().String("agent-addr", "", "gRPC agent listen address (default from config)")
 	cmd.Flags().Bool("tls", false, "enable TLS")
 	cmd.Flags().String("tls-cert", "", "TLS certificate file")
 	cmd.Flags().String("tls-key", "", "TLS key file")
@@ -142,7 +149,6 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 	cmd.Flags().Int("local-concurrency", 0, "concurrency for the embedded local worker")
 
 	loader.MustBindFlag("server.http_addr", cmd.Flags().Lookup("addr"))
-	loader.MustBindFlag("server.agent_addr", cmd.Flags().Lookup("agent-addr"))
 	loader.MustBindFlag("server.tls.enabled", cmd.Flags().Lookup("tls"))
 	loader.MustBindFlag("server.tls.cert_file", cmd.Flags().Lookup("tls-cert"))
 	loader.MustBindFlag("server.tls.key_file", cmd.Flags().Lookup("tls-key"))
@@ -154,15 +160,7 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 
 func notebookWorkerDockerConfig(cfg piper.NotebookWorkerDockerConfig) notebookworker.DockerConfig {
 	out := notebookworker.DockerConfig{
-		Image:        cfg.Image,
-		Network:      cfg.Network,
-		CPUs:         cfg.CPUs,
-		Memory:       cfg.Memory,
-		ShmSize:      cfg.ShmSize,
-		ReadOnlyRoot: cfg.ReadOnlyRoot,
-		Tmpfs:        cfg.Tmpfs,
-		User:         cfg.User,
-		ExtraArgs:    cfg.ExtraArgs,
+		Network: cfg.Network,
 	}
 	if len(cfg.Volumes) > 0 {
 		out.Volumes = make([]notebookworker.DockerVolume, len(cfg.Volumes))
@@ -188,16 +186,4 @@ func localMasterURL(addr string) string {
 		return "http://localhost" + addr[idx:]
 	}
 	return "http://" + addr
-}
-
-// localAgentConnURL converts a gRPC listen address like ":9090" or "0.0.0.0:9090"
-// to "localhost:9090" for the embedded serving/notebook workers to dial.
-func localAgentConnURL(addr string) string {
-	if strings.HasPrefix(addr, ":") {
-		return "localhost" + addr
-	}
-	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		return "localhost" + addr[idx:]
-	}
-	return addr
 }

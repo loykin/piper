@@ -31,8 +31,10 @@ type FSListFilesResponse struct {
 }
 
 type WorkerProvisionVolumeRequest struct {
-	VolumeID    string `json:"volume_id"`
-	StorageSize string `json:"storage_size,omitempty"`
+	VolumeID     string `json:"volume_id"`
+	Namespace    string `json:"namespace,omitempty"`
+	StorageSize  string `json:"storage_size,omitempty"`
+	StorageClass string `json:"storage_class,omitempty"`
 }
 
 type WorkerProvisionVolumeResponse struct {
@@ -42,7 +44,6 @@ type WorkerProvisionVolumeResponse struct {
 type WorkerStartRequest struct {
 	ProjectID string `json:"project_id"`
 	YAML      string `json:"yaml"`
-	MasterURL string `json:"master_url,omitempty"`
 	WorkDir   string `json:"work_dir"`
 	VolumeID  string `json:"volume_id"`
 }

@@ -5,14 +5,18 @@ metadata:
   name: my-notebook
 
 spec:
-  k8s:
-    image: jupyter/scipy-notebook:latest  # overrides server-level worker_image
-    storage_class: standard               # PVC storage class; omit for cluster default
-    storage_size: 20Gi
+  volume:
+    storage_class: standard
+    size: 20Gi
+  driver:
+    placement:
+      runtime: k8s
+    k8s:
+      namespace: piper-notebooks
+      image: jupyter/scipy-notebook:latest
 
     # pod_template is a standard Kubernetes PodTemplateSpec.
     # The notebook container must be named "notebook".
-    # These fields are merged on top of the server-level pod_defaults.
     pod_template:
       metadata:
         labels:

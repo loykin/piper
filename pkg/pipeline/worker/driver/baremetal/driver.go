@@ -17,6 +17,7 @@ import (
 
 	"github.com/loykin/provisr/core"
 	"github.com/loykin/provisr/core/history"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 	"github.com/piper/piper/pkg/pipeline/worker/driver"
@@ -113,14 +114,11 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 	resultPath := filepath.Join(resultDir, spec.RuntimeKey+".result.json")
 
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
-		MasterURL:    spec.MasterURL,
-		WorkerToken:  spec.WorkerToken,
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    spec.OutputDir,
 		InputDir:     spec.OutputDir,
 		ResultFile:   resultPath,
-		ReportMode:   agent.ReportModeFile,
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)
@@ -154,12 +152,18 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 	d.active[spec.RuntimeKey] = aj
 	d.mu.Unlock()
 
+	var logConfig core.LogConfig
+	if spec.LogSink != nil {
+		logConfig.File.StdoutWriter = logsink.NewLineWriter(spec.LogSink, task.RunID, task.StepName, "stdout")
+		logConfig.File.StderrWriter = logsink.NewLineWriter(spec.LogSink, task.RunID, task.StepName, "stderr")
+	}
 	if regErr := d.manager.Register(core.Spec{
 		Name:        spec.RuntimeKey, // exact name = runtimeKey, exitSink matches this
 		Args:        args,
 		Env:         spec.Env,
 		AutoRestart: false,
 		PIDFile:     pidFile,
+		Log:         logConfig,
 	}); regErr != nil {
 		err = regErr
 	}

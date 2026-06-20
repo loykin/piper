@@ -239,7 +239,7 @@ func newFakeDriver() *fakeDriver {
 	}
 }
 
-func (d *fakeDriver) ProvisionVolume(_ context.Context, vol *NotebookVolume, _ string) error {
+func (d *fakeDriver) ProvisionVolume(_ context.Context, vol *NotebookVolume, _ Notebook) error {
 	if d.provisionWork != nil {
 		d.provisionWork(vol)
 	}

@@ -53,14 +53,7 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt, err := NewWithClient(Config{
-		Image:   "jupyter/scipy-notebook:latest",
 		Network: "bridge",
-		CPUs:    "2",
-		Memory:  "4g",
-		ShmSize: "1g",
-		ExtraArgs: []string{
-			"--ServerApp.disable_check_xsrf=true",
-		},
 		Volumes: []Volume{{
 			Name:          "datasets",
 			HostPath:      datasets,
@@ -74,7 +67,11 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	var spec notebook.Notebook
 	spec.Metadata.Name = "analysis"
 	spec.Spec.Driver.Docker = &manifest.DriverDockerSpec{
-		Volumes: []string{"datasets"},
+		Image:    "jupyter/scipy-notebook:latest",
+		CPUs:     "2",
+		MemLimit: "4g",
+		ShmSize:  "1g",
+		Volumes:  []string{"datasets"},
 		Deploy: &manifest.DockerDeploySpec{
 			Resources: manifest.DockerDeployResources{
 				Reservations: &manifest.DockerReservations{
@@ -124,9 +121,6 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	if !opts.HostConfig.Mounts[1].ReadOnly {
 		t.Fatal("datasets mount should be read-only")
 	}
-	if got := opts.Config.Cmd[len(opts.Config.Cmd)-1]; got != "--ServerApp.disable_check_xsrf=true" {
-		t.Fatalf("last command arg = %q", got)
-	}
 	wantArgs := notebook.JupyterStartArgs("/notebooks/analysis/proxy/", "", notebook.ContainerWorkDir, 8888)
 	for i, want := range wantArgs {
 		if opts.Config.Cmd[i] != want {
@@ -160,13 +154,13 @@ func TestDockerRuntimeRejectsUnallowedVolume(t *testing.T) {
 }
 
 func TestDockerRuntimePrepWrapsLaunchCommand(t *testing.T) {
-	rt, err := NewWithClient(Config{Image: "jupyter/scipy-notebook:latest"}, "test-agent", &fakeDockerClient{})
+	rt, err := NewWithClient(Config{}, "test-agent", &fakeDockerClient{})
 	if err != nil {
 		t.Fatalf("new runtime: %v", err)
 	}
 	var spec notebook.Notebook
 	spec.Metadata.Name = "analysis"
-	spec.Spec.Driver.Docker = &manifest.DriverDockerSpec{}
+	spec.Spec.Driver.Docker = &manifest.DriverDockerSpec{Image: "jupyter/scipy-notebook:latest"}
 	spec.Spec.Prepare = &notebook.NotebookPrepareSpec{
 		Steps: []notebook.NotebookPrepareStep{
 			{Type: notebook.PrepareStepCommand, Backend: notebook.PrepareBackendDocker, Command: []string{"bash", "-lc", "echo docker prep"}},
@@ -238,7 +232,7 @@ func TestDockerGPUResources(t *testing.T) {
 			},
 		},
 	}
-	all, err := dockerResources(Config{}, allDS)
+	all, err := dockerResources(allDS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +253,7 @@ func TestDockerGPUResources(t *testing.T) {
 			},
 		},
 	}
-	selected, err := dockerResources(Config{}, selectedDS)
+	selected, err := dockerResources(selectedDS)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -123,8 +123,8 @@ func (l *Loader) Load() (RootConfig, error) {
 		l.loadErr = fmt.Errorf("config: %w", err)
 		return RootConfig{}, l.loadErr
 	}
-	if cfg.Version != 1 {
-		l.loadErr = fmt.Errorf("config: version must be 1")
+	if cfg.Version != 2 {
+		l.loadErr = fmt.Errorf("config: version must be 2")
 		return RootConfig{}, l.loadErr
 	}
 	l.cached = &cfg
@@ -174,8 +174,8 @@ func strictFile(path string) error {
 	if err := dec.Decode(&cfg); err != nil {
 		return fmt.Errorf("config file %s: %w", path, err)
 	}
-	if cfg.Version != 1 {
-		return fmt.Errorf("config file %s: version must be 1", path)
+	if cfg.Version != 2 {
+		return fmt.Errorf("config file %s: version must be 2", path)
 	}
 	return nil
 }
@@ -223,6 +223,8 @@ func validateYAMLNode(node *yaml.Node, typ reflect.Type, prefix string) error {
 			}
 		}
 	case reflect.Map:
+		return nil
+	default:
 		return nil
 	}
 	return nil

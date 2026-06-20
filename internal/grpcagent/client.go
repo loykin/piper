@@ -2,15 +2,18 @@ package grpcagent
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
@@ -19,8 +22,8 @@ import (
 
 // ClientConfig holds connection parameters for a worker-side gRPC client.
 type ClientConfig struct {
-	// AgentAddr is the gRPC address of the master agent server, e.g. "master:9090".
-	AgentAddr string
+	// MasterURL is the single HTTP(S) endpoint used for the agent tunnel.
+	MasterURL string
 	// AgentID uniquely identifies this worker.
 	AgentID string
 	// WorkerToken is the bearer token sent in gRPC authorization metadata.
@@ -63,8 +66,8 @@ func (c *Client) Dispatcher() *Dispatcher { return c.dispatcher }
 // Run connects to the master and serves RPC frames, reconnecting on disconnect.
 // Blocks until ctx is cancelled.
 func (c *Client) Run(ctx context.Context) error {
-	if c.cfg.AgentAddr == "" {
-		return fmt.Errorf("grpc client: AgentAddr is required")
+	if c.cfg.MasterURL == "" {
+		return fmt.Errorf("grpc client: MasterURL is required")
 	}
 	if c.cfg.AgentID == "" {
 		return fmt.Errorf("grpc client: AgentID is required")
@@ -102,9 +105,17 @@ func (c *Client) SendPush(method string, payload any) error {
 }
 
 func (c *Client) connectAndServe(ctx context.Context) error {
-	conn, err := grpc.NewClient(c.cfg.AgentAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	u, err := url.Parse(c.cfg.MasterURL)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("grpc client: invalid MasterURL %q", c.cfg.MasterURL)
+	}
+	var transport credentials.TransportCredentials
+	if u.Scheme == "https" {
+		transport = credentials.NewTLS(&tls.Config{ServerName: u.Hostname(), MinVersion: tls.VersionTLS12})
+	} else {
+		transport = insecure.NewCredentials()
+	}
+	conn, err := grpc.NewClient(u.Host, grpc.WithTransportCredentials(transport))
 	if err != nil {
 		return err
 	}
@@ -183,7 +194,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	slog.Info("grpc agent registered with master", "id", c.cfg.AgentID, "addr", c.cfg.AgentAddr)
+	slog.Info("grpc agent registered with master", "id", c.cfg.AgentID, "master_url", c.cfg.MasterURL)
 
 	for {
 		msg, err := stream.Recv()

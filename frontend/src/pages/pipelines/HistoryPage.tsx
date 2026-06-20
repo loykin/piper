@@ -70,6 +70,7 @@ function HistoryPageInner() {
           rowHeight={44}
           rowCursor
           onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 720 })}
+          initialSorting={[{ id: 'started_at', desc: true }]}
           pagination={{ pageSize: 20 }}
           footer={(table) => (
             <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">

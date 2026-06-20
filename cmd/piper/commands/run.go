@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"os"
-	"time"
 
 	cliconfig "github.com/piper/piper/cmd/piper/config"
 	"github.com/piper/piper/pkg/pipeline"
@@ -35,14 +34,8 @@ func newRunCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command {
 	}
 
 	cmd.Flags().String("output-dir", "", "root directory for step outputs")
-	cmd.Flags().Int("retries", 0, "max retries per step")
-	cmd.Flags().Duration("retry-delay", 0*time.Second, "delay between retries")
-	cmd.Flags().Int("concurrency", 0, "max parallel steps (0 = unlimited)")
 
-	loader.MustBindFlag("server.run.output_dir", cmd.Flags().Lookup("output-dir"))
-	loader.MustBindFlag("server.run.retries", cmd.Flags().Lookup("retries"))
-	loader.MustBindFlag("server.run.retry_delay", cmd.Flags().Lookup("retry-delay"))
-	loader.MustBindFlag("server.run.concurrency", cmd.Flags().Lookup("concurrency"))
+	loader.MustBindFlag("server.data_dir", cmd.Flags().Lookup("output-dir"))
 
 	return cmd
 }

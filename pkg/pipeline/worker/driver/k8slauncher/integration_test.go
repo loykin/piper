@@ -6,20 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
-	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/worker/driver"
+	taskruntime "github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
 const testKubeconfig = "/Users/loykin/.kube/config"
@@ -110,46 +105,11 @@ func TestIntegration_SimpleJob(t *testing.T) {
 //     - Docker Desktop: enable Settings → Experimental → "Use containerd for pulling and storing images", then run:
 //     make docker IMAGE=piper/agent:latest
 //     - Or push to a registry and set the PIPER_AGENT_IMAGE env var
-//
-// The fake master listens on 0.0.0.0 so the agent Pod can reach it.
-// Set PIPER_TEST_HOST to override the hostname the Pod uses (default: host.docker.internal).
 func TestIntegration_DispatchJob(t *testing.T) {
 	agentImage := os.Getenv("PIPER_AGENT_IMAGE")
 	if agentImage == "" {
 		t.Skip("PIPER_AGENT_IMAGE env var is not set (e.g. localhost:5000/piper/agent:latest)")
 	}
-
-	// ── Fake master ──────────────────────────────────────────────────────────
-	// Bind on all interfaces so the K8s Pod can reach the host.
-	var doneCalled atomic.Bool
-	var failedCalled atomic.Bool
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/tasks/", func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/done"):
-			doneCalled.Store(true)
-			t.Logf("fake master: received /done")
-		case strings.HasSuffix(r.URL.Path, "/failed"):
-			failedCalled.Store(true)
-			t.Logf("fake master: received /failed")
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/runs/", func(w http.ResponseWriter, r *http.Request) {
-		// log flush endpoint: /runs/{id}/steps/{name}/logs
-		t.Logf("fake master: received logs")
-		w.WriteHeader(http.StatusOK)
-	})
-
-	fakeSrv := testutil.NewIPv4Server(t, mux)
-	port := fakeSrv.ListenerAddr().(*net.TCPAddr).Port
-	testHost := os.Getenv("PIPER_TEST_HOST")
-	if testHost == "" {
-		testHost = "host.docker.internal" // Docker Desktop default
-	}
-	masterURL := fmt.Sprintf("http://%s:%d", testHost, port)
-	t.Logf("fake master listening on %s (pod → %s)", fakeSrv.URL, masterURL)
 
 	// ── Launcher ─────────────────────────────────────────────────────────────
 	l := newTestLauncher(t)
@@ -164,7 +124,6 @@ func TestIntegration_DispatchJob(t *testing.T) {
 	step := pipeline.Step{
 		Name: stepName,
 		Run: pipeline.Run{
-			Image:   "alpine:3.20",
 			Command: []string{"sh", "-c", "echo hello-from-piper-agent && sleep 1"},
 		},
 	}
@@ -181,10 +140,9 @@ func TestIntegration_DispatchJob(t *testing.T) {
 	}
 
 	args, err := taskruntime.BuildAgentExec(task, taskruntime.AgentExecConfig{
-		MasterURL:  masterURL,
 		OutputDir:  "/piper-outputs",
 		InputDir:   "/piper-inputs",
-		ReportMode: taskruntime.ReportModeHTTP,
+		ResultFile: "/dev/termination-log",
 	})
 	if err != nil {
 		t.Fatalf("build agent args: %v", err)
@@ -202,12 +160,13 @@ func TestIntegration_DispatchJob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// ── Verify agent reported back ────────────────────────────────────────────
-	if !doneCalled.Load() && !failedCalled.Load() {
-		t.Error("agent did not call back to master (neither /done nor /failed received)")
-	}
-	if failedCalled.Load() {
-		t.Error("agent reported /failed — check job logs")
+	var got proto.TaskResult
+	l.ReconcileJobs(ctx, func(_ context.Context, result proto.TaskResult) error {
+		got = result
+		return nil
+	})
+	if got.TaskID != task.ID || got.Status != proto.TaskStatusDone {
+		t.Fatalf("termination result = %+v", got)
 	}
 }
 

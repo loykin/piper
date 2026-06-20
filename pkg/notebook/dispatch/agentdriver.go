@@ -30,15 +30,17 @@ func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo ...notebook.Reposi
 	return d
 }
 
-func (d *AgentDriver) ProvisionVolume(ctx context.Context, vol *notebook.NotebookVolume, storageSize string) error {
+func (d *AgentDriver) ProvisionVolume(ctx context.Context, vol *notebook.NotebookVolume, spec notebook.Notebook) error {
 	agentInfo, err := d.selectAgent(vol.WorkerID)
 	if err != nil {
 		return err
 	}
 	var result notebook.WorkerProvisionVolumeResponse
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookProvisionVolume, map[string]any{
-		"volume_id":    vol.ID,
-		"storage_size": storageSize,
+		"volume_id":     vol.ID,
+		"namespace":     spec.K8sNamespace(),
+		"storage_size":  spec.StorageSize(),
+		"storage_class": spec.StorageClass(),
 	}, &result); err != nil {
 		return fmt.Errorf("notebook agent provision volume: %w", err)
 	}

@@ -37,7 +37,6 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	drv, err := New(Config{
 		WorkerID:   "worker-1",
-		Namespace:  "default",
 		Namespaces: []string{"jobs"},
 		AgentImage: "piper:test",
 		K8sClient:  client,
@@ -51,8 +50,6 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 		RuntimeKey:   "worker-1-run-1-train-a1",
 		Image:        "python:3.12", // pre-resolved by the worker layer
 		Namespace:    "jobs",        // pre-resolved by the worker layer
-		MasterURL:    "http://master:8080",
-		WorkerToken:  "worker-token",
 		StorageToken: "storage-token",
 		StorageURL:   "s3://bucket",
 		Env:          []string{"PIPER_GIT_USER=test-user"},
@@ -76,9 +73,6 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	}
 	args := job.Spec.Template.Spec.Containers[0].Args
 	for _, want := range []string{
-		"--report-mode=file",
-		"--master=http://master:8080",
-		"--worker-token=worker-token",
 		"--storage-token=storage-token",
 		"--storage-url=s3://bucket",
 		"--result-file=/dev/termination-log",
@@ -128,7 +122,7 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	}
 }
 
-func TestDriverRecoverDiscoversDynamicNamespaceAndMetadata(t *testing.T) {
+func TestDriverRecoverScansAllowedNamespaceAndMetadata(t *testing.T) {
 	client := fake.NewSimpleClientset(&batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "piper-run-step-a2",
@@ -146,9 +140,9 @@ func TestDriverRecoverDiscoversDynamicNamespaceAndMetadata(t *testing.T) {
 		},
 	})
 	drv, err := New(Config{
-		WorkerID:  "worker-1",
-		Namespace: "default",
-		K8sClient: client,
+		WorkerID:   "worker-1",
+		Namespaces: []string{"dynamic-jobs"},
+		K8sClient:  client,
 	})
 	if err != nil {
 		t.Fatal(err)

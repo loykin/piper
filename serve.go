@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -48,10 +47,6 @@ type ServeOption struct {
 
 	// Addr overrides Config.Server.Addr when non-empty.
 	Addr string
-
-	// AgentAddr overrides Config.Server.AgentAddr for the gRPC agent server.
-	// Useful in --local mode where the gRPC address must be determined at runtime.
-	AgentAddr string
 }
 
 // Serve runs the piper HTTP server.
@@ -95,18 +90,34 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		addr = ":8080"
 	}
 
+	grpcSrv := p.grpcAgentServer.GRPCServer(p.workerTokenGRPCOptions()...)
+	combinedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcSrv.ServeHTTP(w, r)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+
 	srv := &http.Server{
-		Addr:        addr,
-		Handler:     handler,
-		ReadTimeout: 30 * time.Second,
-		IdleTimeout: 120 * time.Second,
+		Addr:              addr,
+		Handler:           combinedHandler,
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 		// WriteTimeout is intentionally unset: SSE streaming endpoints require
-		// an unbounded write deadline.
+		// an unbounded write deadline. ReadTimeout is also unset because the
+		// worker's bidirectional gRPC request body stays open for its lifetime.
 	}
+	srv.Protocols = new(http.Protocols)
+	srv.Protocols.SetHTTP1(true)
+	srv.Protocols.SetUnencryptedHTTP2(true)
 
 	// Graceful shutdown
 	go func() {
 		<-ctx.Done()
+		// gRPC is hosted through ServeHTTP on the shared listener. Its handler
+		// transport does not implement graceful drain; Stop closes active streams.
+		grpcSrv.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
@@ -132,37 +143,11 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		return nil
 	}
 
-	agentAddr := p.cfg.Server.AgentAddr
-	if opt.AgentAddr != "" {
-		agentAddr = opt.AgentAddr
-	}
-	if agentAddr != "" {
-		go p.serveGRPCAgents(ctx, agentAddr)
-	}
-
 	slog.Info("piper server starting (HTTP)", "addr", srv.Addr)
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return err
 	}
 	return nil
-}
-
-// serveGRPCAgents runs the gRPC agent server on addr until ctx is cancelled.
-func (p *Piper) serveGRPCAgents(ctx context.Context, addr string) {
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		slog.Error("grpc agent server: listen failed", "addr", addr, "err", err)
-		return
-	}
-	grpcSrv := p.grpcAgentServer.GRPCServer(p.workerTokenGRPCOptions()...)
-	go func() {
-		<-ctx.Done()
-		grpcSrv.GracefulStop()
-	}()
-	slog.Info("grpc agent server starting", "addr", addr)
-	if err := grpcSrv.Serve(lis); err != nil {
-		slog.Error("grpc agent server stopped", "err", err)
-	}
 }
 
 // newRouter builds the Gin router wired with all domain handlers.
@@ -356,7 +341,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	// Workers and K8s pods reach the store via HTTP using the master URL.
 	p.registerStoreRoutes(r)
 
-	p.registerWorkerRoutes(r, sysAdmin, runHandler)
+	p.registerWorkerRoutes(sysAdmin)
 
 	// JupyterLab requests /custom/custom.css as an absolute path (no base_url prefix).
 	// The file is empty by convention — it is a user customization hook.
@@ -396,15 +381,50 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
-// Handler returns the piper HTTP API handler.
-// Library users can mount it on their own router.
+// Handler returns a handler whose gRPC lifecycle is tied to Piper.Close.
+// Library users that own an HTTP server should prefer HandlerContext and cancel
+// its context when that server shuts down.
 //
 //	mux.Handle("/piper/", http.StripPrefix("/piper", p.Handler(nil)))
 func (p *Piper) Handler(extra http.Handler) http.Handler {
+	return p.HandlerContext(p.ctx, extra)
+}
+
+// HandlerContext returns the Piper HTTP/gRPC handler and stops its gRPC server
+// when ctx is cancelled. The context should share the parent HTTP server's
+// lifecycle so connected workers receive a deterministic shutdown.
+//
+// The caller's http.Server must enable unencrypted HTTP/2 (H2C) so that gRPC
+// workers can connect:
+//
+//	srv.Protocols = new(http.Protocols)
+//	srv.Protocols.SetHTTP1(true)
+//	srv.Protocols.SetUnencryptedHTTP2(true)
+func (p *Piper) HandlerContext(ctx context.Context, extra http.Handler) http.Handler {
+	handler, _ := p.handlerContext(ctx, extra)
+	return handler
+}
+
+func (p *Piper) handlerContext(ctx context.Context, extra http.Handler) (http.Handler, <-chan struct{}) {
 	mgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
 	mgr.RegisterDriver(viewertb.New())
 	mgr.RegisterDriver(viewerhtml.New())
-	return p.newRouter(extra, mgr)
+	handler := p.newRouter(extra, mgr)
+	grpcSrv := p.grpcAgentServer.GRPCServer(p.workerTokenGRPCOptions()...)
+	stopped := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		grpcSrv.Stop()
+		close(stopped)
+	}()
+	combined := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
+			grpcSrv.ServeHTTP(w, r)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+	return combined, stopped
 }
 
 // ── responseRecorder ────────────────────────────────────────────────────────

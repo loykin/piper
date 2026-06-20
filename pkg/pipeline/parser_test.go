@@ -40,6 +40,25 @@ func TestParse_valid(t *testing.T) {
 	}
 }
 
+func TestParseRejectsIncompleteK8sDriver(t *testing.T) {
+	_, err := Parse([]byte(`
+metadata:
+  name: invalid
+spec:
+  steps:
+    - name: step
+      driver:
+        placement: {runtime: k8s}
+        k8s: {image: alpine}
+      run:
+        type: command
+        command: [echo, ok]
+`))
+	if err == nil {
+		t.Fatal("expected missing k8s namespace error")
+	}
+}
+
 func TestParse_invalidYAML(t *testing.T) {
 	_, err := Parse([]byte("not: valid: yaml: ["))
 	if err == nil {

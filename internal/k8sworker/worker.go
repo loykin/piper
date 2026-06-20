@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -23,18 +22,11 @@ import (
 // AgentConfig configures the gRPC connection to the master agent server
 // and this worker's identity within the agent registry.
 type AgentConfig struct {
-	Addr        string // gRPC address of the master agent server, e.g. "master:9090"
+	MasterURL   string // single HTTP(S) endpoint for the outbound master tunnel
 	WorkerToken string // bearer token sent in gRPC authorization metadata
 	ID          string
 	ClusterName string
-}
-
-// MasterConfig holds the HTTP connection to the piper master,
-// forwarded to K8s Job pods for artifact callbacks.
-type MasterConfig struct {
-	URL          string
-	WorkerToken  string
-	StorageToken string
+	Labels      map[string]string
 }
 
 // K8sConfig groups all Kubernetes cluster options: client, namespaces,
@@ -48,29 +40,19 @@ type K8sConfig struct {
 	// Empty means all domains are enabled (default behavior).
 	EnabledDomains []string
 
-	// Namespace routing per workload type (defaults to first Namespaces entry or "default").
-	NotebookNamespace string
-	ServingNamespace  string
-	PipelineNamespace string
-
 	// Container images.
-	NotebookImage        string
-	PipelineWorkerImage  string // piper agent image for pipeline Job init containers
-	DefaultImage         string // fallback step image
-	AgentImagePullPolicy string
+	NotebookInfrastructureImage string
+	PipelineWorkerImage         string // piper agent image for pipeline Job init containers
+	AgentImagePullPolicy        string
 
 	// Storage.
-	StorageClass     string
-	StorageSize      string
 	TTLAfterFinished *int32
-
-	PodDefaults corev1.PodTemplateSpec
 }
 
 type Config struct {
-	Agent  AgentConfig
-	Master MasterConfig
-	K8s    K8sConfig
+	Agent        AgentConfig
+	StorageToken string
+	K8s          K8sConfig
 	// StorageURL is the artifact store URL forwarded to pipeline Job pods.
 	StorageURL string
 	// ResultOutboxDir is the durable directory for unacknowledged pipeline results.
@@ -116,13 +98,14 @@ func New(cfg Config) *Worker {
 	}
 
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		AgentAddr:    cfg.Agent.Addr,
+		MasterURL:    cfg.Agent.MasterURL,
 		AgentID:      cfg.Agent.ID,
 		WorkerToken:  cfg.Agent.WorkerToken,
 		Kind:         iagent.KindK8s,
 		ClusterName:  cfg.Agent.ClusterName,
 		Capabilities: capabilities,
 		Runtime:      iagent.RuntimeK8s,
+		Labels:       cfg.Agent.Labels,
 	})
 
 	var outbox *pdriver.ResultOutbox
@@ -151,15 +134,11 @@ func New(cfg Config) *Worker {
 	if cfg.K8s.Client != nil {
 		if domainEnabled(cfg.K8s, iagent.CapabilityNotebook) {
 			notebookObserver = k8snotebook.Register(client.Dispatcher(), k8snotebook.Config{
-				WorkerID:     cfg.Agent.ID,
-				ClusterName:  cfg.Agent.ClusterName,
-				Namespaces:   cfg.K8s.Namespaces,
-				Client:       cfg.K8s.Client,
-				Namespace:    cfg.K8s.NotebookNamespace,
-				Image:        cfg.K8s.NotebookImage,
-				StorageClass: cfg.K8s.StorageClass,
-				StorageSize:  cfg.K8s.StorageSize,
-				PodDefaults:  cfg.K8s.PodDefaults,
+				WorkerID:            cfg.Agent.ID,
+				ClusterName:         cfg.Agent.ClusterName,
+				Namespaces:          cfg.K8s.Namespaces,
+				Client:              cfg.K8s.Client,
+				InfrastructureImage: cfg.K8s.NotebookInfrastructureImage,
 				ReportStatus: func(update notebook.WorkerStatusUpdate) error {
 					return client.SendPush(iagent.MethodNotebookStatusUpdate, update)
 				},
@@ -171,7 +150,6 @@ func New(cfg Config) *Worker {
 				ClusterName: cfg.Agent.ClusterName,
 				Namespaces:  cfg.K8s.Namespaces,
 				Client:      cfg.K8s.Client,
-				Namespace:   cfg.K8s.ServingNamespace,
 				ReportStatus: func(update serving.WorkerStatusUpdate) error {
 					return client.SendPush(iagent.MethodServingStatusUpdate, update)
 				},
@@ -182,18 +160,14 @@ func New(cfg Config) *Worker {
 			pipelineObserver = k8spipeline.Register(client.Dispatcher(), k8spipeline.Config{
 				WorkerID: cfg.Agent.ID,
 				Store: k8spipeline.StoreConfig{
-					MasterURL:    cfg.Master.URL,
-					WorkerToken:  cfg.Master.WorkerToken,
-					StorageToken: cfg.Master.StorageToken,
+					StorageToken: cfg.StorageToken,
 					StorageURL:   cfg.StorageURL,
 				},
 				K8s: k8spipeline.K8sConfig{
 					Client:               cfg.K8s.Client,
-					Namespace:            cfg.K8s.PipelineNamespace,
 					Namespaces:           cfg.K8s.Namespaces,
 					AgentImage:           cfg.K8s.PipelineWorkerImage,
 					AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
-					DefaultImage:         cfg.K8s.DefaultImage,
 					TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
 				},
 				ReportResult: func(result proto.TaskResult) error {
@@ -205,6 +179,7 @@ func New(cfg Config) *Worker {
 				RenewLeases: func(taskIDs []string) error {
 					return client.SendPush(iagent.MethodPipelineLeaseRenew, map[string]any{"task_ids": taskIDs})
 				},
+				LogClient: client,
 			})
 		}
 	}

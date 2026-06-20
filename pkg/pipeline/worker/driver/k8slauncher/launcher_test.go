@@ -91,7 +91,7 @@ func TestBuildJob_structure(t *testing.T) {
 		TTLAfterFinished: &ttl,
 	}}
 	task := &proto.Task{RunID: "run-1", StepName: "train"}
-	job := l.buildJob(task, "pytorch:latest", []string{agentSubcmd, agentExecSubcmd, "--master=http://x"})
+	job := l.buildJob(task, "pytorch:latest", []string{agentSubcmd, agentExecSubcmd, "--result-file=/dev/termination-log"})
 
 	if job.Namespace != "ml" {
 		t.Errorf("namespace = %q, want ml", job.Namespace)
@@ -357,8 +357,6 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 		"agent",
 		"exec",
 		"--task=encoded",
-		"--master=http://master:8080",
-		"--report-mode=file",
 		"--result-file=/dev/termination-log",
 	}
 	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", preparedArgs, nil); err != nil {
@@ -393,8 +391,8 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 	if !hasArgPrefix(stepContainer.Args, "--task=") {
 		t.Fatalf("agent args missing --task: %v", stepContainer.Args)
 	}
-	if !hasArg(stepContainer.Args, "--master=http://master:8080") {
-		t.Fatalf("agent args missing master URL: %v", stepContainer.Args)
+	if hasArgPrefix(stepContainer.Args, "--master=") {
+		t.Fatalf("job pod must not receive a master URL: %v", stepContainer.Args)
 	}
 	if hasArg(stepContainer.Args, "--") || hasArg(stepContainer.Args, "echo") || hasArg(stepContainer.Args, "train") {
 		t.Fatalf("launcher must not append command override args: %v", stepContainer.Args)

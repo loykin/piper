@@ -8,7 +8,7 @@
 // must live in the same binary — exactly like the full piper CLI.
 //
 //	go run ./examples/bare-metal/worker
-//	go run ./examples/bare-metal/worker --agent-addr=remote:9090 --master=http://remote:8080
+//	go run ./examples/bare-metal/worker --master=http://remote:8080
 package main
 
 import (
@@ -31,8 +31,7 @@ func main() {
 		return
 	}
 
-	agentAddr := flag.String("agent-addr", "localhost:9090", "gRPC address of piper master agent server")
-	master := flag.String("master", "http://localhost:8080", "piper server URL (for agent exec callbacks)")
+	master := flag.String("master", "http://localhost:8080", "single piper master endpoint")
 	workerToken := flag.String("worker-token", "", "worker-to-master authentication token")
 	storageToken := flag.String("storage-token", "", "artifact storage authentication token")
 	label := flag.String("label", "", "worker label (e.g. gpu, cpu, large-mem)")
@@ -42,14 +41,12 @@ func main() {
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
-			Addr:        *agentAddr,
+			MasterURL:   *master,
 			WorkerToken: *workerToken,
 			Label:       *label,
 			Concurrency: *concurrency,
 		},
 		Store: worker.StoreConfig{
-			MasterURL:    *master,
-			WorkerToken:  *workerToken,
 			StorageToken: *storageToken,
 			OutputDir:    os.TempDir() + "/piper-worker-outputs",
 		},
@@ -64,7 +61,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	log.Printf("worker starting → agent-addr=%s master=%s label=%q concurrency=%d", *agentAddr, *master, *label, *concurrency)
+	log.Printf("worker starting → master=%s label=%q concurrency=%d", *master, *label, *concurrency)
 
 	if err := w.Run(ctx); err != nil {
 		log.Fatal(err)
@@ -75,15 +72,12 @@ func main() {
 // Called when this binary is invoked as "<worker> agent exec --task=...".
 func runAgentExec(args []string) {
 	fs := flag.NewFlagSet("agent exec", flag.ExitOnError)
-	master := fs.String("master", "", "piper server URL")
-	workerToken := fs.String("worker-token", "", "worker-to-master authentication token")
 	storageToken := fs.String("storage-token", "", "artifact storage authentication token")
 	taskB64 := fs.String("task", "", "base64-encoded proto.Task JSON")
 	outputDir := fs.String("output-dir", "/piper-outputs", "local output directory")
 	inputDir := fs.String("input-dir", "/piper-inputs", "local input directory")
 	storageURL := fs.String("storage-url", "", "artifact store URL")
 	resultFile := fs.String("result-file", "", "path to write AgentResult JSON")
-	reportMode := fs.String("report-mode", string(agent.ReportModeFile), "result delivery mode")
 	if err := fs.Parse(args); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: parse flags: %v\n", err)
 		os.Exit(1)
@@ -100,8 +94,6 @@ func runAgentExec(args []string) {
 	}
 
 	r, err := agent.New(agent.Config{
-		MasterURL:    *master,
-		WorkerToken:  *workerToken,
 		StorageToken: *storageToken,
 		OutputDir:    *outputDir,
 		InputDir:     *inputDir,
@@ -113,7 +105,7 @@ func runAgentExec(args []string) {
 	}
 
 	result := r.Run(context.Background(), task)
-	if err := agent.DeliverResult(result, agent.ReportMode(*reportMode), *resultFile, r); err != nil {
+	if err := agent.DeliverResult(result, *resultFile); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: deliver result: %v\n", err)
 		os.Exit(1)
 	}

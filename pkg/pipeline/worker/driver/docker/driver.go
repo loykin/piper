@@ -16,6 +16,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	dockerclient "github.com/moby/moby/client"
 
+	dockerinfra "github.com/piper/piper/internal/docker"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 	"github.com/piper/piper/pkg/pipeline/worker/driver" //nolint:depguard
@@ -35,10 +36,9 @@ const (
 
 // Config configures the DockerDriver.
 type Config struct {
-	WorkerID     string
-	DefaultImage string // fallback image when step has none
-	ResultDir    string // host directory for result files
-	OutputDir    string // host output root directory
+	WorkerID  string
+	ResultDir string // host directory for result files
+	OutputDir string // host output root directory
 	// Network is the Docker network to attach containers to.
 	Network string
 }
@@ -105,14 +105,11 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 	containerResultFile := driver.ContainerResultDir + "/" + spec.RuntimeKey + ".result.json"
 
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
-		MasterURL:    spec.MasterURL,
-		WorkerToken:  spec.WorkerToken,
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    driver.ContainerOutputDir,
 		InputDir:     driver.ContainerInputDir,
 		ResultFile:   containerResultFile,
-		ReportMode:   agent.ReportModeFile,
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)
@@ -194,6 +191,9 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 	if _, err := d.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		_, _ = d.client.ContainerRemove(ctx, resp.ID, dockerclient.ContainerRemoveOptions{Force: true})
 		return driver.Handle{}, fmt.Errorf("container start: %w", err)
+	}
+	if spec.LogSink != nil {
+		go dockerinfra.StreamLogs(d.client, resp.ID, task.RunID, task.StepName, spec.LogSink)
 	}
 
 	d.mu.Lock()

@@ -49,12 +49,8 @@ export function RunDetailPanel({ id }: { id: string }) {
   return (
     <PanelTemplate
       eyebrow="Run"
-      title={
-        <span className="flex items-center gap-2">
-          <span className="font-mono">{run.id}</span>
-          <StatusBadge status={run.status} />
-        </span>
-      }
+      title={run.id}
+      status={<StatusBadge status={run.status} />}
       actions={
         <div className="flex items-center gap-1">
           <IconButton icon={<XCircle />} label="Cancel"

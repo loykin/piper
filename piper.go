@@ -78,15 +78,6 @@ func New(cfg Config) (*Piper, error) {
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = def.OutputDir
 	}
-	if cfg.MaxRetries < 0 {
-		cfg.MaxRetries = def.MaxRetries
-	}
-	if cfg.RetryDelay == 0 {
-		cfg.RetryDelay = def.RetryDelay
-	}
-	if cfg.Concurrency == 0 {
-		cfg.Concurrency = def.Concurrency
-	}
 	if cfg.Server.Addr == "" {
 		cfg.Server.Addr = def.Server.Addr
 	}
@@ -181,7 +172,7 @@ func New(cfg Config) (*Piper, error) {
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
-	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv, repos.Log))
+	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv, repos.Log, repos.Metric))
 	// On agent (re)connect: sync notebook status so master DB catches up on any
 	// state changes that occurred while the connection was down.
 	grpcSrv.SetConnectHandler(func(agentID string) {
@@ -189,7 +180,6 @@ func New(cfg Config) (*Piper, error) {
 		servingMgr.SyncAgent(context.Background(), agentID)
 	})
 
-	q.SetRetryPolicy(cfg.MaxRetries+1, cfg.RetryDelay)
 	p := &Piper{
 		cfg:     cfg,
 		ctx:     bgCtx,
@@ -496,13 +486,7 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	if err != nil {
 		return nil, fmt.Errorf("run: allocate HTTP port: %w", err)
 	}
-	agentPort, err := randomFreePort()
-	if err != nil {
-		return nil, fmt.Errorf("run: allocate gRPC port: %w", err)
-	}
-
 	httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
 	masterURL := "http://" + httpAddr
 
 	events, unsub := p.events.Subscribe()
@@ -511,7 +495,7 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
-	go func() { _ = p.Serve(runCtx, ServeOption{Addr: httpAddr, AgentAddr: agentAddr}) }()
+	go func() { _ = p.Serve(runCtx, ServeOption{Addr: httpAddr}) }()
 
 	if err := waitForHTTPReady(ctx, masterURL+"/health", 10*time.Second); err != nil {
 		return nil, fmt.Errorf("run: server not ready: %w", err)
@@ -521,10 +505,7 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	if outputDir == "" {
 		outputDir = "./piper-outputs"
 	}
-	concurrency := p.cfg.Concurrency
-	if concurrency <= 0 {
-		concurrency = 4
-	}
+	concurrency := 4
 
 	metaDir, err := os.MkdirTemp("", "piper-run-meta-*")
 	if err != nil {
@@ -535,14 +516,12 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	storageToken := p.cfg.Storage.Token
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
-			Addr:        agentAddr,
+			MasterURL:   masterURL,
 			WorkerToken: p.cfg.Server.WorkerToken,
 			ID:          worker.NewID("run"),
 			Concurrency: concurrency,
 		},
 		Store: worker.StoreConfig{
-			MasterURL:    masterURL,
-			WorkerToken:  p.cfg.Server.WorkerToken,
 			StorageToken: storageToken,
 			OutputDir:    outputDir,
 			StorageURL:   p.storageURL,

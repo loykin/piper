@@ -28,22 +28,16 @@ func TestMain(m *testing.M) {
 func runAgentExec() int {
 	var (
 		taskB64    string
-		masterURL  string
-		token      string
 		outputDir  string
 		inputDir   string
 		storageURL string
-		reportMode string
 		resultFile string
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
-	fs.StringVar(&masterURL, "master", "", "")
-	fs.StringVar(&token, "token", "", "")
 	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
 	fs.StringVar(&inputDir, "input-dir", "", "")
 	fs.StringVar(&storageURL, "storage-url", "", "")
-	fs.StringVar(&reportMode, "report-mode", "http", "")
 	fs.StringVar(&resultFile, "result-file", "", "")
 
 	// Strip "agent" and "exec" prefix from os.Args.
@@ -65,11 +59,9 @@ func runAgentExec() int {
 	}
 
 	r, err := agentpkg.New(agentpkg.Config{
-		MasterURL:   masterURL,
-		WorkerToken: token,
-		OutputDir:   outputDir,
-		InputDir:    inputDir,
-		StorageURL:  storageURL,
+		OutputDir:  outputDir,
+		InputDir:   inputDir,
+		StorageURL: storageURL,
 	})
 	if err != nil {
 		return 1
@@ -77,7 +69,7 @@ func runAgentExec() int {
 
 	result := r.Run(context.Background(), task)
 
-	if err := agentpkg.DeliverResult(result, agentpkg.ReportMode(reportMode), resultFile, r); err != nil {
+	if err := agentpkg.DeliverResult(result, resultFile); err != nil {
 		return 1
 	}
 	return 0

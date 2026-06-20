@@ -43,6 +43,22 @@ func (p *Pipeline) Validate() error {
 			}
 		}
 	}
+	resolved := p.ApplyDefaults()
+	for _, s := range resolved.Spec.Steps {
+		switch s.Driver.Placement.Runtime {
+		case "docker":
+			if s.Driver.Docker == nil || s.Driver.Docker.Image == "" {
+				return fmt.Errorf("step %q: driver.docker.image is required", s.Name)
+			}
+		case "k8s":
+			if s.Driver.K8s == nil || s.Driver.K8s.Image == "" {
+				return fmt.Errorf("step %q: driver.k8s.image is required", s.Name)
+			}
+			if s.Driver.K8s.Namespace == "" {
+				return fmt.Errorf("step %q: driver.k8s.namespace is required", s.Name)
+			}
+		}
+	}
 	return nil
 }
 

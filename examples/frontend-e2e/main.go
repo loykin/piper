@@ -44,7 +44,6 @@ func main() {
 	}
 
 	addr := flag.String("addr", "127.0.0.1:18080", "HTTP listen address")
-	agentAddr := flag.String("agent-addr", "127.0.0.1:19090", "gRPC agent listen address")
 	flag.Parse()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -112,7 +111,7 @@ func main() {
 	masterURL := "http://" + *addr
 	extra := e2eHandler(s3Client)
 	go func() {
-		if err := p.Serve(ctx, piper.ServeOption{Addr: *addr, AgentAddr: *agentAddr, Extra: extra}); err != nil {
+		if err := p.Serve(ctx, piper.ServeOption{Addr: *addr, Extra: extra}); err != nil {
 			log.Printf("server stopped: %v", err)
 			cancel()
 		}
@@ -129,12 +128,11 @@ func main() {
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
-			Addr:        *agentAddr,
+			MasterURL:   masterURL,
 			ID:          "frontend-e2e-worker",
 			Concurrency: 4,
 		},
 		Store: worker.StoreConfig{
-			MasterURL:   masterURL,
 			OutputDir:   filepath.Join(tmpDir, "worker-outputs"),
 			StorageURL:  s3URL,
 			RemoteStore: true,
@@ -266,24 +264,18 @@ func waitHTTP(ctx context.Context, url string) error {
 func runAgentExec(args []string) int {
 	var (
 		taskB64      string
-		masterURL    string
-		workerToken  string
 		storageToken string
 		outputDir    string
 		inputDir     string
 		storageURL   string
-		reportMode   string
 		resultFile   string
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
-	fs.StringVar(&masterURL, "master", "", "")
-	fs.StringVar(&workerToken, "worker-token", "", "")
 	fs.StringVar(&storageToken, "storage-token", "", "")
 	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
 	fs.StringVar(&inputDir, "input-dir", "", "")
 	fs.StringVar(&storageURL, "storage-url", "", "")
-	fs.StringVar(&reportMode, "report-mode", "http", "")
 	fs.StringVar(&resultFile, "result-file", "", "")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -297,8 +289,6 @@ func runAgentExec(args []string) int {
 		return 1
 	}
 	runner, err := agent.New(agent.Config{
-		MasterURL:    masterURL,
-		WorkerToken:  workerToken,
 		StorageToken: storageToken,
 		OutputDir:    outputDir,
 		InputDir:     inputDir,
@@ -308,7 +298,7 @@ func runAgentExec(args []string) int {
 		return 1
 	}
 	result := runner.Run(context.Background(), task)
-	if err := agent.DeliverResult(result, agent.ReportMode(reportMode), resultFile, runner); err != nil {
+	if err := agent.DeliverResult(result, resultFile); err != nil {
 		return 1
 	}
 	return 0

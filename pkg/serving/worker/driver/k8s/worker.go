@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,7 +32,6 @@ type Config struct {
 	ClusterName  string
 	Namespaces   []string
 	Client       kubernetes.Interface
-	Namespace    string
 	ReportStatus func(serving.WorkerStatusUpdate) error
 	// LogClient enables pod log streaming for serving deployments.
 	LogClient logsink.PushClient
@@ -122,7 +122,10 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 		ns = svc.Spec.Driver.K8s.Namespace
 	}
 	if ns == "" {
-		ns = a.servingNamespace()
+		return servingDeployResponse{}, fmt.Errorf("spec.driver.k8s.namespace is required")
+	}
+	if !slices.Contains(a.cfg.Namespaces, ns) {
+		return servingDeployResponse{}, fmt.Errorf("namespace %q is not allowed", ns)
 	}
 	a.rememberNamespace(ns)
 	var replicas int32
@@ -254,7 +257,7 @@ func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error 
 	name := servingResourceName(req.ProjectID, req.Name)
 	ns := req.Namespace
 	if ns == "" {
-		ns = a.servingNamespace()
+		return fmt.Errorf("namespace is required")
 	}
 	if err := a.cfg.Client.AppsV1().Deployments(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
 		return err
@@ -282,7 +285,7 @@ func (a *Worker) syncStatus(ctx context.Context, req serving.WorkerSyncStatusReq
 		key := servingKey(target.ProjectID, target.Name)
 		ns := target.Namespace
 		if ns == "" {
-			ns = a.servingNamespace()
+			continue
 		}
 		a.rememberNamespace(ns)
 		deployment, err := a.cfg.Client.AppsV1().Deployments(ns).Get(ctx, servingResourceName(target.ProjectID, target.Name), metav1.GetOptions{})
@@ -370,8 +373,7 @@ func (a *Worker) rememberNamespace(namespace string) {
 func (a *Worker) observedNamespaces() []string {
 	a.statusMu.Lock()
 	defer a.statusMu.Unlock()
-	namespaces := make([]string, 0, len(a.namespaces)+len(a.cfg.Namespaces)+1)
-	namespaces = append(namespaces, a.servingNamespace())
+	namespaces := make([]string, 0, len(a.namespaces)+len(a.cfg.Namespaces))
 	namespaces = append(namespaces, a.cfg.Namespaces...)
 	for namespace := range a.namespaces {
 		namespaces = append(namespaces, namespace)
@@ -462,16 +464,6 @@ func (a *Worker) ensureServingLogStream(ctx context.Context, projectID, name str
 			sink.Append(runID, "runtime", "combined", sc.Text(), time.Now())
 		}
 	}()
-}
-
-func (a *Worker) servingNamespace() string {
-	if a.cfg.Namespace != "" {
-		return a.cfg.Namespace
-	}
-	if len(a.cfg.Namespaces) > 0 && a.cfg.Namespaces[0] != "" {
-		return a.cfg.Namespaces[0]
-	}
-	return "default"
 }
 
 func (a *Worker) k8sLabels(kind, id string) map[string]string {

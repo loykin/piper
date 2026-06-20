@@ -17,8 +17,7 @@ type Driver interface {
 	// ProvisionVolume allocates backing storage for vol.
 	// Bare-metal: creates a host work directory and sets vol.WorkDir/vol.WorkerID.
 	// K8s: creates a PersistentVolumeClaim and reports the notebook container work dir.
-	// storageSize overrides the worker-level default when non-empty.
-	ProvisionVolume(ctx context.Context, vol *NotebookVolume, storageSize string) error
+	ProvisionVolume(ctx context.Context, vol *NotebookVolume, spec Notebook) error
 
 	// Start launches a notebook server with vol mounted.
 	// Process: starts JupyterLab on the worker host.

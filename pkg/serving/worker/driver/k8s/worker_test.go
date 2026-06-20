@@ -16,7 +16,7 @@ func TestServingDeployCreatesDeploymentAndService(t *testing.T) {
 	a := New(Config{
 		ClusterName: "gpu-a",
 		Client:      client,
-		Namespace:   "serving",
+		Namespaces:  []string{"serving"},
 	})
 
 	resp, err := a.deployServing(context.Background(), servingDeployRequest{
@@ -34,6 +34,7 @@ spec:
   driver:
     k8s:
       image: model:latest
+      namespace: serving
       resources:
         cpu: "1"
 `,
@@ -75,7 +76,7 @@ func TestServingDeployUpdatesExistingDeployment(t *testing.T) {
 			},
 		},
 	})
-	a := New(Config{ClusterName: "gpu-a", Client: client, Namespace: "serving"})
+	a := New(Config{ClusterName: "gpu-a", Client: client, Namespaces: []string{"serving"}})
 
 	if _, err := a.deployServing(context.Background(), servingDeployRequest{
 		ProjectID: "project-a",
@@ -90,6 +91,7 @@ spec:
   driver:
     k8s:
       image: new
+      namespace: serving
 `,
 	}); err != nil {
 		t.Fatalf("deployServing returned error: %v", err)
@@ -115,12 +117,12 @@ func TestSyncStatusSeparatesProjectsWithSameServiceName(t *testing.T) {
 			Spec:       appsv1.DeploymentSpec{Replicas: int32Ptr(1)},
 		},
 	)
-	a := New(Config{Client: client, Namespace: "serving"})
+	a := New(Config{Client: client, Namespaces: []string{"serving"}})
 
 	response, err := a.syncStatus(context.Background(), serving.WorkerSyncStatusRequest{
 		Services: []serving.WorkerSyncStatusTarget{
-			{ProjectID: "project-a", Name: "demo"},
-			{ProjectID: "project-b", Name: "demo"},
+			{ProjectID: "project-a", Name: "demo", Namespace: "serving"},
+			{ProjectID: "project-b", Name: "demo", Namespace: "serving"},
 		},
 	})
 	if err != nil {

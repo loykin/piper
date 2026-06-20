@@ -104,7 +104,7 @@ func TestIntegration_BrowseStoppedPVC_CreatesViewerResources(t *testing.T) {
 		volumeID = "vol-inttest0001"
 	)
 	client := fake.NewSimpleClientset(boundPVCObj(notebookPVCName(volumeID), ns))
-	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespace: ns, Image: "piper:latest"})
+	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespaces: []string{ns}, InfrastructureImage: "piper:latest"})
 
 	// Use a very short timeout so waitForReady exits quickly, returning
 	// transitioning instead of blocking 30s.
@@ -182,7 +182,7 @@ func TestIntegration_NotebookStart_DrainsViewerFirst(t *testing.T) {
 		volumeID = "vol-inttest0003"
 	)
 	client := fake.NewSimpleClientset(boundPVCObj(notebookPVCName(volumeID), ns))
-	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespace: ns, Image: "piper:latest"})
+	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespaces: []string{ns}, InfrastructureImage: "piper:latest"})
 
 	ctx := context.Background()
 
@@ -195,7 +195,7 @@ func TestIntegration_NotebookStart_DrainsViewerFirst(t *testing.T) {
 	}
 
 	// drainViewerAndRun should delete the viewer before notebook start.
-	if err := w.drainViewerAndRun(ctx, volumeID, func(_ context.Context) error { return nil }); err != nil {
+	if err := w.drainViewerAndRun(ctx, ns, volumeID, func(_ context.Context) error { return nil }); err != nil {
 		t.Fatalf("drainViewerAndRun: %v", err)
 	}
 
@@ -217,7 +217,7 @@ func TestIntegration_RunningNotebook_ReturnsTransitioning_WhenNoToken(t *testing
 	)
 	pvcName := notebookPVCName(volumeID)
 	client := fake.NewSimpleClientset(boundPVCObj(pvcName, ns))
-	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespace: ns, Image: "piper:latest"})
+	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespaces: []string{ns}, InfrastructureImage: "piper:latest"})
 
 	// Create a Ready notebook pod referencing the PVC.
 	nbPod := notebookPod("piper-nb-nb1", ns, pvcName, true)
@@ -249,7 +249,7 @@ func TestIntegration_Stop_Then_Browse(t *testing.T) {
 	)
 	pvcName := notebookPVCName(volumeID)
 	client := fake.NewSimpleClientset(boundPVCObj(pvcName, ns))
-	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespace: ns, Image: "piper:latest"})
+	w := New(Config{WorkerID: "w1", ClusterName: "test", Client: client, Namespaces: []string{ns}, InfrastructureImage: "piper:latest"})
 
 	// Simulate a stopped StatefulSet (replicas=0) with no pods.
 	zero := int32(0)
@@ -285,12 +285,12 @@ func TestIntegration_ObserveOnce_RemovesViewerWhenNotebookActive(t *testing.T) {
 	)
 	client := fake.NewSimpleClientset()
 	w := New(Config{
-		WorkerID:     "w1",
-		ClusterName:  "test",
-		Client:       client,
-		Namespace:    ns,
-		Image:        "piper:latest",
-		ReportStatus: func(notebook.WorkerStatusUpdate) error { return nil },
+		WorkerID:            "w1",
+		ClusterName:         "test",
+		Client:              client,
+		Namespaces:          []string{ns},
+		InfrastructureImage: "piper:latest",
+		ReportStatus:        func(notebook.WorkerStatusUpdate) error { return nil },
 	})
 
 	ctx := context.Background()

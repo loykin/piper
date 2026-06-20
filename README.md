@@ -9,7 +9,7 @@ server or embedded Go library, and can dispatch work to local processes,
 bare-metal GPU workers, or cluster-local K8s workers.
 
 The K8s worker mode is designed for on-prem, private-network, and air-gapped
-environments: the worker runs inside the cluster and opens an outbound WebSocket
+environments: the worker runs inside the cluster and opens one outbound gRPC
 tunnel to the Piper server, so the server does not need kubeconfig access or
 inbound network access to the cluster.
 
@@ -44,7 +44,7 @@ as the entire ML platform.
 ## Features
 
 - **DAG-based execution** — declare step dependencies with `depends_on`, automatic parallelization
-- **Four execution modes** — local (in-process) / bare-metal worker / Kubernetes Jobs / K8s Worker
+- **Three deployment modes** — self-contained local / bare-metal workers / cluster-local K8s workers
 - **Single binary** — UI included, works out of the box with `go install`
 - **Embeddable library** — mount into your existing Go app and HTTP router
 - **S3 artifact passing** — share files between steps via any S3-compatible store (AWS S3, SeaweedFS, etc.)
@@ -57,16 +57,16 @@ as the entire ML platform.
 ```bash
 go install github.com/piper/piper/cmd/piper@latest
 
-# Start server
-piper server
+# Run a pipeline as a self-contained local process
+piper run examples/basics/simple.yaml
 
-# Run a pipeline (CLI)
-piper run examples/simple.yaml
+# Or start the API with embedded workers for development
+piper server --local
 
-# Run a pipeline (API)
-curl -X POST http://localhost:8080/runs \
+# Submit to the running server
+curl -X POST http://localhost:8080/api/projects/default/runs \
   -H 'Content-Type: application/json' \
-  -d "{\"yaml\": $(cat examples/simple.yaml | jq -Rs .)}"
+  -d "{\"yaml\": $(jq -Rs . < examples/basics/simple.yaml)}"
 ```
 
 Open `http://localhost:8080` to view the UI.
@@ -86,14 +86,14 @@ spec:
   defaults:
     driver:
       placement:
-        worker: ""                # worker ID/hostname (bare-metal or k8s-worker ID)
+        worker: ""                # worker ID (persisted in workers.common.state_dir)
         label: ""                 # route to any worker registered with this label
-        runtime: ""               # baremetal | docker | k8s
+        runtime: k8s              # baremetal | docker | k8s
       docker:
         image: alpine:3.20        # default image for Docker runtime
       k8s:
         image: alpine:3.20        # default image for K8s runtime
-        namespace: ""             # K8s namespace for worker-created Jobs
+        namespace: piper-jobs     # required; must be in the worker allowlist
 
   steps:
   - name: extract
@@ -110,17 +110,16 @@ spec:
       env:
         - name: PYTHONPATH
           value: /app
-      timeout: 600
     driver:
       placement:
         label: gpu                # route to workers with this label
         runtime: k8s
-      resources:
-        cpu: "4"
-        memory: "16Gi"
-        gpu: "1"
       k8s:
         image: python:3.12-slim   # image for this step (overrides defaults.driver.k8s.image)
+        resources:
+          cpu: "4"
+          memory: "16Gi"
+          gpu: "1"
         pod_template:
           spec:
             nodeSelector:
@@ -165,25 +164,27 @@ The storage backend is selected by `storage.url`, independently of execution mod
 s3://{bucket}/{runID}/{stepName}/{artifactName}/...
 ```
 
-Worker and Kubernetes modes require S3 because steps run on separate machines or Pods and cannot share a local filesystem.
-In-process mode works with either backend.
+Workers on different hosts and Kubernetes workloads require a shared remote
+`storage.url` because they cannot rely on the master's local filesystem. The
+self-contained local mode can use local or remote storage.
 
 ## Execution Modes
 
 | | Local | Bare-metal Worker | K8s Worker |
 |---|---|---|---|
-| **Step runs as** | goroutine in server process | subprocess or Docker container | K8s Job (one Pod per step) |
-| **Task delivery** | in-process (no queue, no gRPC) | gRPC push (worker → server outbound) | gRPC push (worker → server outbound) |
-| **Worker location** | — | any machine | inside the K8s cluster |
+| **Step runs as** | host subprocess through an embedded worker | subprocess or Docker container | K8s Job (one Pod per step) |
+| **Task delivery** | loopback gRPC through the production queue | gRPC push (worker → server outbound) | gRPC push (worker → server outbound) |
+| **Worker location** | same process/host | any machine | inside the K8s cluster |
 | **Server needs kubeconfig** | — | no | no — worker owns cluster access |
-| **Artifact storage** | local or S3 | local or S3 | S3 required (no shared filesystem) |
-| **Cancellation** | context cancel | SIGTERM / docker stop | K8s Job deletion |
+| **Artifact storage** | local or remote | local when co-located, otherwise remote | remote object storage |
+| **Cancellation** | context + subprocess termination | SIGTERM / docker stop | K8s Job deletion |
 | **Multi-cluster** | — | — | yes (one k8s-worker per cluster) |
 | **Best for** | development, libraries | on-prem GPU servers | Kubernetes environments |
 
-### 1. Local (in-process)
+### 1. Local (self-contained)
 
-Runs entirely within a single process. Default when using piper as a library.
+`piper run` and `p.Run` start a temporary loopback master and embedded worker,
+then use the same queue, tunnel, and execution path as a deployed system.
 
 ```go
 p, _ := piper.New(piper.Config{OutputDir: "./outputs"})
@@ -195,15 +196,14 @@ result, _ := p.Run(ctx, yamlBytes)
 Server and workers run separately. Workers connect to the master via gRPC and receive tasks by push.
 
 ```bash
-# Terminal 1: server (start gRPC agent server on :9090)
-piper server --agent-addr :9090
+# Terminal 1: API and worker tunnel share one endpoint
+piper server
 
-# Terminal 2: worker (connect to gRPC agent server)
-piper worker --agent-addr localhost:9090 --master-url http://localhost:8080 --label gpu --concurrency 4
+# Terminal 2: worker opens one outbound tunnel to master
+piper worker --master-url http://localhost:8080 --label gpu --concurrency 4
 ```
 
-- `--agent-addr`: gRPC address of the master's agent server (required)
-- `--master-url`: piper HTTP URL, used by each step subprocess for artifact upload/reporting
+- `--master-url`: the single master endpoint used by the worker tunnel
 - `--label`: label for routing (e.g. `gpu`, `cpu`, `large-mem`)
 
 Workers register with the master on connect. Active workers can be listed via `GET /api/agents`.
@@ -214,10 +214,10 @@ Individual steps can override placement via `step.driver.placement`.
 
 ### 3. K8s Worker
 
-A `piper k8s-worker` runs **inside the cluster** and connects outbound to the piper master's gRPC agent server. The master never needs kubeconfig access or inbound cluster access — making this the right choice for isolated networks, firewall-restricted environments, or multi-cluster setups.
+A `piper k8s-worker` runs **inside the cluster** and connects outbound to the Piper master's unified HTTP/gRPC endpoint. The master never needs kubeconfig access or inbound cluster access — making this the right choice for isolated networks, firewall-restricted environments, or multi-cluster setups.
 
 ```
-piper-server (:9090 gRPC) ←──── outbound gRPC ────  piper k8s-worker (in-cluster)
+piper-server (:8080 HTTP + gRPC) ←── outbound HTTP/2 tunnel ── piper k8s-worker
                                                               │
                                                        K8s API server
                                                   (Jobs / StatefulSets / PVCs)
@@ -238,20 +238,27 @@ step container (user image)  →  /piper-tools/piper agent exec --task=<encoded-
 piper k8s-worker \
   --master-url http://piper-server:8080 \
   --cluster my-cluster \
+  --namespaces piper-jobs,piper-notebooks,piper-serving \
   --in-cluster \
-  --enable  pipeline,notebook,serving \    # default: all three; omit to enable all
-  --pipeline-namespace  piper-jobs \
-  --notebook-namespace  piper-notebooks \
-  --serving-namespace   piper-serving \
-  --notebook-image      jupyter/scipy-notebook:latest \
-  --pipeline-worker-image piper/piper:latest \
-  --storage-class       standard \
-  --storage-size        20Gi
+  --enable pipeline,notebook,serving \
+  --notebook-infrastructure-image piper/piper:latest \
+  --runner-image piper/piper:latest
 ```
 
 Or as a Kubernetes Deployment (recommended):
 
 ```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piper-worker-state
+  namespace: piper-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -275,20 +282,29 @@ spec:
         - k8s-worker
         - --master-url=http://piper-server.piper-system.svc.cluster.local:8080
         - --cluster=production
+        - --namespaces=piper-jobs,piper-notebooks,piper-serving
         - --in-cluster
-        - --pipeline-namespace=piper-jobs
-        - --notebook-namespace=piper-notebooks
-        - --serving-namespace=piper-serving
-        - --notebook-image=jupyter/scipy-notebook:latest
-        - --pipeline-worker-image=piper/piper:latest
-        - --storage-class=standard
+        - --state-dir=/var/lib/piper
+        - --notebook-infrastructure-image=piper/piper:latest
+        - --runner-image=piper/piper:latest
         env:
         - name: PIPER_STORAGE_URL
           valueFrom:
             secretKeyRef:
               name: piper-s3
               key: url
+        volumeMounts:
+        - name: worker-state
+          mountPath: /var/lib/piper
+      volumes:
+      - name: worker-state
+        persistentVolumeClaim:
+          claimName: piper-worker-state
 ```
+
+The `piper-worker-state` PVC stores the generated worker identity across Pod
+replacement. Workload image, namespace, resources, and PVC size/class remain in
+the submitted manifests.
 
 For **multi-cluster**, deploy one `piper k8s-worker` per cluster with a different `--cluster` name.
 Pipeline placement is run-level: one pipeline run executes on one selected worker or cluster.
@@ -301,7 +317,7 @@ Workers register automatically over gRPC when they connect to the master's agent
 GET  /api/agents                     list connected agents (workers)
 ```
 
-Pipeline workers connect to the master through the gRPC agent API. HTTP worker polling endpoints are not supported.
+Pipeline workers connect to the master through the outbound gRPC tunnel on the unified server endpoint. HTTP worker polling endpoints are not supported.
 
 ## Model Serving
 
@@ -337,15 +353,15 @@ spec:
     placement:
       runtime: k8s              # baremetal | docker | k8s
       worker: ""                # pin to a specific worker (optional)
-    resources:
-      cpu: "2"
-      memory: "8Gi"
-      gpu: "1"
     k8s:                        # K8s runtime settings
       image: nvcr.io/nvidia/tritonserver:24.01-py3
       namespace: default
       replicas: 1
       image_pull_policy: IfNotPresent
+      resources:
+        cpu: "2"
+        memory: "8Gi"
+        gpu: "1"
     process:                    # baremetal runtime settings
       gpus: "0"                 # CUDA_VISIBLE_DEVICES
 ```
@@ -369,6 +385,7 @@ driver:
     runtime: k8s
   k8s:
     image: nvcr.io/nvidia/tritonserver:24.01-py3
+    namespace: piper-serving
 
 # vLLM (K8s)
 run:
@@ -380,6 +397,7 @@ driver:
     runtime: k8s
   k8s:
     image: vllm/vllm-openai:latest
+    namespace: piper-serving
 
 # TorchServe (Docker)
 run:
@@ -412,11 +430,11 @@ Deploys the serving process on a **serving worker** — a separate process runni
 **Setup**
 
 ```bash
-# 1. Start the piper server with gRPC agent server
-piper server --addr :8080 --agent-addr :9090
+# 1. Start Piper's unified HTTP/gRPC endpoint
+piper server --addr :8080
 
 # 2. Start a serving worker on the inference node
-piper serving-worker --agent-addr <server>:9090
+piper serving-worker --master-url http://<server>:8080
 ```
 
 **Multi-node**: run `piper serving-worker` on each inference node. To pin a deployment to a specific node, set `driver.placement.worker` in the ModelService YAML:
@@ -428,7 +446,7 @@ spec:
     port: 8000
   driver:
     placement:
-      worker: gpu-node-01     # serving worker ID (default: stable serving-<hostname>)
+      worker: serving-abc123  # persisted serving worker ID
       runtime: baremetal
 ```
 
@@ -450,37 +468,34 @@ spec:
 ### Model Serving API
 
 ```
-GET    /serving                      list services
-POST   /serving                      deploy a ModelService (body: {"yaml": "..."})
-GET    /serving/{name}               service status
-DELETE /serving/{name}               stop and delete
-POST   /serving/{name}/restart       restart with latest artifact
-POST   /serving/predict/*path        proxy inference request to the runtime
+GET    /api/projects/{project_id}/serving                    list services
+POST   /api/projects/{project_id}/serving                    deploy a ModelService
+GET    /api/projects/{project_id}/serving/{name}             service status
+DELETE /api/projects/{project_id}/serving/{name}             stop and delete
+POST   /api/projects/{project_id}/serving/{name}/restart     restart
 ```
 
 ### Library Usage
 
 ```go
 // Deploy a service
-svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
-
-// Inference proxy is automatically mounted at /serving/predict/*path
-// — just send requests to the piper server
+svc, err := p.DeployService(ctx, "default", []byte(modelServiceYAML))
 
 // Stop a service
-err = p.StopService(ctx, "fraud-detector")
+err = p.StopService(ctx, "default", "fraud-detector")
 
 // Restart with latest artifact
-err = p.RestartService(ctx, "fraud-detector")
+err = p.RestartService(ctx, "default", "fraud-detector")
 ```
 
 ---
 
 ## Notebook Servers
 
-Launch JupyterLab servers through the piper UI (`/notebooks`). Three deployment modes are supported.
+Launch JupyterLab servers through the Piper UI. Bare-metal workers support
+`process` and `docker` runtimes; Kubernetes notebooks run through a K8s worker.
 
-### Mode 1: Bare-metal Worker
+### Bare-metal Worker (process or Docker)
 
 JupyterLab is launched as a subprocess on a dedicated **notebook worker** node.
 
@@ -490,12 +505,12 @@ JupyterLab is launched as a subprocess on a dedicated **notebook worker** node.
 # Install JupyterLab (one-time, on each worker node)
 pip install jupyterlab
 
-# Start piper server with gRPC agent server
-piper server --addr :8080 --agent-addr :9090
+# Start Piper's unified HTTP/gRPC endpoint
+piper server --addr :8080
 
 # Start notebook worker on each node
 piper notebook-worker \
-  --agent-addr <server>:9090 \
+  --master-url http://<server>:8080 \
   --gpus 0,1    # GPU device indices available on this node (optional)
 ```
 
@@ -505,50 +520,19 @@ piper notebook-worker \
 piper server --local
 ```
 
-Bare-metal notebook workers are mirrored into the unified agent registry. If
-`server.notebook.delegate: true` is enabled and the selected notebook worker is bare-metal,
-Piper uses the existing notebook worker HTTP protocol; if it is a K8s worker, Piper
-uses tunnel RPC.
+Bare-metal and Kubernetes notebook workers both use the unified worker tunnel.
 
-### Mode 2: Kubernetes (direct)
+Kubernetes notebook execution is always delegated through the worker tunnel. The
+server does not connect directly to the Kubernetes API.
 
-The piper server creates StatefulSets and PVCs directly via the Kubernetes API.
-Use this when the piper server has direct access to the cluster's API server.
-
-```yaml
-# .piper.yaml
-version: 1
-server:
-  notebook:
-    delegate: false
-    k8s:
-      image: jupyter/scipy-notebook:latest
-      namespace: piper-notebooks
-      storage_class: standard
-      storage_size: 20Gi
-      pod_defaults:
-        metadata:
-          annotations:
-            iam.amazonaws.com/role: ml-notebook-role
-        spec:
-          nodeSelector:
-            accelerator: nvidia-tesla-a100
-```
-
-### Mode 3: K8s Worker
+### K8s Worker
 
 The notebook lifecycle is managed by a `piper k8s-worker` running inside the cluster.
 Use this when the piper server cannot reach the cluster API server directly (firewall, VPN, multi-cluster).
 
-```yaml
-# .piper.yaml
-version: 1
-server:
-  notebook:
-    delegate: true
-```
+No Kubernetes workload settings are required on the server.
 
-Then deploy `piper k8s-worker` as described in the [K8s Worker](#4-k8s-worker) section above.
+Then deploy `piper k8s-worker` as described in the [K8s Worker](#3-k8s-worker) section above.
 
 ### Notebook Server YAML
 
@@ -560,32 +544,28 @@ metadata:
 spec:
   volume:
     size: 20Gi              # PVC size (K8s mode only)
-
-  options:
-    env:
-      - name: JUPYTER_TOKEN
-        value: ""
+    storage_class: standard # optional; omitted means cluster default
 
   driver:
     placement:
       runtime: k8s          # baremetal | docker | k8s
-      worker: gpu-node-01   # pin to a specific worker (optional)
-    resources:
-      cpu: "2"
-      memory: "8Gi"
-      gpu: "1"
+      worker: notebook-abc123 # persisted worker ID (optional)
     k8s:                    # K8s-specific (runtime=k8s)
       image: jupyter/scipy-notebook:latest
+      namespace: piper-notebooks
+      resources:
+        cpu: "2"
+        memory: "8Gi"
+        gpu: "1"
       pod_template:
         spec:
           nodeSelector:
             accelerator: nvidia
-    process:                # baremetal-specific (runtime=baremetal)
-      gpus: "0"             # CUDA_VISIBLE_DEVICES
-    docker:                 # Docker-specific (runtime=docker)
-      cpus: "4"
-      mem_limit: "8g"
 ```
+
+For Docker notebook workers, select `runtime: docker` and provide
+`driver.docker.image` plus any CPU/memory/container options in this manifest.
+Process workers use `runtime: baremetal` and `driver.process`.
 
 ---
 
@@ -598,56 +578,40 @@ p, err := piper.New(piper.Config{
     DBPath:    "./piper.db",
     OutputDir: "./outputs",
     Server:    piper.ServerConfig{Addr: ":8080"},
-    Hooks: piper.Hooks{
-        Auth: func(r *http.Request) error {
-            // authentication logic
-            return nil
-        },
-    },
+    Auth:      piper.AuthConfig{Trusted: true},
 })
 
-// Run locally (in-process)
+// Run through a temporary loopback master and embedded worker
 result, err := p.Run(ctx, yamlBytes)
 
-// Start as HTTP server (UI + API)
+// Start HTTP API and the gRPC worker tunnel on the same endpoint
 err = p.Serve(ctx, piper.ServeOption{})
 
-// Start with gRPC agent server for bare-metal/K8s workers
-err = p.Serve(ctx, piper.ServeOption{AgentAddr: ":9090"})
-
-// Mount into an existing router (API only)
-mux.Handle("/piper/", http.StripPrefix("/piper", p.Handler(nil)))
+// Mount into an existing server. Cancel ctx when the parent server shuts down.
+mux.Handle("/piper/", http.StripPrefix("/piper", p.HandlerContext(ctx, nil)))
 
 // Mount UI separately (opt-in)
 import "github.com/piper/piper/pkg/ui"
 mux.Handle("/piper/ui/", http.StripPrefix("/piper/ui", ui.Handler()))
 
 // Deploy a ModelService
-svc, err := p.DeployService(ctx, []byte(modelServiceYAML))
+svc, err := p.DeployService(ctx, "default", []byte(modelServiceYAML))
 ```
 
 ## Configuration (`.piper.yaml`)
 
 ```yaml
-version: 1
+version: 2
 
 server:
   http_addr: ":8080"
-  agent_addr: ":9090"   # gRPC agent server for workers (required for worker modes)
   tls:
     enabled: false
     cert_file: ""
     key_file: ""
-  run:
-    output_dir: ./piper-outputs
-    retries: 2
-    retry_delay: 5s
-    concurrency: 4
+  data_dir: ./piper-outputs
   serving:
     model_dir: ./piper-models
-    delegate: true
-  notebook:
-    delegate: true
 
 storage:
   url: s3://piper-artifacts?endpoint=http://localhost:9000&s3ForcePathStyle=true
@@ -656,28 +620,55 @@ storage:
 workers:
   common:
     master_url: http://localhost:8080
-    agent_addr: localhost:9090
+    state_dir: ./piper-worker-state
+    labels:
+      region: seoul
   notebook:
     mode: process
     notebooks_root: ./notebooks
     port_range: 8888-9900
     docker:
-      image: jupyter/scipy-notebook:latest
       network: bridge
   k8s:
     cluster: local
-    namespaces: [piper-jobs, piper-notebooks]
+    namespaces: [piper-jobs, piper-notebooks, piper-serving]
     enabled: [pipeline, notebook, serving]
     in_cluster: true
     pipeline:
-      namespace: piper-jobs
-      worker_image: piper/piper:latest
+      runner_image: piper/piper:latest
     notebook:
-      namespace: piper-notebooks
-      image: jupyter/scipy-notebook:latest
-      storage_class: standard
-      storage_size: 20Gi
+      infrastructure_image: piper/piper:latest
 ```
+
+### Configuration ownership
+
+- Pipeline, Notebook, and ModelService manifests own workload image, namespace,
+  resources, pod template, and notebook PVC size/class.
+- `server.*` contains control-plane settings only: listener, TLS, database,
+  retention, scheduling, and local data directories.
+- `workers.common` contains tunnel identity/metadata; role sections contain only
+  local runtime capability, capacity, paths, and safety policy.
+- `workers.k8s.namespaces` is an allowlist. It never supplies a workload default.
+- Workers and workload runtimes may connect directly to `storage.url`; all other
+  worker control-plane traffic uses the single master tunnel.
+
+CLI flags override environment variables, which override `.piper.yaml`, which
+override operational defaults. Worker Config never overrides submitted workload
+fields; incomplete manifests are rejected.
+
+Command scope:
+
+| Command | Relevant Config |
+|---|---|
+| `piper server` | `server`, `storage`, `source`, `log`; `workers` only with `--local` |
+| `piper run` | local data/storage/source settings plus the submitted Pipeline manifest |
+| `piper worker` | `workers.common`, `workers.pipeline`, `storage`, `source` |
+| `piper notebook-worker` | `workers.common`, `workers.notebook` |
+| `piper serving-worker` | `workers.common`, `workers.serving` |
+| `piper k8s-worker` | `workers.common`, `workers.k8s`, `storage` |
+
+On first startup, each worker role writes its generated identity metadata under
+`workers.common.state_dir` and reuses that ID after restart.
 
 ## CLI
 
@@ -686,12 +677,12 @@ piper server                                     start server (API + UI)
 piper server --local                             start server with embedded worker/serving/notebook workers
 piper run <file.yaml>                            run a pipeline locally
 piper parse <file.yaml>                          validate YAML without running
-piper worker --agent-addr=<grpc-addr> --master-url=<url>   start a pipeline worker (bare-metal)
-piper serving-worker --agent-addr=<grpc-addr>          start a serving worker (bare-metal ModelService)
-piper notebook-worker --agent-addr=<grpc-addr>         start a notebook worker (bare-metal JupyterLab)
+piper worker --master-url=<url>              start a pipeline worker (bare-metal)
+piper serving-worker --master-url=<url>      start a serving worker (bare-metal ModelService)
+piper notebook-worker --master-url=<url>     start a notebook worker (bare-metal JupyterLab)
 piper k8s-worker --master-url=<url> --cluster=<name> start a cluster-local K8s worker (pipelines + notebooks + serving)
 piper k8s-worker --master-url=<url> --cluster=<name> --enable pipeline  start K8s worker for pipeline only
-piper agent exec --master=<url> ...              execute a step inside a K8s Pod (called automatically)
+piper agent exec --result-file=<path> ...         execute a step inside a K8s Pod (called automatically)
 ```
 
 ## Docker
@@ -720,8 +711,8 @@ k8s worker:      piper k8s-worker --master-url=... --cluster=...
 
 ```bash
 # Requirements
-go 1.21+
-node 18+   # only needed to rebuild the UI
+go 1.26+
+node 20+   # only needed to rebuild the UI
 
 # Full build (UI + binary)
 make build
@@ -772,12 +763,12 @@ pkg/serving/worker/driver/k8s/  K8s Deployment serving worker
 
 pkg/template/                   PipelineTemplate (submit → S3 snapshot → deploy/run)
 pkg/storage/                    artifact store (S3, local, HTTP, memory)
-pkg/dispatch/notebook/          master-side notebook dispatch
-pkg/dispatch/serving/           master-side serving dispatch
-pkg/workers/k8s/                cluster-local K8s unified worker (pipeline + notebook + serving)
-pkg/workers/k8s/pipeline/       K8s pipeline dispatch (embedded in k8s unified worker)
-pkg/k8s/                        Kubernetes Job launcher primitives
-pkg/executor/                   step executors (command, python, notebook)
+pkg/notebook/dispatch/          master-side notebook dispatch
+pkg/serving/dispatch/           master-side serving dispatch
+internal/k8sworker/             cluster-local unified K8s worker
+internal/k8sworker/pipeline/    K8s pipeline dispatch
+pkg/pipeline/worker/driver/k8slauncher/ Kubernetes Job launcher
+pkg/pipeline/executor/          step executors
 
 internal/proto/                 Task, TaskResult wire types
 internal/event/                 in-process pub/sub event bus
@@ -786,9 +777,8 @@ internal/agent/                 server-side worker registry, routing, RPC model
 internal/grpcagent/             gRPC bidirectional streaming transport
 internal/queue/                 DAG task queue (retry, lease, idempotency)
 internal/store/                 state persistence (SQLite / PostgreSQL)
-internal/tunnel/                WebSocket reverse tunnel hub
 
-pkg/run/                        Run and Step records (public API)
+pkg/pipeline/run/               Run and Step records
 pkg/schedule/                   cron/once scheduled pipeline execution
 pkg/ui/                         embedded React SPA
 examples/                       usage examples
@@ -798,7 +788,7 @@ examples/                       usage examples
 
 | Example | Description |
 |---------|-------------|
-| `examples/basics/` | Sequential, parallel, and retry pipelines |
+| `examples/basics/` | Sequential, parallel, and failure-propagation pipelines |
 | `examples/artifacts/` | S3 artifact passing between steps |
 | `examples/git-source/` | Fetching scripts from a Git repository |
 | `examples/notebook/` | Jupyter notebook execution via papermill |

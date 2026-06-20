@@ -48,6 +48,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
     <PanelTemplate
       eyebrow="Notebook Server"
       title={notebook.name}
+      status={<StatusBadge status={notebook.status} />}
       actions={
         <div className="flex items-center gap-1">
           {notebook.status === 'running' && (
@@ -74,29 +75,28 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
           {closeBtn}
         </div>
       }
-      footer={<StatusBadge status={notebook.status} />}
     >
       <PanelTemplate.Section title="Details">
         <dl className="grid grid-cols-2 gap-3">
+          <div>
+            <dt className="text-xs text-muted-foreground">Environment</dt>
+            <dd className="mt-0.5 break-all font-mono text-xs">{notebook.env || notebook.image || '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Work Dir</dt>
+            <dd className="mt-0.5 break-all font-mono text-xs">{notebook.work_dir || '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Volume</dt>
+            <dd className="mt-0.5 font-mono text-xs">{notebook.volume_id || '—'}</dd>
+          </div>
           <div>
             <dt className="text-xs text-muted-foreground">Worker</dt>
             <dd className="mt-0.5 text-xs">{notebook.worker_id || '—'}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Endpoint</dt>
-            <dd className="mt-0.5 font-mono text-xs">{notebook.endpoint || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Environment</dt>
-            <dd className="mt-0.5 font-mono text-xs">{notebook.env || notebook.image || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Work Dir</dt>
-            <dd className="mt-0.5 font-mono text-xs">{notebook.work_dir || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Volume</dt>
-            <dd className="mt-0.5 font-mono text-xs">{notebook.volume_id || '—'}</dd>
+            <dd className="mt-0.5 break-all font-mono text-xs">{notebook.endpoint || '—'}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Created</dt>

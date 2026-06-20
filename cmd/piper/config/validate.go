@@ -5,14 +5,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/docker/go-units"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func ValidatePipeline(c RootConfig) error {
-	if c.Workers.Common.AgentAddr == "" {
-		return fmt.Errorf("config: workers.common.agent_addr is required")
+	if c.Workers.Common.MasterURL == "" {
+		return fmt.Errorf("config: workers.common.master_url is required")
 	}
 	if c.Workers.Pipeline.Concurrency < 1 {
 		return fmt.Errorf("config: workers.pipeline.concurrency must be at least 1")
@@ -26,8 +23,8 @@ func ValidatePipeline(c RootConfig) error {
 }
 
 func ValidateNotebook(c RootConfig) error {
-	if c.Workers.Common.AgentAddr == "" {
-		return fmt.Errorf("config: workers.common.agent_addr is required")
+	if c.Workers.Common.MasterURL == "" {
+		return fmt.Errorf("config: workers.common.master_url is required")
 	}
 	switch c.Workers.Notebook.Mode {
 	case "process", "docker":
@@ -53,8 +50,8 @@ func ValidateNotebook(c RootConfig) error {
 }
 
 func ValidateServing(c RootConfig) error {
-	if c.Workers.Common.AgentAddr == "" {
-		return fmt.Errorf("config: workers.common.agent_addr is required")
+	if c.Workers.Common.MasterURL == "" {
+		return fmt.Errorf("config: workers.common.master_url is required")
 	}
 	switch c.Workers.Serving.Mode {
 	case "process", "docker":
@@ -67,9 +64,6 @@ func ValidateServing(c RootConfig) error {
 func ValidateK8s(c RootConfig) error {
 	if c.Workers.Common.MasterURL == "" {
 		return fmt.Errorf("config: workers.common.master_url is required")
-	}
-	if c.Workers.Common.AgentAddr == "" {
-		return fmt.Errorf("config: workers.common.agent_addr is required")
 	}
 	if c.Workers.K8s.Cluster == "" {
 		return fmt.Errorf("config: workers.k8s.cluster is required")
@@ -85,27 +79,13 @@ func ValidateK8s(c RootConfig) error {
 			return fmt.Errorf("config: workers.k8s.enabled contains invalid domain %q", d)
 		}
 	}
-	if size := c.Workers.K8s.Notebook.StorageSize; size != "" {
-		qty, err := resource.ParseQuantity(size)
-		if err != nil || qty.Sign() <= 0 {
-			return fmt.Errorf("config: workers.k8s.notebook.storage_size is invalid")
-		}
-	}
-	switch c.Workers.K8s.Pipeline.AgentImagePullPolicy {
+	switch c.Workers.K8s.Pipeline.RunnerImagePullPolicy {
 	case "", "Always", "IfNotPresent", "Never":
 	default:
-		return fmt.Errorf("config: workers.k8s.pipeline.agent_image_pull_policy must be Always, IfNotPresent, or Never")
+		return fmt.Errorf("config: workers.k8s.pipeline.runner_image_pull_policy must be Always, IfNotPresent, or Never")
 	}
-	allowed := make(map[string]bool, len(c.Workers.K8s.Namespaces))
-	for _, ns := range c.Workers.K8s.Namespaces {
-		allowed[ns] = true
-	}
-	if len(allowed) > 0 {
-		for _, item := range []struct{ key, namespace string }{{"workers.k8s.pipeline.namespace", c.Workers.K8s.Pipeline.Namespace}, {"workers.k8s.notebook.namespace", c.Workers.K8s.Notebook.Namespace}, {"workers.k8s.serving.namespace", c.Workers.K8s.Serving.Namespace}} {
-			if item.namespace != "" && !allowed[item.namespace] {
-				return fmt.Errorf("config: %s must be included in workers.k8s.namespaces", item.key)
-			}
-		}
+	if len(c.Workers.K8s.Namespaces) == 0 {
+		return fmt.Errorf("config: workers.k8s.namespaces must contain at least one allowed namespace")
 	}
 	return nil
 }
@@ -135,21 +115,6 @@ func unique(key string, values []string) error {
 }
 
 func validateNotebookDocker(c NotebookDockerConfig) error {
-	if c.CPUs != "" {
-		cpus, err := strconv.ParseFloat(c.CPUs, 64)
-		if err != nil || cpus <= 0 {
-			return fmt.Errorf("config: workers.notebook.docker.cpus is invalid")
-		}
-	}
-	for _, item := range []struct{ key, value string }{{"memory", c.Memory}, {"shm_size", c.ShmSize}} {
-		if item.value == "" {
-			continue
-		}
-		n, err := units.RAMInBytes(item.value)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("config: workers.notebook.docker.%s is invalid", item.key)
-		}
-	}
 	names := map[string]bool{}
 	for _, v := range c.Volumes {
 		if strings.TrimSpace(v.Name) == "" {

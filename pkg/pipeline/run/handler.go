@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -68,12 +67,6 @@ type Handler struct {
 	deps HandlerDeps
 }
 
-type ingestedLogEntry struct {
-	Ts     time.Time `json:"ts"`
-	Stream string    `json:"stream"`
-	Line   string    `json:"line"`
-}
-
 // NewHandler creates a new run Handler with the given dependencies.
 func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{deps: deps}
@@ -105,13 +98,6 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	member.POST("/runs/:id/rerun", h.rerunRun)
 	member.DELETE("/runs/:id", h.deleteRun)
 	member.POST("/runs/:id/steps/:step/retry", h.retryStep)
-}
-
-// RegisterWorkerRoutes mounts infrastructure callbacks used by pipeline workers.
-// The caller must apply worker authentication and project resolution middleware.
-func (h *Handler) RegisterWorkerRoutes(rg *gin.RouterGroup) {
-	rg.POST("/runs/:id/steps/:step/logs", h.ingestLogs)
-	rg.POST("/runs/:id/steps/:step/final-metrics", h.ingestFinalMetrics)
 }
 
 // GET /runs
@@ -443,100 +429,6 @@ func (h *Handler) streamLogs(c *gin.Context) {
 	})
 }
 
-// POST /runs/:id/steps/:step/logs  — ingest worker logs
-func (h *Handler) ingestLogs(c *gin.Context) {
-	ref := stepRef{RunID: c.Param("id"), StepName: c.Param("step")}
-	if !h.workerRunExists(c, ref.RunID) {
-		return
-	}
-
-	var entries []ingestedLogEntry
-	if err := c.ShouldBindJSON(&entries); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	lines := make([]*logstore.Line, len(entries))
-	var metrics []*logstore.Metric
-	currentProjectID := projectID(c)
-	for i, e := range entries {
-		lines[i] = &logstore.Line{
-			ProjectID: currentProjectID,
-			RunID:     ref.RunID,
-			StepName:  ref.StepName,
-			Ts:        e.Ts,
-			Stream:    e.Stream,
-			Line:      e.Line,
-		}
-		if metric, ok := parseMetricLine(ref, e); ok {
-			metric.ProjectID = currentProjectID
-			metrics = append(metrics, metric)
-		}
-	}
-	if err := h.deps.Logs.Append(lines); err != nil {
-		slog.Warn("append logs failed", "run_id", ref.RunID, "step", ref.StepName, "err", err)
-	}
-	if h.deps.Metrics != nil {
-		if err := h.deps.Metrics.AppendMetrics(metrics); err != nil {
-			slog.Warn("append metrics failed", "run_id", ref.RunID, "step", ref.StepName, "err", err)
-		}
-	}
-	c.Status(http.StatusOK)
-}
-
-// POST /runs/:id/steps/:step/final-metrics — ingest .metrics.json from worker
-func (h *Handler) ingestFinalMetrics(c *gin.Context) {
-	if h.deps.Metrics == nil {
-		c.Status(http.StatusOK)
-		return
-	}
-	runID := c.Param("id")
-	stepName := c.Param("step")
-	if !h.workerRunExists(c, runID) {
-		return
-	}
-
-	var vals map[string]float64
-	if err := c.ShouldBindJSON(&vals); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	now := time.Now().UTC()
-	metrics := make([]*logstore.Metric, 0, len(vals))
-	for k, v := range vals {
-		metrics = append(metrics, &logstore.Metric{
-			ProjectID: projectID(c),
-			RunID:     runID,
-			StepName:  stepName,
-			Key:       k,
-			Value:     v,
-			Ts:        now,
-		})
-	}
-	if err := h.deps.Metrics.AppendMetrics(metrics); err != nil {
-		slog.Warn("final metrics ingest failed", "run_id", runID, "step", stepName, "err", err)
-	}
-	c.Status(http.StatusOK)
-}
-
-func (h *Handler) workerRunExists(c *gin.Context, runID string) bool {
-	if h.deps.Runs == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "run repository not configured"})
-		return false
-	}
-	runRec, err := h.deps.Runs.Get(c.Request.Context(), projectID(c), runID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return false
-	}
-	if runRec == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
-		return false
-	}
-	return true
-}
-
 func (h *Handler) getMetrics(c *gin.Context) {
 	if h.deps.Metrics == nil {
 		c.JSON(http.StatusOK, []any{})
@@ -548,28 +440,6 @@ func (h *Handler) getMetrics(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, metrics)
-}
-
-type stepRef struct {
-	RunID    string
-	StepName string
-}
-
-func parseMetricLine(ref stepRef, entry ingestedLogEntry) (*logstore.Metric, bool) {
-	line := strings.TrimSpace(entry.Line)
-	if !strings.HasPrefix(line, "PIPER_METRIC ") {
-		return nil, false
-	}
-	key, rawValue, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(line, "PIPER_METRIC ")), "=")
-	if !ok {
-		return nil, false
-	}
-	key = strings.TrimSpace(key)
-	value, err := strconv.ParseFloat(strings.TrimSpace(rawValue), 64)
-	if key == "" || err != nil {
-		return nil, false
-	}
-	return &logstore.Metric{RunID: ref.RunID, StepName: ref.StepName, Key: key, Value: value, Ts: entry.Ts}, true
 }
 
 // GET /runs/:id/artifacts

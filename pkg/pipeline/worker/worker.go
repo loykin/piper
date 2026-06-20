@@ -16,6 +16,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
@@ -34,10 +35,11 @@ const (
 // AgentConfig configures the gRPC connection to the master agent server
 // and this worker's identity within the agent registry.
 type AgentConfig struct {
-	Addr        string // gRPC address of master agent server, e.g. "master:9090"
+	MasterURL   string // single HTTP(S) endpoint for the outbound master tunnel
 	WorkerToken string // bearer token for gRPC authorization metadata
 	ID          string // stable worker identity
 	Label       string
+	Labels      map[string]string
 	Hostname    string
 	Concurrency int
 }
@@ -45,8 +47,6 @@ type AgentConfig struct {
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to every piper agent exec subprocess.
 type StoreConfig struct {
-	MasterURL    string
-	WorkerToken  string
 	StorageToken string
 	StorageURL   string
 	OutputDir    string
@@ -64,8 +64,7 @@ type BaremetalConfig struct {
 
 // DockerConfig holds options specific to the Docker container driver.
 type DockerConfig struct {
-	DefaultImage string
-	Network      string
+	Network string
 }
 
 // Config holds full Worker configuration grouped by layer.
@@ -81,6 +80,7 @@ type Config struct {
 type trackedTask struct {
 	handle pdriver.Handle
 	cancel context.CancelFunc
+	logs   logsink.LogSink
 }
 
 // Worker manages pipeline workloads via gRPC.
@@ -111,7 +111,10 @@ func New(cfg Config) (*Worker, error) {
 		hostname, _ = os.Hostname()
 	}
 
-	labels := map[string]string{}
+	labels := make(map[string]string, len(cfg.Agent.Labels)+1)
+	for k, v := range cfg.Agent.Labels {
+		labels[k] = v
+	}
 	if cfg.Agent.Label != "" {
 		labels["label"] = cfg.Agent.Label
 	}
@@ -121,7 +124,7 @@ func New(cfg Config) (*Worker, error) {
 		runtime = string(RuntimeBaremetal)
 	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		AgentAddr:    cfg.Agent.Addr,
+		MasterURL:    cfg.Agent.MasterURL,
 		AgentID:      cfg.Agent.ID,
 		WorkerToken:  cfg.Agent.WorkerToken,
 		Kind:         iagent.KindBareMetal,
@@ -136,11 +139,10 @@ func New(cfg Config) (*Worker, error) {
 	switch cfg.Runtime {
 	case RuntimeDocker:
 		d, err := dockerdriver.New(dockerdriver.Config{
-			WorkerID:     cfg.Agent.ID,
-			DefaultImage: cfg.Docker.DefaultImage,
-			ResultDir:    filepath.Join(cfg.Store.OutputDir, ".results"),
-			OutputDir:    cfg.Store.OutputDir,
-			Network:      cfg.Docker.Network,
+			WorkerID:  cfg.Agent.ID,
+			ResultDir: filepath.Join(cfg.Store.OutputDir, ".results"),
+			OutputDir: cfg.Store.OutputDir,
+			Network:   cfg.Docker.Network,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("docker driver: %w", err)
@@ -258,17 +260,16 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	spec := pdriver.ExecSpec{
 		RuntimeKey:   runtimeKey,
 		OutputDir:    w.cfg.Store.OutputDir,
-		MasterURL:    w.cfg.Store.MasterURL,
-		WorkerToken:  w.cfg.Store.WorkerToken,
 		StorageToken: w.cfg.Store.StorageToken,
 		StorageURL:   w.cfg.Store.StorageURL,
 		Env:          w.gitEnv(),
+		LogSink:      logsink.NewGRPCLogSink(task.ProjectID, w.client),
 	}
 
 	// Image must be resolved here (in the worker layer) for container runtimes.
 	// Baremetal subprocesses run the host binary directly — no image needed.
 	if w.cfg.Runtime == RuntimeDocker {
-		image, err := pdriver.ResolveImage(task, string(RuntimeDocker), w.cfg.Docker.DefaultImage)
+		image, err := pdriver.ResolveImage(task, string(RuntimeDocker))
 		if err != nil {
 			return err
 		}
@@ -277,12 +278,13 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 
 	handle, err := w.driver.Start(ctx, task, spec)
 	if err != nil {
+		spec.LogSink.Stop()
 		return fmt.Errorf("start job: %w", err)
 	}
 
 	taskCtx, cancel := context.WithCancel(context.Background())
 	w.mu.Lock()
-	w.active[runtimeKey] = &trackedTask{handle: handle, cancel: cancel}
+	w.active[runtimeKey] = &trackedTask{handle: handle, cancel: cancel, logs: spec.LogSink}
 	w.inFlight++
 	w.mu.Unlock()
 
@@ -295,9 +297,13 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 func (w *Worker) observe(ctx context.Context, handle pdriver.Handle) {
 	defer func() {
 		w.mu.Lock()
+		tracked := w.active[handle.RuntimeKey]
 		delete(w.active, handle.RuntimeKey)
 		w.inFlight--
 		w.mu.Unlock()
+		if tracked != nil && tracked.logs != nil {
+			tracked.logs.Stop()
+		}
 	}()
 
 	exit, err := w.driver.Wait(ctx, handle)

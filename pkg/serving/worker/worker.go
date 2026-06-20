@@ -24,11 +24,12 @@ import (
 
 // Config holds configuration for a serving worker agent.
 type Config struct {
-	AgentAddr   string // gRPC address of master agent server, e.g. "master:9090"
+	MasterURL   string // single HTTP(S) endpoint for the outbound master tunnel
 	WorkerToken string // bearer token sent in gRPC authorization metadata
 	GPUs        []string
 	Hostname    string
 	ID          string // UUID; caller must generate
+	Labels      map[string]string
 	Mode        string // process | docker; empty means process
 	Docker      DockerConfig
 }
@@ -63,7 +64,7 @@ func New(cfg Config) *Worker {
 		mode = servingdriver.ModeProcess
 	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		AgentAddr:    cfg.AgentAddr,
+		MasterURL:    cfg.MasterURL,
 		AgentID:      cfg.ID,
 		WorkerToken:  cfg.WorkerToken,
 		Kind:         iagent.KindBareMetal,
@@ -71,6 +72,7 @@ func New(cfg Config) *Worker {
 		Hostname:     cfg.Hostname,
 		GPUs:         cfg.GPUs,
 		Capabilities: []string{iagent.CapabilityServing},
+		Labels:       cfg.Labels,
 	})
 
 	w := &Worker{

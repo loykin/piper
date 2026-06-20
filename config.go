@@ -8,18 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 	storemod "github.com/piper/piper/internal/store"
 	"github.com/piper/piper/pkg/security"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // Config is the global piper configuration. Accepts a struct and can be embedded.
 type Config struct {
-	// Execution
-	// MaxRetries is the number of retry attempts after the first failure.
-	// 0 means no retries (fail immediately). Negative values use the default (2).
-	MaxRetries  int           `yaml:"max_retries"  mapstructure:"max_retries"`
-	RetryDelay  time.Duration `yaml:"retry_delay"  mapstructure:"retry_delay"`
-	Concurrency int           `yaml:"concurrency"  mapstructure:"concurrency"`
-	OutputDir   string        `yaml:"output_dir"   mapstructure:"output_dir"`
+	OutputDir string `yaml:"output_dir"   mapstructure:"output_dir"`
 	// DB configuration — specify only one. Priority: Repos > DB > DBDriver+DBDSN > DBPath.
 	DBPath string  `yaml:"db_path"   mapstructure:"db_path"` // sqlite file path (default: output_dir/piper.db)
 	DB     *sql.DB `yaml:"-" mapstructure:"-"`               // directly injected sqlite *sql.DB
@@ -65,11 +58,6 @@ type Config struct {
 
 	// NotebookWorker — embedded/standalone notebook worker configuration.
 	NotebookWorker NotebookWorkerConfig `yaml:"notebook_worker" mapstructure:"notebook_worker"`
-
-	// NotebookK8s — K8s notebook driver configuration.
-	// When WorkerImage is non-empty and a K8s clientset is available, notebooks
-	// run as StatefulSets instead of delegating to a notebook-worker daemon.
-	NotebookK8s NotebookK8sConfig `yaml:"notebook_k8s" mapstructure:"notebook_k8s"`
 }
 
 type GitConfig struct {
@@ -136,7 +124,6 @@ type AuthFactory func(AuthDependencies) (AuthConfig, error)
 
 type ServerConfig struct {
 	Addr        string    `yaml:"addr"         mapstructure:"addr"`
-	AgentAddr   string    `yaml:"agent_addr"   mapstructure:"agent_addr"`   // gRPC agent server, e.g. ":9090"
 	WorkerToken string    `yaml:"worker_token" mapstructure:"worker_token"` // separate token for worker/agent auth
 	TLS         TLSConfig `yaml:"tls"          mapstructure:"tls"`
 }
@@ -165,9 +152,6 @@ type ServingConfig struct {
 	// ModelDir is the local directory where model artifacts are downloaded before serving.
 	// Defaults to output_dir/models.
 	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
-
-	// Worker delegates serving lifecycle to a worker selected through the unified registry.
-	Worker bool `yaml:"worker" mapstructure:"worker"`
 }
 
 // NotebookWorkerConfig holds configuration for the embedded/standalone notebook worker.
@@ -188,16 +172,8 @@ type NotebookWorkerConfig struct {
 }
 
 type NotebookWorkerDockerConfig struct {
-	Image        string                       `yaml:"image"          mapstructure:"image"`
-	Network      string                       `yaml:"network"        mapstructure:"network"`
-	CPUs         string                       `yaml:"cpus"           mapstructure:"cpus"`
-	Memory       string                       `yaml:"memory"         mapstructure:"memory"`
-	ShmSize      string                       `yaml:"shm_size"       mapstructure:"shm_size"`
-	ReadOnlyRoot bool                         `yaml:"read_only_root" mapstructure:"read_only_root"`
-	Tmpfs        []string                     `yaml:"tmpfs"          mapstructure:"tmpfs"`
-	User         string                       `yaml:"user"           mapstructure:"user"`
-	Volumes      []NotebookWorkerDockerVolume `yaml:"volumes"        mapstructure:"volumes"`
-	ExtraArgs    []string                     `yaml:"extra_args"     mapstructure:"extra_args"`
+	Network string                       `yaml:"network"        mapstructure:"network"`
+	Volumes []NotebookWorkerDockerVolume `yaml:"volumes"        mapstructure:"volumes"`
 }
 
 type NotebookWorkerDockerVolume struct {
@@ -207,36 +183,9 @@ type NotebookWorkerDockerVolume struct {
 	ReadOnly      bool   `yaml:"read_only"      mapstructure:"read_only"`
 }
 
-// NotebookK8sConfig holds server-side K8s notebook worker dispatch configuration.
-type NotebookK8sConfig struct {
-	// Worker delegates notebook lifecycle to a cluster-local K8s worker instead of
-	// letting piper-server call the K8s API directly.
-	Worker bool `yaml:"worker" mapstructure:"worker"`
-
-	// Namespace is a placement hint passed to the K8s worker for notebook StatefulSets and PVCs.
-	Namespace string `yaml:"namespace" mapstructure:"namespace"`
-
-	// WorkerImage is the default Jupyter container image (e.g. jupyter/scipy-notebook:latest).
-	WorkerImage string `yaml:"worker_image" mapstructure:"worker_image"`
-
-	// StorageClass is the PVC storage class. Empty string uses the cluster default.
-	StorageClass string `yaml:"storage_class" mapstructure:"storage_class"`
-
-	// StorageSize is the PVC size (e.g. "10Gi"). Defaults to "10Gi".
-	StorageSize string `yaml:"storage_size" mapstructure:"storage_size"`
-
-	// PodDefaults sets cluster-wide defaults applied to every notebook pod.
-	// Uses native corev1.PodTemplateSpec format — same as a Kubernetes manifest.
-	// Per-notebook spec.k8s.pod_template overlays on top; piper required fields are always last.
-	PodDefaults corev1.PodTemplateSpec `yaml:"pod_defaults" mapstructure:"pod_defaults"`
-}
-
 func DefaultConfig() Config {
 	return Config{
-		MaxRetries:  2,
-		RetryDelay:  5 * time.Second,
-		Concurrency: 4,
-		OutputDir:   "./piper-outputs",
+		OutputDir: "./piper-outputs",
 		Auth: AuthConfig{
 			Trusted: true,
 		},

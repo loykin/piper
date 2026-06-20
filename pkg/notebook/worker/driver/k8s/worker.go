@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,18 +29,12 @@ import (
 type Dispatcher = *grpcagent.Dispatcher
 
 type Config struct {
-	WorkerID     string
-	ClusterName  string
-	Namespaces   []string
-	Client       kubernetes.Interface
-	Namespace    string
-	Image        string
-	StorageClass string
-	StorageSize  string
-	// PodDefaults are cluster-wide defaults applied to every notebook pod.
-	// Merged before the per-notebook pod_template (defaults lose on conflict).
-	PodDefaults  corev1.PodTemplateSpec
-	ReportStatus func(notebook.WorkerStatusUpdate) error
+	WorkerID            string
+	ClusterName         string
+	Namespaces          []string
+	Client              kubernetes.Interface
+	InfrastructureImage string
+	ReportStatus        func(notebook.WorkerStatusUpdate) error
 	// LogClient enables pod log streaming. When set, running notebook pods
 	// forward stdout/stderr to the master log store.
 	LogClient logsink.PushClient
@@ -90,13 +85,16 @@ func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.Worke
 	if req.VolumeID == "" {
 		return nil, fmt.Errorf("volume_id is required")
 	}
-	ns := a.notebookNamespace()
+	ns := req.Namespace
+	if ns == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
+	if !slices.Contains(a.cfg.Namespaces, ns) {
+		return nil, fmt.Errorf("namespace %q is not allowed", ns)
+	}
 	size := req.StorageSize
 	if size == "" {
-		size = a.cfg.StorageSize
-	}
-	if size == "" {
-		size = "10Gi"
+		return nil, fmt.Errorf("storage_size is required")
 	}
 	qty, err := resource.ParseQuantity(size)
 	if err != nil {
@@ -119,8 +117,8 @@ func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.Worke
 			},
 		},
 	}
-	if a.cfg.StorageClass != "" {
-		storageClass := a.cfg.StorageClass
+	if req.StorageClass != "" {
+		storageClass := req.StorageClass
 		pvc.Spec.StorageClassName = &storageClass
 	}
 	if _, err := a.cfg.Client.CoreV1().PersistentVolumeClaims(ns).Create(ctx, pvc, metav1.CreateOptions{}); err != nil && !k8serrors.IsAlreadyExists(err) {
@@ -144,7 +142,13 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 		return nil, fmt.Errorf("metadata.name is required")
 	}
 
-	ns := a.notebookNamespace()
+	ns := spec.K8sNamespace()
+	if ns == "" {
+		return nil, fmt.Errorf("notebook driver.k8s.namespace is required")
+	}
+	if !slices.Contains(a.cfg.Namespaces, ns) {
+		return nil, fmt.Errorf("namespace %q is not allowed", ns)
+	}
 	name := notebookWorkloadName(req.ProjectID, spec.Metadata.Name)
 	labels := a.k8sLabels("notebook", spec.Metadata.Name)
 	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", spec.Metadata.Name)
@@ -155,23 +159,22 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	}
 	replicas := int32(1)
 
-	// ── Stage 1: deep copy server-level PodDefaults ───────────────────────────
-	podTemplate := *a.cfg.PodDefaults.DeepCopy()
-
-	// ── Stage 2: merge per-notebook pod_template on top ──────────────────────
+	var podTemplate corev1.PodTemplateSpec
 	if spec.Spec.Driver.K8s != nil {
-		mergePodTemplate(&podTemplate, &spec.Spec.Driver.K8s.PodTemplate)
+		podTemplate = *spec.Spec.Driver.K8s.PodTemplate.DeepCopy()
 	}
 
 	// ── Stage 3: apply piper-required fields (always last) ───────────────────
 
-	// Resolve image: spec.driver.k8s.image > notebook container image in merged template
-	// > cfg.Image > hardcoded default.
+	// Resolve image only from the submitted notebook manifest.
 	var driverImage string
 	if spec.Spec.Driver.K8s != nil {
 		driverImage = spec.Spec.Driver.K8s.Image
 	}
-	image := resolveImage(a.cfg.Image, driverImage, podTemplate)
+	image := resolveImage(driverImage, podTemplate)
+	if image == "" {
+		return nil, fmt.Errorf("notebook driver.k8s.image is required")
+	}
 
 	// Piper selector labels must be present; merged template labels are preserved.
 	if podTemplate.Labels == nil {
@@ -246,7 +249,7 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 
 	// Drain viewer and scale up StatefulSet inside the same volume lock so
 	// no browse request can create a viewer between drain and scale-up.
-	if err := a.drainViewerAndRun(ctx, req.VolumeID, func(ctx context.Context) error {
+	if err := a.drainViewerAndRun(ctx, ns, req.VolumeID, func(ctx context.Context) error {
 		_, err := a.cfg.Client.AppsV1().StatefulSets(ns).Create(ctx, sts, metav1.CreateOptions{})
 		if err != nil {
 			if !k8serrors.IsAlreadyExists(err) {
@@ -307,8 +310,14 @@ func (a *Worker) stopNotebook(ctx context.Context, req notebook.WorkerStopReques
 	}
 	a.logMu.Unlock()
 
-	ns := a.notebookNamespace()
 	name := notebookWorkloadName(req.ProjectID, req.Name)
+	ns, err := a.findNotebookNamespace(ctx, name)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
@@ -328,7 +337,14 @@ func (a *Worker) deprovisionNotebookVolume(ctx context.Context, req notebook.Wor
 	if req.VolumeID == "" {
 		return fmt.Errorf("volume_id is required")
 	}
-	err := a.cfg.Client.CoreV1().PersistentVolumeClaims(a.notebookNamespace()).Delete(ctx, notebookPVCName(req.VolumeID), metav1.DeleteOptions{})
+	ns, err := a.findVolumeNamespace(ctx, req.VolumeID)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	err = a.cfg.Client.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, notebookPVCName(req.VolumeID), metav1.DeleteOptions{})
 	if err != nil && !k8serrors.IsNotFound(err) {
 		return err
 	}
@@ -340,7 +356,13 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSync
 	for _, target := range req.Targets {
 		name := target.Name
 		key := notebookStatusKey(target.ProjectID, name)
-		sts, err := a.cfg.Client.AppsV1().StatefulSets(a.notebookNamespace()).Get(ctx, notebookWorkloadName(target.ProjectID, name), metav1.GetOptions{})
+		resourceName := notebookWorkloadName(target.ProjectID, name)
+		ns, findErr := a.findNotebookNamespace(ctx, resourceName)
+		if findErr != nil {
+			statuses[key] = notebook.StatusFailed
+			continue
+		}
+		sts, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, resourceName, metav1.GetOptions{})
 		if err != nil {
 			if k8serrors.IsNotFound(err) {
 				statuses[key] = notebook.StatusFailed
@@ -366,13 +388,12 @@ func (a *Worker) syncNotebookStatus(ctx context.Context, req notebook.WorkerSync
 // drainViewerAndRun acquires the volume lock, removes any existing viewer Pod/Service,
 // then runs fn while holding the lock. StatefulSet scale-up must be performed inside fn
 // to guarantee no browse request creates a viewer between drain and notebook start.
-func (a *Worker) drainViewerAndRun(ctx context.Context, volumeID string, fn func(ctx context.Context) error) error {
-	ns := a.notebookNamespace()
+func (a *Worker) drainViewerAndRun(ctx context.Context, ns, volumeID string, fn func(ctx context.Context) error) error {
 	lockCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	return volumeLock(lockCtx, a.cfg.Client, ns, a.cfg.WorkerID, volumeID, func(ctx context.Context) error {
-		mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.Image)
+		mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.InfrastructureImage)
 		if mgr.ViewerExists(ctx, volumeID) {
 			if err := mgr.Stop(ctx, volumeID); err != nil {
 				return err
@@ -403,7 +424,12 @@ func (a *Worker) Observe(ctx context.Context) {
 }
 
 func (a *Worker) observeOnce(ctx context.Context) {
-	ns := a.notebookNamespace()
+	for _, ns := range a.cfg.Namespaces {
+		a.observeNamespace(ctx, ns)
+	}
+}
+
+func (a *Worker) observeNamespace(ctx context.Context, ns string) {
 	selector := k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=notebook"
 	items, err := a.cfg.Client.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
@@ -454,7 +480,7 @@ func (a *Worker) observeOnce(ctx context.Context) {
 
 	// Remove viewer pods that conflict with active notebooks.
 	if len(activeVolumeIDs) > 0 {
-		mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.Image)
+		mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.InfrastructureImage)
 		for volumeID := range activeVolumeIDs {
 			if mgr.ViewerExists(ctx, volumeID) {
 				_ = mgr.Stop(ctx, volumeID)
@@ -463,7 +489,7 @@ func (a *Worker) observeOnce(ctx context.Context) {
 	}
 
 	// Run viewer idle/orphan cleanup.
-	newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.Image).Reconcile(ctx)
+	newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.InfrastructureImage).Reconcile(ctx)
 }
 
 func (a *Worker) statusChanged(name, status string) bool {
@@ -495,7 +521,7 @@ func (a *Worker) ensureNotebookLogStream(ctx context.Context, projectID, name st
 	a.logCancels[key] = cancel
 	a.logMu.Unlock()
 
-	ns := a.notebookNamespace()
+	ns := sts.Namespace
 	podName := sts.Name + "-0" // StatefulSet pod naming convention
 	sink := logsink.NewGRPCLogSink(projectID, a.cfg.LogClient)
 	runID := "nb:" + name
@@ -547,14 +573,27 @@ func observedStatefulSetStatus(sts *appsv1.StatefulSet) string {
 	return ""
 }
 
-func (a *Worker) notebookNamespace() string {
-	if a.cfg.Namespace != "" {
-		return a.cfg.Namespace
+func (a *Worker) findNotebookNamespace(ctx context.Context, name string) (string, error) {
+	for _, ns := range a.cfg.Namespaces {
+		if _, err := a.cfg.Client.AppsV1().StatefulSets(ns).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			return ns, nil
+		} else if !k8serrors.IsNotFound(err) {
+			return "", err
+		}
 	}
-	if len(a.cfg.Namespaces) > 0 {
-		return a.cfg.Namespaces[0]
+	return "", k8serrors.NewNotFound(appsv1.Resource("statefulsets"), name)
+}
+
+func (a *Worker) findVolumeNamespace(ctx context.Context, volumeID string) (string, error) {
+	name := notebookPVCName(volumeID)
+	for _, ns := range a.cfg.Namespaces {
+		if _, err := a.cfg.Client.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			return ns, nil
+		} else if !k8serrors.IsNotFound(err) {
+			return "", err
+		}
 	}
-	return "default"
+	return "", k8serrors.NewNotFound(corev1.Resource("persistentvolumeclaims"), name)
 }
 
 func (a *Worker) k8sLabels(kind, id string) map[string]string {
@@ -581,94 +620,9 @@ func notebookStatusKey(projectID, name string) string {
 // Using a piper-prefixed name avoids collisions with user-defined volumes.
 const piperDataVolume = "piper-data"
 
-// mergePodTemplate overlays src onto dst in-place.
-// For each field: src wins if set, dst keeps its value otherwise.
-// Containers and Volumes are merged by name (src entry replaces dst entry with same name;
-// src-only entries are appended).
-func mergePodTemplate(dst, src *corev1.PodTemplateSpec) {
-	// Labels and Annotations: src merged into dst (src wins on conflict).
-	dst.Labels = mergeStringMaps(dst.Labels, src.Labels)
-	dst.Annotations = mergeStringMaps(dst.Annotations, src.Annotations)
-
-	// PodSpec scalar fields: src wins if non-zero.
-	if src.Spec.ServiceAccountName != "" {
-		dst.Spec.ServiceAccountName = src.Spec.ServiceAccountName
-	}
-	if src.Spec.SchedulerName != "" {
-		dst.Spec.SchedulerName = src.Spec.SchedulerName
-	}
-	if src.Spec.NodeName != "" {
-		dst.Spec.NodeName = src.Spec.NodeName
-	}
-
-	// NodeSelector: src merged into dst.
-	dst.Spec.NodeSelector = mergeStringMaps(dst.Spec.NodeSelector, src.Spec.NodeSelector)
-
-	// Tolerations: append src (duplicates allowed — k8s deduplicates).
-	dst.Spec.Tolerations = append(dst.Spec.Tolerations, src.Spec.Tolerations...)
-
-	// Containers: merge by name.
-	dst.Spec.Containers = mergeContainers(dst.Spec.Containers, src.Spec.Containers)
-	dst.Spec.InitContainers = mergeContainers(dst.Spec.InitContainers, src.Spec.InitContainers)
-
-	// Volumes: src replaces dst entry with same name; src-only entries appended.
-	dst.Spec.Volumes = mergeVolumes(dst.Spec.Volumes, src.Spec.Volumes)
-}
-
-// mergeContainers merges src containers into dst by name.
-// src entries replace dst entries with the same name; src-only entries are appended.
-func mergeContainers(dst, src []corev1.Container) []corev1.Container {
-	if len(src) == 0 {
-		return dst
-	}
-	out := make([]corev1.Container, len(dst))
-	copy(out, dst)
-	for _, sc := range src {
-		idx := containerIndex(out, sc.Name)
-		if idx >= 0 {
-			out[idx] = sc
-		} else {
-			out = append(out, sc)
-		}
-	}
-	return out
-}
-
-// mergeVolumes merges src volumes into dst by name.
-func mergeVolumes(dst, src []corev1.Volume) []corev1.Volume {
-	if len(src) == 0 {
-		return dst
-	}
-	out := make([]corev1.Volume, len(dst))
-	copy(out, dst)
-	for _, sv := range src {
-		idx := volumeIndex(out, sv.Name)
-		if idx >= 0 {
-			out[idx] = sv
-		} else {
-			out = append(out, sv)
-		}
-	}
-	return out
-}
-
-func mergeStringMaps(dst, src map[string]string) map[string]string {
-	if len(src) == 0 {
-		return dst
-	}
-	out := make(map[string]string, len(dst)+len(src))
-	for k, v := range dst {
-		out[k] = v
-	}
-	for k, v := range src {
-		out[k] = v
-	}
-	return out
-}
-
 // resolveImage returns the image to use for the notebook container.
-// Priority: spec.k8s.image > pod_template notebook container image > cfg.Image > default.
-func resolveImage(cfgImage string, driverImage string, tpl corev1.PodTemplateSpec) string {
+// Priority: spec.k8s.image > pod_template notebook container image.
+func resolveImage(driverImage string, tpl corev1.PodTemplateSpec) string {
 	if driverImage != "" {
 		return driverImage
 	}
@@ -676,10 +630,7 @@ func resolveImage(cfgImage string, driverImage string, tpl corev1.PodTemplateSpe
 	if idx >= 0 && tpl.Spec.Containers[idx].Image != "" {
 		return tpl.Spec.Containers[idx].Image
 	}
-	if cfgImage != "" {
-		return cfgImage
-	}
-	return "jupyter/scipy-notebook:latest"
+	return ""
 }
 
 func containerIndex(containers []corev1.Container, name string) int {

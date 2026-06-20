@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
@@ -12,7 +13,7 @@ import (
 )
 
 // newAgentCmd returns the "piper agent" command.
-// Used as the K8s Job entrypoint: piper agent exec --master=... --task=...
+// Used as the K8s Job entrypoint. It reports only to its parent worker.
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -23,15 +24,12 @@ func newAgentCmd() *cobra.Command {
 }
 
 type agentExecFlags struct {
-	master       string
-	workerToken  string
 	storageToken string
 	taskB64      string
 	outputDir    string
 	inputDir     string
 	storageURL   string
 	resultFile   string
-	reportMode   string
 	gitUser      string
 	gitToken     string
 }
@@ -48,15 +46,12 @@ func newAgentExecCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&f.master, "master", "", "piper server URL")
-	cmd.Flags().StringVar(&f.workerToken, "worker-token", "", "worker callback token")
 	cmd.Flags().StringVar(&f.storageToken, "storage-token", "", "artifact store token")
 	cmd.Flags().StringVar(&f.taskB64, "task", "", "base64-encoded proto.Task JSON")
 	cmd.Flags().StringVar(&f.outputDir, "output-dir", "/piper-outputs", "local output directory")
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
 	cmd.Flags().StringVar(&f.storageURL, "storage-url", "", "artifact store URL (s3://, file://, http://)")
-	cmd.Flags().StringVar(&f.resultFile, "result-file", "", "path to write AgentResult JSON (required for report-mode=file)")
-	cmd.Flags().StringVar(&f.reportMode, "report-mode", string(agent.ReportModeHTTP), "result delivery mode: http (migration) or file")
+	cmd.Flags().StringVar(&f.resultFile, "result-file", "", "path to write AgentResult JSON (required)")
 
 	return cmd
 }
@@ -78,8 +73,6 @@ func runAgentExec(ctx context.Context, f agentExecFlags) error {
 	}
 
 	r, err := agent.New(agent.Config{
-		MasterURL:    f.master,
-		WorkerToken:  f.workerToken,
 		StorageToken: f.storageToken,
 		OutputDir:    f.outputDir,
 		InputDir:     f.inputDir,
@@ -93,7 +86,7 @@ func runAgentExec(ctx context.Context, f agentExecFlags) error {
 
 	result := r.Run(ctx, task)
 
-	if err := deliverResult(result, agent.ReportMode(f.reportMode), f.resultFile, r); err != nil {
+	if err := deliverResult(result, f.resultFile); err != nil {
 		return fmt.Errorf("deliver result: %w", err)
 	}
 
@@ -105,11 +98,11 @@ func runAgentExec(ctx context.Context, f agentExecFlags) error {
 
 // deliverResult sends the TaskResult according to the configured report mode.
 // For /dev/termination-log, the result is first truncated to fit the 4096-byte K8s limit.
-func deliverResult(result proto.TaskResult, mode agent.ReportMode, resultFile string, r *agent.Runner) error {
+func deliverResult(result proto.TaskResult, resultFile string) error {
 	if resultFile == "/dev/termination-log" {
 		result = truncateForTerminationLog(result)
 	}
-	return agent.DeliverResult(result, mode, resultFile, r)
+	return agent.DeliverResult(result, resultFile)
 }
 
 // truncateForTerminationLog trims an AgentResult JSON to fit within
@@ -137,6 +130,23 @@ func truncateForTerminationLog(result proto.TaskResult) proto.TaskResult {
 		data, err = json.Marshal(agent.AgentResult{Version: 1, Result: result})
 		if err != nil {
 			break
+		}
+	}
+	if len(data) > softLimit && len(result.Metrics) > 0 {
+		metrics := make(map[string]float64, len(result.Metrics))
+		keys := make([]string, 0, len(result.Metrics))
+		for key, value := range result.Metrics {
+			metrics[key] = value
+			keys = append(keys, key)
+		}
+		result.Metrics = metrics
+		sort.Strings(keys)
+		for i := len(keys) - 1; i >= 0 && len(data) > softLimit; i-- {
+			delete(result.Metrics, keys[i])
+			data, err = json.Marshal(agent.AgentResult{Version: 1, Result: result})
+			if err != nil {
+				break
+			}
 		}
 	}
 	if len(data) > hardLimit {

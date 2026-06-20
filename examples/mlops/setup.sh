@@ -55,7 +55,7 @@ echo "    server ready"
 
 # ── 4. Start piper worker (background) ───────────────────────────────────────
 echo "==> Starting piper worker…"
-bin/piper --config examples/mlops/piper.yaml worker --master "$SERVER" &
+bin/piper --config examples/mlops/piper.yaml worker --master-url "$SERVER" &
 WORKER_PID=$!
 echo "    worker PID=$WORKER_PID"
 

@@ -32,7 +32,7 @@ func (m *Manager) SetEventPublisher(p event.Publisher) {
 
 // Create provisions new storage and launches a new notebook server asynchronously.
 // Returns immediately with status=provisioning; background goroutine handles
-// volume allocation and server start. Worker callback sets final status.
+// volume allocation and server start. Worker status push sets final status.
 func (m *Manager) Create(ctx context.Context, projectID string, spec Notebook, yamlStr string) (*NotebookServer, error) {
 	if projectID == "" {
 		return nil, fmt.Errorf("notebook: project ID is required")
@@ -41,6 +41,9 @@ func (m *Manager) Create(ctx context.Context, projectID string, spec Notebook, y
 	name := spec.Metadata.Name
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
+	}
+	if err := spec.Validate(); err != nil {
+		return nil, fmt.Errorf("notebook: %w", err)
 	}
 	if err := spec.Spec.Prepare.Validate(); err != nil {
 		return nil, fmt.Errorf("notebook: invalid prepare spec: %w", err)
@@ -80,13 +83,13 @@ func (m *Manager) Create(ctx context.Context, projectID string, spec Notebook, y
 }
 
 // provisionAndStart handles the async two-phase startup: volume provisioning then server start.
-// Status transitions: provisioning → starting → (running or failed via worker callback).
+// Status transitions: provisioning → starting → (running or failed via worker status push).
 func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *NotebookVolume, spec Notebook, yamlStr string) {
 	spec.Metadata.ProjectID = projectID
 	name := spec.Metadata.Name
 
 	// Phase 1: provision storage
-	if err := m.driver.ProvisionVolume(ctx, vol, spec.StorageSize()); err != nil {
+	if err := m.driver.ProvisionVolume(ctx, vol, spec); err != nil {
 		slog.Error("notebook: provision volume failed", "name", name, "err", err)
 		_ = m.repo.SetStatus(ctx, projectID, name, StatusFailed)
 		_ = m.vols.Delete(ctx, vol.ID)
@@ -132,7 +135,7 @@ func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *
 		if fresh.Image != "" {
 			nb.Image = fresh.Image
 		}
-		// Keep status=starting; worker callback will set it to running/failed.
+		// Keep status=starting; worker status push will set it to running/failed.
 		_ = m.repo.Update(ctx, nb)
 	}
 }
@@ -249,7 +252,7 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 }
 
 // Restart relaunches a stopped notebook on the same worker that holds its volume.
-// Returns immediately with status=starting; worker callback sets status to running/failed.
+// Returns immediately with status=starting; worker status push sets status to running/failed.
 func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 	if projectID == "" {
 		return fmt.Errorf("notebook: project ID is required")

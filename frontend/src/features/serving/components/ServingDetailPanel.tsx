@@ -59,6 +59,7 @@ export function ServingDetailPanel({ name }: { name: string }) {
     <PanelTemplate
       eyebrow="Service"
       title={service.name}
+      status={<StatusBadge status={service.status} />}
       actions={
         <div className="flex items-center gap-1">
           {service.status === 'running' && (
@@ -73,12 +74,6 @@ export function ServingDetailPanel({ name }: { name: string }) {
               className="text-destructive hover:bg-destructive/10" />
           )}
           {closeBtn}
-        </div>
-      }
-      footer={
-        <div className="flex items-center gap-2">
-          <StatusBadge status={service.status} />
-          <span className="text-xs text-muted-foreground">ModelService</span>
         </div>
       }
     >

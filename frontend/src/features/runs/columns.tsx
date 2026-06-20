@@ -40,12 +40,12 @@ function StepDots({ steps }: { steps: Step[] }) {
 
 export const runColumns: DataGridColumnDef<Run>[] = [
   {
-    accessorKey: 'id',
-    header: 'Run ID',
-    meta: { minWidth: 200 },
+    accessorKey: 'started_at',
+    header: 'Started',
+    meta: { minWidth: 160 },
     cell: ({ row }) => (
-      <span className="block truncate font-mono text-xs text-primary" title={row.original.id}>
-        {row.original.id}
+      <span className="text-xs text-muted-foreground">
+        {new Date(row.original.started_at).toLocaleString()}
       </span>
     ),
   },
@@ -72,16 +72,24 @@ export const runColumns: DataGridColumnDef<Run>[] = [
     cell: ({ row }) => <StepDots steps={row.original.steps ?? []} />,
   },
   {
-    accessorKey: 'started_at',
-    header: 'Started',
-    meta: { minWidth: 180 },
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.started_at).toLocaleString()}</span>,
-  },
-  {
     id: 'duration',
     header: 'Duration',
     meta: { minWidth: 100 },
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{elapsed(row.original.started_at, row.original.ended_at)}</span>,
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {elapsed(row.original.started_at, row.original.ended_at)}
+      </span>
+    ),
+  },
+  {
+    accessorKey: 'id',
+    header: 'Run ID',
+    meta: { minWidth: 200 },
+    cell: ({ row }) => (
+      <span className="block truncate font-mono text-xs text-primary" title={row.original.id}>
+        {row.original.id}
+      </span>
+    ),
   },
 ]
 

@@ -55,13 +55,15 @@ type Task struct {
 
 // TaskResult is the result a worker reports back to the server
 type TaskResult struct {
-	TaskID    string    `json:"task_id"`
-	WorkerID  string    `json:"worker_id,omitempty"`
-	Status    string    `json:"status"` // done | failed
-	Error     string    `json:"error,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at"`
-	Attempt   int       `json:"attempt"`
+	ProjectID string             `json:"project_id,omitempty"`
+	TaskID    string             `json:"task_id"`
+	WorkerID  string             `json:"worker_id,omitempty"`
+	Status    string             `json:"status"` // done | failed
+	Error     string             `json:"error,omitempty"`
+	StartedAt time.Time          `json:"started_at"`
+	EndedAt   time.Time          `json:"ended_at"`
+	Attempt   int                `json:"attempt"`
+	Metrics   map[string]float64 `json:"metrics,omitempty"`
 }
 
 // RunRequest is used by a client to request a pipeline run

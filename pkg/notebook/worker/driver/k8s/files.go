@@ -19,7 +19,13 @@ func (a *Worker) listFilesK8s(ctx context.Context, req notebook.FSListFilesReque
 		return &notebook.FSListFilesResponse{Files: []string{}, State: notebook.FSAccessReady}, nil
 	}
 
-	ns := a.notebookNamespace()
+	ns, err := a.findVolumeNamespace(ctx, req.VolumeID)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return notebook.UnavailableResponse("PVC not found"), nil
+		}
+		return nil, err
+	}
 	snap, err := a.resolveVolumeSnapshot(ctx, ns, req.VolumeID)
 	if err != nil {
 		return nil, err
@@ -35,19 +41,19 @@ func (a *Worker) listFilesK8s(ctx context.Context, req notebook.FSListFilesReque
 	case snap.unknownConsumer:
 		return notebook.TransitioningResponse("PVC in use by unknown workload"), nil
 	case snap.notebookReadyPod != nil:
-		return a.listFilesViaJupyter(ctx, req, snap.notebookReadyPod)
+		return a.listFilesViaJupyter(ctx, ns, req, snap.notebookReadyPod)
 	case snap.notebookNonReadyPod != nil:
 		return notebook.TransitioningResponse("notebook pod not ready"), nil
 	case snap.viewerTerminating:
 		return notebook.TransitioningResponse("viewer pod terminating"), nil
 	case snap.viewerReadyPod != nil:
-		return a.listFilesViaViewer(ctx, req, snap.viewerReadyPod)
+		return a.listFilesViaViewer(ctx, ns, req, snap.viewerReadyPod)
 	case snap.viewerNonReadyPod != nil:
 		return notebook.TransitioningResponse("viewer pod pending"), nil
 	case snap.stsDesiredReplicas > 0:
 		return notebook.TransitioningResponse("notebook starting"), nil
 	case snap.pvcBound:
-		return a.ensureAndListViaViewer(ctx, req)
+		return a.ensureAndListViaViewer(ctx, ns, req)
 	case snap.pvcPending:
 		return notebook.TransitioningResponse("PVC pending"), nil
 	}
@@ -143,12 +149,11 @@ func (a *Worker) resolveVolumeSnapshot(ctx context.Context, ns, volumeID string)
 	return snap, nil
 }
 
-func (a *Worker) listFilesViaJupyter(ctx context.Context, req notebook.FSListFilesRequest, _ *corev1.Pod) (*notebook.FSListFilesResponse, error) {
+func (a *Worker) listFilesViaJupyter(ctx context.Context, ns string, req notebook.FSListFilesRequest, _ *corev1.Pod) (*notebook.FSListFilesResponse, error) {
 	if req.Notebook == "" || req.Token == "" {
 		return notebook.TransitioningResponse("notebook token not available"), nil
 	}
 
-	ns := a.notebookNamespace()
 	client := newJupyterContentsClient()
 	svcHost := jupyterServiceHost(req.ProjectID, req.Notebook, ns)
 	baseURL := jupyterBaseURL(req.Notebook)
@@ -172,16 +177,15 @@ func (a *Worker) listFilesViaJupyter(ctx context.Context, req notebook.FSListFil
 	}, nil
 }
 
-func (a *Worker) listFilesViaViewer(ctx context.Context, req notebook.FSListFilesRequest, pod *corev1.Pod) (*notebook.FSListFilesResponse, error) {
-	mgr := newVolumeBrowserManager(a.cfg.Client, a.notebookNamespace(), a.cfg.WorkerID, a.cfg.Image)
+func (a *Worker) listFilesViaViewer(ctx context.Context, ns string, req notebook.FSListFilesRequest, pod *corev1.Pod) (*notebook.FSListFilesResponse, error) {
+	mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.InfrastructureImage)
 	ep := mgr.endpointFromPod(pod)
 	_ = mgr.touchAnnotation(ctx, pod)
 	return mgr.ListFiles(ctx, ep, req)
 }
 
-func (a *Worker) ensureAndListViaViewer(ctx context.Context, req notebook.FSListFilesRequest) (*notebook.FSListFilesResponse, error) {
-	ns := a.notebookNamespace()
-	mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.Image)
+func (a *Worker) ensureAndListViaViewer(ctx context.Context, ns string, req notebook.FSListFilesRequest) (*notebook.FSListFilesResponse, error) {
+	mgr := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.InfrastructureImage)
 
 	var ep *browserEndpoint
 	lockErr := volumeLock(ctx, a.cfg.Client, ns, a.cfg.WorkerID, req.VolumeID, func(ctx context.Context) error {

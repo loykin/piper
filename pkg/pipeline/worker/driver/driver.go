@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/proto"
 )
 
@@ -58,8 +59,6 @@ type ExecSpec struct {
 	Namespace string
 
 	// Artifact store connection (passed through to piper agent exec).
-	MasterURL    string
-	WorkerToken  string
 	StorageToken string
 	StorageURL   string
 
@@ -71,6 +70,10 @@ type ExecSpec struct {
 	// Env carries additional environment variables injected into the execution
 	// environment (e.g. PIPER_GIT_USER, PIPER_GIT_TOKEN).
 	Env []string
+
+	// LogSink is owned by the parent worker and forwards runtime output through
+	// the existing master tunnel. Child processes never connect to master.
+	LogSink logsink.LogSink
 }
 
 // Driver manages the lifecycle of execution environments for pipeline steps.

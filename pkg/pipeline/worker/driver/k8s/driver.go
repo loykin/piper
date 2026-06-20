@@ -23,11 +23,9 @@ import (
 // Config configures the K8sDriver.
 type Config struct {
 	WorkerID             string
-	Namespace            string
 	Namespaces           []string
 	AgentImage           string
 	AgentImagePullPolicy string
-	DefaultImage         string
 	TTLAfterFinished     *int32
 	K8sClient            kubernetes.Interface
 }
@@ -64,9 +62,6 @@ func New(cfg Config) (*Driver, error) {
 	}
 	// Register launchers for every namespace that recovery must scan.
 	namespaces := append([]string{}, cfg.Namespaces...)
-	if cfg.Namespace != "" && !slices.Contains(namespaces, cfg.Namespace) {
-		namespaces = append(namespaces, cfg.Namespace)
-	}
 	if len(namespaces) == 0 {
 		namespaces = append(namespaces, "default")
 	}
@@ -93,17 +88,14 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 	}
 	namespace := spec.Namespace
 	if namespace == "" {
-		namespace = d.defaultNamespace()
+		return driver.Handle{}, fmt.Errorf("k8s driver: spec.Namespace is required")
 	}
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
-		MasterURL:    spec.MasterURL,
-		WorkerToken:  spec.WorkerToken,
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    "/piper-outputs",
 		InputDir:     "/piper-inputs",
 		ResultFile:   "/dev/termination-log",
-		ReportMode:   agent.ReportModeFile,
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("k8s driver: build agent args: %w", err)
@@ -161,7 +153,7 @@ func (d *Driver) Stop(ctx context.Context, handle driver.Handle, _ time.Duration
 	namespace := d.namespaceByKey[handle.RuntimeKey]
 	d.mu.Unlock()
 	if namespace == "" {
-		namespace = d.defaultNamespace()
+		return fmt.Errorf("k8s driver: namespace is required for stop")
 	}
 	err := d.launcher(namespace).DeleteJob(ctx, handle.RuntimeKey)
 	d.forget(handle)
@@ -174,9 +166,9 @@ func (d *Driver) StopRun(ctx context.Context, runID, namespace string) error {
 		return fmt.Errorf("k8s driver: run ID is required")
 	}
 	if namespace == "" {
-		namespace = d.defaultNamespace()
+		return fmt.Errorf("k8s driver: namespace is required for run cancellation")
 	}
-	if len(d.cfg.Namespaces) > 0 && namespace != d.cfg.Namespace && !slices.Contains(d.cfg.Namespaces, namespace) {
+	if len(d.cfg.Namespaces) > 0 && !slices.Contains(d.cfg.Namespaces, namespace) {
 		return fmt.Errorf("k8s driver: namespace %q is not allowed", namespace)
 	}
 	return d.launcher(namespace).CancelRun(ctx, runID)
@@ -281,16 +273,6 @@ func (d *Driver) launcher(namespace string) *k8slauncher.Launcher {
 	}, d.cfg.K8sClient)
 	d.launchers[namespace] = l
 	return l
-}
-
-func (d *Driver) defaultNamespace() string {
-	if d.cfg.Namespace != "" {
-		return d.cfg.Namespace
-	}
-	if len(d.cfg.Namespaces) > 0 && d.cfg.Namespaces[0] != "" {
-		return d.cfg.Namespaces[0]
-	}
-	return "default"
 }
 
 func (d *Driver) snapshotLaunchers() map[string]*k8slauncher.Launcher {

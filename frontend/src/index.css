@@ -3,11 +3,6 @@
 @import "@loykin/side-panel/styles";
 @import "tw-animate-css";
 
-/* published 0.0.1-dev.0 missing flex layout on .sp-root */
-.sp-root {
-  flex: 1;
-  min-height: 0;
-}
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 

@@ -63,7 +63,7 @@ func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, e
 	default:
 		dbFile := cfg.Server.DB.Path
 		if dbFile == "" {
-			outputDir := cfg.Server.Run.OutputDir
+			outputDir := cfg.Server.DataDir
 			if outputDir == "" {
 				outputDir = "./piper-outputs"
 			}

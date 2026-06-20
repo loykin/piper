@@ -10,13 +10,12 @@ import (
 )
 
 // ResolveImage returns the container image for a task and runtime using the
-// standard priority order:
+// manifest priority order:
 //
-//	step.driver.<runtime>.image → pipeline defaults.driver.<runtime>.image → workerDefault
+//	step.driver.<runtime>.image → pipeline defaults.driver.<runtime>.image
 //
-// Returns an error only when no image is found and workerDefault is empty.
 // Must be called by the worker layer before passing ExecSpec to a Driver.
-func ResolveImage(task *proto.Task, runtime string, workerDefault string) (string, error) {
+func ResolveImage(task *proto.Task, runtime string) (string, error) {
 	var step pipeline.Step
 	if len(task.Step) > 0 {
 		_ = json.Unmarshal(task.Step, &step)
@@ -33,10 +32,7 @@ func ResolveImage(task *proto.Task, runtime string, workerDefault string) (strin
 			return image, nil
 		}
 	}
-	if workerDefault != "" {
-		return workerDefault, nil
-	}
-	return "", fmt.Errorf("step %q: no %s image configured (set step.driver.%s.image, spec.defaults.driver.%s.image, or --default-image)", task.StepName, runtime, runtime, runtime)
+	return "", fmt.Errorf("step %q: no %s image configured (set step.driver.%s.image or spec.defaults.driver.%s.image)", task.StepName, runtime, runtime, runtime)
 }
 
 func runtimeImage(spec manifest.DriverSpec, runtime string) string {
@@ -53,23 +49,23 @@ func runtimeImage(spec manifest.DriverSpec, runtime string) string {
 	return ""
 }
 
-// ResolveNamespace extracts the K8s namespace from the task's step driver or pipeline defaults.
-// Falls back to defaultNamespace when none is specified.
-// Must be called by the K8s worker layer; namespace policy validation is the caller's responsibility.
-func ResolveNamespace(task *proto.Task, defaultNamespace string) string {
+// ResolveNamespace extracts the required K8s namespace from the task's step
+// driver or pipeline defaults. Worker policy validation remains the caller's
+// responsibility.
+func ResolveNamespace(task *proto.Task) (string, error) {
 	var step pipeline.Step
 	if len(task.Step) > 0 {
 		_ = json.Unmarshal(task.Step, &step)
 	}
 	if step.Driver.K8s != nil && step.Driver.K8s.Namespace != "" {
-		return step.Driver.K8s.Namespace
+		return step.Driver.K8s.Namespace, nil
 	}
 	var pl pipeline.Pipeline
 	if len(task.Pipeline) > 0 {
 		_ = json.Unmarshal(task.Pipeline, &pl)
 	}
 	if pl.Spec.Defaults != nil && pl.Spec.Defaults.Driver.K8s != nil && pl.Spec.Defaults.Driver.K8s.Namespace != "" {
-		return pl.Spec.Defaults.Driver.K8s.Namespace
+		return pl.Spec.Defaults.Driver.K8s.Namespace, nil
 	}
-	return defaultNamespace
+	return "", fmt.Errorf("step %q: k8s namespace is required", task.StepName)
 }

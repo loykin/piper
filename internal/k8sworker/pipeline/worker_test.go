@@ -17,12 +17,11 @@ import (
 func TestPipelineDispatchCreatesJob(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	a := New(Config{
-		Store: StoreConfig{MasterURL: "http://piper:8080"},
+		Store: StoreConfig{},
 		K8s: K8sConfig{
-			Client:       client,
-			Namespace:    "runs",
-			AgentImage:   "piper:test",
-			DefaultImage: "python:3.12",
+			Client:     client,
+			Namespaces: []string{"runs", "run-placement"},
+			AgentImage: "piper:test",
 		},
 	})
 	pl := pipeline.Pipeline{}
@@ -72,9 +71,9 @@ func TestPipelineCancelDeletesJobs(t *testing.T) {
 			},
 		},
 	})
-	a := New(Config{K8s: K8sConfig{Client: client, Namespace: "runs"}})
+	a := New(Config{K8s: K8sConfig{Client: client, Namespaces: []string{"runs"}}})
 
-	if err := a.cancelPipelineRun(context.Background(), pipelineCancelRunRequest{RunID: "run-1"}); err != nil {
+	if err := a.cancelPipelineRun(context.Background(), pipelineCancelRunRequest{RunID: "run-1", Namespace: "runs"}); err != nil {
 		t.Fatalf("cancelPipelineRun returned error: %v", err)
 	}
 	jobs, err := client.BatchV1().Jobs("runs").List(context.Background(), metav1.ListOptions{})

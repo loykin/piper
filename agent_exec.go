@@ -28,13 +28,10 @@ func init() {
 func runEmbeddedAgentExec() int {
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	taskB64 := fs.String("task", "", "")
-	masterURL := fs.String("master", "", "")
-	workerToken := fs.String("worker-token", "", "")
 	storageToken := fs.String("storage-token", "", "")
 	outputDir := fs.String("output-dir", "./piper-outputs", "")
 	inputDir := fs.String("input-dir", "", "")
 	storageURL := fs.String("storage-url", "", "")
-	reportMode := fs.String("report-mode", string(agentpkg.ReportModeFile), "")
 	resultFile := fs.String("result-file", "", "")
 
 	args := os.Args[3:] // strip "agent exec"
@@ -55,8 +52,6 @@ func runEmbeddedAgentExec() int {
 	}
 
 	r, err := agentpkg.New(agentpkg.Config{
-		MasterURL:    *masterURL,
-		WorkerToken:  *workerToken,
 		StorageToken: *storageToken,
 		OutputDir:    *outputDir,
 		InputDir:     *inputDir,
@@ -68,7 +63,7 @@ func runEmbeddedAgentExec() int {
 	}
 
 	result := r.Run(context.Background(), task)
-	if err := agentpkg.DeliverResult(result, agentpkg.ReportMode(*reportMode), *resultFile, r); err != nil {
+	if err := agentpkg.DeliverResult(result, *resultFile); err != nil {
 		slog.Error("agent exec: deliver result", "err", err)
 		return 1
 	}

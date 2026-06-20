@@ -35,16 +35,8 @@ const (
 )
 
 type Config struct {
-	Image        string
-	Network      string
-	CPUs         string
-	Memory       string
-	ShmSize      string
-	ReadOnlyRoot bool
-	Tmpfs        []string
-	User         string
-	Volumes      []Volume
-	ExtraArgs    []string
+	Network string
+	Volumes []Volume
 }
 
 type Volume struct {
@@ -319,37 +311,26 @@ func dockerHostPort(item container.Summary) int {
 }
 
 func (r *Driver) containerCreateOptions(req driver.StartRequest) (dockerclient.ContainerCreateOptions, error) {
-	ds := req.Spec.Spec.Driver.Docker // per-notebook overrides (may be nil)
-
-	image := r.cfg.Image
-	if ds != nil && ds.Image != "" {
-		image = ds.Image
+	ds := req.Spec.Spec.Driver.Docker
+	if ds == nil {
+		return dockerclient.ContainerCreateOptions{}, fmt.Errorf("docker driver spec is required")
 	}
-	if image == "" {
+	if ds.Image == "" {
 		return dockerclient.ContainerCreateOptions{}, fmt.Errorf("docker image is required")
 	}
 	containerName := dockerContainerName(req.RuntimeName)
 
-	// Merge tmpfs: server-level defaults, overridden by per-notebook spec.
-	tmpfsPaths := r.cfg.Tmpfs
-	if ds != nil && len(ds.Tmpfs) > 0 {
-		tmpfsPaths = ds.Tmpfs
-	}
-	tmpfs := make(map[string]string, len(tmpfsPaths))
-	for _, path := range tmpfsPaths {
+	tmpfs := make(map[string]string, len(ds.Tmpfs))
+	for _, path := range ds.Tmpfs {
 		tmpfs[path] = ""
 	}
 
-	resources, err := dockerResources(r.cfg, ds)
+	resources, err := dockerResources(ds)
 	if err != nil {
 		return dockerclient.ContainerCreateOptions{}, err
 	}
 
-	var volumeNames []string
-	if ds != nil {
-		volumeNames = ds.Volumes
-	}
-	selected, err := selectDockerVolumes(r.cfg.Volumes, volumeNames)
+	selected, err := selectDockerVolumes(r.cfg.Volumes, ds.Volumes)
 	if err != nil {
 		return dockerclient.ContainerCreateOptions{}, err
 	}
@@ -358,19 +339,12 @@ func (r *Driver) containerCreateOptions(req driver.StartRequest) (dockerclient.C
 		return dockerclient.ContainerCreateOptions{}, err
 	}
 
-	// Per-notebook overrides take precedence over server-level config defaults.
-	user := r.cfg.User
-	if ds != nil && ds.User != "" {
-		user = ds.User
-	}
+	user := ds.User
 	network := r.cfg.Network
-	if ds != nil && ds.NetworkMode != "" {
+	if ds.NetworkMode != "" {
 		network = ds.NetworkMode
 	}
-	readOnly := r.cfg.ReadOnlyRoot
-	if ds != nil && ds.ReadOnly {
-		readOnly = ds.ReadOnly
-	}
+	readOnly := ds.ReadOnly
 
 	labels := map[string]string{
 		dockerManagedLabel:  "true",
@@ -384,7 +358,6 @@ func (r *Driver) containerCreateOptions(req driver.StartRequest) (dockerclient.C
 		return dockerclient.ContainerCreateOptions{}, err
 	}
 	cmd := notebook.JupyterStartArgs(req.BaseURL, req.Token, notebook.ContainerWorkDir, 8888)
-	cmd = append(cmd, r.cfg.ExtraArgs...)
 	entrypoint := []string(nil)
 	if len(prepSteps) > 0 {
 		script, err := notebook.BuildLaunchScript(nil, prepSteps, cmd, notebook.ContainerWorkDir)
@@ -399,7 +372,7 @@ func (r *Driver) containerCreateOptions(req driver.StartRequest) (dockerclient.C
 		Name: containerName,
 		Config: &container.Config{
 			Entrypoint:   entrypoint,
-			Image:        image,
+			Image:        ds.Image,
 			Cmd:          cmd,
 			User:         user,
 			WorkingDir:   notebook.ContainerWorkDir,
@@ -462,14 +435,11 @@ type dockerResourceSpec struct {
 	shmSize   int64
 }
 
-// dockerResources merges server-level Config with per-notebook DriverDockerSpec.
-// Per-notebook values override server-level defaults when set.
-func dockerResources(cfg Config, ds *manifest.DriverDockerSpec) (dockerResourceSpec, error) {
+func dockerResources(ds *manifest.DriverDockerSpec) (dockerResourceSpec, error) {
 	var out dockerResourceSpec
 
-	// Memory: per-notebook mem_limit overrides server-level memory.
-	memory := cfg.Memory
-	if ds != nil && ds.MemLimit != "" {
+	var memory string
+	if ds != nil {
 		memory = ds.MemLimit
 	}
 	if memory != "" {
@@ -480,9 +450,8 @@ func dockerResources(cfg Config, ds *manifest.DriverDockerSpec) (dockerResourceS
 		out.resources.Memory = n
 	}
 
-	// ShmSize: per-notebook overrides server-level.
-	shmSize := cfg.ShmSize
-	if ds != nil && ds.ShmSize != "" {
+	var shmSize string
+	if ds != nil {
 		shmSize = ds.ShmSize
 	}
 	if shmSize != "" {
@@ -493,9 +462,8 @@ func dockerResources(cfg Config, ds *manifest.DriverDockerSpec) (dockerResourceS
 		out.shmSize = n
 	}
 
-	// CPUs: per-notebook overrides server-level.
-	cpuStr := cfg.CPUs
-	if ds != nil && ds.CPUs != "" {
+	var cpuStr string
+	if ds != nil {
 		cpuStr = ds.CPUs
 	}
 	if cpuStr != "" {
@@ -601,9 +569,6 @@ func selectDockerVolumes(allowlist []Volume, names []string) ([]Volume, error) {
 }
 
 func normalizeDockerConfig(cfg Config) (Config, error) {
-	if cfg.Image == "" {
-		cfg.Image = "jupyter/scipy-notebook:latest"
-	}
 	if cfg.Network == "" {
 		cfg.Network = "bridge"
 	}

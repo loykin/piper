@@ -31,40 +31,6 @@ export function getNotebookColumns(
       cell: ({ row }) => <StatusBadge status={row.original.status} />,
     },
     {
-      id: 'environment',
-      header: 'Environment',
-      meta: { minWidth: 160, flex: 1 },
-      cell: ({ row }) => {
-        const { image, env } = row.original
-        const value = image || env
-        return (
-          <span className="block truncate font-mono text-xs text-muted-foreground" title={value || undefined}>
-            {value || '—'}
-          </span>
-        )
-      },
-    },
-    {
-      accessorKey: 'work_dir',
-      header: 'Work Dir',
-      meta: { minWidth: 140 },
-      cell: ({ row }) => (
-        <span className="block truncate font-mono text-xs text-muted-foreground" title={row.original.work_dir || undefined}>
-          {row.original.work_dir || '—'}
-        </span>
-      ),
-    },
-    {
-      id: 'volume',
-      header: 'Volume',
-      meta: { minWidth: 120 },
-      cell: ({ row }) => (
-        <span className="font-mono text-xs text-muted-foreground">
-          {row.original.volume_id ? row.original.volume_id.slice(0, 8) + '…' : '—'}
-        </span>
-      ),
-    },
-    {
       id: 'actions',
       header: '',
       meta: { minWidth: 160, align: 'right' },

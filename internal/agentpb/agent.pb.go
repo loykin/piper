@@ -314,7 +314,6 @@ func (x *RPCResponse) GetError() string {
 }
 
 // StatusPush is an async notification from worker to master.
-// Replaces the old HTTP PATCH /api/notebooks/:name/status callback.
 type StatusPush struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Method        string                 `protobuf:"bytes,1,opt,name=method,proto3" json:"method,omitempty"`   // e.g. "notebook.status_update"

@@ -28,7 +28,7 @@ import (
 
 // Config holds configuration for a notebook worker agent.
 type Config struct {
-	AgentAddr     string // gRPC address of master agent server, e.g. "master:9090"
+	MasterURL     string // single HTTP(S) endpoint for the outbound master tunnel
 	WorkerToken   string // bearer token sent in gRPC authorization metadata (matches server.worker_token)
 	NotebooksRoot string // base directory for notebook work dirs (default: "./notebooks")
 	PortRange     string // "START-END", e.g. "8888-9900"
@@ -37,6 +37,7 @@ type Config struct {
 	GPUs          []string
 	Hostname      string
 	ID            string // stable worker identity assigned by the caller
+	Labels        map[string]string
 }
 
 // Worker is the notebook worker agent.
@@ -83,7 +84,7 @@ func New(cfg Config) *Worker {
 	}
 
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		AgentAddr:    cfg.AgentAddr,
+		MasterURL:    cfg.MasterURL,
 		AgentID:      cfg.ID,
 		WorkerToken:  cfg.WorkerToken,
 		Kind:         iagent.KindBareMetal,
@@ -91,6 +92,7 @@ func New(cfg Config) *Worker {
 		Hostname:     cfg.Hostname,
 		GPUs:         cfg.GPUs,
 		Capabilities: []string{iagent.CapabilityNotebook},
+		Labels:       cfg.Labels,
 	})
 
 	w := &Worker{

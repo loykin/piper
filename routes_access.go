@@ -7,8 +7,6 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	authpkg "github.com/piper/piper/pkg/auth"
-	"github.com/piper/piper/pkg/pipeline/run"
-	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/security"
 )
@@ -76,12 +74,6 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 	return admin
 }
 
-func (p *Piper) registerWorkerRoutes(r *gin.Engine, admin *gin.RouterGroup, runHandler *run.Handler) {
-	workerAPI := r.Group("/api", p.workerTokenMiddleware())
-	worker.NewHandler(worker.HandlerDeps{Queue: p.queue}).RegisterCompletionRoutes(workerAPI)
-	runHandler.RegisterWorkerRoutes(workerAPI.Group(
-		"/projects/:project_id",
-		project.RequireTrusted(p.repos.Project),
-	))
+func (p *Piper) registerWorkerRoutes(admin *gin.RouterGroup) {
 	iagent.NewHandler(p.agentRegistry).RegisterRoutes(admin)
 }

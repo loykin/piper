@@ -5,48 +5,29 @@ import (
 	"testing"
 )
 
-func TestValidateNotebookRejectsInvalidResourcesAndDuplicateGPUs(t *testing.T) {
+func TestValidateNotebookRejectsDuplicateGPUs(t *testing.T) {
 	base := Defaults()
-	base.Workers.Common.AgentAddr = "master:9090"
+	base.Workers.Common.MasterURL = "http://master:8080"
 	base.Workers.Notebook.GPUs = []string{"0", "0"}
 	if err := ValidateNotebook(base); err == nil || !strings.Contains(err.Error(), "gpus") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	base.Workers.Notebook.GPUs = nil
-	base.Workers.Notebook.Docker.Memory = "not-memory"
-	if err := ValidateNotebook(base); err == nil || !strings.Contains(err.Error(), "memory") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	base.Workers.Notebook.Docker.Memory = "1GiB"
-	base.Workers.Notebook.Docker.CPUs = "0"
-	if err := ValidateNotebook(base); err == nil || !strings.Contains(err.Error(), "cpus") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestValidateNotebookRejectsInvalidVolume(t *testing.T) {
 	cfg := Defaults()
-	cfg.Workers.Common.AgentAddr = "master:9090"
+	cfg.Workers.Common.MasterURL = "http://master:8080"
 	cfg.Workers.Notebook.Docker.Volumes = []NotebookDockerVolume{{Name: "data", HostPath: "relative", ContainerPath: "/data"}}
 	if err := ValidateNotebook(cfg); err == nil || !strings.Contains(err.Error(), "host_path") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestValidateK8sRejectsStorageAndPullPolicy(t *testing.T) {
+func TestValidateK8sRejectsPullPolicy(t *testing.T) {
 	cfg := Defaults()
 	cfg.Workers.Common.MasterURL = "http://master:8080"
-	cfg.Workers.Common.AgentAddr = "master:9090"
 	cfg.Workers.K8s.Cluster = "test"
-	cfg.Workers.K8s.Notebook.StorageSize = "invalid"
-	if err := ValidateK8s(cfg); err == nil || !strings.Contains(err.Error(), "storage_size") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	cfg.Workers.K8s.Notebook.StorageSize = "10Gi"
-	cfg.Workers.K8s.Pipeline.AgentImagePullPolicy = "Sometimes"
+	cfg.Workers.K8s.Pipeline.RunnerImagePullPolicy = "Sometimes"
 	if err := ValidateK8s(cfg); err == nil || !strings.Contains(err.Error(), "image_pull_policy") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,16 +35,16 @@ func TestValidateK8sRejectsStorageAndPullPolicy(t *testing.T) {
 
 func TestRoleConfigsLoadFromFileOnly(t *testing.T) {
 	l := NewLoader()
-	l.SetConfigFile(writeConfig(t, `version: 1
+	l.SetConfigFile(writeConfig(t, `version: 2
 workers:
   common:
     master_url: http://master:8080
-    agent_addr: master:9090
   pipeline: {}
   notebook: {}
   serving: {}
   k8s:
     cluster: test
+    namespaces: [test]
     in_cluster: true
 `))
 	cfg, err := l.Load()

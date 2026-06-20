@@ -1,11 +1,32 @@
 package notebook
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/piper/piper/pkg/manifest"
 )
+
+func (n Notebook) Validate() error {
+	switch n.Spec.Driver.Placement.Runtime {
+	case "docker":
+		if n.Spec.Driver.Docker == nil || n.Spec.Driver.Docker.Image == "" {
+			return fmt.Errorf("driver.docker.image is required")
+		}
+	case "k8s":
+		if n.Spec.Driver.K8s == nil || n.Spec.Driver.K8s.Image == "" {
+			return fmt.Errorf("driver.k8s.image is required")
+		}
+		if n.Spec.Driver.K8s.Namespace == "" {
+			return fmt.Errorf("driver.k8s.namespace is required")
+		}
+		if n.Spec.Volume == nil || n.Spec.Volume.Size == "" {
+			return fmt.Errorf("volume.size is required for k8s")
+		}
+	}
+	return nil
+}
 
 // Notebook is the top-level structure of a piper Notebook YAML definition.
 type Notebook struct {
@@ -24,6 +45,20 @@ func (n Notebook) WorkerID() string { return n.Spec.Driver.Placement.Worker }
 func (n Notebook) StorageSize() string {
 	if n.Spec.Volume != nil {
 		return n.Spec.Volume.Size
+	}
+	return ""
+}
+
+func (n Notebook) StorageClass() string {
+	if n.Spec.Volume != nil {
+		return n.Spec.Volume.StorageClass
+	}
+	return ""
+}
+
+func (n Notebook) K8sNamespace() string {
+	if n.Spec.Driver.K8s != nil {
+		return n.Spec.Driver.K8s.Namespace
 	}
 	return ""
 }

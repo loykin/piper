@@ -352,25 +352,10 @@ metadata:
   namespace: %[1]s
 data:
   piper.yaml: |
-    run:
-      output_dir: /tmp/piper-outputs
-      retries: 0
+    version: 2
     server:
-      addr: :8080
-    source:
-      s3:
-        endpoint: seaweedfs:9000
-        access_key: anyadmin
-        secret_key: anypassword
-        bucket: piper-artifacts
-        use_ssl: false
-    serving:
-      worker: true
-    notebook_k8s:
-      worker: true
-      namespace: %[1]s
-      worker_image: %[3]q
-      storage_size: 1Gi
+      http_addr: :8080
+      data_dir: /tmp/piper-outputs
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -392,10 +377,9 @@ spec:
         - name: piper
           image: %[2]q
           imagePullPolicy: IfNotPresent
-          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080", "--agent-addr", ":9090"]
+          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080"]
           ports:
             - containerPort: 8080
-            - containerPort: 9090
           volumeMounts:
             - name: config
               mountPath: /etc/piper
@@ -426,17 +410,13 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - k8s-worker
-            - --master=http://piper-server.%[1]s.svc.cluster.local:8080
-            - --agent-addr=piper-server.%[1]s.svc.cluster.local:9090
+            - --master-url=http://piper-server.%[1]s.svc.cluster.local:8080
+            - --state-dir=/tmp/piper-worker-state
             - --cluster=agent-e2e
             - --namespaces=%[1]s
-            - --notebook-namespace=%[1]s
-            - --serving-namespace=%[1]s
-            - --pipeline-namespace=%[1]s
-            - --notebook-image=%[3]s
-            - --pipeline-worker-image=%[2]s
-            - --agent-image-pull-policy=IfNotPresent
-            - --default-image=alpine:3.20
+            - --notebook-infrastructure-image=%[2]s
+            - --runner-image=%[2]s
+            - --runner-image-pull-policy=IfNotPresent
             - --storage-url=s3://piper-artifacts?endpoint=http://seaweedfs:9000&s3ForcePathStyle=true&accessKey=anyadmin&secretKey=anypassword
 ---
 apiVersion: v1

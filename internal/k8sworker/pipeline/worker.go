@@ -1,6 +1,7 @@
 package pipelineworker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -10,9 +11,12 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
+	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/proto"
 	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
 	k8sdriver "github.com/piper/piper/pkg/pipeline/worker/driver/k8s"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -21,8 +25,6 @@ type Dispatcher = *grpcagent.Dispatcher
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to K8s Job pods via piper agent exec arguments.
 type StoreConfig struct {
-	MasterURL    string
-	WorkerToken  string
 	StorageToken string
 	StorageURL   string
 }
@@ -30,11 +32,9 @@ type StoreConfig struct {
 // K8sConfig holds Kubernetes-specific driver and placement options.
 type K8sConfig struct {
 	Client               kubernetes.Interface
-	Namespace            string   // primary namespace for Jobs
 	Namespaces           []string // allowed namespaces (policy check)
 	AgentImage           string   // piper binary image used in init containers
 	AgentImagePullPolicy string
-	DefaultImage         string
 	TTLAfterFinished     *int32
 }
 
@@ -48,6 +48,7 @@ type Config struct {
 	ReportResult func(proto.TaskResult) error
 	// RenewLeases pushes active task IDs to the master for lease renewal.
 	RenewLeases func([]string) error
+	LogClient   logsink.PushClient
 }
 
 // Worker manages K8s pipeline workloads dispatched via gRPC.
@@ -67,16 +68,15 @@ type Worker struct {
 type trackedTask struct {
 	handle pdriver.Handle
 	cancel context.CancelFunc
+	logs   logsink.LogSink
 }
 
 func New(cfg Config) *Worker {
 	driver, err := k8sdriver.New(k8sdriver.Config{
 		WorkerID:             cfg.WorkerID,
-		Namespace:            cfg.K8s.Namespace,
 		Namespaces:           cfg.K8s.Namespaces,
 		AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
 		AgentImage:           pipelineWorkerImage(cfg),
-		DefaultImage:         cfg.K8s.DefaultImage,
 		TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
 		K8sClient:            cfg.K8s.Client,
 	})
@@ -119,11 +119,14 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	}
 
 	// Resolve image and namespace here (worker layer), not inside the driver.
-	image, err := pdriver.ResolveImage(task, "k8s", a.cfg.K8s.DefaultImage)
+	image, err := pdriver.ResolveImage(task, "k8s")
 	if err != nil {
 		return err
 	}
-	namespace := pdriver.ResolveNamespace(task, a.cfg.K8s.Namespace)
+	namespace, err := pdriver.ResolveNamespace(task)
+	if err != nil {
+		return err
+	}
 	if len(a.cfg.K8s.Namespaces) > 0 && !slices.Contains(a.cfg.K8s.Namespaces, namespace) {
 		return fmt.Errorf("k8s pipeline worker: namespace %q is not in the allowed list", namespace)
 	}
@@ -132,21 +135,28 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		RuntimeKey:   pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
 		Image:        image,
 		Namespace:    namespace,
-		MasterURL:    a.cfg.Store.MasterURL,
-		WorkerToken:  a.cfg.Store.WorkerToken,
 		StorageToken: a.cfg.Store.StorageToken,
 		StorageURL:   a.cfg.Store.StorageURL,
+	}
+	if a.cfg.LogClient != nil {
+		spec.LogSink = logsink.NewGRPCLogSink(task.ProjectID, a.cfg.LogClient)
 	}
 
 	handle, err := a.driver.Start(ctx, task, spec)
 	if err != nil {
+		if spec.LogSink != nil {
+			spec.LogSink.Stop()
+		}
 		return err
 	}
 
 	waitCtx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
-	a.handles[handle.RuntimeKey] = &trackedTask{handle: handle, cancel: cancel}
+	a.handles[handle.RuntimeKey] = &trackedTask{handle: handle, cancel: cancel, logs: spec.LogSink}
 	a.mu.Unlock()
+	if spec.LogSink != nil {
+		go streamJobLogs(waitCtx, a.cfg.K8s.Client, spec.Namespace, handle.RuntimeKey, task, spec.LogSink)
+	}
 
 	go a.observe(waitCtx, handle)
 	return nil
@@ -155,11 +165,15 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 func (a *Worker) observe(ctx context.Context, handle pdriver.Handle) {
 	defer func() {
 		a.mu.Lock()
-		if tracked := a.handles[handle.RuntimeKey]; tracked != nil {
+		tracked := a.handles[handle.RuntimeKey]
+		if tracked != nil {
 			tracked.cancel()
 		}
 		delete(a.handles, handle.RuntimeKey)
 		a.mu.Unlock()
+		if tracked != nil && tracked.logs != nil {
+			tracked.logs.Stop()
+		}
 	}()
 
 	exit, err := a.driver.Wait(ctx, handle)
@@ -180,6 +194,34 @@ func (a *Worker) observe(ctx context.Context, handle pdriver.Handle) {
 	}
 	if err := a.cfg.ReportResult(result); err != nil {
 		slog.Warn("k8s pipeline: report result failed", "task_id", handle.TaskID, "err", err)
+	}
+}
+
+func streamJobLogs(ctx context.Context, client kubernetes.Interface, namespace, jobName string, task *proto.Task, sink logsink.LogSink) {
+	if client == nil || sink == nil {
+		return
+	}
+	var podName string
+	for podName == "" {
+		pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + jobName})
+		if err == nil && len(pods.Items) > 0 {
+			podName = pods.Items[0].Name
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{Follow: true}).Stream(ctx)
+	if err != nil {
+		return
+	}
+	defer func() { _ = stream.Close() }()
+	scanner := bufio.NewScanner(stream)
+	for scanner.Scan() {
+		sink.Append(task.RunID, task.StepName, "combined", scanner.Text(), time.Now())
 	}
 }
 

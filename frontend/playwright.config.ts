@@ -22,7 +22,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `PATH=${pythonEnv}/bin:$PATH go run ./examples/frontend-e2e --addr=127.0.0.1:18080 --agent-addr=127.0.0.1:19090`,
+      command: `PATH=${pythonEnv}/bin:$PATH go run ./examples/frontend-e2e --addr=127.0.0.1:18080`,
       cwd: repoRoot,
       url: 'http://127.0.0.1:18080/e2e/ready',
       timeout: 120_000,

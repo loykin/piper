@@ -33,16 +33,14 @@ type GitConfig struct {
 
 type ServerConfig struct {
 	HTTPAddr       string          `mapstructure:"http_addr" yaml:"http_addr"`
-	AgentAddr      string          `mapstructure:"agent_addr" yaml:"agent_addr"`
 	WorkerToken    string          `mapstructure:"worker_token" yaml:"worker_token"`
 	AuthSigningKey string          `mapstructure:"auth_signing_key" yaml:"auth_signing_key"`
 	TLS            TLSConfig       `mapstructure:"tls" yaml:"tls"`
 	DB             DBConfig        `mapstructure:"db" yaml:"db"`
-	Run            RunConfig       `mapstructure:"run" yaml:"run"`
+	DataDir        string          `mapstructure:"data_dir" yaml:"data_dir"`
 	Retention      RetentionConfig `mapstructure:"retention" yaml:"retention"`
 	Schedule       ScheduleConfig  `mapstructure:"schedule" yaml:"schedule"`
 	Serving        ServerServing   `mapstructure:"serving" yaml:"serving"`
-	Notebook       ServerNotebook  `mapstructure:"notebook" yaml:"notebook"`
 	Local          LocalConfig     `mapstructure:"local" yaml:"local"`
 }
 
@@ -58,13 +56,6 @@ type DBConfig struct {
 	Path   string `mapstructure:"path" yaml:"path"`
 }
 
-type RunConfig struct {
-	OutputDir   string        `mapstructure:"output_dir" yaml:"output_dir"`
-	Retries     int           `mapstructure:"retries" yaml:"retries"`
-	RetryDelay  time.Duration `mapstructure:"retry_delay" yaml:"retry_delay"`
-	Concurrency int           `mapstructure:"concurrency" yaml:"concurrency"`
-}
-
 type RetentionConfig struct {
 	RunTTL      time.Duration `mapstructure:"run_ttl" yaml:"run_ttl"`
 	ArtifactTTL time.Duration `mapstructure:"artifact_ttl" yaml:"artifact_ttl"`
@@ -77,12 +68,6 @@ type ScheduleConfig struct {
 
 type ServerServing struct {
 	ModelDir string `mapstructure:"model_dir" yaml:"model_dir"`
-	Delegate bool   `mapstructure:"delegate" yaml:"delegate"`
-}
-
-type ServerNotebook struct {
-	Delegate bool              `mapstructure:"delegate" yaml:"delegate"`
-	K8s      K8sNotebookConfig `mapstructure:"k8s" yaml:"k8s"`
 }
 
 type LocalConfig struct {
@@ -101,15 +86,15 @@ type WorkersConfig struct {
 }
 
 type WorkerCommonConfig struct {
-	MasterURL    string `mapstructure:"master_url" yaml:"master_url"`
-	AgentAddr    string `mapstructure:"agent_addr" yaml:"agent_addr"`
-	WorkerToken  string `mapstructure:"worker_token" yaml:"worker_token"`
-	StorageToken string `mapstructure:"storage_token" yaml:"storage_token"`
-	Hostname     string `mapstructure:"hostname" yaml:"hostname"`
+	MasterURL    string            `mapstructure:"master_url" yaml:"master_url"`
+	WorkerToken  string            `mapstructure:"worker_token" yaml:"worker_token"`
+	StorageToken string            `mapstructure:"storage_token" yaml:"storage_token"`
+	Hostname     string            `mapstructure:"hostname" yaml:"hostname"`
+	StateDir     string            `mapstructure:"state_dir" yaml:"state_dir"`
+	Labels       map[string]string `mapstructure:"labels" yaml:"labels"`
 }
 
 type PipelineWorkerConfig struct {
-	ID          string               `mapstructure:"id" yaml:"id"`
 	Label       string               `mapstructure:"label" yaml:"label"`
 	Runtime     string               `mapstructure:"runtime" yaml:"runtime"`
 	Concurrency int                  `mapstructure:"concurrency" yaml:"concurrency"`
@@ -119,12 +104,10 @@ type PipelineWorkerConfig struct {
 }
 
 type PipelineDockerConfig struct {
-	DefaultImage string `mapstructure:"default_image" yaml:"default_image"`
-	Network      string `mapstructure:"network" yaml:"network"`
+	Network string `mapstructure:"network" yaml:"network"`
 }
 
 type NotebookWorkerConfig struct {
-	ID            string               `mapstructure:"id" yaml:"id"`
 	GPUs          []string             `mapstructure:"gpus" yaml:"gpus"`
 	Mode          string               `mapstructure:"mode" yaml:"mode"`
 	NotebooksRoot string               `mapstructure:"notebooks_root" yaml:"notebooks_root"`
@@ -133,16 +116,8 @@ type NotebookWorkerConfig struct {
 }
 
 type NotebookDockerConfig struct {
-	Image        string                 `mapstructure:"image" yaml:"image"`
-	Network      string                 `mapstructure:"network" yaml:"network"`
-	CPUs         string                 `mapstructure:"cpus" yaml:"cpus"`
-	Memory       string                 `mapstructure:"memory" yaml:"memory"`
-	ShmSize      string                 `mapstructure:"shm_size" yaml:"shm_size"`
-	ReadOnlyRoot bool                   `mapstructure:"read_only_root" yaml:"read_only_root"`
-	Tmpfs        []string               `mapstructure:"tmpfs" yaml:"tmpfs"`
-	User         string                 `mapstructure:"user" yaml:"user"`
-	Volumes      []NotebookDockerVolume `mapstructure:"volumes" yaml:"volumes"`
-	ExtraArgs    []string               `mapstructure:"extra_args" yaml:"extra_args"`
+	Network string                 `mapstructure:"network" yaml:"network"`
+	Volumes []NotebookDockerVolume `mapstructure:"volumes" yaml:"volumes"`
 }
 
 type NotebookDockerVolume struct {
@@ -153,19 +128,16 @@ type NotebookDockerVolume struct {
 }
 
 type ServingWorkerConfig struct {
-	ID     string              `mapstructure:"id" yaml:"id"`
 	GPUs   []string            `mapstructure:"gpus" yaml:"gpus"`
 	Mode   string              `mapstructure:"mode" yaml:"mode"`
 	Docker ServingDockerConfig `mapstructure:"docker" yaml:"docker"`
 }
 
 type ServingDockerConfig struct {
-	Image   string `mapstructure:"image" yaml:"image"`
 	Network string `mapstructure:"network" yaml:"network"`
 }
 
 type K8sWorkerConfig struct {
-	ID              string            `mapstructure:"id" yaml:"id"`
 	Cluster         string            `mapstructure:"cluster" yaml:"cluster"`
 	Namespaces      []string          `mapstructure:"namespaces" yaml:"namespaces"`
 	Enabled         []string          `mapstructure:"enabled" yaml:"enabled"`
@@ -174,24 +146,13 @@ type K8sWorkerConfig struct {
 	ResultOutboxDir string            `mapstructure:"result_outbox_dir" yaml:"result_outbox_dir"`
 	Pipeline        K8sPipelineConfig `mapstructure:"pipeline" yaml:"pipeline"`
 	Notebook        K8sNotebookConfig `mapstructure:"notebook" yaml:"notebook"`
-	Serving         K8sServingConfig  `mapstructure:"serving" yaml:"serving"`
 }
 
 type K8sPipelineConfig struct {
-	Namespace            string `mapstructure:"namespace" yaml:"namespace"`
-	WorkerImage          string `mapstructure:"worker_image" yaml:"worker_image"`
-	DefaultImage         string `mapstructure:"default_image" yaml:"default_image"`
-	AgentImagePullPolicy string `mapstructure:"agent_image_pull_policy" yaml:"agent_image_pull_policy"`
+	RunnerImage           string `mapstructure:"runner_image" yaml:"runner_image"`
+	RunnerImagePullPolicy string `mapstructure:"runner_image_pull_policy" yaml:"runner_image_pull_policy"`
 }
 
 type K8sNotebookConfig struct {
-	Namespace    string         `mapstructure:"namespace" yaml:"namespace"`
-	Image        string         `mapstructure:"image" yaml:"image"`
-	StorageClass string         `mapstructure:"storage_class" yaml:"storage_class"`
-	StorageSize  string         `mapstructure:"storage_size" yaml:"storage_size"`
-	PodDefaults  map[string]any `mapstructure:"pod_defaults" yaml:"pod_defaults"`
-}
-
-type K8sServingConfig struct {
-	Namespace string `mapstructure:"namespace" yaml:"namespace"`
+	InfrastructureImage string `mapstructure:"infrastructure_image" yaml:"infrastructure_image"`
 }

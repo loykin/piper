@@ -19,11 +19,10 @@ func TestNotebookProvisionVolumeCreatesPVC(t *testing.T) {
 		WorkerID:    "worker-1",
 		ClusterName: "gpu-a",
 		Client:      client,
-		Namespace:   "notebooks",
-		StorageSize: "5Gi",
+		Namespaces:  []string{"notebooks"},
 	})
 
-	resp, err := a.provisionNotebookVolume(context.Background(), notebook.WorkerProvisionVolumeRequest{VolumeID: "vol-1234567890abcdef"})
+	resp, err := a.provisionNotebookVolume(context.Background(), notebook.WorkerProvisionVolumeRequest{VolumeID: "vol-1234567890abcdef", Namespace: "notebooks", StorageSize: "5Gi"})
 	if err != nil {
 		t.Fatalf("provisionNotebookVolume returned error: %v", err)
 	}
@@ -42,14 +41,29 @@ func TestNotebookProvisionVolumeCreatesPVC(t *testing.T) {
 	}
 }
 
+func TestNotebookVolumeUsesManifestNamespaceWithinAllowlist(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	a := New(Config{WorkerID: "worker-1", Client: client, Namespaces: []string{"first", "second"}})
+	req := notebook.WorkerProvisionVolumeRequest{VolumeID: "vol-multi", Namespace: "second", StorageSize: "1Gi"}
+	if _, err := a.provisionNotebookVolume(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().PersistentVolumeClaims("second").Get(context.Background(), notebookPVCName(req.VolumeID), metav1.GetOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.deprovisionNotebookVolume(context.Background(), notebook.WorkerDeprovisionVolumeRequest{VolumeID: req.VolumeID}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNotebookStartCreatesStatefulSetAndService(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	a := New(Config{
-		WorkerID:    "worker-1",
-		ClusterName: "gpu-a",
-		Client:      client,
-		Namespace:   "notebooks",
-		Image:       "jupyter/minimal-notebook:latest",
+		WorkerID:            "worker-1",
+		ClusterName:         "gpu-a",
+		Client:              client,
+		Namespaces:          []string{"notebooks"},
+		InfrastructureImage: "piper:latest",
 	})
 
 	resp, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
@@ -57,7 +71,11 @@ func TestNotebookStartCreatesStatefulSetAndService(t *testing.T) {
 		YAML: `
 metadata:
   name: My Notebook
-spec: {}
+spec:
+  driver:
+    k8s:
+      namespace: notebooks
+      image: jupyter:test
 `,
 		VolumeID: "vol-abc",
 	})
@@ -78,7 +96,7 @@ spec: {}
 	if err != nil {
 		t.Fatalf("get statefulset: %v", err)
 	}
-	if sts.Spec.Template.Spec.Containers[0].Image != "jupyter/minimal-notebook:latest" {
+	if sts.Spec.Template.Spec.Containers[0].Image != "jupyter:test" {
 		t.Fatalf("image = %q", sts.Spec.Template.Spec.Containers[0].Image)
 	}
 	wantArgs := notebook.JupyterStartArgs("/notebooks/My Notebook/proxy/", resp.Token, notebook.ContainerWorkDir, 8888)
@@ -106,11 +124,11 @@ spec: {}
 func TestNotebookStartPrepWrapsContainerCommand(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	a := New(Config{
-		WorkerID:    "worker-1",
-		ClusterName: "gpu-a",
-		Client:      client,
-		Namespace:   "notebooks",
-		Image:       "jupyter/minimal-notebook:latest",
+		WorkerID:            "worker-1",
+		ClusterName:         "gpu-a",
+		Client:              client,
+		Namespaces:          []string{"notebooks"},
+		InfrastructureImage: "piper:latest",
 	})
 
 	_, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
@@ -119,6 +137,10 @@ func TestNotebookStartPrepWrapsContainerCommand(t *testing.T) {
 metadata:
   name: prep notebook
 spec:
+  driver:
+    k8s:
+      namespace: notebooks
+      image: jupyter:test
   prepare:
     steps:
       - type: command
@@ -154,7 +176,7 @@ func TestNotebookStopScalesStatefulSetToZero(t *testing.T) {
 			Replicas: &replicas,
 		},
 	})
-	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
+	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespaces: []string{"notebooks"}})
 
 	if err := a.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "test-project", Name: "demo"}); err != nil {
 		t.Fatalf("stopNotebook returned error: %v", err)
@@ -172,7 +194,7 @@ func TestNotebookDeprovisionDeletesPVC(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "piper-nb-vol-volabc", Namespace: "notebooks"},
 	})
-	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
+	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespaces: []string{"notebooks"}})
 
 	if err := a.deprovisionNotebookVolume(context.Background(), notebook.WorkerDeprovisionVolumeRequest{VolumeID: "vol-abc"}); err != nil {
 		t.Fatalf("deprovisionNotebookVolume returned error: %v", err)
@@ -194,16 +216,16 @@ func TestNotebookStartUpdatesExistingStatefulSet(t *testing.T) {
 		},
 	})
 	a := New(Config{
-		WorkerID:    "worker-1",
-		ClusterName: "gpu-a",
-		Client:      client,
-		Namespace:   "notebooks",
-		Image:       "new-image",
+		WorkerID:            "worker-1",
+		ClusterName:         "gpu-a",
+		Client:              client,
+		Namespaces:          []string{"notebooks"},
+		InfrastructureImage: "piper:latest",
 	})
 
 	if _, err := a.startNotebook(context.Background(), notebook.WorkerStartRequest{
 		ProjectID: "test-project",
-		YAML:      "metadata:\n  name: demo\nspec: {}\n",
+		YAML:      "metadata:\n  name: demo\nspec:\n  driver:\n    k8s:\n      namespace: notebooks\n      image: new-image\n",
 		VolumeID:  "vol-demo",
 	}); err != nil {
 		t.Fatalf("startNotebook returned error: %v", err)
@@ -228,7 +250,7 @@ func TestNotebookSyncStatusReportsReadyStatefulSet(t *testing.T) {
 			ReadyReplicas: 1,
 		},
 	})
-	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespace: "notebooks"})
+	a := New(Config{WorkerID: "worker-1", ClusterName: "gpu-a", Client: client, Namespaces: []string{"notebooks"}})
 
 	resp, err := a.syncNotebookStatus(context.Background(), notebook.WorkerSyncStatusRequest{
 		Targets: []notebook.WorkerSyncStatusTarget{{ProjectID: "project-a", Name: "demo"}},
@@ -265,8 +287,8 @@ func TestObserveOnceReportsStateChanges(t *testing.T) {
 	client := fake.NewSimpleClientset(sts)
 	var updates []notebook.WorkerStatusUpdate
 	a := New(Config{
-		Client:    client,
-		Namespace: "notebooks",
+		Client:     client,
+		Namespaces: []string{"notebooks"},
 		ReportStatus: func(update notebook.WorkerStatusUpdate) error {
 			updates = append(updates, update)
 			return nil
@@ -298,25 +320,25 @@ func TestObserveOnceReportsStateChanges(t *testing.T) {
 func TestNotebookK8sProjectIsolation(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	a := New(Config{
-		WorkerID:    "worker-1",
-		ClusterName: "gpu-a",
-		Client:      client,
-		Namespace:   "notebooks",
-		Image:       "jupyter/minimal-notebook:latest",
+		WorkerID:            "worker-1",
+		ClusterName:         "gpu-a",
+		Client:              client,
+		Namespaces:          []string{"notebooks"},
+		InfrastructureImage: "piper:latest",
 	})
 	ctx := context.Background()
 
 	// Start the same notebook name from two different projects.
 	if _, err := a.startNotebook(ctx, notebook.WorkerStartRequest{
 		ProjectID: "project-a",
-		YAML:      "metadata:\n  name: training\nspec: {}\n",
+		YAML:      "metadata:\n  name: training\nspec:\n  driver:\n    k8s:\n      namespace: notebooks\n      image: jupyter:test\n",
 		VolumeID:  "vol-a",
 	}); err != nil {
 		t.Fatalf("project-a start: %v", err)
 	}
 	if _, err := a.startNotebook(ctx, notebook.WorkerStartRequest{
 		ProjectID: "project-b",
-		YAML:      "metadata:\n  name: training\nspec: {}\n",
+		YAML:      "metadata:\n  name: training\nspec:\n  driver:\n    k8s:\n      namespace: notebooks\n      image: jupyter:test\n",
 		VolumeID:  "vol-b",
 	}); err != nil {
 		t.Fatalf("project-b start: %v", err)

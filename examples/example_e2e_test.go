@@ -205,14 +205,11 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	workerBin := buildBinary(t, "./examples/bare-metal/worker")
 
 	port := freePort(t)
-	agentPort := freePort(t)
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
 	tmpDir := t.TempDir()
 
 	serverCmd := exec.CommandContext(ctx, serverBin,
 		fmt.Sprintf("--addr=:%d", port),
-		"--agent-addr="+agentAddr,
 	)
 	serverCmd.Dir = tmpDir
 	serverCmd.Env = append(os.Environ(), "HOME="+tmpDir)
@@ -226,7 +223,6 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	waitReady(t, defaultProjectAPI(baseURL)+"/runs", 15*time.Second)
 
 	workerCmd := exec.CommandContext(ctx, workerBin,
-		"--agent-addr="+agentAddr,
 		"--master="+baseURL,
 		"--concurrency=4",
 		"--meta-dir="+filepath.Join(tmpDir, "piper-meta"),
@@ -364,9 +360,6 @@ func TestExampleArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agentPort := freePort(t)
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
-
 	p, err := piper.New(piper.Config{
 		DB:        db,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
@@ -382,16 +375,15 @@ func TestExampleArtifacts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	go func() { _ = p.Serve(ctx, piper.ServeOption{AgentAddr: agentAddr}) }()
+	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
 	waitReady(t, defaultProjectAPI(serverURL)+"/runs", 10*time.Second)
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
-			Addr:        agentAddr,
+			MasterURL:   serverURL,
 			Concurrency: 4,
 		},
 		Store: worker.StoreConfig{
-			MasterURL:  serverURL,
 			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
 			StorageURL: serverURL + "/store",
 		},
@@ -446,8 +438,6 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	storeDir := filepath.Join(tmpDir, "store")
-	agentPort := freePort(t)
-	agentAddr := fmt.Sprintf("127.0.0.1:%d", agentPort)
 
 	p, err := piper.New(piper.Config{
 		DB:        db,
@@ -475,16 +465,15 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	go func() { _ = p.Serve(ctx, piper.ServeOption{AgentAddr: agentAddr}) }()
+	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
 	waitReady(t, projectAPI+"/pipelines", 10*time.Second)
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
-			Addr:        agentAddr,
+			MasterURL:   serverURL,
 			Concurrency: 2,
 		},
 		Store: worker.StoreConfig{
-			MasterURL:  serverURL,
 			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
 			StorageURL: serverURL + "/store",
 		},
@@ -631,12 +620,9 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	p, err := piper.New(piper.Config{
-		DB:   db,
-		Auth: piper.AuthConfig{Trusted: true},
-		Server: piper.ServerConfig{
-			Addr:      fmt.Sprintf(":%d", port),
-			AgentAddr: fmt.Sprintf("127.0.0.1:%d", freePort(t)),
-		},
+		DB:     db,
+		Auth:   piper.AuthConfig{Trusted: true},
+		Server: piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -657,7 +643,7 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	const nbName = "e2e-nb-baremetal"
 
 	nw := notebookworker.New(notebookworker.Config{
-		AgentAddr:     p.Config().Server.AgentAddr,
+		MasterURL:     serverURL,
 		NotebooksRoot: tmpDir,
 		Hostname:      "fake-host",
 		ID:            "fake-bm-1",

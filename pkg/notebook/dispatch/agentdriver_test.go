@@ -53,7 +53,8 @@ func TestAgentDriverProvisionVolume(t *testing.T) {
 	driver, rpc := newAgentNotebookDriver()
 	vol := &notebook.NotebookVolume{ID: "vol-1"}
 
-	if err := driver.ProvisionVolume(context.Background(), vol, "5Gi"); err != nil {
+	spec := notebook.Notebook{Spec: notebook.NotebookSpec{Volume: &notebook.VolumeSpec{Size: "5Gi"}}}
+	if err := driver.ProvisionVolume(context.Background(), vol, spec); err != nil {
 		t.Fatalf("ProvisionVolume returned error: %v", err)
 	}
 	if vol.WorkDir != notebook.ContainerWorkDir {

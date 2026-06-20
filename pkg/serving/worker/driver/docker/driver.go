@@ -29,7 +29,6 @@ const (
 // Config holds the Docker serving runtime configuration.
 type Config struct {
 	WorkerID string
-	Image    string // default image when spec does not specify one
 	Network  string // docker network name (default: "bridge")
 }
 
@@ -77,9 +76,6 @@ func NewWithClient(cfg Config, cli dockerinfra.API) (*Driver, error) {
 // is still running. Health checks are owned by the Worker.
 func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint string, err error) {
 	image := req.Image
-	if image == "" {
-		image = d.cfg.Image
-	}
 	if image == "" {
 		if req.LogSink != nil {
 			req.LogSink.Stop()

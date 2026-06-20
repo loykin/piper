@@ -16,6 +16,7 @@ import (
 	dockerclient "github.com/moby/moby/client"
 
 	dockerinfra "github.com/piper/piper/internal/docker"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/notebook/worker/driver"
 )
@@ -40,7 +41,7 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 		t.Skipf("Docker image %q is not available locally; pull it before running this e2e: %v", image, err)
 	}
 
-	rt, err := NewWithClient(Config{Image: image, Network: "bridge"}, "docker-e2e-agent", cli)
+	rt, err := NewWithClient(Config{Network: "bridge"}, "docker-e2e-agent", cli)
 	if err != nil {
 		t.Fatalf("docker runtime: %v", err)
 	}
@@ -51,6 +52,7 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 
 	var spec notebook.Notebook
 	spec.Metadata.Name = name
+	spec.Spec.Driver.Docker = &manifest.DriverDockerSpec{Image: image}
 
 	started, err := rt.Start(ctx, driver.StartRequest{
 		RuntimeName: name,
@@ -127,7 +129,7 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := NewWithClient(Config{Image: image, Network: "bridge"}, workerID, cli)
+	recovered, err := NewWithClient(Config{Network: "bridge"}, workerID, cli)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +168,7 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	started, err := recovered.Start(ctx, driver.StartRequest{
 		RuntimeName: name,
 		Name:        name,
-		Spec:        notebook.Notebook{},
+		Spec:        dockerNotebookSpec(image),
 		WorkDir:     workDir,
 		Port:        restartPort,
 		Token:       "restart-token",
@@ -187,7 +189,7 @@ func TestDockerRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {
 	final, err := recovered.Start(ctx, driver.StartRequest{
 		RuntimeName: name,
 		Name:        name,
-		Spec:        notebook.Notebook{},
+		Spec:        dockerNotebookSpec(image),
 		WorkDir:     workDir,
 		Port:        finalPort,
 		Token:       "final-token",
@@ -222,14 +224,14 @@ func TestDockerRuntimeE2E_CrashHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt, err := NewWithClient(Config{Image: image, Network: "bridge"}, workerID, cli)
+	rt, err := NewWithClient(Config{Network: "bridge"}, workerID, cli)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started, err := rt.Start(context.Background(), driver.StartRequest{
 		RuntimeName: name,
 		Name:        name,
-		Spec:        notebook.Notebook{},
+		Spec:        dockerNotebookSpec(image),
 		WorkDir:     workDir,
 		Port:        port,
 		Token:       "crash-token",
@@ -249,6 +251,10 @@ func TestDockerRuntimeE2E_CrashHelper(t *testing.T) {
 	// Exit without runtime cleanup. This simulates a worker process crash while
 	// the Docker-managed notebook continues running in the daemon.
 	os.Exit(0)
+}
+
+func dockerNotebookSpec(image string) notebook.Notebook {
+	return notebook.Notebook{Spec: notebook.NotebookSpec{Driver: manifest.DriverSpec{Docker: &manifest.DriverDockerSpec{Image: image}}}}
 }
 
 func requireDockerNotebookE2E(t *testing.T) string {

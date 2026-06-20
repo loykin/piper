@@ -1,12 +1,32 @@
 package serving
 
-import "github.com/piper/piper/pkg/manifest"
+import (
+	"fmt"
+	"github.com/piper/piper/pkg/manifest"
+)
 
 // ModelService is the top-level structure for a piper ModelService YAML definition.
 type ModelService struct {
 	manifest.TypeMeta `yaml:",inline"`
 	Metadata          manifest.ObjectMeta `yaml:"metadata"`
 	Spec              ModelServiceSpec    `yaml:"spec"`
+}
+
+func (s ModelService) Validate() error {
+	switch s.Spec.Driver.Placement.Runtime {
+	case "docker":
+		if s.Spec.Driver.Docker == nil || s.Spec.Driver.Docker.Image == "" {
+			return fmt.Errorf("driver.docker.image is required")
+		}
+	case "k8s":
+		if s.Spec.Driver.K8s == nil || s.Spec.Driver.K8s.Image == "" {
+			return fmt.Errorf("driver.k8s.image is required")
+		}
+		if s.Spec.Driver.K8s.Namespace == "" {
+			return fmt.Errorf("driver.k8s.namespace is required")
+		}
+	}
+	return nil
 }
 
 type ModelServiceSpec struct {

@@ -33,6 +33,9 @@ func (m *Manager) ArtifactTarget() artifact.Target { return m.driver.ArtifactTar
 
 // Deploy starts a ModelService. Artifact resolution must happen before calling Deploy.
 func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) error {
+	if err := svc.Validate(); err != nil {
+		return fmt.Errorf("serving: %w", err)
+	}
 	if projectID == "" {
 		return fmt.Errorf("serving: project ID is required")
 	}

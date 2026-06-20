@@ -15,11 +15,11 @@ import (
 
 func newK8sWorker(client *fake.Clientset) *Worker {
 	return New(Config{
-		WorkerID:    "worker-1",
-		ClusterName: "test",
-		Client:      client,
-		Namespace:   "notebooks",
-		Image:       "piper:latest",
+		WorkerID:            "worker-1",
+		ClusterName:         "test",
+		Client:              client,
+		Namespaces:          []string{"notebooks"},
+		InfrastructureImage: "piper:latest",
 	})
 }
 

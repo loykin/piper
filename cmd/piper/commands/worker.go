@@ -26,9 +26,9 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 			}
 			c := root.Workers.Pipeline
 			common := root.Workers.Common
-			id := c.ID
-			if id == "" {
-				id = worker.NewID("")
+			id, err := loadOrCreateWorkerID(common.StateDir, "pipeline")
+			if err != nil {
+				return err
 			}
 
 			runtime := worker.RuntimeType(c.Runtime)
@@ -39,16 +39,15 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 
 			cfg := worker.Config{
 				Agent: worker.AgentConfig{
-					Addr:        common.AgentAddr,
+					MasterURL:   common.MasterURL,
 					WorkerToken: common.WorkerToken,
 					ID:          id,
 					Label:       c.Label,
+					Labels:      common.Labels,
 					Hostname:    common.Hostname,
 					Concurrency: c.Concurrency,
 				},
 				Store: worker.StoreConfig{
-					MasterURL:    common.MasterURL,
-					WorkerToken:  common.WorkerToken,
 					StorageToken: storageToken,
 					StorageURL:   root.Storage.URL,
 					OutputDir:    c.OutputDir,
@@ -61,8 +60,7 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 					MetaDir: c.MetaDir,
 				},
 				Docker: worker.DockerConfig{
-					DefaultImage: c.Docker.DefaultImage,
-					Network:      c.Docker.Network,
+					Network: c.Docker.Network,
 				},
 			}
 
@@ -77,21 +75,18 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("agent-addr", "", "gRPC address of piper master agent server (e.g. master:9090)")
-	cmd.Flags().String("id", "", "stable worker ID (auto-generated if empty)")
+	cmd.Flags().String("state-dir", "", "directory for persistent worker identity and state")
 	cmd.Flags().String("label", "", "worker label for task routing")
-	cmd.Flags().String("master-url", "", "piper master HTTP URL (for agent exec callbacks)")
-	cmd.Flags().String("worker-token", "", "worker token for gRPC and master callbacks")
+	cmd.Flags().String("master-url", "", "single piper master endpoint for the worker tunnel")
+	cmd.Flags().String("worker-token", "", "worker tunnel authentication token")
 	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
 	cmd.Flags().Int("concurrency", 0, "max parallel tasks")
 	cmd.Flags().String("runtime", "", "execution runtime: baremetal or docker")
 	cmd.Flags().String("output-dir", "", "output directory")
 	cmd.Flags().String("meta-dir", "", "metadata sidecar directory (default: $TMPDIR/piper-meta)")
-	cmd.Flags().String("default-image", "", "fallback container image (docker runtime)")
 	cmd.Flags().String("docker-network", "", "Docker network for step containers")
 
-	loader.MustBindFlag("workers.common.agent_addr", cmd.Flags().Lookup("agent-addr"))
-	loader.MustBindFlag("workers.pipeline.id", cmd.Flags().Lookup("id"))
+	loader.MustBindFlag("workers.common.state_dir", cmd.Flags().Lookup("state-dir"))
 	loader.MustBindFlag("workers.pipeline.label", cmd.Flags().Lookup("label"))
 	loader.MustBindFlag("workers.common.master_url", cmd.Flags().Lookup("master-url"))
 	loader.MustBindFlag("workers.common.worker_token", cmd.Flags().Lookup("worker-token"))
@@ -100,7 +95,6 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	loader.MustBindFlag("workers.pipeline.runtime", cmd.Flags().Lookup("runtime"))
 	loader.MustBindFlag("workers.pipeline.output_dir", cmd.Flags().Lookup("output-dir"))
 	loader.MustBindFlag("workers.pipeline.meta_dir", cmd.Flags().Lookup("meta-dir"))
-	loader.MustBindFlag("workers.pipeline.docker.default_image", cmd.Flags().Lookup("default-image"))
 	loader.MustBindFlag("workers.pipeline.docker.network", cmd.Flags().Lookup("docker-network"))
 
 	return cmd

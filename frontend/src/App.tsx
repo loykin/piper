@@ -270,13 +270,13 @@ export default function App() {
       <ProjectProvider>
         <div className="h-screen dark">
           <TooltipProvider>
-            <SidebarProvider>
+            <SidebarProvider className="h-screen">
               <Sidebar>
                 <AppSidebar />
                 <SidebarRail />
               </Sidebar>
               <SidebarInset>
-                <div className="flex-1 min-h-0">
+                <div className="flex flex-col flex-1 min-h-0">
                   <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>}>
                     <ProjectRoutes />
                   </Suspense>

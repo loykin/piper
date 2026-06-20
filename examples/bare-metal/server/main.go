@@ -1,12 +1,12 @@
 // Server mode example — run as master server
 //
-// Runs piper as an HTTP server with a gRPC agent server for worker dispatch.
+// Runs piper with HTTP API and gRPC worker tunnel on one endpoint.
 //
 //	# Start the server
 //	go run ./examples/bare-metal/server
 //
 //	# Start a worker in another terminal
-//	go run ./examples/bare-metal/worker --agent-addr=:9090
+//	go run ./examples/bare-metal/worker --master=http://localhost:8080
 //
 //	# Submit a pipeline run
 //	curl -X POST http://localhost:8080/runs \
@@ -31,7 +31,6 @@ import (
 
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
-	agentAddr := flag.String("agent-addr", ":9090", "gRPC agent server address")
 	flag.Parse()
 
 	p, err := piper.New(piper.Config{
@@ -50,10 +49,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	log.Printf("piper server starting on %s (gRPC agent: %s)", *addr, *agentAddr)
+	log.Printf("piper server starting on %s", *addr)
 	fmt.Printf("LISTEN_ADDR=%s\n", *addr)
 
-	if err := p.Serve(ctx, piper.ServeOption{AgentAddr: *agentAddr}); err != nil {
+	if err := p.Serve(ctx, piper.ServeOption{}); err != nil {
 		log.Fatal(err)
 	}
 }

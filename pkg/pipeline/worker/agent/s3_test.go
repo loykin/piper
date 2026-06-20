@@ -64,10 +64,8 @@ func fakeS3StorageURL(srv *testutil.Server) string {
 
 func TestRun_s3_artifact_upload(t *testing.T) {
 	srv, store := fakeS3(t)
-	masterSrv := fakeMasterServer(t)
 
 	r, err := agent.New(agent.Config{
-		MasterURL:  masterSrv.URL,
 		OutputDir:  t.TempDir(),
 		StorageURL: fakeS3StorageURL(srv),
 	})
@@ -102,7 +100,6 @@ func TestRun_s3_artifact_upload(t *testing.T) {
 
 func TestRun_s3_artifact_input_output(t *testing.T) {
 	srv, store := fakeS3(t)
-	masterSrv := fakeMasterServer(t)
 
 	// Upload an input file to the store as if a previous step had done so
 	runID := "run-s3-test"
@@ -117,7 +114,6 @@ func TestRun_s3_artifact_input_output(t *testing.T) {
 
 	outDir := t.TempDir()
 	r, err := agent.New(agent.Config{
-		MasterURL:  masterSrv.URL,
 		OutputDir:  outDir,
 		InputDir:   outDir,
 		StorageURL: fakeS3StorageURL(srv),
@@ -156,11 +152,9 @@ func TestRun_s3_artifact_input_output(t *testing.T) {
 
 func TestRun_s3_cleansLocalWorkdirAfterRun(t *testing.T) {
 	srv, _ := fakeS3(t)
-	masterSrv := fakeMasterServer(t)
 
 	outDir := t.TempDir()
 	r, err := agent.New(agent.Config{
-		MasterURL:  masterSrv.URL,
 		OutputDir:  outDir,
 		InputDir:   outDir,
 		StorageURL: fakeS3StorageURL(srv),
@@ -186,7 +180,6 @@ func TestRun_s3_cleansLocalWorkdirAfterRun(t *testing.T) {
 
 func TestRun_s3_parallelConsumersUseIsolatedInputDirs(t *testing.T) {
 	srv, store := fakeS3(t)
-	masterSrv := fakeMasterServer(t)
 
 	const runID = "run-parallel-inputs"
 	if err := store.Put(context.Background(),
@@ -199,7 +192,6 @@ func TestRun_s3_parallelConsumersUseIsolatedInputDirs(t *testing.T) {
 
 	outDir := t.TempDir()
 	r, err := agent.New(agent.Config{
-		MasterURL:  masterSrv.URL,
 		OutputDir:  outDir,
 		InputDir:   outDir,
 		StorageURL: fakeS3StorageURL(srv),

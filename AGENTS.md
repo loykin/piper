@@ -4,6 +4,16 @@
 
 # Piper — Frontend Agent Guide
 
+## Worker Network Invariant
+
+- Workers establish one outbound tunnel to the Piper master using `workers.common.master_url`.
+- The master serves the HTTP API and the gRPC worker tunnel on the same `server.http_addr` endpoint.
+- Do not add a separate agent listener/address or reintroduce `server.agent_addr`, `workers.common.agent_addr`, or `--agent-addr`.
+- All worker control-plane traffic must use the existing tunnel: registration, heartbeat, dispatch, cancellation, status, results, logs, metrics, notebook/serving control, and reverse proxy traffic.
+- Pipeline subprocesses, containers, and Kubernetes Job pods must not call the master directly. They report locally to their parent worker, which forwards data through the tunnel.
+- Artifact storage is the only exception: workers and workload runtimes may connect directly to the configured `storage.url` such as S3.
+- Changes that create any additional worker-side outbound endpoint require an explicit architecture decision and documentation update.
+
 ## Stack
 
 - React 19, TypeScript, Vite

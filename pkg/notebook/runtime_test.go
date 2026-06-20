@@ -1,6 +1,10 @@
 package notebook
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/piper/piper/pkg/manifest"
+)
 
 func TestJupyterArgsConformance(t *testing.T) {
 	baseURL := "/notebooks/demo/proxy/"
@@ -32,6 +36,17 @@ func TestJupyterArgsConformance(t *testing.T) {
 		if got := containerArgs[i+1]; got != want {
 			t.Fatalf("arg[%d] mismatch: container %q process %q", i, got, want)
 		}
+	}
+}
+
+func TestNotebookValidateRequiresManifestOwnedK8sValues(t *testing.T) {
+	n := Notebook{Spec: NotebookSpec{Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Runtime: "k8s"}, K8s: &manifest.DriverK8sSpec{Image: "jupyter:test", Namespace: "notebooks"}}}}
+	if err := n.Validate(); err == nil {
+		t.Fatal("expected missing volume size error")
+	}
+	n.Spec.Volume = &VolumeSpec{Size: "10Gi"}
+	if err := n.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -36,6 +36,9 @@ func main() {
 	}
 	defer func() { _ = p.Close() }()
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	// App router
 	mux := http.NewServeMux()
 
@@ -46,16 +49,16 @@ func main() {
 
 	// Mount piper API + UI under /piper/
 	// Only import pkg/ui when the UI is needed
-	piperHandler := p.Handler(nil)
+	piperHandler := p.HandlerContext(ctx, nil)
 	mux.Handle("/piper/runs", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/runs/", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/api/", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/", http.StripPrefix("/piper", ui.Handler()))
 
 	srv := &http.Server{Addr: ":8080", Handler: mux}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	srv.Protocols = new(http.Protocols)
+	srv.Protocols.SetHTTP1(true)
+	srv.Protocols.SetUnencryptedHTTP2(true)
 
 	go func() {
 		<-ctx.Done()

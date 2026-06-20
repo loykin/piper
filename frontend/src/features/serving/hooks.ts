@@ -1,4 +1,3 @@
-// serving feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import { api as sysApi } from '@/lib/api'
@@ -19,6 +18,7 @@ export function useServices() {
     queryFn: () => api.listServing(projectId),
     enabled: !!projectId,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -29,6 +29,7 @@ export function useService(name: string) {
     queryFn: () => api.getServing(projectId, name),
     enabled: !!projectId && !!name,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -41,11 +42,11 @@ export function useServingHistory() {
   })
 }
 
-export function useDeployService() {
+export function useCreateService() {
   const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (yaml: string) => api.deployServing(projectId, yaml),
+    mutationFn: (yaml: string) => api.createServing(projectId, yaml),
     onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all(projectId) }),
   })
 }
@@ -72,6 +73,7 @@ export function useServingWorkers() {
   return useQuery({
     queryKey: ['serving-workers'],
     queryFn: () => sysApi.get<ServingWorkerInfo[]>('/api/serving-workers').then(d => Array.isArray(d) ? d : []),
-    refetchInterval: 10000,
+    refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }

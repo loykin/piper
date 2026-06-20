@@ -1,4 +1,3 @@
-// storage feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import type { StorageConfig } from './types'
@@ -38,7 +37,7 @@ export function useDeleteObject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (key: string) => api.deleteStorageObject(projectId, key),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['storage', projectId, 'objects'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objects(projectId) }),
   })
 }
 
@@ -48,6 +47,6 @@ export function useUploadObject() {
   return useMutation({
     mutationFn: ({ file, key }: { file: File; key?: string }) =>
       api.uploadStorageObject(projectId, file, key),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['storage', projectId, 'objects'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objects(projectId) }),
   })
 }

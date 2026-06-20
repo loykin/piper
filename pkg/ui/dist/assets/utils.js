@@ -1,1 +1,1 @@
-import{An as e,Mn as t}from"./vendor-loykin.js";function n(...n){return e(t(n))}export{n as t};
+import{Bn as e,Rn as t}from"./vendor-loykin.js";function n(...n){return t(e(n))}export{n as t};

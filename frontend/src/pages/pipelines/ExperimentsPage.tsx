@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { useRuns } from '@/features/runs/hooks'
+import { ExperimentDetailPanel } from '@/features/runs/components/ExperimentDetailPanel'
 import type { Run } from '@/features/runs/types'
 
 interface ExperimentRow {
@@ -14,8 +15,8 @@ interface ExperimentRow {
   latest: string
 }
 
-export default function ExperimentsPage() {
-  const navigate = useNavigate()
+function ExperimentsPageInner() {
+  const { open } = useSidePanel()
   const { data: runs = [], isLoading } = useRuns()
 
   const experiments = useMemo<ExperimentRow[]>(() => {
@@ -52,7 +53,11 @@ export default function ExperimentsPage() {
         ? <span className="text-blue-400">{row.original.running}</span>
         : <span>{row.original.running}</span> },
     { id: 'latest',  header: 'Latest Run',  accessorKey: 'latest',
-      cell: ({ row }) => <span className="text-muted-foreground text-xs">{new Date(row.original.latest).toLocaleString()}</span> },
+      cell: ({ row }) => (
+        <span className="text-muted-foreground text-xs">
+          {new Date(row.original.latest).toLocaleString()}
+        </span>
+      ) },
   ], [])
 
   return (
@@ -61,21 +66,25 @@ export default function ExperimentsPage() {
       description="Grouped sweep runs. Click an experiment to compare runs by params and metrics."
     >
       <DataBodyTemplate.Body>
-        {isLoading ? (
-          <div className="py-8 text-sm text-muted-foreground">Loading…</div>
-        ) : experiments.length === 0 ? (
-          <div className="py-8 text-sm text-muted-foreground">No experiments yet. Submit a sweep via POST /runs/sweep.</div>
-        ) : (
-          <DataGrid
-            data={experiments}
-            columns={columns}
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={(row) => navigate(`/experiments/${encodeURIComponent(row.name)}`)}
-          />
-        )}
+        <DataGrid
+          data={experiments}
+          columns={columns}
+          isLoading={isLoading}
+          emptyMessage="No experiments yet. Submit a sweep via POST /runs/sweep."
+          tableWidthMode="fill-last"
+          rowHeight={44}
+          rowCursor
+          onRowClick={(row) => open(<ExperimentDetailPanel experiment={row.name} />, { size: 800 })}
+        />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+  )
+}
+
+export default function ExperimentsPage() {
+  return (
+    <SidePanelProvider defaultSize={800} defaultMinSize={580} defaultMaxSize={1200}>
+      <ExperimentsPageInner />
+    </SidePanelProvider>
   )
 }

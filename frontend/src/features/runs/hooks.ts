@@ -21,6 +21,7 @@ export function useRuns(filter?: RunFilter) {
     queryFn: () => api.listRuns(projectId, filter),
     enabled: !!projectId,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -31,6 +32,7 @@ export function useRun(id: string) {
     queryFn: () => api.getRun(projectId, id),
     enabled: !!projectId && !!id,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -44,6 +46,7 @@ export function useRunSteps(runId: string) {
       const steps = query.state.data ?? []
       return steps.some(s => s.status === 'running' || s.status === 'pending') ? 2000 : 5000
     },
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 

@@ -1,7 +1,6 @@
-// pipelines feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import type { SubmitPipelineRequest, TriggerRunRequest, DeployRequest } from './types'
+import type { CreatePipelineRequest, TriggerRunRequest, DeployRequest } from './types'
 import { useProjectId } from '@/lib/projectContext'
 
 export const pipelineKeys = {
@@ -16,15 +15,16 @@ export function usePipelines(name?: string, limit?: number) {
     queryKey: pipelineKeys.list(projectId, name),
     queryFn: () => api.listPipelines(projectId, name, limit),
     enabled: !!projectId,
-    refetchInterval: 10000,
+    refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
-export function useSubmitPipeline() {
+export function useCreatePipeline() {
   const projectId = useProjectId()
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (req: SubmitPipelineRequest) => api.submitPipeline(projectId, req),
+    mutationFn: (req: CreatePipelineRequest) => api.createPipeline(projectId, req),
     onSuccess: () => qc.invalidateQueries({ queryKey: pipelineKeys.all(projectId) }),
   })
 }

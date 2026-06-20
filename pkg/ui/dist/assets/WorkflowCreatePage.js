@@ -1,4 +1,4 @@
-import{n as e}from"./rolldown-runtime.js";import{o as t,s as n}from"./vendor-codemirror.js";import{c as r}from"./vendor-react.js";import{t as i}from"./vendor-loykin.js";import{h as a,m as o,t as s}from"./index.js";import{t as c}from"./yaml-mirror.js";import{t as l}from"./hooks3.js";var u=e(n(),1),d=t(),f=`apiVersion: piper/v1
+import{n as e}from"./rolldown-runtime.js";import{o as t,s as n}from"./vendor-codemirror.js";import{c as r}from"./vendor-react.js";import{r as i}from"./vendor-loykin.js";import{h as a,m as o,t as s}from"./index.js";import{t as c}from"./yaml-mirror.js";import{t as l}from"./hooks3.js";var u=e(n(),1),d=t(),f=`apiVersion: piper/v1
 kind: Pipeline
 metadata:
   name: my-pipeline

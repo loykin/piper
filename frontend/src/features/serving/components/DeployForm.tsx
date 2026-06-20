@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useRuns } from '@/features/runs/hooks'
 import { listArtifacts, type StepArtifacts } from '@/features/runs/api'
-import { useDeployService, useServingWorkers } from '../hooks'
+import { useCreateService, useServingWorkers } from '../hooks'
 import { useProjectId } from '@/lib/projectContext'
 import { buildYAML, DEFAULT_FORM, RUNTIME_TEMPLATES, type FormState } from '../editor'
 
@@ -22,7 +22,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const projectId = useProjectId()
   const { data: allRuns = [] } = useRuns({ status: 'success' })
   const { data: servingWorkers = [] } = useServingWorkers()
-  const { mutateAsync: deploy, isPending: deploying } = useDeployService()
+  const { mutateAsync: deploy, isPending: deploying } = useCreateService()
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM)
   const [tab, setTab] = useState<'form' | 'yaml'>('form')

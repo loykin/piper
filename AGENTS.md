@@ -160,6 +160,43 @@ const loading = l1 || l2 || l3
 <Section isLoading={l2} ... />
 ```
 
+## Polling Queries (`refetchInterval`)
+
+React Query distinguishes two loading states:
+
+| Property | True when | Use for |
+|----------|-----------|---------|
+| `isLoading` | initial fetch only (no cached data) | full skeleton |
+| `isFetching` | any fetch in progress incl. refetch | subtle indicator |
+
+**Rules for hooks that use `refetchInterval`:**
+
+1. Always add `notifyOnChangeProps: ['data', 'isLoading']` — prevents re-renders on every `isFetching` toggle (which happens twice per interval).
+2. Never pass `isLoading={isLoading}` to `DataGrid` on monitoring/status pages — the skeleton will flash on every poll. Omit the prop; the DataGrid shows the empty/data state immediately and updates silently.
+
+```ts
+// hooks — polling query
+export function useWorkers() {
+  return useQuery({
+    queryKey: workerKeys.list(),
+    queryFn: api.listWorkers,
+    refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],  // ← required
+  })
+}
+
+// page — no isLoading on DataGrid for polling sections
+<DataGrid
+  data={data}
+  columns={columns}
+  // isLoading omitted — monitoring pages show empty state immediately
+  emptyMessage="No workers registered."
+  ...
+/>
+```
+
+Without `notifyOnChangeProps`, each poll fires two re-renders (`isFetching` true → false) which propagate into DataGrid internals and cause visible flicker. React `<StrictMode>` (dev only) amplifies this by remounting components, making the skeleton re-appear on each cycle.
+
 ## Adding a New Feature
 
 1. Create `features/<domain>/types.ts`, `api.ts`, `hooks.ts`.

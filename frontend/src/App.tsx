@@ -23,27 +23,30 @@ import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
 import { AuthProvider, useAuth } from '@/features/auth/context'
 import { useState } from 'react'
 
-const LoginPage             = lazy(() => import('@/pages/LoginPage'))
-const RunDetailPage         = lazy(() => import('@/pages/RunDetailPage'))
-const ExperimentsPage       = lazy(() => import('@/pages/ExperimentsPage'))
-const ExperimentDetailPage  = lazy(() => import('@/pages/ExperimentDetailPage'))
-const WorkflowsPage         = lazy(() => import('@/pages/WorkflowsPage'))
-const WorkflowCreatePage    = lazy(() => import('@/pages/WorkflowCreatePage'))
-const HistoryPage           = lazy(() => import('@/pages/HistoryPage'))
-const ScheduleDetailPage    = lazy(() => import('@/pages/ScheduleDetailPage'))
-const PipelineEditorPage    = lazy(() => import('@/pages/PipelineEditorPage'))
-const PipelinesListPage     = lazy(() => import('@/pages/PipelinesListPage'))
-const ServingPage           = lazy(() => import('@/pages/ServingPage'))
-const ServingDetailPage     = lazy(() => import('@/pages/ServingDetailPage'))
-const ServingHistoryPage    = lazy(() => import('@/pages/ServingHistoryPage'))
-const WorkersPage           = lazy(() => import('@/pages/WorkersPage'))
-const NotebooksPage         = lazy(() => import('@/pages/NotebooksPage'))
-const NotebookCreatePage    = lazy(() => import('@/pages/NotebookCreatePage'))
-const NotebookDetailPage    = lazy(() => import('@/pages/NotebookDetailPage'))
-const NotebookVolumesPage   = lazy(() => import('@/pages/NotebookVolumesPage'))
-const StoragePage           = lazy(() => import('@/pages/StoragePage'))
+const LoginPage           = lazy(() => import('@/pages/LoginPage'))
+const NotebooksPage       = lazy(() => import('@/pages/notebooks/NotebooksPage'))
+const NotebookCreatePage  = lazy(() => import('@/pages/notebooks/NotebookCreatePage'))
+const NotebookVolumesPage = lazy(() => import('@/pages/notebooks/NotebookVolumesPage'))
+const PipelinesListPage   = lazy(() => import('@/pages/pipelines/PipelinesListPage'))
+const PipelineEditorPage  = lazy(() => import('@/pages/pipelines/PipelineEditorPage'))
+const HistoryPage         = lazy(() => import('@/pages/pipelines/HistoryPage'))
+const ExperimentsPage     = lazy(() => import('@/pages/pipelines/ExperimentsPage'))
+const WorkflowsPage       = lazy(() => import('@/pages/schedules/WorkflowsPage'))
+const WorkflowCreatePage  = lazy(() => import('@/pages/schedules/WorkflowCreatePage'))
+const ServingPage         = lazy(() => import('@/pages/serving/ServingPage'))
+const ServingHistoryPage  = lazy(() => import('@/pages/serving/ServingHistoryPage'))
+const WorkersPage         = lazy(() => import('@/pages/system/WorkersPage'))
+const StoragePage         = lazy(() => import('@/pages/system/StoragePage'))
 
-function navItems(projectId: string) {
+type NavItem = {
+  id: string
+  label: string
+  icon: React.ComponentType
+  to: string
+  exact?: boolean
+}
+
+function navItems(projectId: string): { label: string; items: NavItem[] }[] {
   const base = `/projects/${projectId}`
   return [
     {
@@ -65,8 +68,8 @@ function navItems(projectId: string) {
     {
       label: 'Service',
       items: [
-        { id: 'serving',         label: 'Serving',  icon: Server,  to: `${base}/serving` },
-        { id: 'serving-history', label: 'History',  icon: History, to: `${base}/serving/history` },
+        { id: 'serving',         label: 'Serving',  icon: Server,  to: `${base}/serving`,         exact: true },
+        { id: 'serving-history', label: 'History',  icon: History, to: `${base}/serving/history`, exact: true },
       ],
     },
     {
@@ -110,9 +113,10 @@ function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => {
-                  const isActive = location.pathname === item.to ||
-                    (item.to !== '/workers' && location.pathname.startsWith(item.to + '/')) ||
-                    location.pathname.startsWith(item.to)
+                  const isActive = item.exact
+                    ? location.pathname === item.to
+                    : location.pathname === item.to ||
+                      (item.to !== '/workers' && location.pathname.startsWith(item.to + '/'))
                   return (
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
@@ -212,19 +216,14 @@ function ProjectRoutes() {
         <Routes>
           <Route path="schedules" element={<WorkflowsPage />} />
           <Route path="schedules/create" element={<WorkflowCreatePage />} />
-          <Route path="schedules/:id" element={<ScheduleDetailPage />} />
           <Route path="pipelines" element={<PipelinesListPage />} />
           <Route path="pipelines/editor" element={<PipelineEditorPage />} />
           <Route path="history" element={<HistoryPage />} />
           <Route path="experiments" element={<ExperimentsPage />} />
-          <Route path="experiments/:name" element={<ExperimentDetailPage />} />
           <Route path="serving" element={<ServingPage />} />
           <Route path="serving/history" element={<ServingHistoryPage />} />
-          <Route path="serving/:name" element={<ServingDetailPage />} />
-          <Route path="runs/:id" element={<RunDetailPage />} />
           <Route path="notebooks" element={<NotebooksPage />} />
           <Route path="notebooks/create" element={<NotebookCreatePage />} />
-          <Route path="notebooks/:name" element={<NotebookDetailPage />} />
           <Route path="notebook-volumes" element={<NotebookVolumesPage />} />
           <Route path="storage" element={<StoragePage />} />
           <Route path="*" element={<Navigate to="schedules" replace />} />
@@ -277,7 +276,7 @@ export default function App() {
                 <SidebarRail />
               </Sidebar>
               <SidebarInset>
-                <div className="h-full overflow-y-auto">
+                <div className="flex-1 min-h-0">
                   <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>}>
                     <ProjectRoutes />
                   </Suspense>

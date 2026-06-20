@@ -12,5 +12,6 @@ export function useWorkers() {
     queryKey: workerKeys.list(),
     queryFn: api.listWorkers,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }

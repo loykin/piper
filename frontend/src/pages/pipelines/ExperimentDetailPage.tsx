@@ -121,20 +121,16 @@ export default function ExperimentDetailPage() {
       description={`${runs.length} run${runs.length !== 1 ? 's' : ''} · click a metric column header to sort`}
     >
       <DataBodyTemplate.Body>
-        {isLoading ? (
-          <div className="py-8 text-sm text-muted-foreground">Loading…</div>
-        ) : runs.length === 0 ? (
-          <div className="py-8 text-sm text-muted-foreground">No runs in this experiment.</div>
-        ) : (
-          <DataGrid
-            data={runs}
-            columns={columns}
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={(row) => navigate(`/runs/${row.id}`)}
-          />
-        )}
+        <DataGrid
+          data={runs}
+          columns={columns}
+          isLoading={isLoading}
+          emptyMessage="No runs in this experiment."
+          tableWidthMode="fill-last"
+          rowHeight={44}
+          rowCursor
+          onRowClick={(row) => navigate(`/runs/${row.id}`)}
+        />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
   )

@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { DataPage } from '@loykin/designkit'
+import { PanelTemplate } from '@loykin/designkit'
 import { artifactDownloadURL } from '../api'
 import { useOpenViewer } from '@/features/viewers/hooks'
 import type { ArtifactFile, ArtifactEntry, StepArtifacts } from '../types'
@@ -69,8 +69,7 @@ export function ArtifactPanel({ runId, artifacts }: ArtifactPanelProps) {
 
   return (
     <>
-      <DataPage.Group surface="bordered" className="mb-4">
-        <DataPage.GroupHeader title="Artifacts" className="px-4 pt-3" />
+      <PanelTemplate title="Artifacts" className="mb-4 h-auto rounded-lg border border-border" bodyClassName="p-0">
         <div className="divide-y divide-border">
           {artifacts.map((sa) =>
             sa.artifacts.map((art) => (
@@ -112,7 +111,7 @@ export function ArtifactPanel({ runId, artifacts }: ArtifactPanelProps) {
             ))
           )}
         </div>
-      </DataPage.Group>
+      </PanelTemplate>
 
       <Dialog open={!!preview} onOpenChange={(open) => { if (!open) setPreview(null) }}>
         <DialogContent className="max-w-4xl">

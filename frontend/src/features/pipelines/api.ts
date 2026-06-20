@@ -1,10 +1,9 @@
-// pipelines feature API — pipeline template management
 export type {
-  PipelineTemplate, SubmitPipelineRequest, TriggerRunRequest, DeployRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
 } from './types'
 
 import type {
-  PipelineTemplate, SubmitPipelineRequest, TriggerRunRequest, DeployRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
 } from './types'
 import { projectApi } from '@/lib/api'
 
@@ -21,9 +20,9 @@ export async function listPipelines(
   return Array.isArray(data) ? data : []
 }
 
-export async function submitPipeline(
+export async function createPipeline(
   projectId: string,
-  req: SubmitPipelineRequest,
+  req: CreatePipelineRequest,
 ): Promise<PipelineTemplate> {
   return projectApi(projectId).post<PipelineTemplate>('/pipelines', req)
 }

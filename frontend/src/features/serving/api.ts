@@ -1,4 +1,3 @@
-// serving feature API
 export type { Service, ServiceHistory, ServingWorkerInfo } from './types'
 
 import type { Service, ServiceHistory } from './types'
@@ -13,7 +12,7 @@ export async function getServing(projectId: string, name: string): Promise<Servi
   return projectApi(projectId).get<Service>(`/serving/${name}`)
 }
 
-export async function deployServing(
+export async function createServing(
   projectId: string,
   yaml: string,
 ): Promise<{ name: string }> {

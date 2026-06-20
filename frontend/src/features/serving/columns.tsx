@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom'
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import StatusBadge from '@/shared/components/StatusBadge'
 import type { Service, ServiceHistory } from './api'
@@ -7,11 +6,9 @@ export const serviceColumns: DataGridColumnDef<Service>[] = [
   {
     accessorKey: 'name',
     header: 'Name',
-    meta: { minWidth: 180 },
+    meta: { minWidth: 160 },
     cell: ({ row }) => (
-      <Link to={`/serving/${row.original.name}`} className="font-medium text-primary hover:underline">
-        {row.original.name}
-      </Link>
+      <span className="block truncate font-medium">{row.original.name}</span>
     ),
   },
   {
@@ -23,13 +20,17 @@ export const serviceColumns: DataGridColumnDef<Service>[] = [
   {
     accessorKey: 'artifact',
     header: 'Artifact',
-    meta: { minWidth: 180, flex: 1 },
-    cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.artifact || '—'}</span>,
+    meta: { minWidth: 160, flex: 1 },
+    cell: ({ row }) => (
+      <span className="block truncate font-mono text-xs text-muted-foreground" title={row.original.artifact || undefined}>
+        {row.original.artifact || '—'}
+      </span>
+    ),
   },
   {
     id: 'namespace',
     header: 'Namespace',
-    meta: { minWidth: 110 },
+    meta: { minWidth: 100 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">{row.original.namespace || 'local'}</span>
     ),
@@ -37,19 +38,28 @@ export const serviceColumns: DataGridColumnDef<Service>[] = [
   {
     accessorKey: 'endpoint',
     header: 'Endpoint',
-    meta: { minWidth: 200 },
+    meta: { minWidth: 160 },
     cell: ({ row }) => {
       const ep = row.original.endpoint
       return ep ? (
-        <a href={ep} target="_blank" rel="noreferrer" className="font-mono text-xs text-primary hover:underline">{ep}</a>
+        <a href={ep} target="_blank" rel="noreferrer"
+          className="block truncate font-mono text-xs text-primary hover:underline"
+          title={ep}
+          onClick={e => e.stopPropagation()}>
+          {ep}
+        </a>
       ) : <span className="text-xs text-muted-foreground">—</span>
     },
   },
   {
     accessorKey: 'updated_at',
     header: 'Updated',
-    meta: { minWidth: 160 },
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.updated_at).toLocaleString()}</span>,
+    meta: { minWidth: 150 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {new Date(row.original.updated_at).toLocaleString()}
+      </span>
+    ),
   },
 ]
 
@@ -65,8 +75,10 @@ export const serviceHistoryColumns: DataGridColumnDef<ServiceHistory>[] = [
   {
     accessorKey: 'name',
     header: 'Service',
-    meta: { minWidth: 160 },
-    cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    meta: { minWidth: 140 },
+    cell: ({ row }) => (
+      <span className="block truncate font-medium">{row.original.name}</span>
+    ),
   },
   {
     accessorKey: 'status',
@@ -77,41 +89,59 @@ export const serviceHistoryColumns: DataGridColumnDef<ServiceHistory>[] = [
   {
     accessorKey: 'artifact',
     header: 'Artifact',
-    meta: { minWidth: 180, flex: 1 },
-    cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.artifact || '—'}</span>,
+    meta: { minWidth: 140, flex: 1 },
+    cell: ({ row }) => (
+      <span className="block truncate font-mono text-xs text-muted-foreground" title={row.original.artifact || undefined}>
+        {row.original.artifact || '—'}
+      </span>
+    ),
   },
   {
     id: 'run_id',
     header: 'Source Run',
-    meta: { minWidth: 200 },
-    cell: ({ row }) => row.original.run_id ? (
-      <Link to={`/runs/${row.original.run_id}`} className="font-mono text-xs text-primary hover:underline">
-        {row.original.run_id}
-      </Link>
-    ) : <span className="text-xs text-muted-foreground">—</span>,
+    meta: { minWidth: 160 },
+    cell: ({ row }) => (
+      <span className="block truncate font-mono text-xs text-muted-foreground" title={row.original.run_id || undefined}>
+        {row.original.run_id || '—'}
+      </span>
+    ),
   },
   {
     id: 'namespace',
     header: 'Namespace',
-    meta: { minWidth: 110 },
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{row.original.namespace || 'local'}</span>,
+    meta: { minWidth: 100 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">{row.original.namespace || 'local'}</span>
+    ),
   },
   {
     id: 'deployed_at',
     header: 'Deployed',
-    meta: { minWidth: 160 },
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.deployed_at).toLocaleString()}</span>,
+    meta: { minWidth: 150 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {new Date(row.original.deployed_at).toLocaleString()}
+      </span>
+    ),
   },
   {
     id: 'stopped_at',
     header: 'Stopped',
-    meta: { minWidth: 160 },
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.stopped_at).toLocaleString()}</span>,
+    meta: { minWidth: 150 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {new Date(row.original.stopped_at).toLocaleString()}
+      </span>
+    ),
   },
   {
     id: 'duration',
     header: 'Duration',
-    meta: { minWidth: 100 },
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{elapsed(row.original.deployed_at, row.original.stopped_at)}</span>,
+    meta: { minWidth: 90 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {elapsed(row.original.deployed_at, row.original.stopped_at)}
+      </span>
+    ),
   },
 ]

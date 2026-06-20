@@ -1,18 +1,21 @@
 import { useNavigate } from 'react-router-dom'
 import { useProjectId } from '@/lib/projectContext'
-import { ArrowRight, Power, Plus, Trash2 } from 'lucide-react'
+import { Power, Plus, Trash2 } from 'lucide-react'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { scheduleColumns } from '@/features/schedules/columns'
+import { ScheduleDetailPanel } from '@/features/schedules/components/ScheduleDetailPanel'
 import { useSchedules, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import type { Schedule } from '@/features/schedules/api'
 
-export default function WorkflowsPage() {
+function WorkflowsPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
+  const { open } = useSidePanel()
   const { data: schedules = [], isLoading, isError } = useSchedules()
   const { mutate: deleteSchedule } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
@@ -20,13 +23,11 @@ export default function WorkflowsPage() {
   const actionColumn: DataGridColumnDef<Schedule> = {
     id: 'actions',
     header: '',
-    meta: { minWidth: 220 },
+    meta: { minWidth: 120 },
     cell: ({ row }) => {
       const s = row.original
       return (
         <div className="flex items-center gap-0.5">
-          <IconButton icon={<ArrowRight />} label="View"
-            onClick={() => navigate(`/projects/${projectId}/schedules/${s.id}`)} />
           {s.schedule_type === 'cron' && (
             <IconButton icon={<Power />} label={s.enabled ? 'Disable' : 'Enable'}
               onClick={(e) => {
@@ -65,28 +66,32 @@ export default function WorkflowsPage() {
             Failed to load schedules.
           </div>
         )}
-        {isLoading ? (
-          <div className="py-8 text-sm text-muted-foreground">Loading...</div>
-        ) : schedules.length === 0 ? (
-          <div className="py-8 text-sm text-muted-foreground">No schedules yet. Create one to start.</div>
-        ) : (
-          <DataGrid
-            data={schedules}
-            columns={columns}
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={(row) => navigate(`/projects/${projectId}/schedules/${row.id}`)}
-            pagination={{ pageSize: 20 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{schedules.length} results</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
-          />
-        )}
+        <DataGrid
+          data={schedules}
+          columns={columns}
+          isLoading={isLoading}
+          emptyMessage="No schedules yet. Create one to start."
+          tableWidthMode="fill-last"
+          rowHeight={44}
+          rowCursor
+          onRowClick={(row) => open(<ScheduleDetailPanel id={row.id} />, { size: 560 })}
+          pagination={{ pageSize: 20 }}
+          footer={(table) => (
+            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+              <span>{schedules.length} results</span>
+              <DataGridPaginationCompact table={table} />
+            </div>
+          )}
+        />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+  )
+}
+
+export default function WorkflowsPage() {
+  return (
+    <SidePanelProvider defaultSize={560} defaultMinSize={420} defaultMaxSize={1000}>
+      <WorkflowsPageInner />
+    </SidePanelProvider>
   )
 }

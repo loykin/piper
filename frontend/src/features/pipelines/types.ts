@@ -9,7 +9,7 @@ export interface PipelineTemplate {
   created_at: string
 }
 
-export interface SubmitPipelineRequest {
+export interface CreatePipelineRequest {
   name: string
   yaml: string
   volume_id?: string

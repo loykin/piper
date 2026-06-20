@@ -1,0 +1,101 @@
+import { useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useProjectId } from '@/lib/projectContext'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
+import { DataBodyTemplate } from '@loykin/designkit'
+import { Button } from '@/components/ui/button'
+import { getNotebookColumns } from '@/features/notebooks/columns'
+import { NotebookDetailPanel } from '@/features/notebooks/components/NotebookDetailPanel'
+import {
+  useNotebooks, useNotebookVolumes,
+  useStopNotebook, useStartNotebook, useDeleteNotebook,
+} from '@/features/notebooks/hooks'
+
+function NotebooksPageInner() {
+  const navigate = useNavigate()
+  const projectId = useProjectId()
+  const { open } = useSidePanel()
+  const { data: notebooks = [], isLoading } = useNotebooks()
+  const { data: allVolumes = [] } = useNotebookVolumes()
+  const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
+
+  const { mutate: stop, isPending: stopping, variables: stoppingName } = useStopNotebook()
+  const { mutate: start, isPending: starting, variables: startingName } = useStartNotebook()
+  const { mutate: del, isPending: deleting, variables: deletingName } = useDeleteNotebook()
+
+  const busy = stopping ? (stoppingName ?? null)
+    : starting ? (startingName ?? null)
+    : deleting ? (deletingName ?? null)
+    : null
+
+  const handleStop   = (name: string) => stop(name)
+  const handleStart  = (name: string) => start(name)
+  const handleDelete = (name: string) => {
+    if (!confirm(`Delete notebook "${name}"?\nThe volume and work directory are preserved. You can recover them from the Volumes page.`)) return
+    del(name)
+  }
+
+  const columns = useMemo(
+    () => getNotebookColumns(busy, handleStop, handleStart, handleDelete, projectId),
+    [busy],
+  )
+
+  return (
+    <DataBodyTemplate
+      title="Notebooks"
+      description="Jupyter notebook servers. Click a row to view details or Open to launch in a new tab."
+      actions={
+        <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
+      }
+    >
+      <DataBodyTemplate.Body>
+        <DataGrid
+          data={notebooks}
+          columns={columns}
+          isLoading={isLoading}
+          emptyContent={
+            <div className="py-12 text-center">
+              <p className="text-sm text-muted-foreground">No notebook servers running.</p>
+              {releasedVolumes.length > 0 && (
+                <p className="mt-1 text-xs text-muted-foreground/60">
+                  {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} available — click Launch to attach one.
+                </p>
+              )}
+            </div>
+          }
+          tableWidthMode="fill-last"
+          rowHeight={44}
+          rowCursor
+          onRowClick={(row) => open(<NotebookDetailPanel name={row.name} projectId={projectId} />, { size: 520 })}
+          pagination={{ pageSize: 20 }}
+          footer={(table) => (
+            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+              <span>{notebooks.length} servers</span>
+              {releasedVolumes.length > 0 && (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={() => navigate(`/projects/${projectId}/notebooks/create?volume=${releasedVolumes[0].id}`)}
+                >
+                  {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
+                </Button>
+              )}
+              <DataGridPaginationCompact table={table} />
+            </div>
+          )}
+        />
+      </DataBodyTemplate.Body>
+    </DataBodyTemplate>
+  )
+}
+
+export default function NotebooksPage() {
+  return (
+    <SidePanelProvider defaultSize={520} defaultMinSize={380} defaultMaxSize={900}>
+      <NotebooksPageInner />
+    </SidePanelProvider>
+  )
+}

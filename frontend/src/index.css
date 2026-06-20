@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @import "@loykin/designkit/styles";
+@import "@loykin/side-panel/styles";
 @import "tw-animate-css";
+
+/* published 0.0.1-dev.0 missing flex layout on .sp-root */
+.sp-root {
+  flex: 1;
+  min-height: 0;
+}
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
@@ -165,3 +172,13 @@
 }
 
 @import "@loykin/gridkit/styles";
+
+/* DesignKit bundles its own Tailwind CSS outside any @layer, so its .hidden
+   (unlayered) wins over the app's layered md:block / md:flex utilities.
+   Re-declare the responsive display overrides as unlayered rules after all
+   imports so they win by document order at the same cascade level. */
+@media (min-width: 640px) { .sm\:flex { display: flex; } }
+@media (min-width: 768px) {
+  .md\:block { display: block; }
+  .md\:flex  { display: flex;  }
+}

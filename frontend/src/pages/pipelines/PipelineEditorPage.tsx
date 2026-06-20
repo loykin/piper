@@ -5,7 +5,7 @@ import {
   Code2, FileCode2, FolderOpen, HardDrive, Plus, BookOpen, Trash2, Upload, X,
 } from 'lucide-react'
 import {
-  DataBodyTemplate, DataPage, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  DataBodyTemplate, WorkbenchBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
@@ -16,7 +16,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import PipelineCanvas from '@/shared/components/PipelineCanvas'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
-import { submitPipeline } from '@/features/pipelines/api'
+import { createPipeline } from '@/features/pipelines/api'
 import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
@@ -564,7 +564,7 @@ export default function PipelineEditorPage() {
     setError('')
     try {
       const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
-      await submitPipeline(projectId, { name: pipelineName, yaml, volume_id: submitVolumeId || undefined })
+      await createPipeline(projectId, { name: pipelineName, yaml, volume_id: submitVolumeId || undefined })
       setSubmitModalOpen(false)
       navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(pipelineName)}`)
     } catch (err) {
@@ -702,338 +702,332 @@ export default function PipelineEditorPage() {
   }
 
   return (
-    <DataBodyTemplate
-      title="Pipeline Editor"
-      description="Build a Piper Pipeline YAML from a source workspace, a task canvas, and a separate YAML tab."
-      actions={
-        <>
-          <Button variant="outline" size="sm" onClick={validateNow}>Validate</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={submitting}>
-            <Upload size={14} className="mr-1.5" /> Submit
-          </Button>
-        </>
-      }
-    >
-      <DataBodyTemplate.Body>
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5">
-          <HardDrive size={14} className="shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <span className="text-xs text-muted-foreground">Source Workspace · </span>
-            {editorSourceKind === 'notebook-volume' && selectedVolume ? (
-              <>
-                <span className="text-sm font-medium">{selectedVolume.label}</span>
-                <span className="ml-2 font-mono text-xs text-muted-foreground">{selectedVolume.work_dir}</span>
-              </>
-            ) : (
-              <span className="font-mono text-xs">{editorRoot || editorSourceKind}</span>
-            )}
+    <>
+      <WorkbenchBodyTemplate
+        title="Pipeline Editor"
+        description="Build a Piper Pipeline YAML from a source workspace, a task canvas, and a separate YAML tab."
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={validateNow}>Validate</Button>
+            <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+              <Upload size={14} className="mr-1.5" /> Submit
+            </Button>
+          </>
+        }
+        leftPaneWidth={320}
+        minLeftPaneWidth={240}
+        maxLeftPaneWidth={440}
+        rightPaneWidth={380}
+        minRightPaneWidth={280}
+        maxRightPaneWidth={520}
+        leftPaneLabel="Task Palette"
+        rightPaneLabel="Task Editor"
+        leftPane={
+          <div className="flex h-full flex-col">
+            <div className="border-b border-border px-4 py-3">
+              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Pipeline Name</label>
+              <Input value={pipelineName} onChange={e => setPipelineName(e.target.value)} />
+            </div>
+            <div className="space-y-4 overflow-y-auto p-4">
+              <div>
+                <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
+                <div className="space-y-2">
+                  {(['notebook', 'python', 'command'] as PipelineTaskType[]).map(type => (
+                    <button
+                      key={type}
+                      type="button"
+                      draggable
+                      onDragStart={e => handlePaletteDragStart(e, type)}
+                      onDragEnd={handlePaletteDragEnd}
+                      onClick={() => addTask(type)}
+                      className="flex w-full items-center justify-between rounded-xl border border-dashed border-border bg-background px-3 py-3 text-left transition hover:border-primary hover:bg-accent"
+                    >
+                      <div className="text-sm font-medium">{TASK_LABELS[type]}</div>
+                      {TASK_ICONS[type]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
-          {canBrowse && volumeFilesStatus === 'transitioning' && (
-            <span className="text-xs text-muted-foreground animate-pulse">Loading files…</span>
-          )}
-          {canBrowse && volumeFilesStatus === 'unavailable' && (
-            <span className="text-xs text-destructive">Volume unavailable</span>
-          )}
-        </div>
-
-        <Tabs value={activeTab} onValueChange={value => setActiveTab(value as ActiveTab)}>
-          <TabsList variant="line" className="mb-4">
-            <TabsTrigger value="design">Design</TabsTrigger>
-            <TabsTrigger value="yaml">YAML</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="design" className="min-h-0">
-            <div className={`grid gap-4 transition-none h-[calc(100vh-220px)] min-h-120 ${editingTask ? 'xl:grid-cols-[320px_minmax(0,1fr)_380px]' : 'xl:grid-cols-[320px_minmax(0,1fr)]'}`}>
-
-              {/* Task Palette */}
-              <DataPage.Group surface="bordered" className="min-h-0">
-                <div className="border-b border-border px-4 py-3">
-                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Pipeline Name</label>
-                  <Input value={pipelineName} onChange={e => setPipelineName(e.target.value)} />
-                </div>
-                <div className="space-y-4 p-4">
-                  <div>
-                    <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
-                    <div className="space-y-2">
-                      {(['notebook', 'python', 'command'] as PipelineTaskType[]).map(type => (
-                        <button
-                          key={type}
-                          type="button"
-                          draggable
-                          onDragStart={e => handlePaletteDragStart(e, type)}
-                          onDragEnd={handlePaletteDragEnd}
-                          onClick={() => addTask(type)}
-                          className="flex w-full items-center justify-between rounded-xl border border-dashed border-border bg-background px-3 py-3 text-left transition hover:border-primary hover:bg-accent"
-                        >
-                          <div className="text-sm font-medium">{TASK_LABELS[type]}</div>
-                          {TASK_ICONS[type]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </DataPage.Group>
-
-              {/* Task Canvas */}
-              <DataPage.Group surface="bordered" className="flex min-h-0 flex-col">
-                <div className="shrink-0 border-b border-border px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold">Task Canvas</h2>
-                    <Button variant="outline" size="sm" onClick={resetLayout}>Reset layout</Button>
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1 p-3">
-                  <PipelineCanvas
-                    steps={tasks}
-                    positions={positions}
-                    selectedId={selectedId}
-                    resetKey={resetKey}
-                    onSelectStep={setSelectedId}
-                    onDoubleClickStep={openTaskEditor}
-                    onAddStep={(type, position) => { dragDropHandledRef.current = true; addTask(type, position) }}
-                    onMoveStep={(id, position) => setPositions(pos => ({ ...pos, [id]: position }))}
-                    onConnectSteps={connectTasks}
-                    onDisconnectSteps={disconnectTasks}
-                  />
-                </div>
-              </DataPage.Group>
-
-              {/* Task Editor */}
-              {editingTask && (
-                <DataPage.Group surface="bordered" className="flex min-h-0 flex-col">
-                  <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
-                    <div>
-                      <h2 className="text-sm font-semibold">Task Editor</h2>
-                      <p className="truncate text-xs text-muted-foreground">{editingTask.name}</p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <IconButton icon={<ArrowUp />} label="Move up" onClick={() => moveTask(editingIndex, -1)} disabled={editingIndex === 0} />
-                      <IconButton icon={<ArrowDown />} label="Move down" onClick={() => moveTask(editingIndex, 1)} disabled={editingIndex === tasks.length - 1} />
-                      <IconButton icon={<Trash2 />} label="Delete task" onClick={() => removeTask(editingIndex)} className="text-destructive hover:bg-destructive/10" />
-                      <IconButton icon={<X />} label="Close" onClick={() => setEditingId(null)} />
-                    </div>
-                  </div>
-
-                  <div className="flex-1 space-y-4 overflow-y-auto p-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Name</label>
-                        <Input value={editingTask.name} onChange={e => updateTask(editingIndex, { name: e.target.value })} />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Type</label>
-                        <Select value={editingTask.type} onValueChange={value => updateTask(editingIndex, { type: value as PipelineTaskType })}>
-                          <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="command">Command</SelectItem>
-                            <SelectItem value="python">Python</SelectItem>
-                            <SelectItem value="notebook">Notebook</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    {(editingTask.type === 'notebook' || editingTask.type === 'python') && (
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">
-                          {SOURCE_LABELS[editingTask.type]}
-                        </label>
-                        <div ref={fileBrowserRef} className="relative">
-                          <div className="flex gap-1.5">
-                            <Input
-                              value={editingTask.sourcePath}
-                              onChange={e => updateTask(editingIndex, { sourcePath: e.target.value })}
-                              placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : 'scripts/train.py'}
-                            />
-                            {canBrowse && (
-                              <button
-                                type="button"
-                                title="Browse files in volume"
-                                onClick={() => { setBrowseQuery(''); setFileBrowserOpen(o => !o) }}
-                                className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                              >
-                                <FolderOpen size={14} />
-                              </button>
-                            )}
-                          </div>
-                          {fileBrowserOpen && canBrowse && (
-                            <FileBrowseDropdown
-                              ext={editingTask.type === 'notebook' ? '.ipynb' : '.py'}
-                              files={volumeFiles.filter(f => f.endsWith(editingTask.type === 'notebook' ? '.ipynb' : '.py'))}
-                              query={browseQuery}
-                              onQueryChange={setBrowseQuery}
-                              onSelect={f => { updateTask(editingIndex, { sourcePath: f }); setFileBrowserOpen(false) }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {editingTask.type !== 'notebook' && (
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Command</label>
-                        <ShellMirror
-                          value={editingTask.command.join('\n')}
-                          onChange={e => updateTask(editingIndex, { command: e.target.value.split(/\n+/).map(s => s.trim()).filter(Boolean) })}
-                          minHeight="6rem"
-                          placeholder={editingTask.type === 'python' ? 'python\nscript.py' : 'echo\nhello'}
-                        />
-                      </div>
-                    )}
-
-                    {(editingTask.type === 'notebook' || editingTask.type === 'python') && (
-                      <div>
-                        <div className="mb-2 flex items-center justify-between">
-                          <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Source Dependencies</label>
-                          <Button variant="outline" size="sm" onClick={() => addDep(editingIndex)}><Plus size={14} className="mr-1.5" /> Add</Button>
-                        </div>
-                        {editingTask.deps.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No extra files or directories. Entry point only.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {editingTask.deps.map((dep, di) => {
-                              const browseKey = `dep-${di}`
-                              const isBrowseOpen = artifactBrowseKey === browseKey
-                              return (
-                                <div key={di} ref={isBrowseOpen ? artifactBrowseRef : null} className="relative">
-                                  <div className="flex gap-2">
-                                    <Input
-                                      value={dep}
-                                      placeholder="models/  or  utils/helper.py"
-                                      onChange={e => updateDep(editingIndex, di, e.target.value)}
-                                    />
-                                    {canBrowse && (
-                                      <button
-                                        type="button"
-                                        title="Browse volume files"
-                                        onClick={() => { setBrowseQuery(''); setArtifactBrowseKey(k => k === browseKey ? null : browseKey) }}
-                                        className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                                      >
-                                        <FolderOpen size={14} />
-                                      </button>
-                                    )}
-                                    <IconButton icon={<Trash2 />} label="Remove" onClick={() => removeDep(editingIndex, di)} className="text-destructive hover:bg-destructive/10" />
-                                  </div>
-                                  {isBrowseOpen && (
-                                    <DepBrowseDropdown
-                                      files={volumeFiles}
-                                      query={browseQuery}
-                                      onQueryChange={setBrowseQuery}
-                                      onSelect={f => { updateDep(editingIndex, di, f); setArtifactBrowseKey(null) }}
-                                    />
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                        <p className="mt-1 text-[11px] text-muted-foreground">Append <code>/</code> for directories (e.g. <code>models/</code>). All contents are included in the snapshot.</p>
-                      </div>
-                    )}
-
-                    <PairSection
-                      label="Parameters"
-                      emptyText="No parameters."
-                      keyPlaceholder="name"
-                      items={editingTask.params}
-                      onAdd={() => addPairRow(editingIndex, 'params')}
-                      onRemove={i => removePairRow(editingIndex, 'params', i)}
-                      onUpdate={(i, patch) => updatePairField(editingIndex, 'params', i, patch)}
-                    />
-
-                    <PairSection
-                      label="Environment"
-                      emptyText="No env overrides."
-                      keyPlaceholder="NAME"
-                      items={editingTask.env}
-                      onAdd={() => addPairRow(editingIndex, 'env')}
-                      onRemove={i => removePairRow(editingIndex, 'env', i)}
-                      onUpdate={(i, patch) => updatePairField(editingIndex, 'env', i, patch)}
-                    />
-
-                    <ArtifactSection
-                      label="Inputs"
-                      kind="inputs"
-                      items={editingTask.inputs}
-                      canBrowse={canBrowse}
-                      volumeFiles={volumeFiles}
-                      activeBrowseKey={artifactBrowseKey}
-                      browseQuery={browseQuery}
-                      browseRef={artifactBrowseRef}
-                      onAdd={() => addArtifactRow(editingIndex, 'inputs')}
-                      onRemove={i => removeArtifactRow(editingIndex, 'inputs', i)}
-                      onUpdate={(i, patch) => updateArtifactField(editingIndex, 'inputs', i, patch)}
-                      onBrowseToggle={key => { setBrowseQuery(''); setArtifactBrowseKey(k => k === key ? null : key) }}
-                      onBrowseQueryChange={setBrowseQuery}
-                      onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'inputs', i, { path: f }); setArtifactBrowseKey(null) }}
-                    />
-
-                    <ArtifactSection
-                      label="Outputs"
-                      kind="outputs"
-                      items={editingTask.outputs}
-                      canBrowse={canBrowse}
-                      volumeFiles={volumeFiles}
-                      activeBrowseKey={artifactBrowseKey}
-                      browseQuery={browseQuery}
-                      browseRef={artifactBrowseRef}
-                      onAdd={() => addArtifactRow(editingIndex, 'outputs')}
-                      onRemove={i => removeArtifactRow(editingIndex, 'outputs', i)}
-                      onUpdate={(i, patch) => updateArtifactField(editingIndex, 'outputs', i, patch)}
-                      onBrowseToggle={key => { setBrowseQuery(''); setArtifactBrowseKey(k => k === key ? null : key) }}
-                      onBrowseQueryChange={setBrowseQuery}
-                      onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'outputs', i, { path: f }); setArtifactBrowseKey(null) }}
-                    />
-
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">CPU</label>
-                        <Input value={editingTask.cpu} onChange={e => updateTask(editingIndex, { cpu: e.target.value })} placeholder="500m" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Memory</label>
-                        <Input value={editingTask.memory} onChange={e => updateTask(editingIndex, { memory: e.target.value })} placeholder="1Gi" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">GPU</label>
-                        <Input value={editingTask.gpu} onChange={e => updateTask(editingIndex, { gpu: e.target.value })} placeholder="1" />
-                      </div>
-                    </div>
-
-                  </div>
-                </DataPage.Group>
+        }
+        mainPane={
+          <div className="flex h-full flex-col overflow-hidden">
+            <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
+              <HardDrive size={14} className="shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <span className="text-xs text-muted-foreground">Source Workspace · </span>
+                {editorSourceKind === 'notebook-volume' && selectedVolume ? (
+                  <>
+                    <span className="text-sm font-medium">{selectedVolume.label}</span>
+                    <span className="ml-2 font-mono text-xs text-muted-foreground">{selectedVolume.work_dir}</span>
+                  </>
+                ) : (
+                  <span className="font-mono text-xs">{editorRoot || editorSourceKind}</span>
+                )}
+              </div>
+              {canBrowse && volumeFilesStatus === 'transitioning' && (
+                <span className="animate-pulse text-xs text-muted-foreground">Loading files…</span>
+              )}
+              {canBrowse && volumeFilesStatus === 'unavailable' && (
+                <span className="text-xs text-destructive">Volume unavailable</span>
               )}
             </div>
-          </TabsContent>
 
-          <TabsContent value="yaml" className="min-h-0">
-            <DataPage.Group surface="bordered">
-              <div className="border-b border-border px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold">Pipeline YAML</h2>
-                    <p className="text-xs text-muted-foreground">The YAML stays canonical. Apply it to rehydrate the task graph.</p>
+            <Tabs value={activeTab} onValueChange={value => setActiveTab(value as ActiveTab)} className="flex min-h-0 flex-1 flex-col">
+              <TabsList variant="line" className="shrink-0 border-b border-border px-4">
+                <TabsTrigger value="design">Design</TabsTrigger>
+                <TabsTrigger value="yaml">YAML</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="design" className="relative min-h-0 flex-1 overflow-hidden p-3">
+                <div className="absolute right-5 top-2 z-10">
+                  <Button variant="outline" size="sm" onClick={resetLayout}>Reset layout</Button>
+                </div>
+                <PipelineCanvas
+                  steps={tasks}
+                  positions={positions}
+                  selectedId={selectedId}
+                  resetKey={resetKey}
+                  onSelectStep={setSelectedId}
+                  onDoubleClickStep={openTaskEditor}
+                  onAddStep={(type, position) => { dragDropHandledRef.current = true; addTask(type, position) }}
+                  onMoveStep={(id, position) => setPositions(pos => ({ ...pos, [id]: position }))}
+                  onConnectSteps={connectTasks}
+                  onDisconnectSteps={disconnectTasks}
+                />
+              </TabsContent>
+
+              <TabsContent value="yaml" className="min-h-0 flex-1 overflow-y-auto">
+                <div className="p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-sm font-semibold">Pipeline YAML</h2>
+                      <p className="text-xs text-muted-foreground">The YAML stays canonical. Apply it to rehydrate the task graph.</p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={applyYaml}>Apply YAML to Graph</Button>
                   </div>
-                  <Button variant="outline" size="sm" onClick={applyYaml}>Apply YAML to Graph</Button>
+                  <div className="space-y-3">
+                    {validation.length === 0 ? (
+                      <p className="text-xs text-green-500">Draft looks valid.</p>
+                    ) : (
+                      <ul className="space-y-1 text-sm text-destructive">
+                        {validation.map(msg => <li key={msg}>• {msg}</li>)}
+                      </ul>
+                    )}
+                    {error && <p className="text-sm text-destructive">{error}</p>}
+                    <YamlMirror value={yamlText} onChange={e => setYamlText(e.target.value)} className="min-h-136" />
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
+        }
+        rightPane={editingTask ? (
+          <div className="flex h-full flex-col">
+            <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold">Task Editor</h2>
+                <p className="truncate text-xs text-muted-foreground">{editingTask.name}</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <IconButton icon={<ArrowUp />} label="Move up" onClick={() => moveTask(editingIndex, -1)} disabled={editingIndex === 0} />
+                <IconButton icon={<ArrowDown />} label="Move down" onClick={() => moveTask(editingIndex, 1)} disabled={editingIndex === tasks.length - 1} />
+                <IconButton icon={<Trash2 />} label="Delete task" onClick={() => removeTask(editingIndex)} className="text-destructive hover:bg-destructive/10" />
+                <IconButton icon={<X />} label="Close" onClick={() => setEditingId(null)} />
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Name</label>
+                  <Input value={editingTask.name} onChange={e => updateTask(editingIndex, { name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Type</label>
+                  <Select value={editingTask.type} onValueChange={value => updateTask(editingIndex, { type: value as PipelineTaskType })}>
+                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="command">Command</SelectItem>
+                      <SelectItem value="python">Python</SelectItem>
+                      <SelectItem value="notebook">Notebook</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
-              <div className="space-y-3 p-4">
-                {validation.length === 0 ? (
-                  <p className="text-xs text-green-500">Draft looks valid.</p>
-                ) : (
-                  <ul className="space-y-1 text-sm text-destructive">
-                    {validation.map(msg => <li key={msg}>• {msg}</li>)}
-                  </ul>
-                )}
-                {error && <p className="text-sm text-destructive">{error}</p>}
-                <YamlMirror value={yamlText} onChange={e => setYamlText(e.target.value)} className="min-h-136" />
+
+              {(editingTask.type === 'notebook' || editingTask.type === 'python') && (
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">
+                    {SOURCE_LABELS[editingTask.type]}
+                  </label>
+                  <div ref={fileBrowserRef} className="relative">
+                    <div className="flex gap-1.5">
+                      <Input
+                        value={editingTask.sourcePath}
+                        onChange={e => updateTask(editingIndex, { sourcePath: e.target.value })}
+                        placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : 'scripts/train.py'}
+                      />
+                      {canBrowse && (
+                        <button
+                          type="button"
+                          title="Browse files in volume"
+                          onClick={() => { setBrowseQuery(''); setFileBrowserOpen(o => !o) }}
+                          className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                        >
+                          <FolderOpen size={14} />
+                        </button>
+                      )}
+                    </div>
+                    {fileBrowserOpen && canBrowse && (
+                      <FileBrowseDropdown
+                        ext={editingTask.type === 'notebook' ? '.ipynb' : '.py'}
+                        files={volumeFiles.filter(f => f.endsWith(editingTask.type === 'notebook' ? '.ipynb' : '.py'))}
+                        query={browseQuery}
+                        onQueryChange={setBrowseQuery}
+                        onSelect={f => { updateTask(editingIndex, { sourcePath: f }); setFileBrowserOpen(false) }}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {editingTask.type !== 'notebook' && (
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Command</label>
+                  <ShellMirror
+                    value={editingTask.command.join('\n')}
+                    onChange={e => updateTask(editingIndex, { command: e.target.value.split(/\n+/).map(s => s.trim()).filter(Boolean) })}
+                    minHeight="6rem"
+                    placeholder={editingTask.type === 'python' ? 'python\nscript.py' : 'echo\nhello'}
+                  />
+                </div>
+              )}
+
+              {(editingTask.type === 'notebook' || editingTask.type === 'python') && (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Source Dependencies</label>
+                    <Button variant="outline" size="sm" onClick={() => addDep(editingIndex)}><Plus size={14} className="mr-1.5" /> Add</Button>
+                  </div>
+                  {editingTask.deps.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No extra files or directories. Entry point only.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {editingTask.deps.map((dep, di) => {
+                        const browseKey = `dep-${di}`
+                        const isBrowseOpen = artifactBrowseKey === browseKey
+                        return (
+                          <div key={di} ref={isBrowseOpen ? artifactBrowseRef : null} className="relative">
+                            <div className="flex gap-2">
+                              <Input
+                                value={dep}
+                                placeholder="models/  or  utils/helper.py"
+                                onChange={e => updateDep(editingIndex, di, e.target.value)}
+                              />
+                              {canBrowse && (
+                                <button
+                                  type="button"
+                                  title="Browse volume files"
+                                  onClick={() => { setBrowseQuery(''); setArtifactBrowseKey(k => k === browseKey ? null : browseKey) }}
+                                  className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                                >
+                                  <FolderOpen size={14} />
+                                </button>
+                              )}
+                              <IconButton icon={<Trash2 />} label="Remove" onClick={() => removeDep(editingIndex, di)} className="text-destructive hover:bg-destructive/10" />
+                            </div>
+                            {isBrowseOpen && (
+                              <DepBrowseDropdown
+                                files={volumeFiles}
+                                query={browseQuery}
+                                onQueryChange={setBrowseQuery}
+                                onSelect={f => { updateDep(editingIndex, di, f); setArtifactBrowseKey(null) }}
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <p className="mt-1 text-[11px] text-muted-foreground">Append <code>/</code> for directories (e.g. <code>models/</code>). All contents are included in the snapshot.</p>
+                </div>
+              )}
+
+              <PairSection
+                label="Parameters"
+                emptyText="No parameters."
+                keyPlaceholder="name"
+                items={editingTask.params}
+                onAdd={() => addPairRow(editingIndex, 'params')}
+                onRemove={i => removePairRow(editingIndex, 'params', i)}
+                onUpdate={(i, patch) => updatePairField(editingIndex, 'params', i, patch)}
+              />
+
+              <PairSection
+                label="Environment"
+                emptyText="No env overrides."
+                keyPlaceholder="NAME"
+                items={editingTask.env}
+                onAdd={() => addPairRow(editingIndex, 'env')}
+                onRemove={i => removePairRow(editingIndex, 'env', i)}
+                onUpdate={(i, patch) => updatePairField(editingIndex, 'env', i, patch)}
+              />
+
+              <ArtifactSection
+                label="Inputs"
+                kind="inputs"
+                items={editingTask.inputs}
+                canBrowse={canBrowse}
+                volumeFiles={volumeFiles}
+                activeBrowseKey={artifactBrowseKey}
+                browseQuery={browseQuery}
+                browseRef={artifactBrowseRef}
+                onAdd={() => addArtifactRow(editingIndex, 'inputs')}
+                onRemove={i => removeArtifactRow(editingIndex, 'inputs', i)}
+                onUpdate={(i, patch) => updateArtifactField(editingIndex, 'inputs', i, patch)}
+                onBrowseToggle={key => { setBrowseQuery(''); setArtifactBrowseKey(k => k === key ? null : key) }}
+                onBrowseQueryChange={setBrowseQuery}
+                onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'inputs', i, { path: f }); setArtifactBrowseKey(null) }}
+              />
+
+              <ArtifactSection
+                label="Outputs"
+                kind="outputs"
+                items={editingTask.outputs}
+                canBrowse={canBrowse}
+                volumeFiles={volumeFiles}
+                activeBrowseKey={artifactBrowseKey}
+                browseQuery={browseQuery}
+                browseRef={artifactBrowseRef}
+                onAdd={() => addArtifactRow(editingIndex, 'outputs')}
+                onRemove={i => removeArtifactRow(editingIndex, 'outputs', i)}
+                onUpdate={(i, patch) => updateArtifactField(editingIndex, 'outputs', i, patch)}
+                onBrowseToggle={key => { setBrowseQuery(''); setArtifactBrowseKey(k => k === key ? null : key) }}
+                onBrowseQueryChange={setBrowseQuery}
+                onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'outputs', i, { path: f }); setArtifactBrowseKey(null) }}
+              />
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">CPU</label>
+                  <Input value={editingTask.cpu} onChange={e => updateTask(editingIndex, { cpu: e.target.value })} placeholder="500m" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Memory</label>
+                  <Input value={editingTask.memory} onChange={e => updateTask(editingIndex, { memory: e.target.value })} placeholder="1Gi" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">GPU</label>
+                  <Input value={editingTask.gpu} onChange={e => updateTask(editingIndex, { gpu: e.target.value })} placeholder="1" />
+                </div>
               </div>
-            </DataPage.Group>
-          </TabsContent>
-        </Tabs>
+            </div>
+          </div>
+        ) : undefined}
+      />
 
-
-      {/* Submit modal */}
       {submitModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl">
@@ -1072,7 +1066,6 @@ export default function PipelineEditorPage() {
           </div>
         </div>
       )}
-      </DataBodyTemplate.Body>
-    </DataBodyTemplate>
+    </>
   )
 }

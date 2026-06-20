@@ -21,6 +21,7 @@ export function useNotebooks() {
     queryFn: () => api.listNotebooks(projectId),
     enabled: !!projectId,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -35,6 +36,7 @@ export function useNotebook(name: string) {
       return status === 'running' || status === 'provisioning' || status === 'starting' || status === 'stopping'
         ? 3000 : 5000
     },
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -82,6 +84,7 @@ export function useNotebookVolumes() {
     queryFn: () => api.listNotebookVolumes(projectId),
     enabled: !!projectId,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -93,6 +96,7 @@ export function useVolumeFiles(volumeId: string, ext?: string) {
     enabled: !!projectId && !!volumeId,
     refetchInterval: (query) =>
       query.state.data?.state === 'transitioning' ? 2000 : false,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -110,6 +114,7 @@ export function useNotebookWorkers() {
   return useQuery({
     queryKey: ['notebook-workers'],
     queryFn: () => sysApi.get<NotebookWorkerInfo[]>('/api/notebook-workers').then(d => Array.isArray(d) ? d : []),
-    refetchInterval: 10000,
+    refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }

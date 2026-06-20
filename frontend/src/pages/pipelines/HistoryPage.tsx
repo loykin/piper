@@ -1,15 +1,16 @@
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import { runColumns } from '@/features/runs/columns'
+import { RunDetailPanel } from '@/features/runs/components/RunDetailPanel'
 import { useRuns, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
 import type { Run } from '@/features/runs/api'
 
-export default function HistoryPage() {
-  const navigate = useNavigate()
+function HistoryPageInner() {
+  const { open } = useSidePanel()
   const { data: runs = [], isLoading } = useRuns()
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
@@ -24,7 +25,7 @@ export default function HistoryPage() {
     e.stopPropagation()
     try {
       const result = await rerunRun(run.id)
-      navigate(`/runs/${result.run_id}`)
+      open(<RunDetailPanel id={result.run_id} />, { size: 720 })
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err))
     }
@@ -33,7 +34,7 @@ export default function HistoryPage() {
   const actionColumn: DataGridColumnDef<Run> = {
     id: 'actions',
     header: '',
-    meta: { minWidth: 210, align: 'right' },
+    meta: { minWidth: 140, align: 'right' },
     cell: ({ row }) => (
       <div className="flex justify-end items-center gap-0.5">
         <IconButton icon={<RotateCcw />} label="Rerun"
@@ -60,28 +61,32 @@ export default function HistoryPage() {
       description="All pipeline run records. Each square in Steps represents one step's status."
     >
       <DataBodyTemplate.Body>
-        {isLoading ? (
-          <div className="py-8 text-sm text-muted-foreground">Loading…</div>
-        ) : runs.length === 0 ? (
-          <div className="py-8 text-sm text-muted-foreground">No runs yet.</div>
-        ) : (
-          <DataGrid
-            data={runs}
-            columns={columns}
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={(row) => navigate(`/runs/${row.id}`)}
-            pagination={{ pageSize: 20 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{runs.length} results</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
-          />
-        )}
+        <DataGrid
+          data={runs}
+          columns={columns}
+          isLoading={isLoading}
+          emptyMessage="No runs yet."
+          tableWidthMode="fill-last"
+          rowHeight={44}
+          rowCursor
+          onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 720 })}
+          pagination={{ pageSize: 20 }}
+          footer={(table) => (
+            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+              <span>{runs.length} results</span>
+              <DataGridPaginationCompact table={table} />
+            </div>
+          )}
+        />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+  )
+}
+
+export default function HistoryPage() {
+  return (
+    <SidePanelProvider defaultSize={720} defaultMinSize={520} defaultMaxSize={1200}>
+      <HistoryPageInner />
+    </SidePanelProvider>
   )
 }

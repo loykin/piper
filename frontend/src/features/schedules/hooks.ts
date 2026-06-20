@@ -18,6 +18,7 @@ export function useSchedules() {
     queryFn: () => api.listSchedules(projectId),
     enabled: !!projectId,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -28,6 +29,7 @@ export function useSchedule(id: string) {
     queryFn: () => api.getSchedule(projectId, id),
     enabled: !!projectId && !!id,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 
@@ -38,6 +40,7 @@ export function useScheduleRuns(id: string) {
     queryFn: () => api.listScheduleRuns(projectId, id),
     enabled: !!projectId && !!id,
     refetchInterval: 5000,
+    notifyOnChangeProps: ['data', 'isLoading'],
   })
 }
 

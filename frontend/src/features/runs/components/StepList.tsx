@@ -1,7 +1,7 @@
 // runs feature — Step list component
 import { RefreshCw } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataPage } from '@loykin/designkit'
+import { PanelTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import type { Step } from '../types'
@@ -87,25 +87,22 @@ export function StepList({ steps, selectedId, onSelect, onRetry }: StepListProps
   ]
 
   return (
-    <DataPage.Group surface="none" className="mb-4">
-      <DataPage.GroupHeader title="Steps" className="px-4 pt-3" />
-      <DataPage.GroupBody className="[&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
-        <DataGrid
-          data={steps}
-          columns={columns}
-          tableWidthMode="fill-last"
-          rowHeight={44}
-          rowCursor
-          onRowClick={(row) => onSelect(row.step_name)}
-          pagination={{ pageSize: 10 }}
-          footer={(table) => (
-            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-              <span>{steps.length} results</span>
-              <DataGridPaginationCompact table={table} />
-            </div>
-          )}
-        />
-      </DataPage.GroupBody>
-    </DataPage.Group>
+    <PanelTemplate title="Steps" className="mb-4 h-auto" bodyClassName="p-0 [&_.dg-shell]:h-full [&_.dg-table-wrapper]:min-h-0 [&_.dg-table-wrapper]:flex-1">
+      <DataGrid
+        data={steps}
+        columns={columns}
+        tableWidthMode="fill-last"
+        rowHeight={44}
+        rowCursor
+        onRowClick={(row) => onSelect(row.step_name)}
+        pagination={{ pageSize: 10 }}
+        footer={(table) => (
+          <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+            <span>{steps.length} results</span>
+            <DataGridPaginationCompact table={table} />
+          </div>
+        )}
+      />
+    </PanelTemplate>
   )
 }

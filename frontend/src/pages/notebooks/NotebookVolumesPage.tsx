@@ -39,30 +39,28 @@ export default function NotebookVolumesPage() {
       description="Persistent storage for notebook servers. Volumes survive server deletion."
     >
       <DataBodyTemplate.Body>
-        {isLoading ? (
-          <div className="py-8 text-sm text-muted-foreground">Loading…</div>
-        ) : volumes.length === 0 ? (
-          <div className="py-12 text-center">
-            <p className="text-sm text-muted-foreground">No volumes yet.</p>
-            <p className="mt-1 text-xs text-muted-foreground/60">
-              Volumes are created automatically when you launch a notebook server.
-            </p>
-          </div>
-        ) : (
-          <DataGrid
-            data={volumes}
-            columns={columns}
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            pagination={{ pageSize: 20 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{volumes.length} volumes</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
-          />
-        )}
+        <DataGrid
+          data={volumes}
+          columns={columns}
+          isLoading={isLoading}
+          emptyContent={
+            <div className="py-12 text-center">
+              <p className="text-sm text-muted-foreground">No volumes yet.</p>
+              <p className="mt-1 text-xs text-muted-foreground/60">
+                Volumes are created automatically when you launch a notebook server.
+              </p>
+            </div>
+          }
+          tableWidthMode="fill-last"
+          rowHeight={44}
+          pagination={{ pageSize: 20 }}
+          footer={(table) => (
+            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+              <span>{volumes.length} volumes</span>
+              <DataGridPaginationCompact table={table} />
+            </div>
+          )}
+        />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
   )

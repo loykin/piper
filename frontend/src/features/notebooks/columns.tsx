@@ -1,5 +1,4 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
-import { Link } from 'react-router-dom'
 import { ExternalLink, HardDriveDownload, Play, Square, Trash2 } from 'lucide-react'
 import { IconButton } from '@/components/ui/icon-button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -22,13 +21,7 @@ export function getNotebookColumns(
       header: 'Name',
       meta: { minWidth: 160 },
       cell: ({ row }) => (
-        <Link
-          to={`/notebooks/${row.original.name}`}
-          className="font-medium text-primary hover:underline"
-          onClick={e => e.stopPropagation()}
-        >
-          {row.original.name}
-        </Link>
+        <span className="font-medium text-foreground">{row.original.name}</span>
       ),
     },
     {
@@ -40,19 +33,25 @@ export function getNotebookColumns(
     {
       id: 'environment',
       header: 'Environment',
-      meta: { minWidth: 200, flex: 1 },
+      meta: { minWidth: 160, flex: 1 },
       cell: ({ row }) => {
         const { image, env } = row.original
         const value = image || env
-        return <span className="font-mono text-xs text-muted-foreground">{value || '—'}</span>
+        return (
+          <span className="block truncate font-mono text-xs text-muted-foreground" title={value || undefined}>
+            {value || '—'}
+          </span>
+        )
       },
     },
     {
       accessorKey: 'work_dir',
       header: 'Work Dir',
-      meta: { minWidth: 180 },
+      meta: { minWidth: 140 },
       cell: ({ row }) => (
-        <span className="font-mono text-xs text-muted-foreground">{row.original.work_dir || '—'}</span>
+        <span className="block truncate font-mono text-xs text-muted-foreground" title={row.original.work_dir || undefined}>
+          {row.original.work_dir || '—'}
+        </span>
       ),
     },
     {

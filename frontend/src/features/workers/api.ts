@@ -1,12 +1,8 @@
-// workers feature API
 export type { Worker } from './types'
-
 import type { Worker } from './types'
-
-const BASE = ''
+import { api } from '@/lib/api'
 
 export async function listWorkers(): Promise<Worker[]> {
-  const res = await fetch(`${BASE}/api/workers`)
-  if (!res.ok) throw new Error(`listWorkers: ${res.status}`)
-  return res.json()
+  const data = await api.get<Worker[]>('/api/workers')
+  return Array.isArray(data) ? data : []
 }

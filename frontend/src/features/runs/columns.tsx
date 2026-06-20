@@ -42,13 +42,22 @@ export const runColumns: DataGridColumnDef<Run>[] = [
   {
     accessorKey: 'id',
     header: 'Run ID',
-    meta: { minWidth: 240 },
-    cell: ({ row }) => <span className="font-mono text-xs text-primary">{row.original.id}</span>,
+    meta: { minWidth: 200 },
+    cell: ({ row }) => (
+      <span className="block truncate font-mono text-xs text-primary" title={row.original.id}>
+        {row.original.id}
+      </span>
+    ),
   },
   {
     accessorKey: 'pipeline_name',
     header: 'Pipeline',
-    meta: { minWidth: 160, flex: 1 },
+    meta: { minWidth: 140, flex: 1 },
+    cell: ({ row }) => (
+      <span className="block truncate text-sm" title={row.original.pipeline_name}>
+        {row.original.pipeline_name}
+      </span>
+    ),
   },
   {
     accessorKey: 'status',

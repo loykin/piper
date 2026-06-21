@@ -53,7 +53,10 @@ func TestAgentDriverProvisionVolume(t *testing.T) {
 	driver, rpc := newAgentNotebookDriver()
 	vol := &notebook.NotebookVolume{ID: "vol-1"}
 
-	spec := notebook.Notebook{Spec: notebook.NotebookSpec{Volume: &notebook.VolumeSpec{Size: "5Gi"}}}
+	spec := notebook.Notebook{Spec: notebook.NotebookSpec{
+		Volume: &notebook.VolumeSpec{Size: "5Gi"},
+		Driver: manifest.DriverSpec{K8s: &manifest.DriverK8sSpec{Namespace: "notebooks"}},
+	}}
 	if err := driver.ProvisionVolume(context.Background(), vol, spec); err != nil {
 		t.Fatalf("ProvisionVolume returned error: %v", err)
 	}
@@ -65,6 +68,13 @@ func TestAgentDriverProvisionVolume(t *testing.T) {
 	}
 	if rpc.calls[0].Method != iagent.MethodNotebookProvisionVolume {
 		t.Fatalf("method = %q", rpc.calls[0].Method)
+	}
+	payload, ok := rpc.calls[0].Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T", rpc.calls[0].Payload)
+	}
+	if got := payload["namespace"]; got != "notebooks" {
+		t.Fatalf("namespace = %q", got)
 	}
 }
 

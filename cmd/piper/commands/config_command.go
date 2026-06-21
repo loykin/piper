@@ -21,6 +21,7 @@ func newConfigValidateCmd(loader *cliconfig.Loader) *cobra.Command {
 	var role string
 	cmd := &cobra.Command{
 		Use: "validate", Short: "Validate the effective configuration",
+		PreRunE: makePreRunE(loader),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loader.Load()
 			if err != nil {
@@ -42,6 +43,7 @@ func newConfigShowCmd(loader *cliconfig.Loader) *cobra.Command {
 	var sources bool
 	cmd := &cobra.Command{
 		Use: "show", Short: "Print the redacted effective configuration",
+		PreRunE: makePreRunE(loader),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loader.Load()
 			if err != nil {

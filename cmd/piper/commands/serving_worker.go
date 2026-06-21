@@ -17,6 +17,14 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serving-worker",
 		Short: "Start a serving worker agent on this node",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
+			loader.MustBindFlag("worker.hostname", cmd.Flags().Lookup("hostname"))
+			loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
+			loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
+			loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
+			return loadAndLog(loader)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := loader.Load()
 			if err != nil {
@@ -66,12 +74,6 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().String("state-dir", "", "directory for persistent worker identity and state")
 	cmd.Flags().String("worker-token", "", "worker token for gRPC authorization")
 	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
-	loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
-	loader.MustBindFlag("worker.hostname", cmd.Flags().Lookup("hostname"))
-	loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
-	loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
-	loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
-
 	return cmd
 }
 

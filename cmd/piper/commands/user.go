@@ -83,15 +83,9 @@ func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, e
 	}
 
 	db := sqlx.NewDb(rawDB, driver)
-	closeDB := db.Close
-	owned := true
-	defer func() {
-		if owned {
-			_ = closeDB()
-		}
-	}()
 	// Run migrations so that the auth tables exist even on a fresh database.
 	if err := storemod.Migrate(context.Background(), db, driver); err != nil {
+		_ = db.Close()
 		return nil, nil, fmt.Errorf("migrate: %w", err)
 	}
 	signingKey := cfg.Server.AuthSigningKey
@@ -115,8 +109,7 @@ func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, e
 	}
 
 	provider := auth.New(auth.Config{SigningKey: []byte(signingKey)}, users, members, sessions)
-	owned = false
-	return provider, closeDB, nil
+	return provider, db.Close, nil
 }
 
 func newUserCreateCmd(loader *cliconfig.Loader) *cobra.Command {
@@ -130,6 +123,7 @@ func newUserCreateCmd(loader *cliconfig.Loader) *cobra.Command {
 
 Example:
   piper user create --email admin@example.com --admin`,
+		PreRunE: makePreRunE(loader),
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if email == "" {
 				return fmt.Errorf("--email is required")
@@ -170,8 +164,9 @@ Example:
 
 func newUserListCmd(loader *cliconfig.Loader) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List all users",
+		Use:     "list",
+		Short:   "List all users",
+		PreRunE: makePreRunE(loader),
 		RunE: func(_ *cobra.Command, _ []string) error {
 			provider, closeDB, err := openAuthProvider(loader)
 			if err != nil {
@@ -202,9 +197,10 @@ func newUserListCmd(loader *cliconfig.Loader) *cobra.Command {
 
 func newUserDeleteCmd(loader *cliconfig.Loader) *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <id>",
-		Short: "Delete a user and revoke all sessions",
-		Args:  cobra.ExactArgs(1),
+		Use:     "delete <id>",
+		Short:   "Delete a user and revoke all sessions",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: makePreRunE(loader),
 		RunE: func(_ *cobra.Command, args []string) error {
 			provider, closeDB, err := openAuthProvider(loader)
 			if err != nil {

@@ -17,6 +17,13 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "worker",
 		Short: "start a piper pipeline worker (connects to master via gRPC)",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
+			loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
+			loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
+			loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
+			return loadAndLog(loader)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := loader.Load()
 			if err != nil {
@@ -90,11 +97,6 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().String("output-dir", "", "output directory")
 	cmd.Flags().String("meta-dir", "", "metadata sidecar directory (default: $TMPDIR/piper-meta)")
 	cmd.Flags().String("docker-network", "", "Docker network for step containers")
-
-	loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
-	loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
-	loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
-	loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
 
 	return cmd
 }

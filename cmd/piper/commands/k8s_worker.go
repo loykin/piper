@@ -20,6 +20,22 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "k8s-worker",
 		Short: "Start a Kubernetes worker",
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			loader.MustBindFlag("storage.url", cmd.Flags().Lookup("storage-url"))
+			loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
+			loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
+			loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
+			loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
+			loader.MustBindFlag("worker.k8s.cluster", cmd.Flags().Lookup("cluster"))
+			loader.MustBindFlag("worker.k8s.namespaces", cmd.Flags().Lookup("namespaces"))
+			loader.MustBindFlag("worker.k8s.kubeconfig", cmd.Flags().Lookup("kubeconfig"))
+			loader.MustBindFlag("worker.k8s.in_cluster", cmd.Flags().Lookup("in-cluster"))
+			loader.MustBindFlag("worker.k8s.notebook_volume_browser.image", cmd.Flags().Lookup("notebook-volume-browser-image"))
+			loader.MustBindFlag("worker.k8s.pipeline_runner.image", cmd.Flags().Lookup("pipeline-runner-image"))
+			loader.MustBindFlag("worker.k8s.pipeline_runner.image_pull_policy", cmd.Flags().Lookup("pipeline-runner-image-pull-policy"))
+			loader.MustBindFlag("worker.k8s.result_outbox_dir", cmd.Flags().Lookup("result-outbox-dir"))
+			return loadAndLog(loader)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := loader.Load()
 			if err != nil {
@@ -82,19 +98,6 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().String("result-outbox-dir", "", "durable directory for unacknowledged pipeline results (default: system temp directory)")
 	cmd.Flags().String("storage-url", "", "artifact storage URL (e.g. s3://bucket?endpoint=...)")
 	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
-	loader.MustBindFlag("storage.url", cmd.Flags().Lookup("storage-url"))
-	loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
-	loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
-	loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
-	loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
-	loader.MustBindFlag("worker.k8s.cluster", cmd.Flags().Lookup("cluster"))
-	loader.MustBindFlag("worker.k8s.namespaces", cmd.Flags().Lookup("namespaces"))
-	loader.MustBindFlag("worker.k8s.kubeconfig", cmd.Flags().Lookup("kubeconfig"))
-	loader.MustBindFlag("worker.k8s.in_cluster", cmd.Flags().Lookup("in-cluster"))
-	loader.MustBindFlag("worker.k8s.notebook_volume_browser.image", cmd.Flags().Lookup("notebook-volume-browser-image"))
-	loader.MustBindFlag("worker.k8s.pipeline_runner.image", cmd.Flags().Lookup("pipeline-runner-image"))
-	loader.MustBindFlag("worker.k8s.pipeline_runner.image_pull_policy", cmd.Flags().Lookup("pipeline-runner-image-pull-policy"))
-	loader.MustBindFlag("worker.k8s.result_outbox_dir", cmd.Flags().Lookup("result-outbox-dir"))
 	return cmd
 }
 

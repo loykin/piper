@@ -15,6 +15,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/piper/piper/pkg/manifest"
+	"github.com/piper/piper/pkg/pipeline"
+	"gopkg.in/yaml.v3"
 )
 
 // TestK8sE2E_SingleStepJobReportsSuccess is a real Kubernetes smoke test for
@@ -76,13 +80,16 @@ metadata:
 spec:
   defaults:
     driver:
+      placement:
+        runtime: k8s
       k8s:
         image: alpine:3.20
+        namespace: %s
   steps:
     - name: smoke
       run:
         command: ["sh", "-c", "echo k8s-e2e-ok"]
-`))
+`, ns))
 
 	if !waitK8sE2ERunStatus(t, serverURL, runID, "success", 2*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
@@ -171,7 +178,7 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 			k8sE2ECreateProject(t, serverURL)
 			waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"pipeline"}, 30*time.Second)
 
-			runID := k8sE2EPostRun(t, serverURL, string(yamlBytes))
+			runID := k8sE2EPostRun(t, serverURL, k8sE2EPipelineYAML(t, yamlBytes, ns))
 			t.Logf("submitted run %s (want=%s)", runID, tc.wantStatus)
 
 			if !waitK8sE2ERunStatus(t, serverURL, runID, tc.wantStatus, 2*time.Minute) {
@@ -250,7 +257,7 @@ spec:
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("worker-mode run %s did not reach success", runID)
 	}
-	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper", "--no-headers"); !strings.Contains(out, "smoke") {
+	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper,piper.io/step-name=smoke", "--no-headers"); strings.TrimSpace(out) == "" {
 		t.Fatalf("expected worker-created pipeline Job for step 'smoke', got:\n%s", out)
 	}
 
@@ -592,6 +599,31 @@ func hasK8sE2ECapabilities(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func k8sE2EPipelineYAML(t *testing.T, raw []byte, namespace string) string {
+	t.Helper()
+	var pl pipeline.Pipeline
+	if err := yaml.Unmarshal(raw, &pl); err != nil {
+		t.Fatalf("parse pipeline YAML: %v", err)
+	}
+	if pl.Spec.Defaults == nil {
+		pl.Spec.Defaults = &pipeline.PipelineDefaults{}
+	}
+	pl.Spec.Defaults.Driver.Placement.Runtime = "k8s"
+	if pl.Spec.Defaults.Driver.K8s == nil {
+		pl.Spec.Defaults.Driver.K8s = &manifest.DriverK8sSpec{}
+	}
+	if pl.Spec.Defaults.Driver.K8s.Image == "" {
+		pl.Spec.Defaults.Driver.K8s.Image = "alpine:3.20"
+	}
+	pl.Spec.Defaults.Driver.K8s.Namespace = namespace
+
+	out, err := yaml.Marshal(&pl)
+	if err != nil {
+		t.Fatalf("marshal pipeline YAML: %v", err)
+	}
+	return string(out)
 }
 
 const k8sE2EProjectID = "e2e"

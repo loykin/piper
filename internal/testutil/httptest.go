@@ -37,6 +37,9 @@ func NewIPv4Server(t *testing.T, handler http.Handler) *Server {
 		t.Fatalf("listen tcp4: %v", err)
 	}
 	srv := &http.Server{Handler: handler}
+	srv.Protocols = new(http.Protocols)
+	srv.Protocols.SetHTTP1(true)
+	srv.Protocols.SetUnencryptedHTTP2(true)
 	server := &Server{
 		URL: "http://" + ln.Addr().String(),
 		ln:  ln,

@@ -31,15 +31,12 @@ type ClientConfig struct {
 	// Leave empty in trusted/dev mode.
 	WorkerToken string
 	// Registration metadata sent to master on connect.
-	Kind         string
-	Mode         string
-	Hostname     string
-	GPUs         []string
-	Capabilities []string
-	ClusterName  string
-	Labels       map[string]string
-	// Runtime is the execution environment: "baremetal", "docker", or "k8s".
-	Runtime string
+	Infrastructure string
+	Hostname       string
+	GPUs           []string
+	Capabilities   []string
+	ClusterName    string
+	Labels         map[string]string
 	// Capacity is the maximum number of concurrent tasks (0 = unlimited).
 	Capacity int
 }
@@ -165,13 +162,10 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		})
 	}
 
-	// Merge runtime/capacity into Labels so we don't need a proto change.
+	// Merge capacity into Labels so we don't need a proto change.
 	labels := make(map[string]string, len(c.cfg.Labels)+2)
 	for k, v := range c.cfg.Labels {
 		labels[k] = v
-	}
-	if c.cfg.Runtime != "" {
-		labels["runtime"] = c.cfg.Runtime
 	}
 	if c.cfg.Capacity > 0 {
 		labels["capacity"] = fmt.Sprintf("%d", c.cfg.Capacity)
@@ -182,8 +176,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		Payload: &agentpb.WorkerMessage_Register{
 			Register: &agentpb.Registration{
 				Id:           c.cfg.AgentID,
-				Kind:         c.cfg.Kind,
-				Mode:         c.cfg.Mode,
+				Kind:         c.cfg.Infrastructure,
 				Hostname:     c.cfg.Hostname,
 				Gpus:         c.cfg.GPUs,
 				Capabilities: c.cfg.Capabilities,

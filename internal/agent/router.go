@@ -45,8 +45,8 @@ func (r *Router) Select(kind WorkloadKind, placement Placement) (*Info, error) {
 		if !hasCapability(a, string(kind)) {
 			return nil, fmt.Errorf("agent %q does not support %s", placement.WorkerID, kind)
 		}
-		if placement.RequireContainer && a.Runtime != RuntimeDocker && a.Runtime != RuntimeK8s {
-			return nil, fmt.Errorf("agent %q runtime %q cannot execute image-based pipeline", a.ID, a.Runtime)
+		if placement.RequireContainer && a.Infrastructure != InfrastructureDocker && a.Infrastructure != InfrastructureK8s {
+			return nil, fmt.Errorf("agent %q infrastructure %q cannot execute image-based pipeline", a.ID, a.Infrastructure)
 		}
 		return a, nil
 	}
@@ -99,8 +99,8 @@ func (r *Router) Reserve(kind WorkloadKind, placement Placement) (*Info, error) 
 		if !hasCapability(agentInfo, string(kind)) {
 			return nil, fmt.Errorf("agent %q does not support %s", placement.WorkerID, kind)
 		}
-		if placement.RequireContainer && agentInfo.Runtime != RuntimeDocker && agentInfo.Runtime != RuntimeK8s {
-			return nil, fmt.Errorf("agent %q runtime %q cannot execute image-based pipeline", agentInfo.ID, agentInfo.Runtime)
+		if placement.RequireContainer && agentInfo.Infrastructure != InfrastructureDocker && agentInfo.Infrastructure != InfrastructureK8s {
+			return nil, fmt.Errorf("agent %q infrastructure %q cannot execute image-based pipeline", agentInfo.ID, agentInfo.Infrastructure)
 		}
 		candidates = []Info{*agentInfo}
 	} else {

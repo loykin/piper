@@ -32,12 +32,9 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 		Serving:   piper.ServingConfig{ModelDir: root.Server.Serving.ModelDir},
 		DBDriver:  root.Server.DB.Driver, DBDSN: root.Server.DB.DSN, DBPath: root.Server.DB.Path,
 		NotebookWorker: piper.NotebookWorkerConfig{
-			NotebooksRoot: root.Workers.Notebook.NotebooksRoot, PortRange: root.Workers.Notebook.PortRange, Mode: root.Workers.Notebook.Mode,
-			Docker: piper.NotebookWorkerDockerConfig{Network: root.Workers.Notebook.Docker.Network},
+			NotebooksRoot: root.Server.Local.NotebookCfg.NotebooksRoot,
+			PortRange:     root.Server.Local.NotebookCfg.PortRange,
 		},
-	}
-	for _, v := range root.Workers.Notebook.Docker.Volumes {
-		cfg.NotebookWorker.Docker.Volumes = append(cfg.NotebookWorker.Docker.Volumes, piper.NotebookWorkerDockerVolume{Name: v.Name, HostPath: v.HostPath, ContainerPath: v.ContainerPath, ReadOnly: v.ReadOnly})
 	}
 
 	signingKey := root.Server.AuthSigningKey

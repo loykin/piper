@@ -56,7 +56,7 @@ type Config struct {
 	// Serving — model serving configuration.
 	Serving ServingConfig `yaml:"serving" mapstructure:"serving"`
 
-	// NotebookWorker — embedded/standalone notebook worker configuration.
+	// NotebookWorker — embedded bare-metal notebook worker configuration.
 	NotebookWorker NotebookWorkerConfig `yaml:"notebook_worker" mapstructure:"notebook_worker"`
 }
 
@@ -154,7 +154,7 @@ type ServingConfig struct {
 	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
 }
 
-// NotebookWorkerConfig holds configuration for the embedded/standalone notebook worker.
+// NotebookWorkerConfig holds paths for the embedded bare-metal notebook worker.
 type NotebookWorkerConfig struct {
 	// NotebooksRoot is the base directory under which per-notebook work directories are created.
 	// Each notebook runs in {notebooks_root}/{name}. Defaults to "./notebooks".
@@ -163,24 +163,6 @@ type NotebookWorkerConfig struct {
 	// PortRange is the inclusive range from which jupyter ports are auto-allocated.
 	// Format: "START-END", e.g. "8888-9900". Defaults to "8888-9900".
 	PortRange string `yaml:"port_range" mapstructure:"port_range"`
-
-	// Mode selects the bare-metal notebook runtime: process or docker.
-	Mode string `yaml:"mode" mapstructure:"mode"`
-
-	// Docker configures Docker-backed notebook isolation when Mode is docker.
-	Docker NotebookWorkerDockerConfig `yaml:"docker" mapstructure:"docker"`
-}
-
-type NotebookWorkerDockerConfig struct {
-	Network string                       `yaml:"network"        mapstructure:"network"`
-	Volumes []NotebookWorkerDockerVolume `yaml:"volumes"        mapstructure:"volumes"`
-}
-
-type NotebookWorkerDockerVolume struct {
-	Name          string `yaml:"name"           mapstructure:"name"`
-	HostPath      string `yaml:"host_path"      mapstructure:"host_path"`
-	ContainerPath string `yaml:"container_path" mapstructure:"container_path"`
-	ReadOnly      bool   `yaml:"read_only"      mapstructure:"read_only"`
 }
 
 func DefaultConfig() Config {
@@ -245,12 +227,6 @@ func (c Config) Validate() error {
 	}
 	if c.Schedule.MisfireGracePeriod < 0 {
 		return fmt.Errorf("schedule.misfire_grace_period must not be negative")
-	}
-
-	switch c.NotebookWorker.Mode {
-	case "", "process", "docker":
-	default:
-		return fmt.Errorf("notebook_worker.mode must be one of: process, docker")
 	}
 
 	return nil

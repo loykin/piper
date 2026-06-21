@@ -11,24 +11,22 @@ import { YamlMirror } from '@/components/ui/yaml-mirror'
 import type { NotebookVolume, NotebookWorkerInfo } from '../types'
 import {
   buildK8sYAML, buildWorkerYAML, buildWorkerYAMLWithBackend,
-  normalizePrepareBackend,
   DEFAULT_K8S, DEFAULT_WORKER,
   type K8sFormState, type WorkerFormState,
 } from '../editor'
 
 function workerLabel(w: NotebookWorkerInfo): string {
-  const base = w.kind === 'k8s' ? (w.cluster_name || w.hostname || w.id) : (w.hostname || w.id)
-  const mode = w.kind === 'baremetal' && w.mode ? ` · ${w.mode}` : ''
-  const gpu = w.gpus?.length ? `  (GPU: ${w.gpus.join(', ')})` : ''
-  return `${base}${mode}${gpu}`
+	const base = w.infrastructure === 'k8s' ? (w.cluster_name || w.hostname || w.id) : (w.hostname || w.id)
+	const gpu = w.gpus?.length ? `  (GPU: ${w.gpus.join(', ')})` : ''
+	return `${base}${gpu}`
 }
 
-function RuntimeBadge({ runtime }: { runtime: 'k8s' | 'baremetal' }) {
+function RuntimeBadge({ runtime }: { runtime: 'k8s' | 'docker' | 'baremetal' }) {
   return (
     <span className={`rounded px-2 py-0.5 text-xs font-medium ${
-      runtime === 'k8s' ? 'bg-blue-500/15 text-blue-400' : 'bg-orange-500/15 text-orange-400'
+      runtime === 'k8s' ? 'bg-blue-500/15 text-blue-400' : runtime === 'docker' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-orange-500/15 text-orange-400'
     }`}>
-      {runtime === 'k8s' ? 'Kubernetes' : 'Bare-metal'}
+      {runtime === 'k8s' ? 'Kubernetes' : runtime === 'docker' ? 'Docker' : 'Bare-metal'}
     </span>
   )
 }
@@ -90,16 +88,18 @@ export function NotebookK8sForm({
     [workers, selectedWorkerID],
   )
 
-  const runtime = useMemo<'k8s' | 'baremetal'>(() => {
-    if (selectedWorker) return selectedWorker.kind
-    if (workers.some(w => w.kind === 'baremetal')) return 'baremetal'
-    if (workers.some(w => w.kind === 'k8s')) return 'k8s'
+  const runtime = useMemo<'k8s' | 'docker' | 'baremetal'>(() => {
+		if (selectedWorker) return selectedWorker.infrastructure
+		if (workers.some(w => w.infrastructure === 'baremetal')) return 'baremetal'
+		if (workers.some(w => w.infrastructure === 'docker')) return 'docker'
+		if (workers.some(w => w.infrastructure === 'k8s')) return 'k8s'
     return 'baremetal'
   }, [selectedWorker, workers])
 
   const workerPrepareBackend = useMemo<'process' | 'docker' | 'k8s'>(() => {
-    if (selectedWorker?.kind === 'k8s') return 'k8s'
-    if (selectedWorker?.kind === 'baremetal') return normalizePrepareBackend(selectedWorker.mode)
+		if (selectedWorker?.infrastructure === 'k8s') return 'k8s'
+		if (selectedWorker?.infrastructure === 'docker') return 'docker'
+		if (selectedWorker?.infrastructure === 'baremetal') return 'process'
     return workerForm.prepareBackend
   }, [selectedWorker, workerForm.prepareBackend])
 
@@ -115,8 +115,10 @@ export function NotebookK8sForm({
     setWorkerForm(prev => {
       const next = { ...prev, [key]: value }
       const backend =
-        selectedWorker?.kind === 'baremetal'
-          ? normalizePrepareBackend(selectedWorker.mode)
+		selectedWorker?.infrastructure === 'docker'
+		  ? 'docker'
+		  : selectedWorker?.infrastructure === 'baremetal'
+		    ? 'process'
           : next.prepareBackend
       setWorkerYaml(buildWorkerYAMLWithBackend(next, selectedWorker?.hostname, backend))
       return next
@@ -127,8 +129,8 @@ export function NotebookK8sForm({
     setSelectedWorkerID(id ?? '')
     const w = workers.find(x => x.id === id) ?? null
     setK8sYaml(buildK8sYAML(k8sForm, w?.hostname))
-    if (w?.kind === 'baremetal' && w.mode) {
-      const backend = normalizePrepareBackend(w.mode)
+		if (w?.infrastructure === 'baremetal' || w?.infrastructure === 'docker') {
+		  const backend = w.infrastructure === 'docker' ? 'docker' : 'process'
       setWorkerForm(prev => ({ ...prev, prepareBackend: backend }))
       setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, w?.hostname, backend))
     } else {
@@ -175,9 +177,9 @@ export function NotebookK8sForm({
                 {workers.map(w => (
                   <SelectItem key={w.id} value={w.id}>
                     <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${
-                      w.kind === 'k8s' ? 'bg-blue-500/15 text-blue-400' : 'bg-orange-500/15 text-orange-400'
+					  w.infrastructure === 'k8s' ? 'bg-blue-500/15 text-blue-400' : w.infrastructure === 'docker' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-orange-500/15 text-orange-400'
                     }`}>
-                      {w.kind === 'k8s' ? 'K8s' : 'BM'}
+					  {w.infrastructure === 'k8s' ? 'K8s' : w.infrastructure === 'docker' ? 'Docker' : 'BM'}
                     </span>
                     {workerLabel(w)}
                   </SelectItem>
@@ -225,7 +227,7 @@ export function NotebookK8sForm({
           </>
         )}
 
-        {runtime === 'baremetal' && (
+        {runtime !== 'k8s' && (
           <DataBodyTemplate.Group layout="stacked">
             <DataBodyTemplate.Field label="Server Name">
               <Input value={workerForm.name} onChange={e => setWorkerField('name', e.target.value)} placeholder="my-notebook" autoFocus />
@@ -240,7 +242,7 @@ export function NotebookK8sForm({
             <DataBodyTemplate.Field label="Prepare Backend" description="Follows the selected bare-metal worker mode; manual selection is used only when auto-assigning.">
               <Select
                 value={workerPrepareBackend}
-                disabled={selectedWorker?.kind === 'baremetal'}
+				disabled={selectedWorker?.infrastructure === 'baremetal' || selectedWorker?.infrastructure === 'docker'}
                 onValueChange={v => setWorkerField('prepareBackend', (v ?? 'process') as WorkerFormState['prepareBackend'])}
               >
                 <SelectTrigger size="sm"><SelectValue /></SelectTrigger>

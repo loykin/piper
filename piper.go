@@ -142,19 +142,15 @@ func New(cfg Config) (*Piper, error) {
 	grpcSrv := grpcagent.NewServer(
 		func(reg grpcagent.Registration) {
 			info := iagent.Info{
-				ID:           reg.ID,
-				Kind:         reg.Kind,
-				Mode:         reg.Mode,
-				Hostname:     reg.Hostname,
-				GPUs:         reg.GPUs,
-				Capabilities: reg.Capabilities,
-				ClusterName:  reg.ClusterName,
-				Labels:       reg.Labels,
+				ID:             reg.ID,
+				Infrastructure: reg.Kind,
+				Hostname:       reg.Hostname,
+				GPUs:           reg.GPUs,
+				Capabilities:   reg.Capabilities,
+				ClusterName:    reg.ClusterName,
+				Labels:         reg.Labels,
 			}
-			// Extract runtime and capacity encoded in Labels by grpcagent.Client.
-			if r := reg.Labels["runtime"]; r != "" {
-				info.Runtime = r
-			}
+			// Extract capacity encoded in Labels by grpcagent.Client.
 			if c := reg.Labels["capacity"]; c != "" {
 				if n, err := strconv.Atoi(c); err == nil {
 					info.Capacity = n
@@ -168,7 +164,7 @@ func New(cfg Config) (*Piper, error) {
 	servingDriver := servingdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Serving)
 	servingMgr := serving.New(repos.Serving, servingDriver)
 
-	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook))
+	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook, repos.WorkerPodPolicy))
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)

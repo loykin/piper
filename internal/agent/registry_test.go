@@ -2,6 +2,18 @@ package agent
 
 import "testing"
 
+func TestRegistryPreservesDockerInfrastructureKind(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "docker-1", Infrastructure: InfrastructureDocker, Capabilities: []string{CapabilityNotebook}})
+	got, err := reg.Get("docker-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Infrastructure != InfrastructureDocker {
+		t.Fatalf("infrastructure = %q, want docker", got.Infrastructure)
+	}
+}
+
 func TestRouterSelectExplicitWorker(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(Info{ID: "a1", Capabilities: []string{CapabilityPipeline}})
@@ -90,14 +102,14 @@ func TestRouterReserveRejectsFullBoundedAgent(t *testing.T) {
 func TestRouterReserveImagePipelineRequiresContainerRuntime(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(Info{
-		ID:           "baremetal",
-		Runtime:      RuntimeBaremetal,
-		Capabilities: []string{CapabilityPipeline},
+		ID:             "baremetal",
+		Infrastructure: InfrastructureBaremetal,
+		Capabilities:   []string{CapabilityPipeline},
 	})
 	reg.Register(Info{
-		ID:           "docker",
-		Runtime:      RuntimeDocker,
-		Capabilities: []string{CapabilityPipeline},
+		ID:             "docker",
+		Infrastructure: InfrastructureDocker,
+		Capabilities:   []string{CapabilityPipeline},
 	})
 	router := NewRouter(reg)
 
@@ -118,8 +130,8 @@ func TestRouterReserveImagePipelineRequiresContainerRuntime(t *testing.T) {
 
 func TestRouterSelectsCluster(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(Info{ID: "a1", Kind: KindK8s, ClusterName: "gpu-a", Capabilities: []string{CapabilityPipeline}})
-	reg.Register(Info{ID: "a2", Kind: KindK8s, ClusterName: "gpu-b", Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "a1", Infrastructure: InfrastructureK8s, ClusterName: "gpu-a", Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "a2", Infrastructure: InfrastructureK8s, ClusterName: "gpu-b", Capabilities: []string{CapabilityPipeline}})
 	router := NewRouter(reg)
 
 	got, err := router.Select(WorkloadPipeline, Placement{ClusterName: "gpu-b"})
@@ -133,8 +145,8 @@ func TestRouterSelectsCluster(t *testing.T) {
 
 func TestRegistryKeepsOneActiveK8sAgentPerCluster(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(Info{ID: "old", Kind: KindK8s, ClusterName: "gpu-a", Capabilities: []string{CapabilityPipeline}})
-	reg.Register(Info{ID: "new", Kind: KindK8s, ClusterName: "gpu-a", Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "old", Infrastructure: InfrastructureK8s, ClusterName: "gpu-a", Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "new", Infrastructure: InfrastructureK8s, ClusterName: "gpu-a", Capabilities: []string{CapabilityPipeline}})
 
 	if _, err := reg.Get("old"); err == nil {
 		t.Fatal("old agent should have been replaced")

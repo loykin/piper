@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -21,17 +22,21 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := cliconfig.ValidateServing(root); err != nil {
+			if err := applyServingFlags(cmd, &root); err != nil {
 				return err
 			}
-			c, common := root.Workers.Serving, root.Workers.Common
+			selection, err := cliconfig.SelectServing(root)
+			if err != nil {
+				return err
+			}
+			c, common := selection.Capability, root.Worker
 			hostname := common.Hostname
 			if hostname == "" {
 				if h, err := os.Hostname(); err == nil {
 					hostname = h
 				}
 			}
-			id, err := loadOrCreateWorkerID(common.StateDir, "serving")
+			id, err := loadOrCreateWorkerID(common.StateDir, "serving-"+selection.Infrastructure)
 			if err != nil {
 				return err
 			}
@@ -46,9 +51,9 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 				Hostname:    hostname,
 				ID:          id,
 				Labels:      common.Labels,
-				Mode:        c.Mode,
+				Mode:        map[string]string{cliconfig.InfrastructureBaremetal: "process", cliconfig.InfrastructureDocker: "docker"}[selection.Infrastructure],
 				Docker: servingworker.DockerConfig{
-					Network: c.Docker.Network,
+					Network: selection.DockerNetwork,
 				},
 			})
 			return w.Run(ctx)
@@ -56,21 +61,62 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	}
 
 	cmd.Flags().String("master-url", "", "piper master HTTP(S) URL (required)")
-	cmd.Flags().String("mode", "", "serving runtime: process or docker")
+	cmd.Flags().String("infrastructure", "", "worker infrastructure: baremetal or docker")
 	cmd.Flags().String("docker-network", "", "Docker network for serving containers")
 	cmd.Flags().StringSlice("gpus", nil, "GPU device indices")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("state-dir", "", "directory for persistent worker identity and state")
 	cmd.Flags().String("worker-token", "", "worker token for gRPC authorization")
 	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
-	loader.MustBindFlag("workers.common.master_url", cmd.Flags().Lookup("master-url"))
-	loader.MustBindFlag("workers.serving.mode", cmd.Flags().Lookup("mode"))
-	loader.MustBindFlag("workers.serving.docker.network", cmd.Flags().Lookup("docker-network"))
-	loader.MustBindFlag("workers.serving.gpus", cmd.Flags().Lookup("gpus"))
-	loader.MustBindFlag("workers.common.hostname", cmd.Flags().Lookup("hostname"))
-	loader.MustBindFlag("workers.common.state_dir", cmd.Flags().Lookup("state-dir"))
-	loader.MustBindFlag("workers.common.worker_token", cmd.Flags().Lookup("worker-token"))
-	loader.MustBindFlag("workers.common.storage_token", cmd.Flags().Lookup("storage-token"))
+	loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
+	loader.MustBindFlag("worker.hostname", cmd.Flags().Lookup("hostname"))
+	loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
+	loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
+	loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
 
 	return cmd
+}
+
+func applyServingFlags(cmd *cobra.Command, root *cliconfig.RootConfig) error {
+	mode, _ := cmd.Flags().GetString("infrastructure")
+	if cmd.Flags().Changed("infrastructure") {
+		switch mode {
+		case cliconfig.InfrastructureBaremetal:
+			if root.Worker.Docker != nil || root.Worker.K8s != nil {
+				return fmt.Errorf("--infrastructure conflicts with configured worker infrastructure")
+			}
+			if root.Worker.Baremetal == nil {
+				root.Worker.Baremetal = &cliconfig.BaremetalWorkerConfig{}
+			}
+			if root.Worker.Baremetal.Capabilities.Serving == nil {
+				root.Worker.Baremetal.Capabilities.Serving = &cliconfig.ServingCapabilityConfig{}
+			}
+		case cliconfig.InfrastructureDocker:
+			if root.Worker.Baremetal != nil || root.Worker.K8s != nil {
+				return fmt.Errorf("--infrastructure conflicts with configured worker infrastructure")
+			}
+			if root.Worker.Docker == nil {
+				root.Worker.Docker = &cliconfig.DockerWorkerConfig{}
+			}
+			if root.Worker.Docker.Capabilities.Serving == nil {
+				root.Worker.Docker.Capabilities.Serving = &cliconfig.ServingCapabilityConfig{}
+			}
+		default:
+			return fmt.Errorf("--infrastructure must be baremetal or docker")
+		}
+	}
+	var capability *cliconfig.ServingCapabilityConfig
+	if root.Worker.Baremetal != nil {
+		capability = root.Worker.Baremetal.Capabilities.Serving
+	}
+	if root.Worker.Docker != nil {
+		capability = root.Worker.Docker.Capabilities.Serving
+		if cmd.Flags().Changed("docker-network") {
+			root.Worker.Docker.Network, _ = cmd.Flags().GetString("docker-network")
+		}
+	}
+	if capability != nil && cmd.Flags().Changed("gpus") {
+		capability.GPUs, _ = cmd.Flags().GetStringSlice("gpus")
+	}
+	return cliconfig.ValidateServing(*root)
 }

@@ -3,6 +3,7 @@ package notebookdispatch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strconv"
@@ -17,15 +18,17 @@ type AgentRPC interface {
 }
 
 type AgentDriver struct {
-	router *iagent.Router
-	rpc    AgentRPC
-	repo   notebook.Repository
+	router      *iagent.Router
+	rpc         AgentRPC
+	repo        notebook.Repository
+	podPolicies iagent.WorkerPodPolicyRepository
 }
 
-func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo ...notebook.Repository) *AgentDriver {
-	d := &AgentDriver{router: router, rpc: rpc}
-	if len(repo) > 0 {
-		d.repo = repo[0]
+// NewAgentDriver constructs a notebook agent driver with an optional pod policy repository.
+func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo notebook.Repository, policies ...iagent.WorkerPodPolicyRepository) *AgentDriver {
+	d := &AgentDriver{router: router, rpc: rpc, repo: repo}
+	if len(policies) > 0 {
+		d.podPolicies = policies[0]
 	}
 	return d
 }
@@ -76,10 +79,24 @@ func (d *AgentDriver) Start(ctx context.Context, spec notebook.Notebook, vol *no
 		}
 		vol.WorkerID = agentInfo.ID
 	}
+
+	// Apply per-worker pod policy for K8s workers before dispatch.
+	dispatchYAML := yamlStr
+	if d.podPolicies != nil && agentInfo.Infrastructure == iagent.InfrastructureK8s {
+		if policy, pErr := d.podPolicies.Get(ctx, agentInfo.ID); pErr == nil && policy != nil {
+			if merged, mErr := applyPodPolicy(yamlStr, policy.PodTemplate); mErr == nil {
+				dispatchYAML = merged
+			} else {
+				slog.Warn("notebook: pod policy merge failed, using original YAML",
+					"worker", agentInfo.ID, "err", mErr)
+			}
+		}
+	}
+
 	var result notebook.WorkerStartResponse
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStart, notebook.WorkerStartRequest{
 		ProjectID: projectID,
-		YAML:      yamlStr,
+		YAML:      dispatchYAML,
 		WorkDir:   workDir,
 		VolumeID:  volumeID,
 	}, &result); err != nil {

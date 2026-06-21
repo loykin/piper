@@ -1,8 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import { api as sysApi } from '@/lib/api'
 import { useProjectId } from '@/lib/projectContext'
-import type { ServingWorkerInfo } from './types'
+import { useWorkers } from '@/features/workers/hooks'
 
 export const servingKeys = {
   all: (projectId: string) => ['serving', projectId] as const,
@@ -70,10 +69,5 @@ export function useRestartService() {
 }
 
 export function useServingWorkers() {
-  return useQuery({
-    queryKey: ['serving-workers'],
-    queryFn: () => sysApi.get<ServingWorkerInfo[]>('/api/serving-workers').then(d => Array.isArray(d) ? d : []),
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
-  })
+  return useWorkers('serving')
 }

@@ -26,13 +26,4 @@ export interface NotebookVolume {
   updated_at: string
 }
 
-export interface NotebookWorkerInfo {
-  id: string
-  kind: 'k8s' | 'baremetal'
-  mode?: 'process' | 'docker'
-  hostname: string
-  cluster_name?: string
-  gpus: string[]
-  labels?: Record<string, string>
-  last_seen: string
-}
+export type NotebookWorkerInfo = import('@/features/workers/types').Worker

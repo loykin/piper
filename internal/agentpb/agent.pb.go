@@ -155,7 +155,7 @@ func (*WorkerMessage_ProxyClose) isWorkerMessage_Payload() {}
 type Registration struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"` // "baremetal" | "k8s"
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"` // "baremetal" | "docker" | "k8s"
 	Hostname      string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	Gpus          []string               `protobuf:"bytes,4,rep,name=gpus,proto3" json:"gpus,omitempty"`
 	Capabilities  []string               `protobuf:"bytes,5,rep,name=capabilities,proto3" json:"capabilities,omitempty"` // "notebook" | "serving" | "pipeline"

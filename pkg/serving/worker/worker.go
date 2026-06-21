@@ -63,16 +63,19 @@ func New(cfg Config) *Worker {
 	if mode == "" {
 		mode = servingdriver.ModeProcess
 	}
+	infrastructure := iagent.InfrastructureBaremetal
+	if mode == servingdriver.ModeDocker {
+		infrastructure = iagent.InfrastructureDocker
+	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		MasterURL:    cfg.MasterURL,
-		AgentID:      cfg.ID,
-		WorkerToken:  cfg.WorkerToken,
-		Kind:         iagent.KindBareMetal,
-		Mode:         mode,
-		Hostname:     cfg.Hostname,
-		GPUs:         cfg.GPUs,
-		Capabilities: []string{iagent.CapabilityServing},
-		Labels:       cfg.Labels,
+		MasterURL:      cfg.MasterURL,
+		AgentID:        cfg.ID,
+		WorkerToken:    cfg.WorkerToken,
+		Infrastructure: infrastructure,
+		Hostname:       cfg.Hostname,
+		GPUs:           cfg.GPUs,
+		Capabilities:   []string{iagent.CapabilityServing},
+		Labels:         cfg.Labels,
 	})
 
 	w := &Worker{

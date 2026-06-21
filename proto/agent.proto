@@ -31,7 +31,7 @@ message WorkerMessage {
 // Registration is the first message sent by a worker after connecting.
 message Registration {
   string              id           = 1;
-  string              kind         = 2; // "baremetal" | "k8s"
+  string              kind         = 2; // "baremetal" | "docker" | "k8s"
   string              hostname     = 3;
   repeated string     gpus         = 4;
   repeated string     capabilities = 5; // "notebook" | "serving" | "pipeline"

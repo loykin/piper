@@ -1,9 +1,8 @@
 // notebooks feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import { api as sysApi } from '@/lib/api'
 import { useProjectId } from '@/lib/projectContext'
-import type { NotebookWorkerInfo } from './types'
+import { useWorkers } from '@/features/workers/hooks'
 
 export const notebookKeys = {
   all: (projectId: string) => ['notebooks', projectId] as const,
@@ -111,10 +110,5 @@ export function usePurgeVolume() {
 
 
 export function useNotebookWorkers() {
-  return useQuery({
-    queryKey: ['notebook-workers'],
-    queryFn: () => sysApi.get<NotebookWorkerInfo[]>('/api/notebook-workers').then(d => Array.isArray(d) ? d : []),
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
-  })
+  return useWorkers('notebook')
 }

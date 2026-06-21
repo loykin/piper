@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -40,7 +41,7 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			defer cancel()
 
 			addr := root.Server.HTTPAddr
-			local, localConcurrency := root.Server.Local.Enabled, root.Workers.Pipeline.Concurrency
+			local, localConcurrency := root.Server.Local.Enabled, root.Server.Local.Concurrency
 
 			if !local {
 				return p.Serve(ctx, piper.ServeOption{Addr: addr})
@@ -49,47 +50,39 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			// Embedded local pipeline worker: connects to the local gRPC agent server.
 			hostname, _ := os.Hostname()
 			localMaster := localMasterURL(addr)
-			pipelineID, err := loadOrCreateWorkerID(root.Workers.Common.StateDir, "local-pipeline")
+			localStateDir := filepath.Join(root.Server.DataDir, ".worker-state")
+			pipelineID, err := loadOrCreateWorkerID(localStateDir, "local-pipeline")
 			if err != nil {
 				return err
 			}
-			servingID, err := loadOrCreateWorkerID(root.Workers.Common.StateDir, "local-serving")
+			servingID, err := loadOrCreateWorkerID(localStateDir, "local-serving")
 			if err != nil {
 				return err
 			}
-			notebookID, err := loadOrCreateWorkerID(root.Workers.Common.StateDir, "local-notebook")
+			notebookID, err := loadOrCreateWorkerID(localStateDir, "local-notebook")
 			if err != nil {
 				return err
 			}
 
 			workerToken := p.Config().Server.WorkerToken
-			if root.Workers.Common.WorkerToken != "" {
-				workerToken = root.Workers.Common.WorkerToken
-			}
 			storageToken := p.Config().Storage.Token
-			if root.Workers.Common.StorageToken != "" {
-				storageToken = root.Workers.Common.StorageToken
-			}
 
 			wCfg := worker.Config{
 				Agent: worker.AgentConfig{
 					MasterURL:   localMaster,
 					WorkerToken: workerToken,
 					ID:          pipelineID,
-					Labels:      root.Workers.Common.Labels,
-					Label:       root.Workers.Pipeline.Label,
 					Concurrency: localConcurrency,
 				},
 				Store: worker.StoreConfig{
 					StorageToken: storageToken,
-					OutputDir:    root.Workers.Pipeline.OutputDir,
+					OutputDir:    root.Server.DataDir,
 					StorageURL:   root.Storage.URL,
 					GitUser:      root.Source.Git.User,
 					GitToken:     root.Source.Git.Token,
 				},
-				Runtime:   worker.RuntimeType(root.Workers.Pipeline.Runtime),
-				Baremetal: worker.BaremetalConfig{MetaDir: root.Workers.Pipeline.MetaDir},
-				Docker:    worker.DockerConfig{Network: root.Workers.Pipeline.Docker.Network},
+				Runtime:   worker.RuntimeBaremetal,
+				Baremetal: worker.BaremetalConfig{MetaDir: filepath.Join(localStateDir, "pipeline-meta")},
 			}
 			var w *worker.Worker
 			if root.Server.Local.Pipeline {
@@ -105,10 +98,7 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 				WorkerToken: workerToken,
 				Hostname:    hostname,
 				ID:          servingID,
-				Labels:      root.Workers.Common.Labels,
-				GPUs:        root.Workers.Serving.GPUs,
-				Mode:        root.Workers.Serving.Mode,
-				Docker:      servingworker.DockerConfig{Network: root.Workers.Serving.Docker.Network},
+				Mode:        "process",
 			})
 
 			nw := notebookworker.New(notebookworker.Config{
@@ -116,12 +106,9 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 				WorkerToken:   workerToken,
 				Hostname:      hostname,
 				ID:            notebookID,
-				Labels:        root.Workers.Common.Labels,
 				NotebooksRoot: p.Config().NotebookWorker.NotebooksRoot,
 				PortRange:     p.Config().NotebookWorker.PortRange,
-				Mode:          p.Config().NotebookWorker.Mode,
-				Docker:        notebookWorkerDockerConfig(p.Config().NotebookWorker.Docker),
-				GPUs:          root.Workers.Notebook.GPUs,
+				Mode:          "process",
 			})
 
 			eg, gctx := errgroup.WithContext(ctx)
@@ -153,27 +140,9 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 	loader.MustBindFlag("server.tls.cert_file", cmd.Flags().Lookup("tls-cert"))
 	loader.MustBindFlag("server.tls.key_file", cmd.Flags().Lookup("tls-key"))
 	loader.MustBindFlag("server.local.enabled", cmd.Flags().Lookup("local"))
-	loader.MustBindFlag("workers.pipeline.concurrency", cmd.Flags().Lookup("local-concurrency"))
+	loader.MustBindFlag("server.local.concurrency", cmd.Flags().Lookup("local-concurrency"))
 
 	return cmd
-}
-
-func notebookWorkerDockerConfig(cfg piper.NotebookWorkerDockerConfig) notebookworker.DockerConfig {
-	out := notebookworker.DockerConfig{
-		Network: cfg.Network,
-	}
-	if len(cfg.Volumes) > 0 {
-		out.Volumes = make([]notebookworker.DockerVolume, len(cfg.Volumes))
-		for i, vol := range cfg.Volumes {
-			out.Volumes[i] = notebookworker.DockerVolume{
-				Name:          vol.Name,
-				HostPath:      vol.HostPath,
-				ContainerPath: vol.ContainerPath,
-				ReadOnly:      vol.ReadOnly,
-			}
-		}
-	}
-	return out
 }
 
 // localMasterURL converts a listen address like ":8080" or "0.0.0.0:8080"

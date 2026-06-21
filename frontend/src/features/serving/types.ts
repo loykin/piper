@@ -27,10 +27,4 @@ export interface ServiceHistory {
   stopped_at: string
 }
 
-export interface ServingWorkerInfo {
-  id: string
-  addr: string
-  gpus: string[]
-  hostname: string
-  last_seen: string
-}
+export type ServingWorkerInfo = import('@/features/workers/types').Worker

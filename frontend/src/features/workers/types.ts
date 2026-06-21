@@ -1,14 +1,21 @@
-// workers feature types
-
+// Connection metadata returned by GET /api/agents.
 export interface Worker {
   id: string
-  label: string
-  version: string
-  capabilities: string
-  hostname: string
-  concurrency: number
-  status: string
-  in_flight: number
+  infrastructure: 'baremetal' | 'docker' | 'k8s'
+  hostname?: string
+  gpus?: string[]
+  capabilities: Array<'pipeline' | 'notebook' | 'serving'>
+  cluster_name?: string
+  namespaces?: string[]
+  labels?: Record<string, string>
+  capacity?: number
   registered_at: string
   last_seen: string
+}
+
+export interface WorkerPodPolicy {
+  worker_id: string
+  pod_template: Record<string, unknown>
+  updated_at: string
+  updated_by: string
 }

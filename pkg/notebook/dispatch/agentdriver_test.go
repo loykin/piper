@@ -40,13 +40,13 @@ func (r *recordingAgentRPC) SendRPC(_ context.Context, agentID, method string, p
 func newAgentNotebookDriver() (*AgentDriver, *recordingAgentRPC) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{
-		ID:           "agent-1",
-		Kind:         iagent.KindK8s,
-		ClusterName:  "gpu-a",
-		Capabilities: []string{iagent.CapabilityNotebook},
+		ID:             "agent-1",
+		Infrastructure: iagent.InfrastructureK8s,
+		ClusterName:    "gpu-a",
+		Capabilities:   []string{iagent.CapabilityNotebook},
 	})
 	rpc := &recordingAgentRPC{}
-	return NewAgentDriver(iagent.NewRouter(reg), rpc), rpc
+	return NewAgentDriver(iagent.NewRouter(reg), rpc, nil), rpc
 }
 
 func TestAgentDriverProvisionVolume(t *testing.T) {
@@ -97,9 +97,9 @@ func TestAgentDriverStartUsesVolumeAgent(t *testing.T) {
 
 func TestAgentDriverStartFallsBackFromStaleVolumeAgent(t *testing.T) {
 	reg := iagent.NewRegistry()
-	reg.Register(iagent.Info{ID: "agent-2", Kind: iagent.KindBareMetal, Capabilities: []string{iagent.CapabilityNotebook}})
+	reg.Register(iagent.Info{ID: "agent-2", Infrastructure: iagent.InfrastructureBaremetal, Capabilities: []string{iagent.CapabilityNotebook}})
 	rpc := &recordingAgentRPC{}
-	driver := NewAgentDriver(iagent.NewRouter(reg), rpc)
+	driver := NewAgentDriver(iagent.NewRouter(reg), rpc, nil)
 	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
 	vol := &notebook.NotebookVolume{ID: "vol-1", WorkerID: "old-agent", WorkDir: "/work/vol-1"}
@@ -121,8 +121,8 @@ func TestAgentDriverStartFallsBackFromStaleVolumeAgent(t *testing.T) {
 
 func TestAgentDriverStartDoesNotFallbackForExplicitPlacement(t *testing.T) {
 	reg := iagent.NewRegistry()
-	reg.Register(iagent.Info{ID: "agent-2", Kind: iagent.KindBareMetal, Capabilities: []string{iagent.CapabilityNotebook}})
-	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{})
+	reg.Register(iagent.Info{ID: "agent-2", Infrastructure: iagent.InfrastructureBaremetal, Capabilities: []string{iagent.CapabilityNotebook}})
+	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{}, nil)
 	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
 	spec.Spec.Driver.Placement = manifest.PlacementSpec{Worker: "old-agent"}
@@ -185,7 +185,7 @@ func TestAgentDriverSyncStatus(t *testing.T) {
 		t.Fatalf("create repo record: %v", err)
 	}
 	reg := iagent.NewRegistry()
-	reg.Register(iagent.Info{ID: "agent-1", Kind: iagent.KindK8s, Capabilities: []string{iagent.CapabilityNotebook}})
+	reg.Register(iagent.Info{ID: "agent-1", Infrastructure: iagent.InfrastructureK8s, Capabilities: []string{iagent.CapabilityNotebook}})
 	rpc := &recordingAgentRPC{}
 	driver := NewAgentDriver(iagent.NewRouter(reg), rpc, repo)
 
@@ -215,7 +215,7 @@ func TestAgentDriverSyncStatus(t *testing.T) {
 func TestAgentDriverStartNoAgent(t *testing.T) {
 	// When no notebook agent is available, Start should return an error.
 	reg := iagent.NewRegistry()
-	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{})
+	driver := NewAgentDriver(iagent.NewRouter(reg), &recordingAgentRPC{}, nil)
 	spec := notebook.Notebook{}
 	spec.Metadata.Name = "demo"
 	vol := &notebook.NotebookVolume{ID: "vol-1", WorkerID: "nonexistent"}

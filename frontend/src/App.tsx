@@ -12,12 +12,16 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
   SidebarInset,
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, Boxes, ChevronRight } from 'lucide-react'
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
 import { AuthProvider, useAuth } from '@/features/auth/context'
@@ -35,15 +39,29 @@ const WorkflowsPage       = lazy(() => import('@/pages/schedules/WorkflowsPage')
 const WorkflowCreatePage  = lazy(() => import('@/pages/schedules/WorkflowCreatePage'))
 const ServingPage         = lazy(() => import('@/pages/serving/ServingPage'))
 const ServingHistoryPage  = lazy(() => import('@/pages/serving/ServingHistoryPage'))
-const WorkersPage         = lazy(() => import('@/pages/system/WorkersPage'))
-const StoragePage         = lazy(() => import('@/pages/system/StoragePage'))
+const WorkersPage           = lazy(() => import('@/pages/system/WorkersPage'))
+const StoragePage           = lazy(() => import('@/pages/system/StoragePage'))
+const PodPoliciesPage       = lazy(() => import('@/pages/kubernetes/PodPoliciesPage'))
+const PodPoliciesCreatePage = lazy(() => import('@/pages/kubernetes/PodPoliciesCreatePage'))
+
+type NavSubItem = {
+  id: string
+  label: string
+  to: string
+  exact?: boolean
+  system?: boolean
+}
 
 type NavItem = {
   id: string
   label: string
   icon: React.ComponentType
-  to: string
+  to?: string
   exact?: boolean
+  /** System-level route — enabled even without a selected project. */
+  system?: boolean
+  /** Nested sub-items rendered with SidebarMenuSub. */
+  children?: NavSubItem[]
 }
 
 function navItems(projectId: string): { label: string; items: NavItem[] }[] {
@@ -75,8 +93,17 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
     {
       label: 'Infrastructure',
       items: [
-        { id: 'workers', label: 'Workers', icon: Cpu,      to: `/workers` },
+        { id: 'workers', label: 'Workers', icon: Cpu,      to: `/workers`, system: true },
         { id: 'storage', label: 'Storage', icon: Database, to: `${base}/storage` },
+        {
+          id: 'kubernetes',
+          label: 'Kubernetes',
+          icon: Boxes,
+          system: true,
+          children: [
+            { id: 'pod-policies', label: 'Pod Policies', to: `/kubernetes/pod-policies`, system: true },
+          ],
+        },
       ],
     },
   ]
@@ -113,16 +140,65 @@ function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => {
+                  if (item.children) {
+                    const anyChildActive = item.children.some(c =>
+                      location.pathname === c.to ||
+                      (c.to !== '/workers' && location.pathname.startsWith(c.to + '/'))
+                    )
+                    return (
+                      <Collapsible key={item.id} defaultOpen className="group/collapsible">
+                        <SidebarMenuItem>
+                          <CollapsibleTrigger
+                            render={
+                              <SidebarMenuButton
+                                isActive={anyChildActive}
+                                disabled={!projectId && !item.system}
+                              />
+                            }
+                          >
+                            <item.icon />
+                            <span>{item.label}</span>
+                            <ChevronRight className="ml-auto transition-transform duration-200 group-data-open/collapsible:rotate-90" />
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <SidebarMenuSub className="mr-0 pr-0">
+                              {item.children.map(child => {
+                                const childActive = child.exact
+                                  ? location.pathname === child.to
+                                  : location.pathname === child.to ||
+                                    (child.to !== '/workers' && location.pathname.startsWith(child.to + '/'))
+                                return (
+                                  <SidebarMenuSubItem key={child.id}>
+                                    <SidebarMenuSubButton
+                                      render={<button type="button" />}
+                                      isActive={childActive}
+                                      onClick={() => {
+                                        if (projectId || child.system) void navigate(child.to)
+                                      }}
+                                      aria-disabled={!projectId && !child.system}
+                                    >
+                                      {child.label}
+                                    </SidebarMenuSubButton>
+                                  </SidebarMenuSubItem>
+                                )
+                              })}
+                            </SidebarMenuSub>
+                          </CollapsibleContent>
+                        </SidebarMenuItem>
+                      </Collapsible>
+                    )
+                  }
+
                   const isActive = item.exact
                     ? location.pathname === item.to
                     : location.pathname === item.to ||
-                      (item.to !== '/workers' && location.pathname.startsWith(item.to + '/'))
+                      (item.to !== '/workers' && item.to != null && location.pathname.startsWith(item.to + '/'))
                   return (
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
                         isActive={isActive}
-                        onClick={() => navigate(item.to)}
-                        disabled={!projectId && item.to !== '/workers'}
+                        onClick={() => item.to && navigate(item.to)}
+                        disabled={!projectId && !item.system}
                       >
                         <item.icon />
                         <span>{item.label}</span>
@@ -232,6 +308,8 @@ function ProjectRoutes() {
 
       {/* System routes (no project) */}
       <Route path="workers" element={<WorkersPage />} />
+      <Route path="kubernetes/pod-policies" element={<PodPoliciesPage />} />
+      <Route path="kubernetes/pod-policies/new" element={<PodPoliciesCreatePage />} />
       <Route path="login" element={<LoginPage />} />
 
       {/* Root redirect */}

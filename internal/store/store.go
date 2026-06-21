@@ -10,6 +10,7 @@ import (
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 
+	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/store/postgres"
 	"github.com/piper/piper/internal/store/sqlite"
@@ -34,6 +35,7 @@ type Repos struct {
 	Notebook         notebook.Repository
 	NotebookVolume   notebook.VolumeRepository
 	PipelineTemplate template.Repository
+	WorkerPodPolicy  iagent.WorkerPodPolicyRepository
 	Log              logstore.LogStore
 	Metric           logstore.MetricStore
 
@@ -124,6 +126,7 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(db),
 			PipelineTemplate: sqlite.NewPipelineRepo(db),
 			Viewer:           sqlite.NewViewerRepo(db),
+			WorkerPodPolicy:  sqlite.NewWorkerPodPolicyRepo(db),
 			Log:              logstore.NewSQLite(db.DB),
 			Metric:           logstore.NewSQLite(db.DB),
 			db:               db,
@@ -141,6 +144,7 @@ func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(db),
 			PipelineTemplate: postgres.NewPipelineRepo(db),
 			Viewer:           postgres.NewViewerRepo(db),
+			WorkerPodPolicy:  postgres.NewWorkerPodPolicyRepo(db),
 			Log:              logstore.NewPostgres(db.DB),
 			Metric:           logstore.NewPostgres(db.DB),
 			db:               db,

@@ -40,10 +40,10 @@ func (r *recordingPipelineAgentRPC) snapshot() []pipelineAgentRPCCall {
 func TestAgentBackendDispatchUsesPipelinePlacement(t *testing.T) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{
-		ID:           "agent-1",
-		Kind:         iagent.KindK8s,
-		Labels:       map[string]string{"label": "gpu"},
-		Capabilities: []string{iagent.CapabilityPipeline},
+		ID:             "agent-1",
+		Infrastructure: iagent.InfrastructureK8s,
+		Labels:         map[string]string{"label": "gpu"},
+		Capabilities:   []string{iagent.CapabilityPipeline},
 	})
 	rpc := &recordingPipelineAgentRPC{}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
@@ -66,7 +66,7 @@ func TestAgentBackendDispatchUsesPipelinePlacement(t *testing.T) {
 
 func TestAgentBackendCancelUsesDispatchAgent(t *testing.T) {
 	reg := iagent.NewRegistry()
-	reg.Register(iagent.Info{ID: "agent-1", Kind: iagent.KindK8s, Capabilities: []string{iagent.CapabilityPipeline}})
+	reg.Register(iagent.Info{ID: "agent-1", Infrastructure: iagent.InfrastructureK8s, Capabilities: []string{iagent.CapabilityPipeline}})
 	rpc := &recordingPipelineAgentRPC{}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
 	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{})
@@ -86,7 +86,7 @@ func TestAgentBackendCancelUsesDispatchAgent(t *testing.T) {
 
 func TestAgentBackendCancelCarriesPipelineNamespace(t *testing.T) {
 	reg := iagent.NewRegistry()
-	reg.Register(iagent.Info{ID: "agent-1", Kind: iagent.KindK8s, Capabilities: []string{iagent.CapabilityPipeline}})
+	reg.Register(iagent.Info{ID: "agent-1", Infrastructure: iagent.InfrastructureK8s, Capabilities: []string{iagent.CapabilityPipeline}})
 	rpc := &recordingPipelineAgentRPC{}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
 	pl := pipeline.Pipeline{}
@@ -174,16 +174,16 @@ func TestAgentBackendPinsConcurrentRunStepsToOneAgent(t *testing.T) {
 func TestAgentBackendReleasesUncommittedRunBindingAfterBusy(t *testing.T) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{
-		ID:           "agent-1",
-		Runtime:      iagent.RuntimeDocker,
-		Capabilities: []string{iagent.CapabilityPipeline},
-		Capacity:     1,
+		ID:             "agent-1",
+		Infrastructure: iagent.InfrastructureDocker,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+		Capacity:       1,
 	})
 	reg.Register(iagent.Info{
-		ID:           "agent-2",
-		Runtime:      iagent.RuntimeDocker,
-		Capabilities: []string{iagent.CapabilityPipeline},
-		Capacity:     1,
+		ID:             "agent-2",
+		Infrastructure: iagent.InfrastructureDocker,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+		Capacity:       1,
 	})
 	rpc := &recordingPipelineAgentRPC{sendErr: &iagent.BusyError{Reason: "actual worker state is full"}}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)

@@ -84,7 +84,7 @@ func domainEnabled(cfg K8sConfig, domain string) bool {
 }
 
 func New(cfg Config) *Worker {
-	capabilities := []string{iagent.CapabilityK8s}
+	capabilities := []string{}
 	if cfg.K8s.Client != nil {
 		if domainEnabled(cfg.K8s, iagent.CapabilityNotebook) {
 			capabilities = append(capabilities, iagent.CapabilityNotebook)
@@ -98,14 +98,13 @@ func New(cfg Config) *Worker {
 	}
 
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		MasterURL:    cfg.Agent.MasterURL,
-		AgentID:      cfg.Agent.ID,
-		WorkerToken:  cfg.Agent.WorkerToken,
-		Kind:         iagent.KindK8s,
-		ClusterName:  cfg.Agent.ClusterName,
-		Capabilities: capabilities,
-		Runtime:      iagent.RuntimeK8s,
-		Labels:       cfg.Agent.Labels,
+		MasterURL:      cfg.Agent.MasterURL,
+		AgentID:        cfg.Agent.ID,
+		WorkerToken:    cfg.Agent.WorkerToken,
+		Infrastructure: iagent.InfrastructureK8s,
+		ClusterName:    cfg.Agent.ClusterName,
+		Capabilities:   capabilities,
+		Labels:         cfg.Agent.Labels,
 	})
 
 	var outbox *pdriver.ResultOutbox

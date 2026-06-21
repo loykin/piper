@@ -123,16 +123,19 @@ func New(cfg Config) (*Worker, error) {
 	if runtime == "" {
 		runtime = string(RuntimeBaremetal)
 	}
+	infrastructure := iagent.InfrastructureBaremetal
+	if runtime == string(RuntimeDocker) {
+		infrastructure = iagent.InfrastructureDocker
+	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
-		MasterURL:    cfg.Agent.MasterURL,
-		AgentID:      cfg.Agent.ID,
-		WorkerToken:  cfg.Agent.WorkerToken,
-		Kind:         iagent.KindBareMetal,
-		Hostname:     hostname,
-		Capabilities: []string{iagent.CapabilityPipeline},
-		Labels:       labels,
-		Runtime:      runtime,
-		Capacity:     cfg.Agent.Concurrency,
+		MasterURL:      cfg.Agent.MasterURL,
+		AgentID:        cfg.Agent.ID,
+		WorkerToken:    cfg.Agent.WorkerToken,
+		Infrastructure: infrastructure,
+		Hostname:       hostname,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+		Labels:         labels,
+		Capacity:       cfg.Agent.Concurrency,
 	})
 
 	var driver pdriver.Driver

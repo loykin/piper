@@ -1,18 +1,12 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import { Badge } from '@/components/ui/badge'
 import type { Worker } from './api'
-import type { NotebookWorkerInfo } from '@/features/notebooks/api'
-import type { ServingWorkerInfo } from '@/features/serving/api'
 
 function relativeTime(ts: string): string {
   const ms = Date.now() - new Date(ts).getTime()
   if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`
   return `${Math.floor(ms / 3_600_000)}h ago`
-}
-
-function isOnline(w: Worker): boolean {
-  return w.status === 'online' && Date.now() - new Date(w.last_seen).getTime() < 30_000
 }
 
 function isNodeOnline(last_seen: string): boolean {
@@ -27,16 +21,16 @@ export const pipelineColumns: DataGridColumnDef<Worker>[] = [
     header: 'Status',
     meta: { minWidth: 90 },
     cell: ({ row }) => (
-      <Badge variant={isOnline(row.original) ? 'default' : 'secondary'}>
-        {isOnline(row.original) ? 'Online' : 'Offline'}
+      <Badge variant={isNodeOnline(row.original.last_seen) ? 'default' : 'secondary'}>
+        {isNodeOnline(row.original.last_seen) ? 'Online' : 'Offline'}
       </Badge>
     ),
   },
   {
-    accessorKey: 'label',
-    header: 'Label',
+    accessorKey: 'infrastructure',
+    header: 'Infrastructure',
     meta: { minWidth: 160 },
-    cell: ({ row }) => <span className="font-medium">{row.original.label || '—'}</span>,
+    cell: ({ row }) => <span className="font-medium">{row.original.infrastructure}</span>,
   },
   {
     accessorKey: 'hostname',
@@ -52,7 +46,7 @@ export const pipelineColumns: DataGridColumnDef<Worker>[] = [
     meta: { minWidth: 90, align: 'right' },
     cell: ({ row }) => (
       <span className="font-mono text-xs text-muted-foreground">
-        {row.original.in_flight}&thinsp;/&thinsp;{row.original.concurrency}
+        {row.original.capacity ?? '—'}
       </span>
     ),
   },
@@ -61,15 +55,15 @@ export const pipelineColumns: DataGridColumnDef<Worker>[] = [
     header: 'Capabilities',
     meta: { minWidth: 160, flex: 1 },
     cell: ({ row }) => (
-      <span className="text-xs text-muted-foreground">{row.original.capabilities || '—'}</span>
+      <span className="text-xs text-muted-foreground">{row.original.capabilities.join(', ') || '—'}</span>
     ),
   },
   {
-    accessorKey: 'version',
-    header: 'Version',
+    accessorKey: 'cluster_name',
+    header: 'Cluster',
     meta: { minWidth: 100 },
     cell: ({ row }) => (
-      <span className="font-mono text-xs text-muted-foreground">{row.original.version || '—'}</span>
+      <span className="font-mono text-xs text-muted-foreground">{row.original.cluster_name || '—'}</span>
     ),
   },
   {
@@ -85,7 +79,7 @@ export const pipelineColumns: DataGridColumnDef<Worker>[] = [
 
 // ── Notebook / Serving Worker node columns (shared shape) ─────────────────────
 
-export type NodeInfo = NotebookWorkerInfo | ServingWorkerInfo
+export type NodeInfo = Worker
 
 export const nodeColumns: DataGridColumnDef<NodeInfo>[] = [
   {

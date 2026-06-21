@@ -15,7 +15,7 @@ export default function NotebookVolumesPage() {
   // Resolves legacy UUID worker_id → hostname; new volumes store hostname directly.
   const workerIdMap = useMemo(() => {
     const m: Record<string, string> = {}
-    for (const w of workers) m[w.id] = w.hostname
+    for (const w of workers) m[w.id] = w.hostname || w.id
     return m
   }, [workers])
 

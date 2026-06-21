@@ -7,35 +7,27 @@ package agent
 import "time"
 
 const (
-	KindBareMetal = "baremetal"
-	KindK8s       = "k8s"
-
-	RuntimeBaremetal = "baremetal"
-	RuntimeDocker    = "docker"
-	RuntimeK8s       = "k8s"
+	InfrastructureBaremetal = "baremetal"
+	InfrastructureDocker    = "docker"
+	InfrastructureK8s       = "k8s"
 
 	CapabilityPipeline = "pipeline"
 	CapabilityNotebook = "notebook"
 	CapabilityServing  = "serving"
-	CapabilityK8s      = "k8s"
 )
 
 // Info describes a connected worker endpoint registered with the server.
 // It is connection/runtime metadata only, never workload state.
 type Info struct {
-	ID           string            `json:"id"`
-	Kind         string            `json:"kind"`
-	Mode         string            `json:"mode,omitempty"`
-	Addr         string            `json:"addr,omitempty"`
-	Hostname     string            `json:"hostname,omitempty"`
-	GPUs         []string          `json:"gpus,omitempty"`
-	Capabilities []string          `json:"capabilities,omitempty"`
-	ClusterName  string            `json:"cluster_name,omitempty"`
-	Namespaces   []string          `json:"namespaces,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	// Runtime is the execution environment: "baremetal", "docker", or "k8s".
-	// Used by the pipeline router to match image requirements.
-	Runtime string `json:"runtime,omitempty"`
+	ID             string            `json:"id"`
+	Infrastructure string            `json:"infrastructure"`
+	Addr           string            `json:"addr,omitempty"`
+	Hostname       string            `json:"hostname,omitempty"`
+	GPUs           []string          `json:"gpus,omitempty"`
+	Capabilities   []string          `json:"capabilities,omitempty"`
+	ClusterName    string            `json:"cluster_name,omitempty"`
+	Namespaces     []string          `json:"namespaces,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
 	// Capacity is the maximum number of concurrent tasks this worker accepts.
 	// 0 means unlimited (used by K8s workers where K8s itself limits parallelism).
 	Capacity     int       `json:"capacity,omitempty"`

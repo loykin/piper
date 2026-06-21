@@ -1,18 +1,16 @@
 # piper.yaml snippet — bare-metal Docker notebook worker configuration.
 
-version: 2
-workers:
-  common:
-    master_url: http://localhost:8080
-  notebook:
-    mode: docker
-    notebooks_root: /data/notebooks
-    port_range: "8888-9900"
-
-    docker:
-      network: bridge
-      # Host mount allowlist; workload resource settings belong in the manifest.
-      volumes:
+version: 3
+worker:
+  master_url: http://localhost:8080
+  docker:
+    network: bridge
+    capabilities:
+      notebook:
+        notebooks_root: /data/notebooks
+        port_range: "8888-9900"
+        # Host mount allowlist; workload resource settings belong in the manifest.
+        volumes:
         - name: datasets
           host_path: /mnt/datasets
           container_path: /mnt/datasets

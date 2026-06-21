@@ -75,5 +75,5 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 }
 
 func (p *Piper) registerWorkerRoutes(admin *gin.RouterGroup) {
-	iagent.NewHandler(p.agentRegistry).RegisterRoutes(admin)
+	iagent.NewHandler(p.agentRegistry, p.repos.WorkerPodPolicy).RegisterRoutes(admin)
 }

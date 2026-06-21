@@ -181,11 +181,11 @@ paths:
       responses:
         "204":
           description: Deleted.
-  /api/workers:
+  /api/agents:
     get:
       responses:
         "200":
-          description: Registered workers.
+          description: Connected workers.
           content:
             application/json:
               schema:
@@ -309,15 +309,26 @@ components:
         updated_at: { type: string, format: date-time }
     Worker:
       type: object
+      required: [id, infrastructure, capabilities, registered_at, last_seen]
       properties:
         id: { type: string }
-        label: { type: string }
-        version: { type: string }
-        capabilities: { type: string }
+        infrastructure: { type: string, enum: [baremetal, docker, k8s] }
+        capabilities:
+          type: array
+          items: { type: string, enum: [pipeline, notebook, serving] }
         hostname: { type: string }
-        concurrency: { type: integer }
-        status: { type: string }
-        in_flight: { type: integer }
+        gpus:
+          type: array
+          items: { type: string }
+        cluster_name: { type: string }
+        namespaces:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        capacity: { type: integer }
+        registered_at: { type: string, format: date-time }
         last_seen: { type: string, format: date-time }
     Service:
       type: object

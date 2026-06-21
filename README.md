@@ -86,7 +86,7 @@ spec:
   defaults:
     driver:
       placement:
-        worker: ""                # worker ID (persisted in workers.common.state_dir)
+        worker: ""                # worker ID (persisted in worker.state_dir)
         label: ""                 # route to any worker registered with this label
         runtime: k8s              # baremetal | docker | k8s
       docker:
@@ -240,7 +240,7 @@ piper k8s-worker \
   --cluster my-cluster \
   --namespaces piper-jobs,piper-notebooks,piper-serving \
   --in-cluster \
-  --enable pipeline,notebook,serving \
+  --capabilities pipeline,notebook,serving \
   --notebook-infrastructure-image piper/piper:latest \
   --runner-image piper/piper:latest
 ```
@@ -601,7 +601,7 @@ svc, err := p.DeployService(ctx, "default", []byte(modelServiceYAML))
 ## Configuration (`.piper.yaml`)
 
 ```yaml
-version: 2
+version: 3
 
 server:
   http_addr: ":8080"
@@ -617,27 +617,40 @@ storage:
   url: s3://piper-artifacts?endpoint=http://localhost:9000&s3ForcePathStyle=true
   token: ""                       # prefer PIPER_STORAGE_TOKEN for secrets
 
-workers:
-  common:
-    master_url: http://localhost:8080
-    state_dir: ./piper-worker-state
-    labels:
-      region: seoul
-  notebook:
-    mode: process
-    notebooks_root: ./notebooks
-    port_range: 8888-9900
-    docker:
-      network: bridge
+worker:
+  master_url: http://localhost:8080
+  state_dir: ./piper-worker-state
+  labels:
+    region: seoul
   k8s:
     cluster: local
     namespaces: [piper-jobs, piper-notebooks, piper-serving]
-    enabled: [pipeline, notebook, serving]
     in_cluster: true
-    pipeline:
-      runner_image: piper/piper:latest
-    notebook:
-      infrastructure_image: piper/piper:latest
+    capabilities:
+      pipeline:
+        runner_image: piper/piper:latest
+      notebook:
+        infrastructure_image: piper/piper:latest
+      serving: {}
+```
+
+`worker` describes one worker process. It must contain exactly one of
+`baremetal`, `docker`, or `k8s`. Bare-metal and Docker workers must enable
+exactly one capability because each corresponding command starts one role.
+The K8s worker may enable multiple capabilities in one cluster-local process.
+
+```yaml
+version: 3
+worker:
+  master_url: http://localhost:8080
+  state_dir: ./piper-worker-state
+  docker:
+    network: bridge
+    capabilities:
+      notebook:
+        notebooks_root: ./notebooks
+        port_range: 8888-9900
+        volumes: []
 ```
 
 ### Configuration ownership
@@ -646,9 +659,11 @@ workers:
   resources, pod template, and notebook PVC size/class.
 - `server.*` contains control-plane settings only: listener, TLS, database,
   retention, scheduling, and local data directories.
-- `workers.common` contains tunnel identity/metadata; role sections contain only
-  local runtime capability, capacity, paths, and safety policy.
-- `workers.k8s.namespaces` is an allowlist. It never supplies a workload default.
+- `server.local` starts bare-metal development workers only. Docker and K8s
+  workers run as standalone processes configured through `worker.*`.
+- `worker.*` describes exactly one standalone worker and owns tunnel identity,
+  infrastructure access, advertised capabilities, capacity, and local paths.
+- `worker.k8s.namespaces` is an allowlist. It never supplies a workload default.
 - Workers and workload runtimes may connect directly to `storage.url`; all other
   worker control-plane traffic uses the single master tunnel.
 
@@ -660,15 +675,15 @@ Command scope:
 
 | Command | Relevant Config |
 |---|---|
-| `piper server` | `server`, `storage`, `source`, `log`; `workers` only with `--local` |
+| `piper server` | `server`, `storage`, `source`, `log` |
 | `piper run` | local data/storage/source settings plus the submitted Pipeline manifest |
-| `piper worker` | `workers.common`, `workers.pipeline`, `storage`, `source` |
-| `piper notebook-worker` | `workers.common`, `workers.notebook` |
-| `piper serving-worker` | `workers.common`, `workers.serving` |
-| `piper k8s-worker` | `workers.common`, `workers.k8s`, `storage` |
+| `piper worker` | `worker.baremetal.capabilities.pipeline` or `worker.docker.capabilities.pipeline` |
+| `piper notebook-worker` | `worker.baremetal.capabilities.notebook` or `worker.docker.capabilities.notebook` |
+| `piper serving-worker` | `worker.baremetal.capabilities.serving` or `worker.docker.capabilities.serving` |
+| `piper k8s-worker` | `worker.k8s`, `storage` |
 
 On first startup, each worker role writes its generated identity metadata under
-`workers.common.state_dir` and reuses that ID after restart.
+`worker.state_dir` and reuses that ID after restart.
 
 ## CLI
 
@@ -677,11 +692,10 @@ piper server                                     start server (API + UI)
 piper server --local                             start server with embedded worker/serving/notebook workers
 piper run <file.yaml>                            run a pipeline locally
 piper parse <file.yaml>                          validate YAML without running
-piper worker --master-url=<url>              start a pipeline worker (bare-metal)
-piper serving-worker --master-url=<url>      start a serving worker (bare-metal ModelService)
-piper notebook-worker --master-url=<url>     start a notebook worker (bare-metal JupyterLab)
-piper k8s-worker --master-url=<url> --cluster=<name> start a cluster-local K8s worker (pipelines + notebooks + serving)
-piper k8s-worker --master-url=<url> --cluster=<name> --enable pipeline  start K8s worker for pipeline only
+piper worker --master-url=<url> --infrastructure=baremetal          start a bare-metal pipeline worker
+piper serving-worker --master-url=<url> --infrastructure=baremetal  start a bare-metal serving worker
+piper notebook-worker --master-url=<url> --infrastructure=baremetal start a bare-metal notebook worker
+piper k8s-worker --master-url=<url> --cluster=<name> --namespaces=<ns> --in-cluster --capabilities=pipeline,notebook,serving
 piper agent exec --result-file=<path> ...         execute a step inside a K8s Pod (called automatically)
 ```
 

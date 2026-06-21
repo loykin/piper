@@ -352,7 +352,7 @@ metadata:
   namespace: %[1]s
 data:
   piper.yaml: |
-    version: 2
+    version: 3
     server:
       http_addr: :8080
       data_dir: /tmp/piper-outputs

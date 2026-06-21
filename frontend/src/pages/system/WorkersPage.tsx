@@ -1,12 +1,13 @@
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { useWorkers } from '@/features/workers/hooks'
-import { useNotebookWorkers } from '@/features/notebooks/hooks'
-import { useServingWorkers } from '@/features/serving/hooks'
 import { pipelineColumns, nodeColumns } from '@/features/workers/columns'
+import { WorkerPodPolicyPanel } from '@/features/workers/components/WorkerPodPolicyPanel'
+import type { Worker } from '@/features/workers/types'
 
 function PipelineWorkersSection() {
-  const { data = [] } = useWorkers()
+  const { data = [] } = useWorkers('pipeline')
   return (
     <DataBodyTemplate.Group layout="stacked" title="Pipeline Workers">
       <DataGrid
@@ -28,7 +29,8 @@ function PipelineWorkersSection() {
 }
 
 function NotebookWorkersSection() {
-  const { data = [] } = useNotebookWorkers()
+  const { data = [] } = useWorkers('notebook')
+  const { open } = useSidePanel()
   return (
     <DataBodyTemplate.Group layout="stacked" title="Notebook Workers">
       <DataGrid
@@ -38,6 +40,9 @@ function NotebookWorkersSection() {
         tableWidthMode="fill-last"
         rowHeight={44}
         pagination={{ pageSize: 20 }}
+        onRowClick={(row) =>
+          open(<WorkerPodPolicyPanel worker={row as Worker} />, { size: 520 })
+        }
         footer={(table) => (
           <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
             <span>{data.length} workers</span>
@@ -50,7 +55,7 @@ function NotebookWorkersSection() {
 }
 
 function ServingWorkersSection() {
-  const { data = [] } = useServingWorkers()
+  const { data = [] } = useWorkers('serving')
   return (
     <DataBodyTemplate.Group layout="stacked" title="Serving Workers">
       <DataGrid
@@ -71,7 +76,7 @@ function ServingWorkersSection() {
   )
 }
 
-export default function WorkersPage() {
+function WorkersContent() {
   return (
     <DataBodyTemplate
       title="Workers"
@@ -81,5 +86,13 @@ export default function WorkersPage() {
       <NotebookWorkersSection />
       <ServingWorkersSection />
     </DataBodyTemplate>
+  )
+}
+
+export default function WorkersPage() {
+  return (
+    <SidePanelProvider defaultSize={520} defaultMinSize={380} defaultMaxSize={900}>
+      <WorkersContent />
+    </SidePanelProvider>
   )
 }

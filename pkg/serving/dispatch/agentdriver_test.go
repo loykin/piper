@@ -103,10 +103,10 @@ func (r *recordingServingAgentRPC) SendRPC(_ context.Context, agentID, method st
 func newServingAgentDriver(repo serving.Repository) (*AgentDriver, *recordingServingAgentRPC) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{
-		ID:           "agent-1",
-		Kind:         iagent.KindK8s,
-		ClusterName:  "gpu-a",
-		Capabilities: []string{iagent.CapabilityServing},
+		ID:             "agent-1",
+		Infrastructure: iagent.InfrastructureK8s,
+		ClusterName:    "gpu-a",
+		Capabilities:   []string{iagent.CapabilityServing},
 	})
 	rpc := &recordingServingAgentRPC{}
 	return NewAgentDriver(iagent.NewRouter(reg), rpc, repo), rpc

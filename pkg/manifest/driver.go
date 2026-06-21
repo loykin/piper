@@ -82,6 +82,41 @@ func (s *DriverK8sSpec) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+func (s DriverK8sSpec) MarshalYAML() (interface{}, error) {
+	type alias struct {
+		Image           string       `yaml:"image,omitempty"`
+		Namespace       string       `yaml:"namespace,omitempty"`
+		Replicas        int          `yaml:"replicas,omitempty"`
+		ImagePullPolicy string       `yaml:"image_pull_policy,omitempty"`
+		Resources       ResourceSpec `yaml:"resources,omitempty"`
+		PodTemplate     interface{}  `yaml:"pod_template,omitempty"`
+	}
+	a := alias{
+		Image:           s.Image,
+		Namespace:       s.Namespace,
+		Replicas:        s.Replicas,
+		ImagePullPolicy: s.ImagePullPolicy,
+		Resources:       s.Resources,
+	}
+	// Serialize PodTemplate via sigs.k8s.io/yaml (handles resource.Quantity etc.)
+	// then decode to a generic interface so yaml.v3 can encode it without corev1 tags.
+	if s.PodTemplate.Spec.Containers != nil || s.PodTemplate.Spec.NodeSelector != nil ||
+		s.PodTemplate.Spec.Tolerations != nil || s.PodTemplate.Spec.Volumes != nil ||
+		s.PodTemplate.Spec.InitContainers != nil || s.PodTemplate.Spec.RuntimeClassName != nil ||
+		s.PodTemplate.ObjectMeta.Labels != nil || s.PodTemplate.ObjectMeta.Annotations != nil {
+		raw, err := sigsyaml.Marshal(s.PodTemplate)
+		if err != nil {
+			return nil, err
+		}
+		var m interface{}
+		if err := sigsyaml.Unmarshal(raw, &m); err != nil {
+			return nil, err
+		}
+		a.PodTemplate = m
+	}
+	return a, nil
+}
+
 // DriverDockerSpec holds Docker-specific driver settings.
 type DriverDockerSpec struct {
 	Image       string            `yaml:"image,omitempty"        json:"image,omitempty"`

@@ -123,12 +123,76 @@ func (l *Loader) Load() (RootConfig, error) {
 		l.loadErr = fmt.Errorf("config: %w", err)
 		return RootConfig{}, l.loadErr
 	}
-	if cfg.Version != 2 {
-		l.loadErr = fmt.Errorf("config: version must be 2")
+	if !l.explicitPrefix("worker.baremetal") {
+		cfg.Worker.Baremetal = nil
+	}
+	if !l.explicitPrefix("worker.docker") {
+		cfg.Worker.Docker = nil
+	}
+	if !l.explicitPrefix("worker.k8s") {
+		cfg.Worker.K8s = nil
+	}
+	if cfg.Worker.Baremetal != nil {
+		if !l.explicitPrefix("worker.baremetal.capabilities.pipeline") {
+			cfg.Worker.Baremetal.Capabilities.Pipeline = nil
+		}
+		if !l.explicitPrefix("worker.baremetal.capabilities.notebook") {
+			cfg.Worker.Baremetal.Capabilities.Notebook = nil
+		}
+		if !l.explicitPrefix("worker.baremetal.capabilities.serving") {
+			cfg.Worker.Baremetal.Capabilities.Serving = nil
+		}
+	}
+	if cfg.Worker.Docker != nil {
+		if !l.explicitPrefix("worker.docker.capabilities.pipeline") {
+			cfg.Worker.Docker.Capabilities.Pipeline = nil
+		}
+		if !l.explicitPrefix("worker.docker.capabilities.notebook") {
+			cfg.Worker.Docker.Capabilities.Notebook = nil
+		}
+		if !l.explicitPrefix("worker.docker.capabilities.serving") {
+			cfg.Worker.Docker.Capabilities.Serving = nil
+		}
+	}
+	if cfg.Worker.K8s != nil {
+		if !l.explicitPrefix("worker.k8s.capabilities.pipeline") {
+			cfg.Worker.K8s.Capabilities.Pipeline = nil
+		}
+		if !l.explicitPrefix("worker.k8s.capabilities.notebook") {
+			cfg.Worker.K8s.Capabilities.Notebook = nil
+		}
+		if !l.explicitPrefix("worker.k8s.capabilities.serving") {
+			cfg.Worker.K8s.Capabilities.Serving = nil
+		}
+	}
+	if cfg.Version != 3 {
+		l.loadErr = fmt.Errorf("config: version must be 3")
 		return RootConfig{}, l.loadErr
 	}
 	l.cached = &cfg
 	return cfg, nil
+}
+
+func (l *Loader) explicitPrefix(prefix string) bool {
+	if l.v.InConfig(prefix) {
+		return true
+	}
+	for _, key := range schemaKeys(reflect.TypeOf(RootConfig{}), "") {
+		if key != prefix && !strings.HasPrefix(key, prefix+".") {
+			continue
+		}
+		if flag := l.flags[key]; flag != nil && flag.Changed {
+			return true
+		}
+		envKey := "PIPER_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+		if _, ok := os.LookupEnv(envKey); ok {
+			return true
+		}
+		if l.v.InConfig(key) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *Loader) ConfigFileUsed() string { return l.v.ConfigFileUsed() }
@@ -174,8 +238,8 @@ func strictFile(path string) error {
 	if err := dec.Decode(&cfg); err != nil {
 		return fmt.Errorf("config file %s: %w", path, err)
 	}
-	if cfg.Version != 2 {
-		return fmt.Errorf("config file %s: version must be 2", path)
+	if cfg.Version != 3 {
+		return fmt.Errorf("config file %s: version must be 3", path)
 	}
 	return nil
 }
@@ -259,6 +323,10 @@ func registerDefaults(v *viper.Viper, value reflect.Value, prefix string) {
 			key = prefix + "." + name
 		}
 		fv := value.Field(i)
+		if fv.Kind() == reflect.Pointer {
+			registerDefaults(v, reflect.New(fv.Type().Elem()).Elem(), key)
+			continue
+		}
 		if fv.Type() != reflect.TypeOf(time.Duration(0)) && fv.Kind() == reflect.Struct {
 			registerDefaults(v, fv, key)
 			continue
@@ -280,6 +348,9 @@ func schemaKeys(t reflect.Type, prefix string) []string {
 			key = prefix + "." + name
 		}
 		ft := f.Type
+		for ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
 		if ft == reflect.TypeOf(time.Duration(0)) || ft.Kind() != reflect.Struct {
 			out = append(out, key)
 			continue

@@ -14,9 +14,6 @@ import (
 // Agent liveness is connection-driven: agents are added via Register when their
 // gRPC stream opens and removed via Remove when it closes. There is no TTL-based
 // eviction — the transport layer signals disconnection explicitly.
-//
-// Pipeline workers (HTTP polling) call Remove explicitly when their heartbeat
-// expires, so no Cleanup sweep is needed here either.
 type Registry struct {
 	mu     sync.RWMutex
 	agents map[string]*Info
@@ -28,8 +25,8 @@ func NewRegistry() *Registry {
 
 func (r *Registry) Register(info Info) {
 	now := time.Now()
-	if info.Kind == "" {
-		info.Kind = KindBareMetal
+	if info.Infrastructure == "" {
+		info.Infrastructure = InfrastructureBaremetal
 	}
 	if info.RegisteredAt.IsZero() {
 		info.RegisteredAt = now
@@ -37,9 +34,9 @@ func (r *Registry) Register(info Info) {
 	info.LastSeen = now
 
 	r.mu.Lock()
-	if info.Kind == KindK8s && info.ClusterName != "" {
+	if info.Infrastructure == InfrastructureK8s && info.ClusterName != "" {
 		for id, existing := range r.agents {
-			if id != info.ID && existing.Kind == KindK8s && existing.ClusterName == info.ClusterName {
+			if id != info.ID && existing.Infrastructure == InfrastructureK8s && existing.ClusterName == info.ClusterName {
 				delete(r.agents, id)
 				slog.Info("event", "type", "agent.replaced", "old_agent_id", id, "new_agent_id", info.ID, "cluster", info.ClusterName)
 			}
@@ -48,7 +45,7 @@ func (r *Registry) Register(info Info) {
 	r.agents[info.ID] = cloneInfo(info)
 	r.mu.Unlock()
 
-	slog.Info("event", "type", "agent.registered", "agent_id", info.ID, "kind", info.Kind, "cluster", info.ClusterName, "capabilities", info.Capabilities)
+	slog.Info("event", "type", "agent.registered", "agent_id", info.ID, "infrastructure", info.Infrastructure, "cluster", info.ClusterName, "capabilities", info.Capabilities)
 }
 
 func (r *Registry) Get(id string) (*Info, error) {
@@ -109,7 +106,7 @@ func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 		if !labelsMatch(a.Labels, p.Labels) {
 			continue
 		}
-		if p.RequireContainer && a.Runtime != RuntimeDocker && a.Runtime != RuntimeK8s {
+		if p.RequireContainer && a.Infrastructure != InfrastructureDocker && a.Infrastructure != InfrastructureK8s {
 			continue
 		}
 		out = append(out, *cloneInfo(*a))

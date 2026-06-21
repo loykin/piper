@@ -36,7 +36,7 @@ func (d *captureDriver) Recover(_ context.Context, onRecovered func(servingdrive
 
 func TestServingWorkerBuildsDriverRequest(t *testing.T) {
 	drv := &captureDriver{endpoint: "http://127.0.0.1:18080"}
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = drv
 	payload := `apiVersion: piper/v1
 kind: ModelService
@@ -64,7 +64,7 @@ spec:
 
 func TestServingWorkerRecoversThroughDriver(t *testing.T) {
 	handle := servingdriver.RecoveredHandle{ProjectID: "project-a", Name: "demo", RuntimeName: "project-a__demo", Port: 18080}
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = &captureDriver{recovered: &handle}
 	w.recoverServices(context.Background())
 	w.mu.Lock()
@@ -76,7 +76,7 @@ func TestServingWorkerRecoversThroughDriver(t *testing.T) {
 }
 
 func TestServingWorker_DeployEmptyCommand(t *testing.T) {
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	yamlPayload := `apiVersion: piper/v1
 kind: ModelService
 metadata:
@@ -92,19 +92,19 @@ spec:
 }
 
 func TestNewDriverRejectsUnsupportedMode(t *testing.T) {
-	if _, err := newDriver(Config{ID: "test-id", Mode: "unknown"}); err == nil {
+	if _, err := newDriver(Config{ID: "test-id", Infrastructure: "unknown"}); err == nil {
 		t.Fatal("expected unsupported mode error")
 	}
 }
 
 func TestNewDockerDriverRequiresStableWorkerID(t *testing.T) {
-	if _, err := newDriver(Config{Mode: servingdriver.ModeDocker}); err == nil {
+	if _, err := newDriver(Config{Infrastructure: InfrastructureDocker}); err == nil {
 		t.Fatal("expected stable worker ID error")
 	}
 }
 
 func TestServingWorker_DeployNoPort(t *testing.T) {
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	yamlPayload := `apiVersion: piper/v1
 kind: ModelService
 metadata:
@@ -120,7 +120,7 @@ spec:
 }
 
 func TestServingWorker_DeployInvalidYAML(t *testing.T) {
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	_, err := w.deploy(context.Background(), deployRequest{ProjectID: "project-a", YAML: ":::not yaml:::"})
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
@@ -128,7 +128,7 @@ func TestServingWorker_DeployInvalidYAML(t *testing.T) {
 }
 
 func TestServingWorker_StopNonExistent(t *testing.T) {
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	// stop is idempotent: stopping a non-existent service is not an error.
 	if err := w.stop(context.Background(), ":nonexistent", "nonexistent"); err != nil {
 		t.Fatalf("stop nonexistent: %v", err)
@@ -136,7 +136,7 @@ func TestServingWorker_StopNonExistent(t *testing.T) {
 }
 
 func TestServingWorker_StaleGenerationCannotMutateCurrentService(t *testing.T) {
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 
 	oldGen, err := w.reserveService("demo", "http://localhost:8080")
 	if err != nil {
@@ -167,7 +167,7 @@ func TestServingWorker_StaleGenerationCannotMutateCurrentService(t *testing.T) {
 }
 
 func TestServingWorker_HealthFailureOverridesStopStatus(t *testing.T) {
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	gen, err := w.reserveService("demo", "http://localhost:8080")
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestServingWorker_HealthFailureOverridesStopStatus(t *testing.T) {
 }
 
 func TestServingWorker_RejectsDuplicateActiveService(t *testing.T) {
-	w := New(Config{ID: "test-id"})
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
 	if _, err := w.reserveService("demo", "http://localhost:8080"); err != nil {
 		t.Fatal(err)
 	}

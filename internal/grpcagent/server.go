@@ -92,15 +92,13 @@ func (q *pushQueue) close() {
 
 // Registration carries the metadata a worker sends on first connect.
 type Registration struct {
-	ID           string
-	Kind         string
-	Mode         string
-	Hostname     string
-	GPUs         []string
-	Capabilities []string
-	ClusterName  string
-	Labels       map[string]string
-	ConnectedAt  time.Time
+	ID             string
+	Infrastructure string
+	Hostname       string
+	Capabilities   []string
+	ClusterName    string
+	Labels         map[string]string
+	ConnectedAt    time.Time
 }
 
 // NewServer creates a gRPC AgentService server.
@@ -141,20 +139,18 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 	if reg == nil {
 		return status.Error(codes.InvalidArgument, "first message must be Registration")
 	}
-	if reg.Id == "" {
-		return status.Error(codes.InvalidArgument, "registration id is required")
+	if err := validateRegistration(reg); err != nil {
+		return err
 	}
 
 	info := Registration{
-		ID:           reg.Id,
-		Kind:         reg.Kind,
-		Mode:         reg.Mode,
-		Hostname:     reg.Hostname,
-		GPUs:         reg.Gpus,
-		Capabilities: reg.Capabilities,
-		ClusterName:  reg.ClusterName,
-		Labels:       reg.Labels,
-		ConnectedAt:  time.Now(),
+		ID:             reg.Id,
+		Infrastructure: reg.Infrastructure,
+		Hostname:       reg.Hostname,
+		Capabilities:   reg.Capabilities,
+		ClusterName:    reg.ClusterName,
+		Labels:         reg.Labels,
+		ConnectedAt:    time.Now(),
 	}
 
 	conn := newWorkerConn(reg.Id, stream)
@@ -167,7 +163,7 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 	if s.connectHandler != nil {
 		go s.connectHandler(reg.Id)
 	}
-	slog.Info("grpc agent connected", "id", reg.Id, "kind", reg.Kind, "hostname", reg.Hostname)
+	slog.Info("grpc agent connected", "id", reg.Id, "infrastructure", reg.Infrastructure, "hostname", reg.Hostname)
 	go conn.runPushLoop(s.pushHandler)
 
 	// Read loop: handle RPC responses, status pushes, and proxy frames from the worker.
@@ -190,6 +186,18 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 		case *agentpb.WorkerMessage_ProxyClose:
 			conn.deliverProxyClose(p.ProxyClose.ChannelId, p.ProxyClose.Error)
 		}
+	}
+}
+
+func validateRegistration(reg *agentpb.Registration) error {
+	if reg.Id == "" {
+		return status.Error(codes.InvalidArgument, "registration id is required")
+	}
+	switch reg.Infrastructure {
+	case "baremetal", "docker", "k8s":
+		return nil
+	default:
+		return status.Error(codes.InvalidArgument, "registration infrastructure must be baremetal, docker, or k8s")
 	}
 }
 

@@ -110,8 +110,8 @@ func applyPipelineFlags(cmd *cobra.Command, root *cliconfig.RootConfig) error {
 			if root.Worker.Baremetal == nil {
 				root.Worker.Baremetal = &cliconfig.BaremetalWorkerConfig{}
 			}
-			if root.Worker.Baremetal.Capabilities.Pipeline == nil {
-				root.Worker.Baremetal.Capabilities.Pipeline = &cliconfig.PipelineCapabilityConfig{}
+			if root.Worker.Capabilities.Pipeline == nil {
+				root.Worker.Capabilities.Pipeline = &cliconfig.PipelineCapabilityConfig{}
 			}
 		case cliconfig.InfrastructureDocker:
 			if root.Worker.Baremetal != nil || root.Worker.K8s != nil {
@@ -120,20 +120,14 @@ func applyPipelineFlags(cmd *cobra.Command, root *cliconfig.RootConfig) error {
 			if root.Worker.Docker == nil {
 				root.Worker.Docker = &cliconfig.DockerWorkerConfig{}
 			}
-			if root.Worker.Docker.Capabilities.Pipeline == nil {
-				root.Worker.Docker.Capabilities.Pipeline = &cliconfig.PipelineCapabilityConfig{}
+			if root.Worker.Capabilities.Pipeline == nil {
+				root.Worker.Capabilities.Pipeline = &cliconfig.PipelineCapabilityConfig{}
 			}
 		default:
 			return fmt.Errorf("--infrastructure must be baremetal or docker")
 		}
 	}
-	var capability *cliconfig.PipelineCapabilityConfig
-	if root.Worker.Baremetal != nil {
-		capability = root.Worker.Baremetal.Capabilities.Pipeline
-	}
-	if root.Worker.Docker != nil {
-		capability = root.Worker.Docker.Capabilities.Pipeline
-	}
+	capability := root.Worker.Capabilities.Pipeline
 	if capability != nil {
 		if cmd.Flags().Changed("label") {
 			capability.Label, _ = cmd.Flags().GetString("label")

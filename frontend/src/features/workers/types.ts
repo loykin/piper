@@ -1,9 +1,8 @@
-// Connection metadata returned by GET /api/agents.
+// Connection metadata returned by GET /api/workers.
 export interface Worker {
   id: string
   infrastructure: 'baremetal' | 'docker' | 'k8s'
   hostname?: string
-  gpus?: string[]
   capabilities: Array<'pipeline' | 'notebook' | 'serving'>
   cluster_name?: string
   namespaces?: string[]

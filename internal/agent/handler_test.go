@@ -13,7 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func TestHandlerListAgents(t *testing.T) {
+func TestHandlerListWorkers(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	reg := NewRegistry()
 	reg.Register(Info{ID: "a1", Infrastructure: InfrastructureK8s, ClusterName: "gpu-a", Capabilities: []string{CapabilityPipeline}})
@@ -21,7 +21,7 @@ func TestHandlerListAgents(t *testing.T) {
 	NewHandler(reg).RegisterRoutes(r.Group("/api"))
 
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/agents", nil))
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workers", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -30,6 +30,9 @@ func TestHandlerListAgents(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"infrastructure":"k8s"`) || strings.Contains(rec.Body.String(), `"kind":`) {
 		t.Fatalf("list body uses inconsistent infrastructure field: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"gpus":`) {
+		t.Fatalf("list body exposes removed GPU inventory: %s", rec.Body.String())
 	}
 }
 
@@ -42,6 +45,12 @@ func TestHandlerHasSingleWorkerListEndpoint(t *testing.T) {
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/notebook-workers", nil))
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("legacy notebook worker list status = %d, want 404", recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/agents", nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("removed agent list status = %d, want 404", recorder.Code)
 	}
 }
 

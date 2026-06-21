@@ -41,9 +41,9 @@ type K8sConfig struct {
 	EnabledDomains []string
 
 	// Container images.
-	NotebookInfrastructureImage string
-	PipelineWorkerImage         string // piper agent image for pipeline Job init containers
-	AgentImagePullPolicy        string
+	NotebookVolumeBrowserImage    string
+	PipelineRunnerImage           string
+	PipelineRunnerImagePullPolicy string
 
 	// Storage.
 	TTLAfterFinished *int32
@@ -137,7 +137,7 @@ func New(cfg Config) *Worker {
 				ClusterName:         cfg.Agent.ClusterName,
 				Namespaces:          cfg.K8s.Namespaces,
 				Client:              cfg.K8s.Client,
-				InfrastructureImage: cfg.K8s.NotebookInfrastructureImage,
+				InfrastructureImage: cfg.K8s.NotebookVolumeBrowserImage,
 				ReportStatus: func(update notebook.WorkerStatusUpdate) error {
 					return client.SendPush(iagent.MethodNotebookStatusUpdate, update)
 				},
@@ -165,8 +165,8 @@ func New(cfg Config) *Worker {
 				K8s: k8spipeline.K8sConfig{
 					Client:               cfg.K8s.Client,
 					Namespaces:           cfg.K8s.Namespaces,
-					AgentImage:           cfg.K8s.PipelineWorkerImage,
-					AgentImagePullPolicy: cfg.K8s.AgentImagePullPolicy,
+					AgentImage:           cfg.K8s.PipelineRunnerImage,
+					AgentImagePullPolicy: cfg.K8s.PipelineRunnerImagePullPolicy,
 					TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
 				},
 				ReportResult: func(result proto.TaskResult) error {

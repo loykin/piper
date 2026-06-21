@@ -143,9 +143,8 @@ func New(cfg Config) (*Piper, error) {
 		func(reg grpcagent.Registration) {
 			info := iagent.Info{
 				ID:             reg.ID,
-				Infrastructure: reg.Kind,
+				Infrastructure: reg.Infrastructure,
 				Hostname:       reg.Hostname,
-				GPUs:           reg.GPUs,
 				Capabilities:   reg.Capabilities,
 				ClusterName:    reg.ClusterName,
 				Labels:         reg.Labels,
@@ -531,7 +530,7 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	}
 	go func() { _ = w.Run(runCtx) }()
 
-	if err := waitForPipelineAgent(ctx, masterURL, 10*time.Second); err != nil {
+	if err := waitForPipelineWorker(ctx, masterURL, 10*time.Second); err != nil {
 		return nil, fmt.Errorf("run: worker did not register: %w", err)
 	}
 
@@ -595,11 +594,11 @@ func waitForHTTPReady(ctx context.Context, url string, timeout time.Duration) er
 	return fmt.Errorf("not ready within %s", timeout)
 }
 
-// waitForPipelineAgent polls GET /api/agents until at least one pipeline-capable agent appears.
-func waitForPipelineAgent(ctx context.Context, masterURL string, timeout time.Duration) error {
+// waitForPipelineWorker polls GET /api/workers until a pipeline worker appears.
+func waitForPipelineWorker(ctx context.Context, masterURL string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, masterURL+"/api/agents", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, masterURL+"/api/workers", nil)
 		if err != nil {
 			return err
 		}

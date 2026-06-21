@@ -181,7 +181,7 @@ paths:
       responses:
         "204":
           description: Deleted.
-  /api/agents:
+  /api/workers:
     get:
       responses:
         "200":
@@ -317,9 +317,6 @@ components:
           type: array
           items: { type: string, enum: [pipeline, notebook, serving] }
         hostname: { type: string }
-        gpus:
-          type: array
-          items: { type: string }
         cluster_name: { type: string }
         namespaces:
           type: array

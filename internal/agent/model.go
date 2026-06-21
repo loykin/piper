@@ -23,7 +23,6 @@ type Info struct {
 	Infrastructure string            `json:"infrastructure"`
 	Addr           string            `json:"addr,omitempty"`
 	Hostname       string            `json:"hostname,omitempty"`
-	GPUs           []string          `json:"gpus,omitempty"`
 	Capabilities   []string          `json:"capabilities,omitempty"`
 	ClusterName    string            `json:"cluster_name,omitempty"`
 	Namespaces     []string          `json:"namespaces,omitempty"`

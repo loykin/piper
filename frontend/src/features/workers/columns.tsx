@@ -101,16 +101,6 @@ export const nodeColumns: DataGridColumnDef<NodeInfo>[] = [
     cell: ({ row }) => <span className="font-medium">{row.original.hostname}</span>,
   },
   {
-    id: 'gpus',
-    header: 'GPUs',
-    meta: { minWidth: 160, flex: 1 },
-    cell: ({ row }) => (
-      <span className="text-xs text-muted-foreground">
-        {row.original.gpus?.length ? row.original.gpus.join(', ') : '—'}
-      </span>
-    ),
-  },
-  {
     id: 'last_seen',
     header: 'Last Seen',
     size: 110,

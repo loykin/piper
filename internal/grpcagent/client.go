@@ -33,7 +33,6 @@ type ClientConfig struct {
 	// Registration metadata sent to master on connect.
 	Infrastructure string
 	Hostname       string
-	GPUs           []string
 	Capabilities   []string
 	ClusterName    string
 	Labels         map[string]string
@@ -175,13 +174,12 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	if err := send(&agentpb.WorkerMessage{
 		Payload: &agentpb.WorkerMessage_Register{
 			Register: &agentpb.Registration{
-				Id:           c.cfg.AgentID,
-				Kind:         c.cfg.Infrastructure,
-				Hostname:     c.cfg.Hostname,
-				Gpus:         c.cfg.GPUs,
-				Capabilities: c.cfg.Capabilities,
-				ClusterName:  c.cfg.ClusterName,
-				Labels:       labels,
+				Id:             c.cfg.AgentID,
+				Infrastructure: c.cfg.Infrastructure,
+				Hostname:       c.cfg.Hostname,
+				Capabilities:   c.cfg.Capabilities,
+				ClusterName:    c.cfg.ClusterName,
+				Labels:         labels,
 			},
 		},
 	}); err != nil {

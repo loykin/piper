@@ -3,21 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { getNotebookVolumeColumns } from '@/features/notebooks/columns'
-import { useNotebookVolumes, useNotebookWorkers, usePurgeVolume } from '@/features/notebooks/hooks'
+import { useNotebookVolumes, usePurgeVolume } from '@/features/notebooks/hooks'
 import type { NotebookVolume } from '@/features/notebooks/api'
 
 export default function NotebookVolumesPage() {
   const navigate = useNavigate()
   const { data: volumes = [], isLoading } = useNotebookVolumes()
-  const { data: workers = [] } = useNotebookWorkers()
   const { mutate: purgeVolume, isPending: purging, variables: purgingId } = usePurgeVolume()
-
-  // Resolves legacy UUID worker_id → hostname; new volumes store hostname directly.
-  const workerIdMap = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const w of workers) m[w.id] = w.hostname || w.id
-    return m
-  }, [workers])
 
   const busy = purging ? (purgingId ?? null) : null
 
@@ -29,8 +21,8 @@ export default function NotebookVolumesPage() {
   const handleAttach = (volId: string) => navigate(`/notebooks/create?volume=${volId}`)
 
   const columns = useMemo(
-    () => getNotebookVolumeColumns(busy, workerIdMap, handleAttach, handlePurge),
-    [busy, workerIdMap],
+    () => getNotebookVolumeColumns(busy, handleAttach, handlePurge),
+    [busy],
   )
 
   return (

@@ -14,7 +14,7 @@
 //	  -d '{"yaml": "apiVersion: piper/v1\nkind: Pipeline\n..."}'
 //
 //	# List active agents
-//	curl http://localhost:8080/api/agents
+//	curl http://localhost:8080/api/workers
 package main
 
 import (

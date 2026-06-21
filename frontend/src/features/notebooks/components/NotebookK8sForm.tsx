@@ -17,8 +17,7 @@ import {
 
 function workerLabel(w: NotebookWorkerInfo): string {
 	const base = w.infrastructure === 'k8s' ? (w.cluster_name || w.hostname || w.id) : (w.hostname || w.id)
-	const gpu = w.gpus?.length ? `  (GPU: ${w.gpus.join(', ')})` : ''
-	return `${base}${gpu}`
+	return base
 }
 
 function RuntimeBadge({ runtime }: { runtime: 'k8s' | 'docker' | 'baremetal' }) {

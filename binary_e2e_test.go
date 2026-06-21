@@ -190,14 +190,14 @@ func writeBinaryE2EFile(t *testing.T, path, content string) {
 	}
 }
 
-// waitBinaryE2EAgent polls /api/agents until an agent with the given capability
+// waitBinaryE2EAgent polls /api/workers until a worker with the given capability
 // appears, or fails the test after timeout.
 func waitBinaryE2EAgent(t *testing.T, serverURL, capability string, timeout time.Duration) {
 	t.Helper()
 	client := &http.Client{Timeout: time.Second}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(serverURL + "/api/agents") //nolint:noctx
+		resp, err := client.Get(serverURL + "/api/workers") //nolint:noctx
 		if err == nil {
 			var agents []struct {
 				Capabilities []string `json:"capabilities"`

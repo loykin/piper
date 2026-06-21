@@ -30,14 +30,18 @@ message WorkerMessage {
 
 // Registration is the first message sent by a worker after connecting.
 message Registration {
+  reserved 2;
+  reserved "kind";
+  reserved 4;
+  reserved "gpus";
+  reserved 8;
+  reserved "mode";
   string              id           = 1;
-  string              kind         = 2; // "baremetal" | "docker" | "k8s"
   string              hostname     = 3;
-  repeated string     gpus         = 4;
   repeated string     capabilities = 5; // "notebook" | "serving" | "pipeline"
   string              cluster_name = 6;
   map<string, string> labels       = 7;
-  string              mode         = 8; // "process" | "docker" for notebook bare-metal workers
+  string              infrastructure = 9; // "baremetal" | "docker" | "k8s"
 }
 
 // RPCResponse carries the result (or error) for a MasterMessage command.

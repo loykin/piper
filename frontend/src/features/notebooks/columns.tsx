@@ -84,7 +84,6 @@ export function getNotebookColumns(
 
 export function getNotebookVolumeColumns(
   busy: string | null,
-  workerIdMap: Record<string, string>,
   onAttach: (volId: string) => void,
   onPurge: (vol: NotebookVolume) => void,
 ): DataGridColumnDef<NotebookVolume>[] {
@@ -116,10 +115,8 @@ export function getNotebookVolumeColumns(
       header: 'Node',
       meta: { minWidth: 140 },
       cell: ({ row }) => {
-        const raw = row.original.worker_id
-        if (!raw) return <span className="text-xs text-muted-foreground">—</span>
-        const display = workerIdMap[raw] ?? raw
-        return <span className="text-xs text-muted-foreground" title={raw}>{display}</span>
+        const workerID = row.original.worker_id
+        return <span className="text-xs text-muted-foreground">{workerID || '—'}</span>
       },
     },
     {

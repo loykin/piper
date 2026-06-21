@@ -6,7 +6,21 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/piper/piper/internal/agentpb"
 )
+
+func TestValidateRegistrationRequiresCurrentInfrastructure(t *testing.T) {
+	if got := status.Code(validateRegistration(&agentpb.Registration{Id: "worker-1"})); got != codes.InvalidArgument {
+		t.Fatalf("missing infrastructure code = %v, want InvalidArgument", got)
+	}
+	if err := validateRegistration(&agentpb.Registration{Id: "worker-1", Infrastructure: "baremetal"}); err != nil {
+		t.Fatalf("valid registration: %v", err)
+	}
+}
 
 func TestWorkerConnDeliverProxyDataDoesNotBlockBeforePipeRead(t *testing.T) {
 	_, pw := io.Pipe()

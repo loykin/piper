@@ -94,21 +94,21 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			slog.Info("embedded local worker enabled", "master_url", localMaster, "concurrency", localConcurrency)
 
 			sw := servingworker.New(servingworker.Config{
-				MasterURL:   localMaster,
-				WorkerToken: workerToken,
-				Hostname:    hostname,
-				ID:          servingID,
-				Mode:        "process",
+				MasterURL:      localMaster,
+				WorkerToken:    workerToken,
+				Hostname:       hostname,
+				ID:             servingID,
+				Infrastructure: servingworker.InfrastructureBaremetal,
 			})
 
 			nw := notebookworker.New(notebookworker.Config{
-				MasterURL:     localMaster,
-				WorkerToken:   workerToken,
-				Hostname:      hostname,
-				ID:            notebookID,
-				NotebooksRoot: p.Config().NotebookWorker.NotebooksRoot,
-				PortRange:     p.Config().NotebookWorker.PortRange,
-				Mode:          "process",
+				MasterURL:      localMaster,
+				WorkerToken:    workerToken,
+				Hostname:       hostname,
+				ID:             notebookID,
+				NotebooksRoot:  p.Config().NotebookWorker.NotebooksRoot,
+				PortRange:      p.Config().NotebookWorker.PortRange,
+				Infrastructure: notebookworker.InfrastructureBaremetal,
 			})
 
 			eg, gctx := errgroup.WithContext(ctx)

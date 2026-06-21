@@ -195,7 +195,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                       <SelectItem value="">auto assign</SelectItem>
                       {servingWorkers.map(w => (
                         <SelectItem key={w.id} value={w.hostname}>
-                          {w.hostname}{w.gpus?.length ? ` (GPU: ${w.gpus.join(', ')})` : ''}
+                          {w.hostname}
                         </SelectItem>
                       ))}
                     </SelectContent>

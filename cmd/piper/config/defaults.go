@@ -4,7 +4,7 @@ import "time"
 
 func Defaults() RootConfig {
 	return RootConfig{
-		Version: 3,
+		Version: 4,
 		Log:     LogConfig{Format: "text", Level: "info"},
 		Server: ServerConfig{
 			HTTPAddr: ":8080",

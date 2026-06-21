@@ -6,7 +6,7 @@ services.
 It is for teams that need more than cron, shell scripts, or CI jobs, but do not
 want to operate a full ML platform such as Kubeflow. Piper runs as a standalone
 server or embedded Go library, and can dispatch work to local processes,
-bare-metal GPU workers, or cluster-local K8s workers.
+bare-metal workers, or Kubernetes workers.
 
 The K8s worker mode is designed for on-prem, private-network, and air-gapped
 environments: the worker runs inside the cluster and opens one outbound gRPC
@@ -21,7 +21,7 @@ notebooks, and model services without operating a full ML platform.
 It provides a reliable way to:
 
 - run DAG-based training and batch jobs
-- route work to a local process, GPU worker, or K8s cluster
+- route work to a local process, bare-metal worker, or K8s cluster
 - pass artifacts between steps through local storage or S3-compatible storage
 - capture logs, metrics, params, and run history
 - launch notebooks close to the compute
@@ -44,7 +44,7 @@ as the entire ML platform.
 ## Features
 
 - **DAG-based execution** — declare step dependencies with `depends_on`, automatic parallelization
-- **Three deployment modes** — self-contained local / bare-metal workers / cluster-local K8s workers
+- **Three deployment modes** — self-contained local / bare-metal workers / Kubernetes workers
 - **Single binary** — UI included, works out of the box with `go install`
 - **Embeddable library** — mount into your existing Go app and HTTP router
 - **S3 artifact passing** — share files between steps via any S3-compatible store (AWS S3, SeaweedFS, etc.)
@@ -200,13 +200,13 @@ Server and workers run separately. Workers connect to the master via gRPC and re
 piper server
 
 # Terminal 2: worker opens one outbound tunnel to master
-piper worker --master-url http://localhost:8080 --label gpu --concurrency 4
+piper worker --master-url http://localhost:8080 --infrastructure baremetal --label trainer --concurrency 4
 ```
 
 - `--master-url`: the single master endpoint used by the worker tunnel
 - `--label`: label for routing (e.g. `gpu`, `cpu`, `large-mem`)
 
-Workers register with the master on connect. Active workers can be listed via `GET /api/agents`.
+Workers register with the master on connect. Active workers can be listed via `GET /api/workers`.
 
 To pin an entire pipeline run to one bare-metal worker, set `spec.defaults.driver.placement.worker`.
 To route all steps to workers with a specific label, set `spec.defaults.driver.placement.label`.
@@ -241,8 +241,8 @@ piper k8s-worker \
   --namespaces piper-jobs,piper-notebooks,piper-serving \
   --in-cluster \
   --capabilities pipeline,notebook,serving \
-  --notebook-infrastructure-image piper/piper:latest \
-  --runner-image piper/piper:latest
+  --notebook-volume-browser-image piper/piper:latest \
+  --pipeline-runner-image piper/piper:latest
 ```
 
 Or as a Kubernetes Deployment (recommended):
@@ -284,9 +284,10 @@ spec:
         - --cluster=production
         - --namespaces=piper-jobs,piper-notebooks,piper-serving
         - --in-cluster
+        - --capabilities=pipeline,notebook,serving
         - --state-dir=/var/lib/piper
-        - --notebook-infrastructure-image=piper/piper:latest
-        - --runner-image=piper/piper:latest
+        - --notebook-volume-browser-image=piper/piper:latest
+        - --pipeline-runner-image=piper/piper:latest
         env:
         - name: PIPER_STORAGE_URL
           valueFrom:
@@ -314,7 +315,7 @@ Pipeline placement is run-level: one pipeline run executes on one selected worke
 Workers register automatically over gRPC when they connect to the master's agent server.
 
 ```
-GET  /api/agents                     list connected agents (workers)
+GET  /api/workers                    list connected workers
 ```
 
 Pipeline workers connect to the master through the outbound gRPC tunnel on the unified server endpoint. HTTP worker polling endpoints are not supported.
@@ -434,7 +435,7 @@ Deploys the serving process on a **serving worker** — a separate process runni
 piper server --addr :8080
 
 # 2. Start a serving worker on the inference node
-piper serving-worker --master-url http://<server>:8080
+piper serving-worker --master-url http://<server>:8080 --infrastructure baremetal
 ```
 
 **Multi-node**: run `piper serving-worker` on each inference node. To pin a deployment to a specific node, set `driver.placement.worker` in the ModelService YAML:
@@ -511,7 +512,7 @@ piper server --addr :8080
 # Start notebook worker on each node
 piper notebook-worker \
   --master-url http://<server>:8080 \
-  --gpus 0,1    # GPU device indices available on this node (optional)
+  --infrastructure baremetal
 ```
 
 **Single-node / dev** — embed everything in one process:
@@ -601,7 +602,7 @@ svc, err := p.DeployService(ctx, "default", []byte(modelServiceYAML))
 ## Configuration (`.piper.yaml`)
 
 ```yaml
-version: 3
+version: 4
 
 server:
   http_addr: ":8080"
@@ -626,31 +627,47 @@ worker:
     cluster: local
     namespaces: [piper-jobs, piper-notebooks, piper-serving]
     in_cluster: true
-    capabilities:
-      pipeline:
-        runner_image: piper/piper:latest
-      notebook:
-        infrastructure_image: piper/piper:latest
-      serving: {}
+    pipeline_runner:
+      image: piper/piper:latest
+    notebook_volume_browser:
+      image: piper/piper:latest
+  capabilities:
+    pipeline: {}
+    notebook: {}
+    serving: {}
 ```
 
 `worker` describes one worker process. It must contain exactly one of
 `baremetal`, `docker`, or `k8s`. Bare-metal and Docker workers must enable
 exactly one capability because each corresponding command starts one role.
-The K8s worker may enable multiple capabilities in one cluster-local process.
+The K8s worker may enable multiple capabilities while managing its configured cluster.
 
 ```yaml
-version: 3
+# Bare-metal pipeline worker
+version: 4
+worker:
+  master_url: http://localhost:8080
+  state_dir: ./piper-worker-state
+  baremetal: {}
+  capabilities:
+    pipeline:
+      label: trainer
+      concurrency: 4
+```
+
+```yaml
+# Docker notebook worker
+version: 4
 worker:
   master_url: http://localhost:8080
   state_dir: ./piper-worker-state
   docker:
     network: bridge
-    capabilities:
-      notebook:
-        notebooks_root: ./notebooks
-        port_range: 8888-9900
-        volumes: []
+    volumes: []
+  capabilities:
+    notebook:
+      notebooks_root: ./notebooks
+      port_range: 8888-9900
 ```
 
 ### Configuration ownership
@@ -677,10 +694,10 @@ Command scope:
 |---|---|
 | `piper server` | `server`, `storage`, `source`, `log` |
 | `piper run` | local data/storage/source settings plus the submitted Pipeline manifest |
-| `piper worker` | `worker.baremetal.capabilities.pipeline` or `worker.docker.capabilities.pipeline` |
-| `piper notebook-worker` | `worker.baremetal.capabilities.notebook` or `worker.docker.capabilities.notebook` |
-| `piper serving-worker` | `worker.baremetal.capabilities.serving` or `worker.docker.capabilities.serving` |
-| `piper k8s-worker` | `worker.k8s`, `storage` |
+| `piper worker` | `worker.baremetal` or `worker.docker`, plus `worker.capabilities.pipeline` |
+| `piper notebook-worker` | `worker.baremetal` or `worker.docker`, plus `worker.capabilities.notebook` |
+| `piper serving-worker` | `worker.baremetal` or `worker.docker`, plus `worker.capabilities.serving` |
+| `piper k8s-worker` | `worker.k8s`, `worker.capabilities`, `storage` |
 
 On first startup, each worker role writes its generated identity metadata under
 `worker.state_dir` and reuses that ID after restart.
@@ -779,7 +796,7 @@ pkg/template/                   PipelineTemplate (submit → S3 snapshot → dep
 pkg/storage/                    artifact store (S3, local, HTTP, memory)
 pkg/notebook/dispatch/          master-side notebook dispatch
 pkg/serving/dispatch/           master-side serving dispatch
-internal/k8sworker/             cluster-local unified K8s worker
+internal/k8sworker/             unified Kubernetes worker
 internal/k8sworker/pipeline/    K8s pipeline dispatch
 pkg/pipeline/worker/driver/k8slauncher/ Kubernetes Job launcher
 pkg/pipeline/executor/          step executors

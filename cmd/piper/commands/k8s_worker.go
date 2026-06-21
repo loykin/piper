@@ -19,7 +19,7 @@ import (
 func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "k8s-worker",
-		Short: "Start a cluster-local K8s worker",
+		Short: "Start a Kubernetes worker",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := loader.Load()
 			if err != nil {
@@ -55,12 +55,12 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 				},
 				StorageToken: storageToken,
 				K8s: k8sworker.K8sConfig{
-					Client:                      k8sClient,
-					Namespaces:                  c.Namespaces,
-					EnabledDomains:              k8sCapabilityNames(c.Capabilities),
-					NotebookInfrastructureImage: k8sNotebookInfrastructureImage(c.Capabilities),
-					PipelineWorkerImage:         k8sPipelineRunnerImage(c.Capabilities),
-					AgentImagePullPolicy:        k8sPipelinePullPolicy(c.Capabilities),
+					Client:                        k8sClient,
+					Namespaces:                    c.Namespaces,
+					EnabledDomains:                workerCapabilityNames(root.Worker.Capabilities),
+					NotebookVolumeBrowserImage:    k8sNotebookVolumeBrowserImage(*c, root.Worker.Capabilities),
+					PipelineRunnerImage:           k8sPipelineRunnerImage(*c, root.Worker.Capabilities),
+					PipelineRunnerImagePullPolicy: k8sPipelinePullPolicy(*c, root.Worker.Capabilities),
 				},
 				StorageURL:      root.Storage.URL,
 				ResultOutboxDir: c.ResultOutboxDir,
@@ -75,10 +75,10 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().StringSlice("namespaces", nil, "namespaces this worker may manage")
 	cmd.Flags().StringSlice("capabilities", nil, "capabilities to enable: pipeline, notebook, serving")
 	cmd.Flags().String("kubeconfig", "", "kubeconfig path for out-of-cluster execution")
-	cmd.Flags().Bool("in-cluster", false, "use in-cluster Kubernetes credentials (effective default: true)")
-	cmd.Flags().String("notebook-infrastructure-image", "", "image containing piper for notebook volume-browser pods")
-	cmd.Flags().String("runner-image", "", "image containing the piper CLI for pipeline Job init containers")
-	cmd.Flags().String("runner-image-pull-policy", "", "image pull policy for pipeline Job init containers")
+	cmd.Flags().Bool("in-cluster", false, "use in-cluster Kubernetes credentials; otherwise --kubeconfig is required")
+	cmd.Flags().String("notebook-volume-browser-image", "", "image containing piper for notebook volume-browser pods")
+	cmd.Flags().String("pipeline-runner-image", "", "image containing the piper CLI for pipeline Job init containers")
+	cmd.Flags().String("pipeline-runner-image-pull-policy", "", "image pull policy for pipeline Job init containers")
 	cmd.Flags().String("result-outbox-dir", "", "durable directory for unacknowledged pipeline results (default: system temp directory)")
 	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
 	loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
@@ -89,9 +89,9 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	loader.MustBindFlag("worker.k8s.namespaces", cmd.Flags().Lookup("namespaces"))
 	loader.MustBindFlag("worker.k8s.kubeconfig", cmd.Flags().Lookup("kubeconfig"))
 	loader.MustBindFlag("worker.k8s.in_cluster", cmd.Flags().Lookup("in-cluster"))
-	loader.MustBindFlag("worker.k8s.capabilities.notebook.infrastructure_image", cmd.Flags().Lookup("notebook-infrastructure-image"))
-	loader.MustBindFlag("worker.k8s.capabilities.pipeline.runner_image", cmd.Flags().Lookup("runner-image"))
-	loader.MustBindFlag("worker.k8s.capabilities.pipeline.runner_image_pull_policy", cmd.Flags().Lookup("runner-image-pull-policy"))
+	loader.MustBindFlag("worker.k8s.notebook_volume_browser.image", cmd.Flags().Lookup("notebook-volume-browser-image"))
+	loader.MustBindFlag("worker.k8s.pipeline_runner.image", cmd.Flags().Lookup("pipeline-runner-image"))
+	loader.MustBindFlag("worker.k8s.pipeline_runner.image_pull_policy", cmd.Flags().Lookup("pipeline-runner-image-pull-policy"))
 	loader.MustBindFlag("worker.k8s.result_outbox_dir", cmd.Flags().Lookup("result-outbox-dir"))
 	return cmd
 }
@@ -102,24 +102,24 @@ func applyK8sCapabilitiesFlag(cmd *cobra.Command, root *cliconfig.RootConfig) er
 	}
 	if cmd.Flags().Changed("capabilities") {
 		domains, _ := cmd.Flags().GetStringSlice("capabilities")
-		previous := root.Worker.K8s.Capabilities
-		root.Worker.K8s.Capabilities = cliconfig.K8sCapabilitiesConfig{}
+		previous := root.Worker.Capabilities
+		root.Worker.Capabilities = cliconfig.WorkerCapabilitiesConfig{}
 		for _, domain := range domains {
 			switch domain {
 			case "pipeline":
-				root.Worker.K8s.Capabilities.Pipeline = previous.Pipeline
-				if root.Worker.K8s.Capabilities.Pipeline == nil {
-					root.Worker.K8s.Capabilities.Pipeline = &cliconfig.K8sPipelineConfig{RunnerImage: "piper/piper:latest", RunnerImagePullPolicy: "IfNotPresent"}
+				root.Worker.Capabilities.Pipeline = previous.Pipeline
+				if root.Worker.Capabilities.Pipeline == nil {
+					root.Worker.Capabilities.Pipeline = &cliconfig.PipelineCapabilityConfig{}
 				}
 			case "notebook":
-				root.Worker.K8s.Capabilities.Notebook = previous.Notebook
-				if root.Worker.K8s.Capabilities.Notebook == nil {
-					root.Worker.K8s.Capabilities.Notebook = &cliconfig.K8sNotebookConfig{}
+				root.Worker.Capabilities.Notebook = previous.Notebook
+				if root.Worker.Capabilities.Notebook == nil {
+					root.Worker.Capabilities.Notebook = &cliconfig.NotebookCapabilityConfig{}
 				}
 			case "serving":
-				root.Worker.K8s.Capabilities.Serving = previous.Serving
-				if root.Worker.K8s.Capabilities.Serving == nil {
-					root.Worker.K8s.Capabilities.Serving = &cliconfig.K8sServingConfig{}
+				root.Worker.Capabilities.Serving = previous.Serving
+				if root.Worker.Capabilities.Serving == nil {
+					root.Worker.Capabilities.Serving = &cliconfig.ServingCapabilityConfig{}
 				}
 			default:
 				return fmt.Errorf("--capabilities contains invalid capability %q", domain)
@@ -129,7 +129,7 @@ func applyK8sCapabilitiesFlag(cmd *cobra.Command, root *cliconfig.RootConfig) er
 	return cliconfig.ValidateK8s(*root)
 }
 
-func k8sCapabilityNames(c cliconfig.K8sCapabilitiesConfig) []string {
+func workerCapabilityNames(c cliconfig.WorkerCapabilitiesConfig) []string {
 	var out []string
 	if c.Pipeline != nil {
 		out = append(out, "pipeline")
@@ -143,31 +143,34 @@ func k8sCapabilityNames(c cliconfig.K8sCapabilitiesConfig) []string {
 	return out
 }
 
-func k8sNotebookInfrastructureImage(c cliconfig.K8sCapabilitiesConfig) string {
+func k8sNotebookVolumeBrowserImage(k cliconfig.K8sWorkerConfig, c cliconfig.WorkerCapabilitiesConfig) string {
 	if c.Notebook == nil {
 		return ""
 	}
-	return c.Notebook.InfrastructureImage
-}
-
-func k8sPipelineRunnerImage(c cliconfig.K8sCapabilitiesConfig) string {
-	if c.Pipeline == nil {
-		return ""
-	}
-	if c.Pipeline.RunnerImage == "" {
+	if k.NotebookVolumeBrowser.Image == "" {
 		return "piper/piper:latest"
 	}
-	return c.Pipeline.RunnerImage
+	return k.NotebookVolumeBrowser.Image
 }
 
-func k8sPipelinePullPolicy(c cliconfig.K8sCapabilitiesConfig) string {
+func k8sPipelineRunnerImage(k cliconfig.K8sWorkerConfig, c cliconfig.WorkerCapabilitiesConfig) string {
 	if c.Pipeline == nil {
 		return ""
 	}
-	if c.Pipeline.RunnerImagePullPolicy == "" {
+	if k.PipelineRunner.Image == "" {
+		return "piper/piper:latest"
+	}
+	return k.PipelineRunner.Image
+}
+
+func k8sPipelinePullPolicy(k cliconfig.K8sWorkerConfig, c cliconfig.WorkerCapabilitiesConfig) string {
+	if c.Pipeline == nil {
+		return ""
+	}
+	if k.PipelineRunner.ImagePullPolicy == "" {
 		return "IfNotPresent"
 	}
-	return c.Pipeline.RunnerImagePullPolicy
+	return k.PipelineRunner.ImagePullPolicy
 }
 
 func buildK8sWorkerClient(kubeconfig string, inCluster bool) (kubernetes.Interface, error) {

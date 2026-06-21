@@ -1,13 +1,14 @@
 # piper.yaml snippet — K8s notebook worker configuration.
 # Workload image, storage and pod settings belong in the Notebook manifest.
 
-version: 3
+version: 4
 worker:
   master_url: http://piper-server:8080
   k8s:
     cluster: production
     namespaces: [ml-notebooks]
     in_cluster: true
-    capabilities:
-      notebook:
-        infrastructure_image: piper/piper:latest
+    notebook_volume_browser:
+      image: piper/piper:latest
+  capabilities:
+    notebook: {}

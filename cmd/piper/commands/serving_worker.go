@@ -29,7 +29,7 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, common := selection.Capability, root.Worker
+			common := root.Worker
 			hostname := common.Hostname
 			if hostname == "" {
 				if h, err := os.Hostname(); err == nil {
@@ -45,13 +45,12 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 			defer cancel()
 
 			w := servingworker.New(servingworker.Config{
-				MasterURL:   common.MasterURL,
-				WorkerToken: common.WorkerToken,
-				GPUs:        c.GPUs,
-				Hostname:    hostname,
-				ID:          id,
-				Labels:      common.Labels,
-				Mode:        map[string]string{cliconfig.InfrastructureBaremetal: "process", cliconfig.InfrastructureDocker: "docker"}[selection.Infrastructure],
+				MasterURL:      common.MasterURL,
+				WorkerToken:    common.WorkerToken,
+				Hostname:       hostname,
+				ID:             id,
+				Labels:         common.Labels,
+				Infrastructure: selection.Infrastructure,
 				Docker: servingworker.DockerConfig{
 					Network: selection.DockerNetwork,
 				},
@@ -63,7 +62,6 @@ func newServingWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().String("master-url", "", "piper master HTTP(S) URL (required)")
 	cmd.Flags().String("infrastructure", "", "worker infrastructure: baremetal or docker")
 	cmd.Flags().String("docker-network", "", "Docker network for serving containers")
-	cmd.Flags().StringSlice("gpus", nil, "GPU device indices")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("state-dir", "", "directory for persistent worker identity and state")
 	cmd.Flags().String("worker-token", "", "worker token for gRPC authorization")
@@ -88,8 +86,8 @@ func applyServingFlags(cmd *cobra.Command, root *cliconfig.RootConfig) error {
 			if root.Worker.Baremetal == nil {
 				root.Worker.Baremetal = &cliconfig.BaremetalWorkerConfig{}
 			}
-			if root.Worker.Baremetal.Capabilities.Serving == nil {
-				root.Worker.Baremetal.Capabilities.Serving = &cliconfig.ServingCapabilityConfig{}
+			if root.Worker.Capabilities.Serving == nil {
+				root.Worker.Capabilities.Serving = &cliconfig.ServingCapabilityConfig{}
 			}
 		case cliconfig.InfrastructureDocker:
 			if root.Worker.Baremetal != nil || root.Worker.K8s != nil {
@@ -98,25 +96,17 @@ func applyServingFlags(cmd *cobra.Command, root *cliconfig.RootConfig) error {
 			if root.Worker.Docker == nil {
 				root.Worker.Docker = &cliconfig.DockerWorkerConfig{}
 			}
-			if root.Worker.Docker.Capabilities.Serving == nil {
-				root.Worker.Docker.Capabilities.Serving = &cliconfig.ServingCapabilityConfig{}
+			if root.Worker.Capabilities.Serving == nil {
+				root.Worker.Capabilities.Serving = &cliconfig.ServingCapabilityConfig{}
 			}
 		default:
 			return fmt.Errorf("--infrastructure must be baremetal or docker")
 		}
 	}
-	var capability *cliconfig.ServingCapabilityConfig
-	if root.Worker.Baremetal != nil {
-		capability = root.Worker.Baremetal.Capabilities.Serving
-	}
 	if root.Worker.Docker != nil {
-		capability = root.Worker.Docker.Capabilities.Serving
 		if cmd.Flags().Changed("docker-network") {
 			root.Worker.Docker.Network, _ = cmd.Flags().GetString("docker-network")
 		}
-	}
-	if capability != nil && cmd.Flags().Changed("gpus") {
-		capability.GPUs, _ = cmd.Flags().GetStringSlice("gpus")
 	}
 	return cliconfig.ValidateServing(*root)
 }

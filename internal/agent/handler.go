@@ -21,14 +21,14 @@ func NewHandler(registry *Registry, policies ...WorkerPodPolicyRepository) *Hand
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.GET("/agents", h.listAgents)
+	rg.GET("/workers", h.listWorkers)
 	rg.GET("/notebook-workers/pod-policies", h.listPodPolicies)
 	rg.GET("/notebook-workers/:id/pod-policy", h.getPodPolicy)
 	rg.PUT("/notebook-workers/:id/pod-policy", h.setPodPolicy)
 	rg.DELETE("/notebook-workers/:id/pod-policy", h.deletePodPolicy)
 }
 
-func (h *Handler) listAgents(c *gin.Context) {
+func (h *Handler) listWorkers(c *gin.Context) {
 	c.JSON(http.StatusOK, h.registry.List())
 }
 

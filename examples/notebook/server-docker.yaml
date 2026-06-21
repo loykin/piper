@@ -6,7 +6,7 @@ metadata:
 
 spec:
   # placement pins this notebook to a specific registered worker.
-  # Omit to let piper pick any available worker (or one that has the requested GPUs).
+  # Omit to let piper pick any available notebook worker.
   placement:
     worker: gpu-server-1
 
@@ -17,7 +17,7 @@ spec:
     mem_limit: "8g"
     shm_size: "1g"
 
-    # Named volumes declared in the worker's piper.yaml notebook_worker.docker.volumes.
+    # Named volumes declared in the worker's piper.yaml worker.docker.volumes.
     volumes:
       - datasets
 

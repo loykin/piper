@@ -18,15 +18,16 @@ import (
 )
 
 type Loader struct {
-	v       *viper.Viper
-	mu      sync.Mutex
-	loadMu  sync.Mutex
-	path    string
-	loaded  bool
-	readErr error
-	cached  *RootConfig
-	loadErr error
-	flags   map[string]*pflag.Flag
+	v        *viper.Viper
+	mu       sync.Mutex
+	loadMu   sync.Mutex
+	path     string
+	loaded   bool
+	readErr  error
+	cached   *RootConfig
+	loadErr  error
+	flags    map[string]*pflag.Flag
+	explicit map[string]struct{}
 }
 
 func NewLoader() *Loader {
@@ -34,7 +35,7 @@ func NewLoader() *Loader {
 	v.SetEnvPrefix("PIPER")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
-	l := &Loader{v: v, flags: make(map[string]*pflag.Flag)}
+	l := &Loader{v: v, flags: make(map[string]*pflag.Flag), explicit: make(map[string]struct{})}
 	registerDefaults(v, reflect.ValueOf(Defaults()), "")
 	for _, key := range schemaKeys(reflect.TypeOf(RootConfig{}), "") {
 		_ = v.BindEnv(key)
@@ -73,6 +74,10 @@ func (l *Loader) Read() error {
 			l.readErr = err
 			return err
 		}
+		if err := l.recordExplicitFileKeys(l.path); err != nil {
+			l.readErr = err
+			return err
+		}
 		l.v.SetConfigFile(l.path)
 		if err := l.v.ReadInConfig(); err != nil {
 			l.readErr = fmt.Errorf("config: %w", err)
@@ -96,6 +101,10 @@ func (l *Loader) Read() error {
 		return nil
 	}
 	if err := strictFile(l.v.ConfigFileUsed()); err != nil {
+		l.readErr = err
+		return err
+	}
+	if err := l.recordExplicitFileKeys(l.v.ConfigFileUsed()); err != nil {
 		l.readErr = err
 		return err
 	}
@@ -123,50 +132,50 @@ func (l *Loader) Load() (RootConfig, error) {
 		l.loadErr = fmt.Errorf("config: %w", err)
 		return RootConfig{}, l.loadErr
 	}
-	if !l.explicitPrefix("worker.baremetal") {
+	if l.explicitPrefix("worker.baremetal") {
+		if cfg.Worker.Baremetal == nil {
+			cfg.Worker.Baremetal = &BaremetalWorkerConfig{}
+		}
+	} else {
 		cfg.Worker.Baremetal = nil
 	}
-	if !l.explicitPrefix("worker.docker") {
+	if l.explicitPrefix("worker.docker") {
+		if cfg.Worker.Docker == nil {
+			cfg.Worker.Docker = &DockerWorkerConfig{}
+		}
+	} else {
 		cfg.Worker.Docker = nil
 	}
-	if !l.explicitPrefix("worker.k8s") {
+	if l.explicitPrefix("worker.k8s") {
+		if cfg.Worker.K8s == nil {
+			cfg.Worker.K8s = &K8sWorkerConfig{}
+		}
+	} else {
 		cfg.Worker.K8s = nil
 	}
-	if cfg.Worker.Baremetal != nil {
-		if !l.explicitPrefix("worker.baremetal.capabilities.pipeline") {
-			cfg.Worker.Baremetal.Capabilities.Pipeline = nil
+	if l.explicitPrefix("worker.capabilities.pipeline") {
+		if cfg.Worker.Capabilities.Pipeline == nil {
+			cfg.Worker.Capabilities.Pipeline = &PipelineCapabilityConfig{}
 		}
-		if !l.explicitPrefix("worker.baremetal.capabilities.notebook") {
-			cfg.Worker.Baremetal.Capabilities.Notebook = nil
-		}
-		if !l.explicitPrefix("worker.baremetal.capabilities.serving") {
-			cfg.Worker.Baremetal.Capabilities.Serving = nil
-		}
+	} else {
+		cfg.Worker.Capabilities.Pipeline = nil
 	}
-	if cfg.Worker.Docker != nil {
-		if !l.explicitPrefix("worker.docker.capabilities.pipeline") {
-			cfg.Worker.Docker.Capabilities.Pipeline = nil
+	if l.explicitPrefix("worker.capabilities.notebook") {
+		if cfg.Worker.Capabilities.Notebook == nil {
+			cfg.Worker.Capabilities.Notebook = &NotebookCapabilityConfig{}
 		}
-		if !l.explicitPrefix("worker.docker.capabilities.notebook") {
-			cfg.Worker.Docker.Capabilities.Notebook = nil
-		}
-		if !l.explicitPrefix("worker.docker.capabilities.serving") {
-			cfg.Worker.Docker.Capabilities.Serving = nil
-		}
+	} else {
+		cfg.Worker.Capabilities.Notebook = nil
 	}
-	if cfg.Worker.K8s != nil {
-		if !l.explicitPrefix("worker.k8s.capabilities.pipeline") {
-			cfg.Worker.K8s.Capabilities.Pipeline = nil
+	if l.explicitPrefix("worker.capabilities.serving") {
+		if cfg.Worker.Capabilities.Serving == nil {
+			cfg.Worker.Capabilities.Serving = &ServingCapabilityConfig{}
 		}
-		if !l.explicitPrefix("worker.k8s.capabilities.notebook") {
-			cfg.Worker.K8s.Capabilities.Notebook = nil
-		}
-		if !l.explicitPrefix("worker.k8s.capabilities.serving") {
-			cfg.Worker.K8s.Capabilities.Serving = nil
-		}
+	} else {
+		cfg.Worker.Capabilities.Serving = nil
 	}
-	if cfg.Version != 3 {
-		l.loadErr = fmt.Errorf("config: version must be 3")
+	if cfg.Version != 4 {
+		l.loadErr = fmt.Errorf("config: version must be 4")
 		return RootConfig{}, l.loadErr
 	}
 	l.cached = &cfg
@@ -174,8 +183,10 @@ func (l *Loader) Load() (RootConfig, error) {
 }
 
 func (l *Loader) explicitPrefix(prefix string) bool {
-	if l.v.InConfig(prefix) {
-		return true
+	for key := range l.explicit {
+		if key == prefix || strings.HasPrefix(key, prefix+".") {
+			return true
+		}
 	}
 	for _, key := range schemaKeys(reflect.TypeOf(RootConfig{}), "") {
 		if key != prefix && !strings.HasPrefix(key, prefix+".") {
@@ -193,6 +204,40 @@ func (l *Loader) explicitPrefix(prefix string) bool {
 		}
 	}
 	return false
+}
+
+func (l *Loader) recordExplicitFileKeys(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("config: read %s: %w", path, err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("config file %s: %w", path, err)
+	}
+	if len(doc.Content) > 0 {
+		recordYAMLKeys(doc.Content[0], "", l.explicit)
+	}
+	return nil
+}
+
+func recordYAMLKeys(node *yaml.Node, prefix string, out map[string]struct{}) {
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		recordYAMLKeys(node.Content[0], prefix, out)
+		return
+	}
+	if node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i].Value, node.Content[i+1]
+		path := key
+		if prefix != "" {
+			path = prefix + "." + key
+		}
+		out[path] = struct{}{}
+		recordYAMLKeys(value, path, out)
+	}
 }
 
 func (l *Loader) ConfigFileUsed() string { return l.v.ConfigFileUsed() }
@@ -238,8 +283,8 @@ func strictFile(path string) error {
 	if err := dec.Decode(&cfg); err != nil {
 		return fmt.Errorf("config file %s: %w", path, err)
 	}
-	if cfg.Version != 3 {
-		return fmt.Errorf("config file %s: version must be 3", path)
+	if cfg.Version != 4 {
+		return fmt.Errorf("config file %s: version must be 4", path)
 	}
 	return nil
 }

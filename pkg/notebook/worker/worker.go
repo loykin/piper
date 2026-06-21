@@ -28,16 +28,15 @@ import (
 
 // Config holds configuration for a notebook worker agent.
 type Config struct {
-	MasterURL     string // single HTTP(S) endpoint for the outbound master tunnel
-	WorkerToken   string // bearer token sent in gRPC authorization metadata (matches server.worker_token)
-	NotebooksRoot string // base directory for notebook work dirs (default: "./notebooks")
-	PortRange     string // "START-END", e.g. "8888-9900"
-	Mode          string // process | docker
-	Docker        DockerConfig
-	GPUs          []string
-	Hostname      string
-	ID            string // stable worker identity assigned by the caller
-	Labels        map[string]string
+	MasterURL      string // single HTTP(S) endpoint for the outbound master tunnel
+	WorkerToken    string // bearer token sent in gRPC authorization metadata (matches server.worker_token)
+	NotebooksRoot  string // base directory for notebook work dirs (default: "./notebooks")
+	PortRange      string // "START-END", e.g. "8888-9900"
+	Infrastructure string // baremetal | docker
+	Docker         DockerConfig
+	Hostname       string
+	ID             string // stable worker identity assigned by the caller
+	Labels         map[string]string
 }
 
 // Worker is the notebook worker agent.
@@ -83,17 +82,12 @@ func New(cfg Config) *Worker {
 		drv = &failingDriver{err: err}
 	}
 
-	infrastructure := iagent.InfrastructureBaremetal
-	if cfg.Mode == "docker" {
-		infrastructure = iagent.InfrastructureDocker
-	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		MasterURL:      cfg.MasterURL,
 		AgentID:        cfg.ID,
 		WorkerToken:    cfg.WorkerToken,
-		Infrastructure: infrastructure,
+		Infrastructure: cfg.Infrastructure,
 		Hostname:       cfg.Hostname,
-		GPUs:           cfg.GPUs,
 		Capabilities:   []string{iagent.CapabilityNotebook},
 		Labels:         cfg.Labels,
 	})
@@ -125,13 +119,13 @@ func New(cfg Config) *Worker {
 }
 
 func newDriver(cfg Config) (notebookdriver.Driver, error) {
-	switch cfg.Mode {
-	case "", RuntimeProcess:
+	switch cfg.Infrastructure {
+	case InfrastructureBaremetal:
 		return notebookprocess.New(cfg.NotebooksRoot), nil
-	case RuntimeDocker:
+	case InfrastructureDocker:
 		return notebookdocker.New(cfg.Docker, cfg.ID)
 	default:
-		return nil, fmt.Errorf("unsupported notebook worker mode %q", cfg.Mode)
+		return nil, fmt.Errorf("unsupported notebook worker infrastructure %q", cfg.Infrastructure)
 	}
 }
 
@@ -230,14 +224,14 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			return
 		}
 
-		mode := w.cfg.Mode
-		if mode == "" {
-			mode = RuntimeProcess
+		runtime := notebookdriver.ModeProcess
+		if w.cfg.Infrastructure == InfrastructureDocker {
+			runtime = notebookdriver.ModeDocker
 		}
 		// rn is the runtime-level name. It uses "__" as separator (not ":") because
 		// process supervisors and Docker container names forbid colons.
 		rn := runtimeName(req.ProjectID, name)
-		logRuntimeStart(mode, rn, workDir, port)
+		logRuntimeStart(runtime, rn, workDir, port)
 		// Create the sink before Start so we can stop it on start error.
 		// The runtime's OnExit wrapper calls sink.Stop() on process exit.
 		nbSink := logsink.NewGRPCLogSink(req.ProjectID, w.client)

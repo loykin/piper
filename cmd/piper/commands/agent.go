@@ -96,7 +96,7 @@ func runAgentExec(ctx context.Context, f agentExecFlags) error {
 	return nil
 }
 
-// deliverResult sends the TaskResult according to the configured report mode.
+// deliverResult writes the TaskResult to the parent worker's result file.
 // For /dev/termination-log, the result is first truncated to fit the 4096-byte K8s limit.
 func deliverResult(result proto.TaskResult, resultFile string) error {
 	if resultFile == "/dev/termination-log" {

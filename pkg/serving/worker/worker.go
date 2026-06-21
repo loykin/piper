@@ -24,14 +24,13 @@ import (
 
 // Config holds configuration for a serving worker agent.
 type Config struct {
-	MasterURL   string // single HTTP(S) endpoint for the outbound master tunnel
-	WorkerToken string // bearer token sent in gRPC authorization metadata
-	GPUs        []string
-	Hostname    string
-	ID          string // UUID; caller must generate
-	Labels      map[string]string
-	Mode        string // process | docker; empty means process
-	Docker      DockerConfig
+	MasterURL      string // single HTTP(S) endpoint for the outbound master tunnel
+	WorkerToken    string // bearer token sent in gRPC authorization metadata
+	Hostname       string
+	ID             string // UUID; caller must generate
+	Labels         map[string]string
+	Infrastructure string // baremetal | docker
+	Docker         DockerConfig
 }
 
 // serviceRecord holds the worker-observed state of an active service.
@@ -59,21 +58,12 @@ func New(cfg Config) *Worker {
 	if err != nil {
 		drv = &failingDriver{err: err}
 	}
-	mode := cfg.Mode
-	if mode == "" {
-		mode = servingdriver.ModeProcess
-	}
-	infrastructure := iagent.InfrastructureBaremetal
-	if mode == servingdriver.ModeDocker {
-		infrastructure = iagent.InfrastructureDocker
-	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		MasterURL:      cfg.MasterURL,
 		AgentID:        cfg.ID,
 		WorkerToken:    cfg.WorkerToken,
-		Infrastructure: infrastructure,
+		Infrastructure: cfg.Infrastructure,
 		Hostname:       cfg.Hostname,
-		GPUs:           cfg.GPUs,
 		Capabilities:   []string{iagent.CapabilityServing},
 		Labels:         cfg.Labels,
 	})
@@ -99,15 +89,15 @@ func New(cfg Config) *Worker {
 }
 
 func newDriver(cfg Config) (servingdriver.Driver, error) {
-	switch cfg.Mode {
-	case "", servingdriver.ModeProcess:
+	switch cfg.Infrastructure {
+	case InfrastructureBaremetal:
 		return servingprocess.New(servingprocess.Config{WorkerID: cfg.ID}), nil
-	case servingdriver.ModeDocker:
+	case InfrastructureDocker:
 		dockerCfg := cfg.Docker
 		dockerCfg.WorkerID = cfg.ID
 		return servingdocker.New(dockerCfg)
 	default:
-		return nil, fmt.Errorf("unsupported serving worker mode %q", cfg.Mode)
+		return nil, fmt.Errorf("unsupported serving worker infrastructure %q", cfg.Infrastructure)
 	}
 }
 

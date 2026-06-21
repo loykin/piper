@@ -388,14 +388,13 @@ func TestStorageObjectUpload(t *testing.T) {
 	}
 }
 
-func TestLegacyWorkerPollingRoutesAreNotMounted(t *testing.T) {
+func TestLegacyWorkerPollingMutationRoutesAreNotMounted(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	router := p.newRouter(nil, nil).(*gin.Engine)
 	for _, route := range []struct {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/api/workers"},
 		{http.MethodPost, "/api/workers"},
 		{http.MethodPost, "/api/workers/:id/heartbeat"},
 		{http.MethodGet, "/api/tasks/next"},

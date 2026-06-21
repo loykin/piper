@@ -1,13 +1,13 @@
 package notebookworker
 
 import (
-	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
+	iagent "github.com/piper/piper/internal/agent"
 	notebookdocker "github.com/piper/piper/pkg/notebook/worker/driver/docker"
 )
 
 const (
-	RuntimeProcess = notebookdriver.ModeProcess
-	RuntimeDocker  = notebookdriver.ModeDocker
+	InfrastructureBaremetal = iagent.InfrastructureBaremetal
+	InfrastructureDocker    = iagent.InfrastructureDocker
 )
 
 type DockerConfig = notebookdocker.Config

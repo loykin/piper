@@ -119,7 +119,7 @@ func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config
 	// tests can submit pipelines immediately without racing against dispatch.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(masterURL + "/api/agents")
+		resp, err := http.Get(masterURL + "/api/workers")
 		if err == nil {
 			var agents []struct {
 				Capabilities []string `json:"capabilities"`
@@ -144,9 +144,10 @@ func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config
 func startE2EServingWorker(t *testing.T, httpURL, id string) {
 	t.Helper()
 	w := servingworker.New(servingworker.Config{
-		MasterURL: httpURL,
-		Hostname:  id,
-		ID:        id,
+		MasterURL:      httpURL,
+		Hostname:       id,
+		ID:             id,
+		Infrastructure: servingworker.InfrastructureBaremetal,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -156,7 +157,7 @@ func startE2EServingWorker(t *testing.T, httpURL, id string) {
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(httpURL + "/api/agents")
+		resp, err := http.Get(httpURL + "/api/workers")
 		if err == nil {
 			var agents []struct {
 				ID string `json:"id"`
@@ -194,7 +195,7 @@ func waitE2EAgent(t *testing.T, serverURL, id string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/api/agents")
+		resp, err := http.Get(serverURL + "/api/workers")
 		if err == nil {
 			var agents []struct {
 				ID string `json:"id"`
@@ -216,7 +217,7 @@ func findE2EAgentByCapability(t *testing.T, serverURL, capability string) string
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/api/agents")
+		resp, err := http.Get(serverURL + "/api/workers")
 		if err == nil {
 			var agents []struct {
 				ID           string   `json:"id"`
@@ -234,7 +235,7 @@ func findE2EAgentByCapability(t *testing.T, serverURL, capability string) string
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	resp, err := http.Get(serverURL + "/api/agents")
+	resp, err := http.Get(serverURL + "/api/workers")
 	if err == nil {
 		defer resp.Body.Close()
 		var agents []struct {

@@ -129,7 +129,6 @@ func labelsMatch(have, want map[string]string) bool {
 
 func cloneInfo(info Info) *Info {
 	cp := info
-	cp.GPUs = slices.Clone(info.GPUs)
 	cp.Capabilities = slices.Clone(info.Capabilities)
 	cp.Namespaces = slices.Clone(info.Namespaces)
 	if info.Labels != nil {

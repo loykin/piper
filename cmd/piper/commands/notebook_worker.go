@@ -31,10 +31,7 @@ func newNotebookWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 				return err
 			}
 			c, common := selection.Capability, root.Worker
-			hostname, mode := common.Hostname, "process"
-			if selection.Infrastructure == cliconfig.InfrastructureDocker {
-				mode = "docker"
-			}
+			hostname := common.Hostname
 			if hostname == "" {
 				if h, err := os.Hostname(); err == nil {
 					hostname = h
@@ -53,16 +50,15 @@ func newNotebookWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 			defer cancel()
 
 			w := notebookworker.New(notebookworker.Config{
-				MasterURL:     common.MasterURL,
-				WorkerToken:   common.WorkerToken,
-				NotebooksRoot: c.NotebooksRoot,
-				PortRange:     c.PortRange,
-				Mode:          mode,
+				MasterURL:      common.MasterURL,
+				WorkerToken:    common.WorkerToken,
+				NotebooksRoot:  c.NotebooksRoot,
+				PortRange:      c.PortRange,
+				Infrastructure: selection.Infrastructure,
 				Docker: notebookworker.DockerConfig{
 					Network: selection.DockerNetwork,
 					Volumes: dockerVolumes,
 				},
-				GPUs:     c.GPUs,
 				Hostname: hostname,
 				ID:       id,
 				Labels:   common.Labels,
@@ -77,7 +73,6 @@ func newNotebookWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().String("infrastructure", "", "worker infrastructure: baremetal or docker")
 	cmd.Flags().String("docker-network", "", "Docker network mode: bridge or none (default: bridge)")
 	cmd.Flags().String("docker-volumes", "", "Docker volumes as a JSON array")
-	cmd.Flags().StringSlice("gpus", nil, "GPU device indices")
 	cmd.Flags().String("hostname", "", "hostname reported to master (default: os.Hostname)")
 	cmd.Flags().String("state-dir", "", "directory for persistent worker identity and state")
 	cmd.Flags().String("worker-token", "", "worker token for gRPC authorization")
@@ -102,8 +97,8 @@ func applyNotebookFlags(cmd *cobra.Command, root *cliconfig.RootConfig) error {
 			if root.Worker.Baremetal == nil {
 				root.Worker.Baremetal = &cliconfig.BaremetalWorkerConfig{}
 			}
-			if root.Worker.Baremetal.Capabilities.Notebook == nil {
-				root.Worker.Baremetal.Capabilities.Notebook = &cliconfig.NotebookCapabilityConfig{}
+			if root.Worker.Capabilities.Notebook == nil {
+				root.Worker.Capabilities.Notebook = &cliconfig.NotebookCapabilityConfig{}
 			}
 		case cliconfig.InfrastructureDocker:
 			if root.Worker.Baremetal != nil || root.Worker.K8s != nil {
@@ -112,27 +107,23 @@ func applyNotebookFlags(cmd *cobra.Command, root *cliconfig.RootConfig) error {
 			if root.Worker.Docker == nil {
 				root.Worker.Docker = &cliconfig.DockerWorkerConfig{}
 			}
-			if root.Worker.Docker.Capabilities.Notebook == nil {
-				root.Worker.Docker.Capabilities.Notebook = &cliconfig.DockerNotebookCapabilityConfig{}
+			if root.Worker.Capabilities.Notebook == nil {
+				root.Worker.Capabilities.Notebook = &cliconfig.NotebookCapabilityConfig{}
 			}
 		default:
 			return fmt.Errorf("--infrastructure must be baremetal or docker")
 		}
 	}
-	if n := root.Worker.Baremetal; n != nil && n.Capabilities.Notebook != nil {
-		applyNotebookCapabilityFlags(cmd, n.Capabilities.Notebook)
+	if root.Worker.Capabilities.Notebook != nil {
+		applyNotebookCapabilityFlags(cmd, root.Worker.Capabilities.Notebook)
 	}
-	if d := root.Worker.Docker; d != nil && d.Capabilities.Notebook != nil {
-		c := d.Capabilities.Notebook
-		base := cliconfig.NotebookCapabilityConfig{GPUs: c.GPUs, NotebooksRoot: c.NotebooksRoot, PortRange: c.PortRange}
-		applyNotebookCapabilityFlags(cmd, &base)
-		c.GPUs, c.NotebooksRoot, c.PortRange = base.GPUs, base.NotebooksRoot, base.PortRange
+	if d := root.Worker.Docker; d != nil {
 		if cmd.Flags().Changed("docker-network") {
 			d.Network, _ = cmd.Flags().GetString("docker-network")
 		}
 		if cmd.Flags().Changed("docker-volumes") {
 			raw, _ := cmd.Flags().GetString("docker-volumes")
-			if err := json.Unmarshal([]byte(raw), &c.Volumes); err != nil {
+			if err := json.Unmarshal([]byte(raw), &d.Volumes); err != nil {
 				return fmt.Errorf("--docker-volumes: %w", err)
 			}
 		}
@@ -146,8 +137,5 @@ func applyNotebookCapabilityFlags(cmd *cobra.Command, c *cliconfig.NotebookCapab
 	}
 	if cmd.Flags().Changed("port-range") {
 		c.PortRange, _ = cmd.Flags().GetString("port-range")
-	}
-	if cmd.Flags().Changed("gpus") {
-		c.GPUs, _ = cmd.Flags().GetStringSlice("gpus")
 	}
 }

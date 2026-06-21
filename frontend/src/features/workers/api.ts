@@ -3,7 +3,7 @@ import type { Worker, WorkerPodPolicy } from './types'
 import { api } from '@/lib/api'
 
 export async function listWorkers(): Promise<Worker[]> {
-  const data = await api.get<Worker[]>('/api/agents')
+  const data = await api.get<Worker[]>('/api/workers')
   return Array.isArray(data) ? data : []
 }
 

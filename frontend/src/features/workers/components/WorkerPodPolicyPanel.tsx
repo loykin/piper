@@ -80,12 +80,6 @@ export function WorkerPodPolicyPanel({ worker }: { worker: Worker }) {
             <dt className="text-xs text-muted-foreground">Runtime</dt>
 			<dd className="mt-0.5 text-xs">{worker.infrastructure === 'k8s' ? 'Kubernetes' : worker.infrastructure === 'docker' ? 'Docker' : 'Bare-metal'}</dd>
           </div>
-          {worker.gpus && worker.gpus.length > 0 && (
-            <div className="col-span-2">
-              <dt className="text-xs text-muted-foreground">GPUs</dt>
-              <dd className="mt-0.5 font-mono text-xs">{worker.gpus.join(', ')}</dd>
-            </div>
-          )}
         </dl>
       </PanelTemplate.Section>
 

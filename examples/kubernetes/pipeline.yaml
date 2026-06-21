@@ -9,7 +9,7 @@
 #
 # Run:
 #   piper server --config piper.yaml
-#   piper k8s-worker --master-url=http://piper-server:8080 --cluster=dev --runner-image=piper/piper:latest
+#   piper k8s-worker --master-url=http://piper-server:8080 --cluster=dev --pipeline-runner-image=piper/piper:latest
 
 apiVersion: piper/v1
 kind: Pipeline

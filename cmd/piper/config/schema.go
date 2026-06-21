@@ -87,36 +87,29 @@ type LocalNotebookConfig struct {
 // WorkerConfig describes exactly one standalone worker process. Exactly one of
 // Baremetal, Docker, or K8s must be configured.
 type WorkerConfig struct {
-	MasterURL    string                 `mapstructure:"master_url" yaml:"master_url"`
-	WorkerToken  string                 `mapstructure:"worker_token" yaml:"worker_token"`
-	StorageToken string                 `mapstructure:"storage_token" yaml:"storage_token"`
-	Hostname     string                 `mapstructure:"hostname" yaml:"hostname"`
-	StateDir     string                 `mapstructure:"state_dir" yaml:"state_dir"`
-	Labels       map[string]string      `mapstructure:"labels" yaml:"labels"`
-	Baremetal    *BaremetalWorkerConfig `mapstructure:"baremetal" yaml:"baremetal,omitempty"`
-	Docker       *DockerWorkerConfig    `mapstructure:"docker" yaml:"docker,omitempty"`
-	K8s          *K8sWorkerConfig       `mapstructure:"k8s" yaml:"k8s,omitempty"`
+	MasterURL    string                   `mapstructure:"master_url" yaml:"master_url"`
+	WorkerToken  string                   `mapstructure:"worker_token" yaml:"worker_token"`
+	StorageToken string                   `mapstructure:"storage_token" yaml:"storage_token"`
+	Hostname     string                   `mapstructure:"hostname" yaml:"hostname"`
+	StateDir     string                   `mapstructure:"state_dir" yaml:"state_dir"`
+	Labels       map[string]string        `mapstructure:"labels" yaml:"labels"`
+	Baremetal    *BaremetalWorkerConfig   `mapstructure:"baremetal" yaml:"baremetal,omitempty"`
+	Docker       *DockerWorkerConfig      `mapstructure:"docker" yaml:"docker,omitempty"`
+	K8s          *K8sWorkerConfig         `mapstructure:"k8s" yaml:"k8s,omitempty"`
+	Capabilities WorkerCapabilitiesConfig `mapstructure:"capabilities" yaml:"capabilities"`
 }
 
-type BaremetalWorkerConfig struct {
-	Capabilities HostCapabilitiesConfig `mapstructure:"capabilities" yaml:"capabilities"`
-}
+type BaremetalWorkerConfig struct{}
 
 type DockerWorkerConfig struct {
-	Network      string                   `mapstructure:"network" yaml:"network"`
-	Capabilities DockerCapabilitiesConfig `mapstructure:"capabilities" yaml:"capabilities"`
+	Network string         `mapstructure:"network" yaml:"network"`
+	Volumes []DockerVolume `mapstructure:"volumes" yaml:"volumes"`
 }
 
-type HostCapabilitiesConfig struct {
+type WorkerCapabilitiesConfig struct {
 	Pipeline *PipelineCapabilityConfig `mapstructure:"pipeline" yaml:"pipeline,omitempty"`
 	Notebook *NotebookCapabilityConfig `mapstructure:"notebook" yaml:"notebook,omitempty"`
 	Serving  *ServingCapabilityConfig  `mapstructure:"serving" yaml:"serving,omitempty"`
-}
-
-type DockerCapabilitiesConfig struct {
-	Pipeline *PipelineCapabilityConfig       `mapstructure:"pipeline" yaml:"pipeline,omitempty"`
-	Notebook *DockerNotebookCapabilityConfig `mapstructure:"notebook" yaml:"notebook,omitempty"`
-	Serving  *ServingCapabilityConfig        `mapstructure:"serving" yaml:"serving,omitempty"`
 }
 
 type PipelineCapabilityConfig struct {
@@ -127,51 +120,34 @@ type PipelineCapabilityConfig struct {
 }
 
 type NotebookCapabilityConfig struct {
-	GPUs          []string `mapstructure:"gpus" yaml:"gpus"`
-	NotebooksRoot string   `mapstructure:"notebooks_root" yaml:"notebooks_root"`
-	PortRange     string   `mapstructure:"port_range" yaml:"port_range"`
+	NotebooksRoot string `mapstructure:"notebooks_root" yaml:"notebooks_root"`
+	PortRange     string `mapstructure:"port_range" yaml:"port_range"`
 }
 
-type DockerNotebookCapabilityConfig struct {
-	GPUs          []string               `mapstructure:"gpus" yaml:"gpus"`
-	NotebooksRoot string                 `mapstructure:"notebooks_root" yaml:"notebooks_root"`
-	PortRange     string                 `mapstructure:"port_range" yaml:"port_range"`
-	Volumes       []NotebookDockerVolume `mapstructure:"volumes" yaml:"volumes"`
-}
-
-type NotebookDockerVolume struct {
+type DockerVolume struct {
 	Name          string `mapstructure:"name" yaml:"name"`
 	HostPath      string `mapstructure:"host_path" yaml:"host_path"`
 	ContainerPath string `mapstructure:"container_path" yaml:"container_path"`
 	ReadOnly      bool   `mapstructure:"read_only" yaml:"read_only"`
 }
 
-type ServingCapabilityConfig struct {
-	GPUs []string `mapstructure:"gpus" yaml:"gpus"`
-}
+type ServingCapabilityConfig struct{}
 
 type K8sWorkerConfig struct {
-	Cluster         string                `mapstructure:"cluster" yaml:"cluster"`
-	Namespaces      []string              `mapstructure:"namespaces" yaml:"namespaces"`
-	Kubeconfig      string                `mapstructure:"kubeconfig" yaml:"kubeconfig"`
-	InCluster       bool                  `mapstructure:"in_cluster" yaml:"in_cluster"`
-	ResultOutboxDir string                `mapstructure:"result_outbox_dir" yaml:"result_outbox_dir"`
-	Capabilities    K8sCapabilitiesConfig `mapstructure:"capabilities" yaml:"capabilities"`
+	Cluster               string                         `mapstructure:"cluster" yaml:"cluster"`
+	Namespaces            []string                       `mapstructure:"namespaces" yaml:"namespaces"`
+	Kubeconfig            string                         `mapstructure:"kubeconfig" yaml:"kubeconfig"`
+	InCluster             bool                           `mapstructure:"in_cluster" yaml:"in_cluster"`
+	ResultOutboxDir       string                         `mapstructure:"result_outbox_dir" yaml:"result_outbox_dir"`
+	PipelineRunner        K8sPipelineRunnerConfig        `mapstructure:"pipeline_runner" yaml:"pipeline_runner"`
+	NotebookVolumeBrowser K8sNotebookVolumeBrowserConfig `mapstructure:"notebook_volume_browser" yaml:"notebook_volume_browser"`
 }
 
-type K8sCapabilitiesConfig struct {
-	Pipeline *K8sPipelineConfig `mapstructure:"pipeline" yaml:"pipeline,omitempty"`
-	Notebook *K8sNotebookConfig `mapstructure:"notebook" yaml:"notebook,omitempty"`
-	Serving  *K8sServingConfig  `mapstructure:"serving" yaml:"serving,omitempty"`
+type K8sPipelineRunnerConfig struct {
+	Image           string `mapstructure:"image" yaml:"image"`
+	ImagePullPolicy string `mapstructure:"image_pull_policy" yaml:"image_pull_policy"`
 }
 
-type K8sPipelineConfig struct {
-	RunnerImage           string `mapstructure:"runner_image" yaml:"runner_image"`
-	RunnerImagePullPolicy string `mapstructure:"runner_image_pull_policy" yaml:"runner_image_pull_policy"`
+type K8sNotebookVolumeBrowserConfig struct {
+	Image string `mapstructure:"image" yaml:"image"`
 }
-
-type K8sNotebookConfig struct {
-	InfrastructureImage string `mapstructure:"infrastructure_image" yaml:"infrastructure_image"`
-}
-
-type K8sServingConfig struct{}

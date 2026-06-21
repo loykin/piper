@@ -352,7 +352,7 @@ metadata:
   namespace: %[1]s
 data:
   piper.yaml: |
-    version: 3
+    version: 4
     server:
       http_addr: :8080
       data_dir: /tmp/piper-outputs
@@ -414,9 +414,11 @@ spec:
             - --state-dir=/tmp/piper-worker-state
             - --cluster=agent-e2e
             - --namespaces=%[1]s
-            - --notebook-infrastructure-image=%[2]s
-            - --runner-image=%[2]s
-            - --runner-image-pull-policy=IfNotPresent
+            - --in-cluster
+            - --capabilities=pipeline,notebook,serving
+            - --notebook-volume-browser-image=%[2]s
+            - --pipeline-runner-image=%[2]s
+            - --pipeline-runner-image-pull-policy=IfNotPresent
             - --storage-url=s3://piper-artifacts?endpoint=http://seaweedfs:9000&s3ForcePathStyle=true&accessKey=anyadmin&secretKey=anypassword
 ---
 apiVersion: v1
@@ -560,7 +562,7 @@ func waitK8sE2EAgentRegistered(t *testing.T, serverURL, cluster string, capabili
 	client := &http.Client{Timeout: time.Second}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(serverURL + "/api/agents") //nolint:noctx
+		resp, err := client.Get(serverURL + "/api/workers") //nolint:noctx
 		if err == nil {
 			var agents []struct {
 				ClusterName  string   `json:"cluster_name"`

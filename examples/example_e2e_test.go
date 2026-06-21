@@ -82,13 +82,13 @@ func waitReady(t *testing.T, url string, timeout time.Duration) {
 	t.Fatalf("server at %s did not become ready within %s", url, timeout)
 }
 
-// waitAgentRegistered polls until an agent with the given id appears in /api/agents.
+// waitAgentRegistered polls until a worker with the given id appears in /api/workers.
 // When id is empty, it waits for at least one agent of any id.
 func waitAgentRegistered(t *testing.T, serverURL, id string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/api/agents")
+		resp, err := http.Get(serverURL + "/api/workers")
 		if err == nil {
 			var agents []struct {
 				ID string `json:"id"`
@@ -643,10 +643,11 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	const nbName = "e2e-nb-baremetal"
 
 	nw := notebookworker.New(notebookworker.Config{
-		MasterURL:     serverURL,
-		NotebooksRoot: tmpDir,
-		Hostname:      "fake-host",
-		ID:            "fake-bm-1",
+		MasterURL:      serverURL,
+		NotebooksRoot:  tmpDir,
+		Hostname:       "fake-host",
+		ID:             "fake-bm-1",
+		Infrastructure: notebookworker.InfrastructureBaremetal,
 	})
 	go func() { _ = nw.Run(ctx) }()
 	waitAgentRegistered(t, serverURL, "fake-bm-1", 10*time.Second)

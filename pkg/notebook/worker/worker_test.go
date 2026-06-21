@@ -98,7 +98,7 @@ func (r *targetRecoveryRuntime) Recover(
 }
 
 func TestNotebookWorker_StartInvalidYAML(t *testing.T) {
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	_, err := w.startNotebook(context.Background(), notebook.WorkerStartRequest{
 		ProjectID: "project-a",
 		YAML:      ":::not yaml:::",
@@ -109,7 +109,7 @@ func TestNotebookWorker_StartInvalidYAML(t *testing.T) {
 }
 
 func TestNotebookWorker_StartMissingName(t *testing.T) {
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	yamlPayload := `apiVersion: piper/v1
 kind: NotebookServer
 metadata:
@@ -128,7 +128,7 @@ spec:
 }
 
 func TestNotebookWorker_StartMissingVolumeID(t *testing.T) {
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	yamlPayload := `apiVersion: piper/v1
 kind: NotebookServer
 metadata:
@@ -151,7 +151,7 @@ spec:
 func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 	rt := &conformanceRuntime{started: make(chan struct{})}
 	workDir := t.TempDir()
-	w := New(Config{ID: "agent-1", PortRange: "18888-18888"})
+	w := New(Config{ID: "agent-1", PortRange: "18888-18888", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 	w.portAllocator = func() (int, error) { return 18888, nil }
 
@@ -187,7 +187,7 @@ func TestNotebookWorkerStartResponseConformance(t *testing.T) {
 }
 
 func TestNotebookWorker_StopNonExistent(t *testing.T) {
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	// stopNotebook is idempotent for non-existent notebooks.
 	if err := w.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "project-a", Name: "nonexistent"}); err != nil {
 		t.Fatalf("stopNotebook nonexistent: %v", err)
@@ -196,7 +196,7 @@ func TestNotebookWorker_StopNonExistent(t *testing.T) {
 
 func TestNotebookWorker_RejectsDuplicateActiveNotebook(t *testing.T) {
 	rt := &conformanceRuntime{started: make(chan struct{})}
-	w := New(Config{ID: "nb-test-id", PortRange: "18888-18889"})
+	w := New(Config{ID: "nb-test-id", PortRange: "18888-18889", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 	ports := []int{18888, 18889}
 	w.portAllocator = func() (int, error) {
@@ -233,7 +233,7 @@ func TestNotebookWorker_RejectsDuplicateActiveNotebook(t *testing.T) {
 }
 
 func TestNotebookWorker_ProvisionVolumeEmptyID(t *testing.T) {
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	_, err := w.provisionVolume(context.Background(), notebook.WorkerProvisionVolumeRequest{VolumeID: ""})
 	if err == nil {
 		t.Fatal("expected error for empty volume_id")
@@ -241,7 +241,7 @@ func TestNotebookWorker_ProvisionVolumeEmptyID(t *testing.T) {
 }
 
 func TestNotebookWorker_SyncStatus(t *testing.T) {
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = &conformanceRuntime{}
 
 	resp, err := w.syncStatus(context.Background(), notebook.WorkerSyncStatusRequest{
@@ -263,7 +263,7 @@ func TestNotebookWorker_SyncStatus(t *testing.T) {
 }
 
 func TestNotebookWorker_SyncStatusUsesRecoveredTerminalState(t *testing.T) {
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = &conformanceRuntime{}
 	w.terminal[":failed-nb"] = notebook.StatusFailed // composite key: ""+":" +"failed-nb"
 
@@ -285,7 +285,7 @@ func TestNotebookWorker_SyncStatusRecoversProcessTarget(t *testing.T) {
 		port:         18888,
 		running:      true,
 	}
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 	w.recoverContainers(context.Background())
 
@@ -316,7 +316,7 @@ func TestNotebookWorker_RecoveryUsesProjectRuntimeName(t *testing.T) {
 		port:         18888,
 		running:      true,
 	}
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 	w.recoverContainers(context.Background())
 
@@ -342,7 +342,7 @@ func TestNotebookWorker_RecoveryReleasesPortLearnedAfterAttach(t *testing.T) {
 		port:         18888,
 		running:      true,
 	}
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 	w.recoverContainers(context.Background())
 
@@ -372,7 +372,7 @@ func TestNotebookWorker_StopRecoversProcessBeforeSync(t *testing.T) {
 		runtimeName: "project-a__recover-me",
 		running:     true,
 	}
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 
 	if err := w.stopNotebook(context.Background(), notebook.WorkerStopRequest{ProjectID: "project-a", Name: "recover-me"}); err != nil {
@@ -400,7 +400,7 @@ func TestNotebookWorker_StartRejectsRecoveredProcessBeforeSync(t *testing.T) {
 		port:         18888,
 		running:      true,
 	}
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 	w.recoverContainers(context.Background())
 
@@ -416,7 +416,7 @@ func TestNotebookWorker_StartRejectsRecoveredProcessBeforeSync(t *testing.T) {
 
 func TestNotebookWorker_RecoveredExitCannotRemoveNewGeneration(t *testing.T) {
 	rt := &recoveryRuntime{}
-	w := New(Config{ID: "nb-test-id"})
+	w := New(Config{ID: "nb-test-id", Infrastructure: InfrastructureBaremetal})
 	w.driver = rt
 	w.recoverContainers(context.Background())
 

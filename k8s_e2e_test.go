@@ -237,7 +237,7 @@ spec:
   defaults:
     driver:
       placement:
-        worker: k8s-agent-e2e
+        runtime: k8s
       k8s:
         image: alpine:3.20
         namespace: %[1]s
@@ -254,7 +254,7 @@ spec:
 		t.Fatalf("expected worker-created pipeline Job for step 'smoke', got:\n%s", out)
 	}
 
-	k8sE2EPostService(t, serverURL, `
+	k8sE2EPostService(t, serverURL, fmt.Sprintf(`
 apiVersion: piper/v1
 kind: ModelService
 metadata:
@@ -266,9 +266,12 @@ spec:
     command: ["sh", "-c", "sleep 3600"]
     port: 8080
   driver:
+    placement:
+      runtime: k8s
     k8s:
       image: alpine:3.20
-`)
+      namespace: %s
+`, ns))
 	waitK8sE2EServingResources(t, ns, k8sE2EServingResourceName("worker-serving"), 2*time.Minute)
 
 	const nbName = "worker-notebook"

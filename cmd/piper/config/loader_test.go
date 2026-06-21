@@ -107,6 +107,24 @@ func TestLoaderEnvironmentJSONCollection(t *testing.T) {
 	}
 }
 
+func TestLoaderFlagWorkerMasterURL(t *testing.T) {
+	l := NewLoader()
+	l.SetConfigFile(writeConfig(t, "version: 4\nworker:\n  baremetal: {}\n  capabilities:\n    pipeline: {}\n"))
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("master-url", "", "master URL")
+	l.MustBindFlag("worker.master_url", flags.Lookup("master-url"))
+	if err := flags.Set("master-url", "http://127.0.0.1:8080"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := l.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Worker.MasterURL != "http://127.0.0.1:8080" {
+		t.Fatalf("got %q, want http://127.0.0.1:8080", cfg.Worker.MasterURL)
+	}
+}
+
 func TestLoaderRejectsUnknownAndMissingVersion(t *testing.T) {
 	for _, body := range []string{"version: 4\nworker:\n  capabilities:\n    notebook:\n      port_rang: 8888-9900\n", "worker: {}\n"} {
 		l := NewLoader()

@@ -26,7 +26,7 @@ type Loader struct {
 	readErr  error
 	cached   *RootConfig
 	loadErr  error
-	flags    map[string]*pflag.Flag
+	flags    map[string][]*pflag.Flag
 	explicit map[string]struct{}
 }
 
@@ -35,7 +35,7 @@ func NewLoader() *Loader {
 	v.SetEnvPrefix("PIPER")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
-	l := &Loader{v: v, flags: make(map[string]*pflag.Flag), explicit: make(map[string]struct{})}
+	l := &Loader{v: v, flags: make(map[string][]*pflag.Flag), explicit: make(map[string]struct{})}
 	registerDefaults(v, reflect.ValueOf(Defaults()), "")
 	for _, key := range schemaKeys(reflect.TypeOf(RootConfig{}), "") {
 		_ = v.BindEnv(key)
@@ -49,10 +49,11 @@ func (l *Loader) BindFlag(key string, flag *pflag.Flag) error {
 	if flag == nil {
 		return fmt.Errorf("config: flag for %s is nil", key)
 	}
-	if err := l.v.BindPFlag(key, flag); err != nil {
-		return err
-	}
-	l.flags[key] = flag
+	// Track all pflags per key. Multiple subcommands may bind the same key
+	// (e.g. worker.master_url in worker, notebook-worker, serving-worker).
+	// Viper only stores one pflag per key, so we manage Changed detection
+	// ourselves and call l.v.Set() for any Changed flag in Load().
+	l.flags[key] = append(l.flags[key], flag)
 	return nil
 }
 
@@ -124,6 +125,17 @@ func (l *Loader) Load() (RootConfig, error) {
 		l.loadErr = err
 		return RootConfig{}, err
 	}
+	// Apply any Changed flags before Unmarshal. Multiple subcommands may bind
+	// the same key; only the active subcommand's flag will be Changed, so we
+	// scan all registered flags and set the first Changed value we find.
+	for key, flags := range l.flags {
+		for _, flag := range flags {
+			if flag.Changed {
+				l.v.Set(key, flag.Value.String())
+				break
+			}
+		}
+	}
 	cfg := Defaults()
 	err := l.v.Unmarshal(&cfg, viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
 		mapstructure.StringToTimeDurationHookFunc(), jsonHook(),
@@ -192,8 +204,10 @@ func (l *Loader) explicitPrefix(prefix string) bool {
 		if key != prefix && !strings.HasPrefix(key, prefix+".") {
 			continue
 		}
-		if flag := l.flags[key]; flag != nil && flag.Changed {
-			return true
+		for _, flag := range l.flags[key] {
+			if flag.Changed {
+				return true
+			}
 		}
 		envKey := "PIPER_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
 		if _, ok := os.LookupEnv(envKey); ok {
@@ -245,7 +259,14 @@ func (l *Loader) ConfigFileUsed() string { return l.v.ConfigFileUsed() }
 func (l *Loader) Sources() map[string]string {
 	out := make(map[string]string)
 	for _, key := range schemaKeys(reflect.TypeOf(RootConfig{}), "") {
-		if flag := l.flags[key]; flag != nil && flag.Changed {
+		changed := false
+		for _, flag := range l.flags[key] {
+			if flag.Changed {
+				changed = true
+				break
+			}
+		}
+		if changed {
 			out[key] = "flag"
 			continue
 		}

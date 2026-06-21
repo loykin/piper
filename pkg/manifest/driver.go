@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"bytes"
+
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	sigsyaml "sigs.k8s.io/yaml"
@@ -100,14 +102,14 @@ func (s DriverK8sSpec) MarshalYAML() (interface{}, error) {
 	}
 	// Serialize PodTemplate via sigs.k8s.io/yaml (handles resource.Quantity etc.)
 	// then decode to a generic interface so yaml.v3 can encode it without corev1 tags.
-	if s.PodTemplate.Spec.Containers != nil || s.PodTemplate.Spec.NodeSelector != nil ||
-		s.PodTemplate.Spec.Tolerations != nil || s.PodTemplate.Spec.Volumes != nil ||
-		s.PodTemplate.Spec.InitContainers != nil || s.PodTemplate.Spec.RuntimeClassName != nil ||
-		s.PodTemplate.ObjectMeta.Labels != nil || s.PodTemplate.ObjectMeta.Annotations != nil {
-		raw, err := sigsyaml.Marshal(s.PodTemplate)
-		if err != nil {
-			return nil, err
-		}
+	// Marshal first and check whether the output is non-empty — this avoids
+	// a hard-coded field list that would silently drop policy-injected fields
+	// (e.g. affinity, imagePullSecrets) missing from the original condition.
+	raw, err := sigsyaml.Marshal(s.PodTemplate)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(bytes.TrimSpace(raw), []byte("{}")) {
 		var m interface{}
 		if err := sigsyaml.Unmarshal(raw, &m); err != nil {
 			return nil, err

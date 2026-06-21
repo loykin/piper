@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+
+	iagent "github.com/piper/piper/internal/agent"
 )
 
 // --- mergePodTemplate ---
@@ -14,7 +16,7 @@ func TestMergePodTemplate_EmptyPolicy(t *testing.T) {
 	overlay := corev1.PodTemplateSpec{}
 	overlay.Spec.NodeSelector = map[string]string{"gpu": "true"}
 
-	result := mergePodTemplate(policy, overlay)
+	result := iagent.MergePodTemplate(policy, overlay)
 	if result.Spec.NodeSelector["gpu"] != "true" {
 		t.Fatalf("expected node selector from overlay, got %v", result.Spec.NodeSelector)
 	}
@@ -24,7 +26,7 @@ func TestMergePodTemplate_EmptyOverlay(t *testing.T) {
 	policy := corev1.PodTemplateSpec{}
 	policy.Spec.NodeSelector = map[string]string{"gpu": "true"}
 
-	result := mergePodTemplate(policy, corev1.PodTemplateSpec{})
+	result := iagent.MergePodTemplate(policy, corev1.PodTemplateSpec{})
 	if result.Spec.NodeSelector["gpu"] != "true" {
 		t.Fatalf("expected node selector from policy, got %v", result.Spec.NodeSelector)
 	}
@@ -37,7 +39,7 @@ func TestMergePodTemplate_NodeSelectorOverlayWins(t *testing.T) {
 	overlay := corev1.PodTemplateSpec{}
 	overlay.Spec.NodeSelector = map[string]string{"gpu": "a100", "zone": "us-east-1"}
 
-	result := mergePodTemplate(policy, overlay)
+	result := iagent.MergePodTemplate(policy, overlay)
 	// overlay wins on conflict
 	if result.Spec.NodeSelector["gpu"] != "a100" {
 		t.Fatalf("overlay should win gpu, got %q", result.Spec.NodeSelector["gpu"])
@@ -64,7 +66,7 @@ func TestMergePodTemplate_TolerationsUnion(t *testing.T) {
 		{Key: "dedicated", Value: "gpu-premium"}, // same key — overlay wins
 	}
 
-	result := mergePodTemplate(policy, overlay)
+	result := iagent.MergePodTemplate(policy, overlay)
 	if len(result.Spec.Tolerations) != 2 {
 		t.Fatalf("expected 2 tolerations (union), got %d", len(result.Spec.Tolerations))
 	}
@@ -96,7 +98,7 @@ func TestMergePodTemplate_VolumesOverlayWins(t *testing.T) {
 		{Name: "data", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/mnt/data"}}},
 	}
 
-	result := mergePodTemplate(policy, overlay)
+	result := iagent.MergePodTemplate(policy, overlay)
 	if len(result.Spec.Volumes) != 2 {
 		t.Fatalf("expected 2 volumes (union), got %d", len(result.Spec.Volumes))
 	}
@@ -123,7 +125,7 @@ func TestMergePodTemplate_RuntimeClassOverlay(t *testing.T) {
 	overlay := corev1.PodTemplateSpec{}
 	overlay.Spec.RuntimeClassName = &name
 
-	result := mergePodTemplate(corev1.PodTemplateSpec{}, overlay)
+	result := iagent.MergePodTemplate(corev1.PodTemplateSpec{}, overlay)
 	if result.Spec.RuntimeClassName == nil || *result.Spec.RuntimeClassName != "nvidia" {
 		t.Fatalf("expected runtimeClassName=nvidia from overlay")
 	}
@@ -134,7 +136,7 @@ func TestMergePodTemplate_PolicyRuntimeClassNotOverriddenWhenOverlayEmpty(t *tes
 	policy := corev1.PodTemplateSpec{}
 	policy.Spec.RuntimeClassName = &name
 
-	result := mergePodTemplate(policy, corev1.PodTemplateSpec{})
+	result := iagent.MergePodTemplate(policy, corev1.PodTemplateSpec{})
 	if result.Spec.RuntimeClassName == nil || *result.Spec.RuntimeClassName != "nvidia" {
 		t.Fatalf("expected runtimeClassName from policy when overlay is empty")
 	}
@@ -245,14 +247,14 @@ func TestApplyPodPolicy_InvalidYAML(t *testing.T) {
 // --- merge helpers ---
 
 func TestMergeStringMaps_BothEmpty(t *testing.T) {
-	result := mergeStringMaps(nil, nil)
+	result := iagent.MergeStringMaps(nil, nil)
 	if result != nil {
 		t.Fatalf("expected nil for both-empty merge, got %v", result)
 	}
 }
 
 func TestMergeTolerations_BothEmpty(t *testing.T) {
-	result := mergeTolerations(nil, nil)
+	result := iagent.MergeTolerations(nil, nil)
 	if len(result) != 0 {
 		t.Fatalf("expected empty, got %v", result)
 	}
@@ -261,7 +263,7 @@ func TestMergeTolerations_BothEmpty(t *testing.T) {
 func TestMergeVolumes_DeduplicatesByName(t *testing.T) {
 	base := []corev1.Volume{{Name: "a"}, {Name: "b"}}
 	overlay := []corev1.Volume{{Name: "b"}, {Name: "c"}}
-	result := mergeVolumes(base, overlay)
+	result := iagent.MergeVolumes(base, overlay)
 	if len(result) != 3 {
 		t.Fatalf("expected 3 volumes (a,b,c), got %d: %v", len(result), result)
 	}

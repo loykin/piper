@@ -433,9 +433,6 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
-    - name: grpc-agent
-      port: 9090
-      targetPort: 9090
 ---
 apiVersion: apps/v1
 kind: Deployment

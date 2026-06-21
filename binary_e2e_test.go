@@ -93,14 +93,14 @@ func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
 
 	configPath := filepath.Join(workDir, "piper.yaml")
 	writeBinaryE2EFile(t, configPath, fmt.Sprintf(`
-source:
-  s3:
-    endpoint: %q
-    access_key: "test"
-    secret_key: "test"
-    bucket: %q
-    use_ssl: false
-`, s3Endpoint, bucket))
+version: 4
+storage:
+  url: "s3://%s?endpoint=http://%s&s3ForcePathStyle=true&accessKey=test&secretKey=test"
+worker:
+  baremetal: {}
+  capabilities:
+    pipeline: {}
+`, bucket, s3Endpoint))
 
 	// ── Server subprocess ─────────────────────────────────────────────────────
 	// Pass --addr explicitly: server.addr in the config file is

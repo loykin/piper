@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -18,9 +19,10 @@ type AgentRPC interface {
 }
 
 type AgentBackend struct {
-	router     *iagent.Router
-	rpc        AgentRPC
-	taskAgents sync.Map // task id -> pipelineTaskAgent
+	router      *iagent.Router
+	rpc         AgentRPC
+	podPolicies iagent.WorkerPodPolicyRepository
+	taskAgents  sync.Map // task id -> pipelineTaskAgent
 
 	runMu     sync.Mutex
 	runAgents map[string]*pipelineRunAgent // run id -> fixed agent for the whole run
@@ -37,12 +39,16 @@ type pipelineTaskAgent struct {
 	AgentID string
 }
 
-func NewAgentBackend(router *iagent.Router, rpc AgentRPC) *AgentBackend {
-	return &AgentBackend{
+func NewAgentBackend(router *iagent.Router, rpc AgentRPC, policies ...iagent.WorkerPodPolicyRepository) *AgentBackend {
+	b := &AgentBackend{
 		router:    router,
 		rpc:       rpc,
 		runAgents: make(map[string]*pipelineRunAgent),
 	}
+	if len(policies) > 0 {
+		b.podPolicies = policies[0]
+	}
+	return b
 }
 
 func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
@@ -75,6 +81,20 @@ func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 
 	taskCopy := *task
 	taskCopy.WorkerID = runAgent.AgentID
+	if b.podPolicies != nil {
+		policy, pErr := b.podPolicies.Get(ctx, runAgent.AgentID)
+		if pErr != nil {
+			slog.Warn("pipeline: pod policy lookup failed, proceeding without policy",
+				"worker_id", runAgent.AgentID, "err", pErr)
+		} else if policy != nil {
+			if merged, mErr := applyPodPolicyToPipeline(taskCopy.Pipeline, policy.PodTemplate); mErr == nil {
+				taskCopy.Pipeline = merged
+			} else {
+				slog.Warn("pipeline: pod policy merge failed, using original pipeline",
+					"worker_id", runAgent.AgentID, "err", mErr)
+			}
+		}
+	}
 	b.taskAgents.Store(task.ID, pipelineTaskAgent{AgentID: runAgent.AgentID})
 	if err := b.rpc.SendRPC(ctx, runAgent.AgentID, iagent.MethodPipelineDispatch, &taskCopy, nil); err != nil {
 		b.taskAgents.Delete(task.ID)

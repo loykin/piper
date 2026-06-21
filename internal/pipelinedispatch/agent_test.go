@@ -6,11 +6,44 @@ import (
 	"sync"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
 )
+
+// stubPipelinePolicyRepo is a minimal WorkerPodPolicyRepository for pipeline tests.
+type stubPipelinePolicyRepo struct {
+	policies map[string]*iagent.WorkerPodPolicy
+}
+
+func newStubPipelinePolicyRepo(entries ...*iagent.WorkerPodPolicy) *stubPipelinePolicyRepo {
+	r := &stubPipelinePolicyRepo{policies: make(map[string]*iagent.WorkerPodPolicy)}
+	for _, e := range entries {
+		r.policies[e.WorkerID] = e
+	}
+	return r
+}
+
+func (r *stubPipelinePolicyRepo) List(_ context.Context) ([]iagent.WorkerPodPolicy, error) {
+	return nil, nil
+}
+
+func (r *stubPipelinePolicyRepo) Get(_ context.Context, workerID string) (*iagent.WorkerPodPolicy, error) {
+	return r.policies[workerID], nil
+}
+
+func (r *stubPipelinePolicyRepo) Set(_ context.Context, p iagent.WorkerPodPolicy) error {
+	r.policies[p.WorkerID] = &p
+	return nil
+}
+
+func (r *stubPipelinePolicyRepo) Delete(_ context.Context, workerID string) error {
+	delete(r.policies, workerID)
+	return nil
+}
 
 type recordingPipelineAgentRPC struct {
 	mu      sync.Mutex
@@ -223,5 +256,130 @@ func TestTaskPlacementRejectsMultipleRunnerLabels(t *testing.T) {
 	_, err := taskPlacement(&proto.Task{RunID: "run-1", Pipeline: pipelineJSON})
 	if err == nil {
 		t.Fatal("expected incompatible runner labels to be rejected")
+	}
+}
+
+func TestAgentBackendDispatch_AppliesPodPolicyToDefaults(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{
+		ID:             "k8s-1",
+		Infrastructure: iagent.InfrastructureK8s,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+		Capacity:       1,
+	})
+	rpc := &recordingPipelineAgentRPC{}
+	repo := newStubPipelinePolicyRepo(&iagent.WorkerPodPolicy{
+		WorkerID: "k8s-1",
+		PodTemplate: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{"tier": "gpu"},
+			},
+		},
+	})
+	b := NewAgentBackend(iagent.NewRouter(reg), rpc, repo)
+
+	pl := pipeline.Pipeline{}
+	pl.Spec.Defaults = &pipeline.PipelineDefaults{
+		Driver: manifest.DriverSpec{
+			K8s: &manifest.DriverK8sSpec{Image: "train:latest"},
+		},
+	}
+	pipelineJSON, _ := json.Marshal(pl)
+	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
+
+	if err := b.Dispatch(context.Background(), task); err != nil {
+		t.Fatalf("Dispatch error: %v", err)
+	}
+	calls := rpc.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 RPC call, got %d", len(calls))
+	}
+	sentTask, ok := calls[0].Payload.(*proto.Task)
+	if !ok {
+		t.Fatalf("payload type: %T", calls[0].Payload)
+	}
+	var sent pipeline.Pipeline
+	if err := json.Unmarshal(sentTask.Pipeline, &sent); err != nil {
+		t.Fatalf("unmarshal sent pipeline: %v", err)
+	}
+	if sent.Spec.Defaults == nil || sent.Spec.Defaults.Driver.K8s == nil {
+		t.Fatal("defaults K8s driver should be present in sent pipeline")
+	}
+	ns := sent.Spec.Defaults.Driver.K8s.PodTemplate.Spec.NodeSelector
+	if ns["tier"] != "gpu" {
+		t.Errorf("policy nodeSelector not applied: got %v", ns)
+	}
+}
+
+func TestAgentBackendDispatch_ManifestWinsOverPolicy(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{
+		ID:             "k8s-1",
+		Infrastructure: iagent.InfrastructureK8s,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+		Capacity:       1,
+	})
+	rpc := &recordingPipelineAgentRPC{}
+	repo := newStubPipelinePolicyRepo(&iagent.WorkerPodPolicy{
+		WorkerID: "k8s-1",
+		PodTemplate: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{"tier": "policy"},
+			},
+		},
+	})
+	b := NewAgentBackend(iagent.NewRouter(reg), rpc, repo)
+
+	pl := pipeline.Pipeline{}
+	pl.Spec.Defaults = &pipeline.PipelineDefaults{
+		Driver: manifest.DriverSpec{
+			K8s: &manifest.DriverK8sSpec{
+				Image: "train:latest",
+				PodTemplate: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						NodeSelector: map[string]string{"tier": "manifest"},
+					},
+				},
+			},
+		},
+	}
+	pipelineJSON, _ := json.Marshal(pl)
+	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
+
+	if err := b.Dispatch(context.Background(), task); err != nil {
+		t.Fatalf("Dispatch error: %v", err)
+	}
+	calls := rpc.snapshot()
+	sentTask := calls[0].Payload.(*proto.Task)
+	var sent pipeline.Pipeline
+	_ = json.Unmarshal(sentTask.Pipeline, &sent)
+	ns := sent.Spec.Defaults.Driver.K8s.PodTemplate.Spec.NodeSelector
+	if ns["tier"] != "manifest" {
+		t.Errorf("manifest should win over policy: tier=%q (want manifest)", ns["tier"])
+	}
+}
+
+func TestAgentBackendDispatch_NoPolicyNoChange(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{
+		ID:           "k8s-1",
+		Capabilities: []string{iagent.CapabilityPipeline},
+		Capacity:     1,
+	})
+	rpc := &recordingPipelineAgentRPC{}
+	// no policy repo passed → NewAgentBackend with no variadic arg
+	b := NewAgentBackend(iagent.NewRouter(reg), rpc)
+
+	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{})
+	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
+
+	if err := b.Dispatch(context.Background(), task); err != nil {
+		t.Fatalf("Dispatch error: %v", err)
+	}
+	calls := rpc.snapshot()
+	sentTask := calls[0].Payload.(*proto.Task)
+	// pipeline bytes should be identical — no merge happened
+	if string(sentTask.Pipeline) != string(pipelineJSON) {
+		t.Errorf("pipeline should be unchanged when no policy repo is configured")
 	}
 }

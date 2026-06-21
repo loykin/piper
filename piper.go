@@ -160,7 +160,7 @@ func New(cfg Config) (*Piper, error) {
 		agentReg.Remove,
 	)
 
-	servingDriver := servingdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Serving)
+	servingDriver := servingdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Serving, repos.WorkerPodPolicy)
 	servingMgr := serving.New(repos.Serving, servingDriver)
 
 	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook, repos.WorkerPodPolicy))
@@ -209,7 +209,7 @@ func New(cfg Config) (*Piper, error) {
 		storageURL: p.storageURL,
 	}
 	// Pipeline tasks are delivered only through gRPC-connected agents.
-	p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer))
+	p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.WorkerPodPolicy))
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)

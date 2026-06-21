@@ -118,7 +118,7 @@ func setupPodPolicyRouter() (*gin.Engine, *inMemoryPolicyRepo) {
 func TestHandlerGetPodPolicy_NotFound(t *testing.T) {
 	r, _ := setupPodPolicyRouter()
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/notebook-workers/nb-worker-1/pod-policy", nil))
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workers/nb-worker-1/pod-policy", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -128,7 +128,7 @@ func TestHandlerSetAndGetPodPolicy(t *testing.T) {
 	r, _ := setupPodPolicyRouter()
 
 	body := `{"yaml": "spec:\n  nodeSelector:\n    nvidia.com/gpu: \"true\"\n"}`
-	req := httptest.NewRequest(http.MethodPut, "/api/notebook-workers/nb-worker-1/pod-policy",
+	req := httptest.NewRequest(http.MethodPut, "/api/workers/nb-worker-1/pod-policy",
 		strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -140,7 +140,7 @@ func TestHandlerSetAndGetPodPolicy(t *testing.T) {
 
 	// GET should return the saved policy
 	rec2 := httptest.NewRecorder()
-	r.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/api/notebook-workers/nb-worker-1/pod-policy", nil))
+	r.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/api/workers/nb-worker-1/pod-policy", nil))
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("GET status = %d body=%s", rec2.Code, rec2.Body.String())
 	}
@@ -160,7 +160,7 @@ func TestHandlerSetAndGetPodPolicy(t *testing.T) {
 func TestHandlerSetPodPolicy_InvalidYAML(t *testing.T) {
 	r, _ := setupPodPolicyRouter()
 	body := `{"yaml": "not: valid: yaml: ["}`
-	req := httptest.NewRequest(http.MethodPut, "/api/notebook-workers/nb-worker-1/pod-policy",
+	req := httptest.NewRequest(http.MethodPut, "/api/workers/nb-worker-1/pod-policy",
 		strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -174,7 +174,7 @@ func TestHandlerSetPodPolicy_InvalidYAML(t *testing.T) {
 func TestHandlerSetPodPolicy_EmptyYAML(t *testing.T) {
 	r, _ := setupPodPolicyRouter()
 	body := `{"yaml": ""}`
-	req := httptest.NewRequest(http.MethodPut, "/api/notebook-workers/nb-worker-1/pod-policy",
+	req := httptest.NewRequest(http.MethodPut, "/api/workers/nb-worker-1/pod-policy",
 		strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -200,14 +200,14 @@ func TestHandlerDeletePodPolicy(t *testing.T) {
 
 	// DELETE
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/notebook-workers/nb-worker-1/pod-policy", nil))
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/workers/nb-worker-1/pod-policy", nil))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE status = %d body=%s", rec.Code, rec.Body.String())
 	}
 
 	// GET should return 404 now
 	rec2 := httptest.NewRecorder()
-	r.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/api/notebook-workers/nb-worker-1/pod-policy", nil))
+	r.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/api/workers/nb-worker-1/pod-policy", nil))
 	if rec2.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 after delete, got %d", rec2.Code)
 	}
@@ -221,13 +221,13 @@ func TestHandlerPodPolicy_NilRepo(t *testing.T) {
 	NewHandler(reg).RegisterRoutes(r.Group("/api"))
 
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/notebook-workers/x/pod-policy", nil))
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workers/x/pod-policy", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("nil repo GET: expected 404, got %d", rec.Code)
 	}
 
 	body := `{"yaml": "spec: {}"}`
-	req := httptest.NewRequest(http.MethodPut, "/api/notebook-workers/x/pod-policy", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/workers/x/pod-policy", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec2 := httptest.NewRecorder()
 	r.ServeHTTP(rec2, req)

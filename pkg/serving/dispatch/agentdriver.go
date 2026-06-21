@@ -3,6 +3,7 @@ package servingdispatch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -15,13 +16,18 @@ type AgentRPC interface {
 }
 
 type AgentDriver struct {
-	router *iagent.Router
-	rpc    AgentRPC
-	repo   serving.Repository
+	router      *iagent.Router
+	rpc         AgentRPC
+	repo        serving.Repository
+	podPolicies iagent.WorkerPodPolicyRepository
 }
 
-func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository) *AgentDriver {
-	return &AgentDriver{router: router, rpc: rpc, repo: repo}
+func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository, policies ...iagent.WorkerPodPolicyRepository) *AgentDriver {
+	d := &AgentDriver{router: router, rpc: rpc, repo: repo}
+	if len(policies) > 0 {
+		d.podPolicies = policies[0]
+	}
+	return d
 }
 
 func (d *AgentDriver) ArtifactTarget() artifact.Target { return artifact.TargetS3 }
@@ -30,6 +36,16 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 	agentInfo, err := d.selectAgent(spec.Spec.Driver.Placement.Worker)
 	if err != nil {
 		return nil, err
+	}
+	if d.podPolicies != nil {
+		if policy, pErr := d.podPolicies.Get(ctx, agentInfo.ID); pErr == nil && policy != nil {
+			if merged, mErr := applyPodPolicy(yamlStr, policy.PodTemplate); mErr == nil {
+				yamlStr = merged
+			} else {
+				slog.Warn("serving: pod policy merge failed, using original YAML",
+					"worker_id", agentInfo.ID, "err", mErr)
+			}
+		}
 	}
 	var result struct {
 		Endpoint string `json:"endpoint"`

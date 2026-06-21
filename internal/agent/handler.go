@@ -22,10 +22,10 @@ func NewHandler(registry *Registry, policies ...WorkerPodPolicyRepository) *Hand
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/workers", h.listWorkers)
-	rg.GET("/notebook-workers/pod-policies", h.listPodPolicies)
-	rg.GET("/notebook-workers/:id/pod-policy", h.getPodPolicy)
-	rg.PUT("/notebook-workers/:id/pod-policy", h.setPodPolicy)
-	rg.DELETE("/notebook-workers/:id/pod-policy", h.deletePodPolicy)
+	rg.GET("/workers/pod-policies", h.listPodPolicies)
+	rg.GET("/workers/:id/pod-policy", h.getPodPolicy)
+	rg.PUT("/workers/:id/pod-policy", h.setPodPolicy)
+	rg.DELETE("/workers/:id/pod-policy", h.deletePodPolicy)
 }
 
 func (h *Handler) listWorkers(c *gin.Context) {

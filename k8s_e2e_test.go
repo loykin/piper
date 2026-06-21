@@ -288,7 +288,7 @@ spec:
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("worker-mode notebook %s did not reach running", nbName)
 	}
-	if out := kubectl(t, "-n", ns, "get", "statefulset,svc,pvc", "--no-headers"); !strings.Contains(out, "piper-nb-worker-notebook") {
+	if out := kubectl(t, "-n", ns, "get", "statefulset,svc,pvc", "--no-headers"); !strings.Contains(out, "piper-nb-"+k8sE2EProjectID+"-"+nbName) {
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("expected worker-created notebook resources, got:\n%s", out)
 	}
@@ -405,6 +405,8 @@ metadata:
   namespace: %[1]s
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: piper-k8s-worker
@@ -430,6 +432,24 @@ spec:
             - --pipeline-runner-image=%[2]s
             - --pipeline-runner-image-pull-policy=IfNotPresent
             - --storage-url=s3://piper-artifacts?endpoint=http://seaweedfs:9000&s3ForcePathStyle=true&accessKey=anyadmin&secretKey=anypassword
+          volumeMounts:
+            - name: worker-state
+              mountPath: /tmp/piper-worker-state
+      volumes:
+        - name: worker-state
+          persistentVolumeClaim:
+            claimName: piper-worker-state
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piper-worker-state
+  namespace: %[1]s
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 64Mi
 ---
 apiVersion: v1
 kind: Service

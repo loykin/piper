@@ -114,11 +114,12 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 	resultPath := filepath.Join(resultDir, spec.RuntimeKey+".result.json")
 
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
-		StorageToken: spec.StorageToken,
-		StorageURL:   spec.StorageURL,
-		OutputDir:    spec.OutputDir,
-		InputDir:     spec.OutputDir,
-		ResultFile:   resultPath,
+		StorageToken:   spec.StorageToken,
+		StorageURL:     spec.StorageURL,
+		OutputDir:      spec.OutputDir,
+		InputDir:       spec.OutputDir,
+		ResultFile:     resultPath,
+		IsolatedPython: true,
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)

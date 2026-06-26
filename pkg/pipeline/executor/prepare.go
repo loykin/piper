@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 
 	"github.com/piper/piper/pkg/pipeline"
@@ -19,7 +18,7 @@ func runPrepare(ctx context.Context, step *pipeline.Step, cfg ExecConfig, workDi
 		cmd.Dir = workDir
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		cmd.Env = append(os.Environ(), append(stepEnv(step.Options.Env), cfg.Env()...)...)
+		cmd.Env = cfg.Environ(step.Options.Env)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("step %q: prepare[%d] failed: %w", step.Name, i, err)
 		}

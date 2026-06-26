@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,6 +41,10 @@ type Config struct {
 	// Source fetch configuration (notebook/python source: git|s3|http)
 	GitToken string
 	GitUser  string
+
+	// IsolatedPython creates a per-task venv and prepends it to PATH before
+	// prepare commands and the task entrypoint run.
+	IsolatedPython bool
 }
 
 // Runner executes a single task.
@@ -179,10 +184,85 @@ func (r *Runner) execute(
 		},
 	}
 
+	if r.cfg.IsolatedPython {
+		pyEnv, cleanup, err := prepareIsolatedPython(ctx, step, outputDir, stdoutW, stderrW)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		if err != nil {
+			stdoutW.Close()
+			stderrW.Close()
+			return err
+		}
+		cfg.PythonBin = pyEnv.python
+		cfg.PapermillBin = pyEnv.papermill
+		cfg.EnvPathPrepend = []string{pyEnv.binDir}
+	}
+
 	err := executor.New(step).Execute(ctx, step, cfg)
 	stdoutW.Close()
 	stderrW.Close()
 	return err
+}
+
+type isolatedPythonEnv struct {
+	dir       string
+	binDir    string
+	python    string
+	pip       string
+	papermill string
+}
+
+func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir string, stdout, stderr io.Writer) (*isolatedPythonEnv, func(), error) {
+	env := &isolatedPythonEnv{
+		dir: filepath.Join(outputDir, ".task-venv"),
+	}
+	cleanup := func() {
+		if err := os.RemoveAll(env.dir); err != nil {
+			slog.Warn("remove task python env failed", "path", env.dir, "err", err)
+		}
+	}
+	if err := os.RemoveAll(env.dir); err != nil {
+		return nil, cleanup, fmt.Errorf("reset task python env: %w", err)
+	}
+
+	python := os.Getenv("PIPER_PYTHON_BIN")
+	if python == "" {
+		python = "python3"
+	}
+	if err := runSetupCommand(ctx, outputDir, stdout, stderr, python, "-m", "venv", env.dir); err != nil {
+		return nil, cleanup, fmt.Errorf("create task python env: %w", err)
+	}
+
+	env.binDir = filepath.Join(env.dir, "bin")
+	env.python = filepath.Join(env.binDir, "python")
+	env.pip = filepath.Join(env.binDir, "pip")
+	env.papermill = filepath.Join(env.binDir, "papermill")
+
+	if needsPapermill(step) && !fileExists(env.papermill) {
+		if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "papermill"); err != nil {
+			return nil, cleanup, fmt.Errorf("install papermill in task python env: %w", err)
+		}
+	}
+
+	return env, cleanup, nil
+}
+
+func needsPapermill(step *pipeline.Step) bool {
+	return step.Run.Type == "notebook" || step.Run.Notebook != ""
+}
+
+func runSetupCommand(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // lineWriter writes complete lines locally while teeing stdout/stderr to the

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/piper/piper/internal/proto"
@@ -69,6 +71,49 @@ func TestRun_includesFinalMetricsInResult(t *testing.T) {
 	}
 }
 
+func TestRun_isolatedPythonPrependsVenvAndCleansUp(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+
+	out := t.TempDir()
+	r, err := agent.New(agent.Config{OutputDir: out, IsolatedPython: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := pipeline.Step{
+		Name: "pyenv",
+		Run: pipeline.Run{
+			Prepare: [][]string{
+				{"sh", "-c", `dirname "$(command -v python)" > "$PIPER_OUTPUT_DIR/prepare-bin.txt"`},
+			},
+			Command: []string{"sh", "-c", `printf "%s|%s" "$PIPER_PYTHON_BIN" "$(dirname "$(command -v python)")" > "$PIPER_OUTPUT_DIR/runtime-bin.txt"`},
+		},
+	}
+
+	result := r.Run(context.Background(), makeTask(t, step))
+	if result.Status != proto.TaskStatusDone {
+		t.Fatalf("status = %q, error = %s", result.Status, result.Error)
+	}
+
+	stepOut := filepath.Join(out, "run-test", "pyenv")
+	wantBin := filepath.Join(stepOut, ".task-venv", "bin")
+	prepareBin := strings.TrimSpace(readFile(t, filepath.Join(stepOut, "prepare-bin.txt")))
+	if prepareBin != wantBin {
+		t.Fatalf("prepare python bin = %q, want %q", prepareBin, wantBin)
+	}
+	runtimeParts := strings.Split(strings.TrimSpace(readFile(t, filepath.Join(stepOut, "runtime-bin.txt"))), "|")
+	if len(runtimeParts) != 2 {
+		t.Fatalf("runtime-bin format = %q", runtimeParts)
+	}
+	if runtimeParts[0] != filepath.Join(wantBin, "python") || runtimeParts[1] != wantBin {
+		t.Fatalf("runtime python = %q, want python=%q bin=%q", runtimeParts, filepath.Join(wantBin, "python"), wantBin)
+	}
+	if _, err := os.Stat(filepath.Join(stepOut, ".task-venv")); !os.IsNotExist(err) {
+		t.Fatalf("task venv was not cleaned up: %v", err)
+	}
+}
+
 func TestRun_failedStepOmitsFinalMetrics(t *testing.T) {
 	r, _ := agent.New(agent.Config{OutputDir: t.TempDir()})
 	task := makeTask(t, pipeline.Step{Name: "fail", Run: pipeline.Run{Command: []string{"sh", "-c", `echo '{"x":1}' > "$PIPER_OUTPUT_DIR/.metrics.json"; exit 1`}}})
@@ -76,4 +121,13 @@ func TestRun_failedStepOmitsFinalMetrics(t *testing.T) {
 	if len(result.Metrics) != 0 {
 		t.Fatalf("failed result metrics = %v", result.Metrics)
 	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

@@ -24,14 +24,15 @@ func newAgentCmd() *cobra.Command {
 }
 
 type agentExecFlags struct {
-	storageToken string
-	taskB64      string
-	outputDir    string
-	inputDir     string
-	storageURL   string
-	resultFile   string
-	gitUser      string
-	gitToken     string
+	storageToken   string
+	taskB64        string
+	outputDir      string
+	inputDir       string
+	storageURL     string
+	resultFile     string
+	gitUser        string
+	gitToken       string
+	isolatedPython bool
 }
 
 func newAgentExecCmd() *cobra.Command {
@@ -52,6 +53,7 @@ func newAgentExecCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
 	cmd.Flags().StringVar(&f.storageURL, "storage-url", "", "artifact store URL (s3://, file://, http://)")
 	cmd.Flags().StringVar(&f.resultFile, "result-file", "", "path to write AgentResult JSON (required)")
+	cmd.Flags().BoolVar(&f.isolatedPython, "isolated-python", false, "create an isolated Python venv for this task")
 
 	return cmd
 }
@@ -73,12 +75,13 @@ func runAgentExec(ctx context.Context, f agentExecFlags) error {
 	}
 
 	r, err := agent.New(agent.Config{
-		StorageToken: f.storageToken,
-		OutputDir:    f.outputDir,
-		InputDir:     f.inputDir,
-		StorageURL:   f.storageURL,
-		GitUser:      gitUser,
-		GitToken:     gitToken,
+		StorageToken:   f.storageToken,
+		OutputDir:      f.outputDir,
+		InputDir:       f.inputDir,
+		StorageURL:     f.storageURL,
+		GitUser:        gitUser,
+		GitToken:       gitToken,
+		IsolatedPython: f.isolatedPython,
 	})
 	if err != nil {
 		return fmt.Errorf("runner init: %w", err)

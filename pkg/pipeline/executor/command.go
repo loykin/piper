@@ -22,7 +22,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	}
 
 	workDir := cfg.WorkDir
-	extraEnv := append(stepEnv(step.Options.Env), cfg.Env()...)
+	extraEnv := cfg.Env()
 
 	// If a source is specified, fetch it and run from fetchDir
 	if step.Run.Source != "" && step.Run.Source != "local" {
@@ -64,7 +64,10 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	cmd.Dir = workDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = cfg.Environ(step.Options.Env)
+	for _, entry := range extraEnv {
+		cmd.Env = setEnv(cmd.Env, entry)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	for k, v := range cfg.Params {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("PIPER_PARAM_%s=%v", k, v))

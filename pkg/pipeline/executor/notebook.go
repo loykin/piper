@@ -62,11 +62,11 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 
 	slog.Info("running papermill", "notebook", notebookPath, "output", outputNb)
 
-	cmd := exec.CommandContext(ctx, "papermill", args...)
+	cmd := exec.CommandContext(ctx, cfg.PapermillCommand(), args...)
 	cmd.Dir = workDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = append(os.Environ(), append(stepEnv(step.Options.Env), cfg.Env()...)...)
+	cmd.Env = cfg.Environ(step.Options.Env)
 
 	return cmd.Run()
 }

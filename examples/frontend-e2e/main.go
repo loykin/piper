@@ -263,13 +263,12 @@ func waitHTTP(ctx context.Context, url string) error {
 
 func runAgentExec(args []string) int {
 	var (
-		taskB64        string
-		storageToken   string
-		outputDir      string
-		inputDir       string
-		storageURL     string
-		resultFile     string
-		isolatedPython bool
+		taskB64      string
+		storageToken string
+		outputDir    string
+		inputDir     string
+		storageURL   string
+		resultFile   string
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
@@ -278,7 +277,6 @@ func runAgentExec(args []string) int {
 	fs.StringVar(&inputDir, "input-dir", "", "")
 	fs.StringVar(&storageURL, "storage-url", "", "")
 	fs.StringVar(&resultFile, "result-file", "", "")
-	fs.BoolVar(&isolatedPython, "isolated-python", false, "")
 	if err := fs.Parse(args); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec parse flags: %v\n", err)
 		return 1
@@ -294,11 +292,10 @@ func runAgentExec(args []string) int {
 		return 1
 	}
 	runner, err := agent.New(agent.Config{
-		StorageToken:   storageToken,
-		OutputDir:      outputDir,
-		InputDir:       inputDir,
-		StorageURL:     storageURL,
-		IsolatedPython: isolatedPython,
+		StorageToken: storageToken,
+		OutputDir:    outputDir,
+		InputDir:     inputDir,
+		StorageURL:   storageURL,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec runner init: %v\n", err)

@@ -28,12 +28,11 @@ func TestMain(m *testing.M) {
 // with the root piper package).
 func runAgentExec() int {
 	var (
-		taskB64        string
-		outputDir      string
-		inputDir       string
-		storageURL     string
-		resultFile     string
-		isolatedPython bool
+		taskB64    string
+		outputDir  string
+		inputDir   string
+		storageURL string
+		resultFile string
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
@@ -41,7 +40,6 @@ func runAgentExec() int {
 	fs.StringVar(&inputDir, "input-dir", "", "")
 	fs.StringVar(&storageURL, "storage-url", "", "")
 	fs.StringVar(&resultFile, "result-file", "", "")
-	fs.BoolVar(&isolatedPython, "isolated-python", false, "")
 
 	// Strip "agent" and "exec" prefix from os.Args.
 	args := os.Args[1:]
@@ -67,10 +65,9 @@ func runAgentExec() int {
 	}
 
 	r, err := agentpkg.New(agentpkg.Config{
-		OutputDir:      outputDir,
-		InputDir:       inputDir,
-		StorageURL:     storageURL,
-		IsolatedPython: isolatedPython,
+		OutputDir:  outputDir,
+		InputDir:   inputDir,
+		StorageURL: storageURL,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent exec runner init: %v\n", err)

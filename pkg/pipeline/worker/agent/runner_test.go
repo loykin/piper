@@ -71,13 +71,13 @@ func TestRun_includesFinalMetricsInResult(t *testing.T) {
 	}
 }
 
-func TestRun_isolatedPythonPrependsVenvAndCleansUp(t *testing.T) {
+func TestRun_pythonStepPrependsVenvAndCleansUp(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available")
 	}
 
 	out := t.TempDir()
-	r, err := agent.New(agent.Config{OutputDir: out, IsolatedPython: true})
+	r, err := agent.New(agent.Config{OutputDir: out})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,9 +114,9 @@ func TestRun_isolatedPythonPrependsVenvAndCleansUp(t *testing.T) {
 	}
 }
 
-func TestRun_isolatedPythonSkipsPlainCommand(t *testing.T) {
+func TestRun_plainCommandSkipsVenv(t *testing.T) {
 	out := t.TempDir()
-	r, err := agent.New(agent.Config{OutputDir: out, IsolatedPython: true})
+	r, err := agent.New(agent.Config{OutputDir: out})
 	if err != nil {
 		t.Fatal(err)
 	}

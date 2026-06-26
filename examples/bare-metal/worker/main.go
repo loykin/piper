@@ -78,7 +78,6 @@ func runAgentExec(args []string) {
 	inputDir := fs.String("input-dir", "/piper-inputs", "local input directory")
 	storageURL := fs.String("storage-url", "", "artifact store URL")
 	resultFile := fs.String("result-file", "", "path to write AgentResult JSON")
-	isolatedPython := fs.Bool("isolated-python", false, "create an isolated Python venv for this task")
 	if err := fs.Parse(args); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: parse flags: %v\n", err)
 		os.Exit(1)
@@ -95,11 +94,10 @@ func runAgentExec(args []string) {
 	}
 
 	r, err := agent.New(agent.Config{
-		StorageToken:   *storageToken,
-		OutputDir:      *outputDir,
-		InputDir:       *inputDir,
-		StorageURL:     *storageURL,
-		IsolatedPython: *isolatedPython,
+		StorageToken: *storageToken,
+		OutputDir:    *outputDir,
+		InputDir:     *inputDir,
+		StorageURL:   *storageURL,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: init runner: %v\n", err)

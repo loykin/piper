@@ -41,10 +41,6 @@ type Config struct {
 	// Source fetch configuration (notebook/python source: git|s3|http)
 	GitToken string
 	GitUser  string
-
-	// IsolatedPython creates a per-task venv and prepends it to PATH before
-	// prepare commands and the task entrypoint run.
-	IsolatedPython bool
 }
 
 // Runner executes a single task.
@@ -184,7 +180,7 @@ func (r *Runner) execute(
 		},
 	}
 
-	if r.cfg.IsolatedPython && needsIsolatedPython(step) {
+	if needsIsolatedPython(step) {
 		pyEnv, cleanup, err := prepareIsolatedPython(ctx, step, outputDir, stdoutW, stderrW)
 		if cleanup != nil {
 			defer cleanup()
@@ -244,7 +240,7 @@ func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir s
 
 	if needsPapermill(step) {
 		if !fileExists(env.papermill) || !hasPythonModule(ctx, env.python, "ipykernel") {
-			if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "papermill", "ipykernel"); err != nil {
+			if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "setuptools", "papermill", "ipykernel"); err != nil {
 				return nil, cleanup, fmt.Errorf("install notebook dependencies in task python env: %w", err)
 			}
 		}

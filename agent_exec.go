@@ -33,7 +33,6 @@ func runEmbeddedAgentExec() int {
 	inputDir := fs.String("input-dir", "", "")
 	storageURL := fs.String("storage-url", "", "")
 	resultFile := fs.String("result-file", "", "")
-	isolatedPython := fs.Bool("isolated-python", false, "")
 
 	args := os.Args[3:] // strip "agent exec"
 	if err := fs.Parse(args); err != nil {
@@ -53,11 +52,10 @@ func runEmbeddedAgentExec() int {
 	}
 
 	r, err := agentpkg.New(agentpkg.Config{
-		StorageToken:   *storageToken,
-		OutputDir:      *outputDir,
-		InputDir:       *inputDir,
-		StorageURL:     *storageURL,
-		IsolatedPython: *isolatedPython,
+		StorageToken: *storageToken,
+		OutputDir:    *outputDir,
+		InputDir:     *inputDir,
+		StorageURL:   *storageURL,
 	})
 	if err != nil {
 		slog.Error("agent exec: init runner", "err", err)

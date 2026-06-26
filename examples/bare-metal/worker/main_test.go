@@ -11,7 +11,7 @@ import (
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
-func TestRunAgentExecAcceptsIsolatedPythonFlag(t *testing.T) {
+func TestRunAgentExec(t *testing.T) {
 	out := t.TempDir()
 	step := pipeline.Step{
 		Name: "hello",
@@ -41,7 +41,6 @@ func TestRunAgentExecAcceptsIsolatedPythonFlag(t *testing.T) {
 		"--output-dir=" + out,
 		"--input-dir=" + out,
 		"--result-file=" + resultFile,
-		"--isolated-python",
 	})
 
 	if _, err := os.Stat(resultFile); err != nil {

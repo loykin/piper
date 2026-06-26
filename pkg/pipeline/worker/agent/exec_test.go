@@ -24,17 +24,3 @@ func TestBuildAgentExecHasNoMasterCallbackArguments(t *testing.T) {
 		t.Fatalf("child args contain legacy callback configuration: %s", joined)
 	}
 }
-
-func TestBuildAgentExecCanRequestIsolatedPython(t *testing.T) {
-	args, err := BuildAgentExec(&proto.Task{ID: "run:step"}, AgentExecConfig{
-		ResultFile:     "/tmp/result.json",
-		IsolatedPython: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--isolated-python") {
-		t.Fatalf("child args missing isolated python flag: %s", joined)
-	}
-}

@@ -15,11 +15,10 @@ import (
 // argument list. It is environment-agnostic; each RuntimeDriver supplies
 // the paths it mounts or creates.
 type AgentExecConfig struct {
-	StorageToken   string
-	StorageURL     string
-	OutputDir      string
-	InputDir       string
-	IsolatedPython bool
+	StorageToken string
+	StorageURL   string
+	OutputDir    string
+	InputDir     string
 	// ResultFile is the path inside the execution environment where the agent
 	// writes the AgentResult JSON.
 	ResultFile string
@@ -54,9 +53,6 @@ func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 	}
 	if cfg.InputDir != "" {
 		args = append(args, "--input-dir="+cfg.InputDir)
-	}
-	if cfg.IsolatedPython {
-		args = append(args, "--isolated-python")
 	}
 	return args, nil
 }

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '@/lib/router'
 import { stringify as yamlStringify } from 'yaml'
 import { DataBodyTemplate, PageTopBar, PanelTemplate } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'

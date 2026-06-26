@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { listRuns, createRun, type Run } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -75,7 +75,7 @@ export default function RunsPage() {
       cell: ({ row }) => (
         <button
           type="button"
-          onClick={() => navigate(`/runs/${row.original.id}`)}
+          onClick={() => navigate(`/projects/${projectId}/runs/${row.original.id}`)}
           className="font-mono text-xs text-indigo-400 hover:text-indigo-300"
         >
           {row.original.id}
@@ -146,7 +146,7 @@ export default function RunsPage() {
               tableHeight="auto"
               rowHeight={44}
               rowCursor
-              onRowClick={(row) => navigate(`/runs/${row.id}`)}
+              onRowClick={(row) => navigate(`/projects/${projectId}/runs/${row.id}`)}
               pagination={{ pageSize: 10 }}
               footer={(table) => <DataGridPaginationBar table={table} className="px-4 py-2" pageSizes={[10, 20, 50]} />}
               classNames={{

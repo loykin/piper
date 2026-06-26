@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from '@/lib/router'
 import { ExternalLink, RefreshCw, Square, Trash2 } from 'lucide-react'
 import { DetailBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'

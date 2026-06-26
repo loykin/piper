@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { getNotebookVolumeColumns } from '@/features/notebooks/columns'

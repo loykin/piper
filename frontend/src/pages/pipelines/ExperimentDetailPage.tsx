@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate } from '@/lib/router'
 import { useQueries } from '@tanstack/react-query'
 import { ArrowUpDown } from 'lucide-react'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
@@ -129,7 +129,7 @@ export default function ExperimentDetailPage() {
           tableWidthMode="fill-last"
           rowHeight={44}
           rowCursor
-          onRowClick={(row) => navigate(`/runs/${row.id}`)}
+          onRowClick={(row) => navigate(`/projects/${projectId}/runs/${row.id}`)}
         />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>

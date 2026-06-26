@@ -30,7 +30,8 @@ export async function createSweep(projectId: string, req: SweepRequest): Promise
 }
 
 export async function getRun(projectId: string, id: string): Promise<Run> {
-  return projectApi(projectId).get<Run>(`/runs/${id}`)
+  const data = await projectApi(projectId).get<Run | { run: Run }>(`/runs/${id}`)
+  return 'run' in data ? data.run : data
 }
 
 export async function getRunSteps(projectId: string, runID: string): Promise<Step[]> {

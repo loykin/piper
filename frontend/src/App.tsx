@@ -1,5 +1,7 @@
-import { lazy, Suspense } from 'react'
-import { useLocation, useNavigate, Routes, Route, Navigate } from 'react-router-dom'
+/* eslint-disable react-refresh/only-export-components */
+import { lazy, Suspense, useEffect } from 'react'
+import { createRootRoute, createRoute, createRouter, Navigate, Outlet, RouterProvider } from '@tanstack/react-router'
+import { useLocation, useNavigate } from '@/lib/router'
 import {
   SidebarProvider,
   Sidebar,
@@ -35,8 +37,10 @@ const PipelinesListPage   = lazy(() => import('@/pages/pipelines/PipelinesListPa
 const PipelineEditorPage  = lazy(() => import('@/pages/pipelines/PipelineEditorPage'))
 const HistoryPage         = lazy(() => import('@/pages/pipelines/HistoryPage'))
 const ExperimentsPage     = lazy(() => import('@/pages/pipelines/ExperimentsPage'))
+const RunDetailPage       = lazy(() => import('@/pages/pipelines/RunDetailPage'))
 const WorkflowsPage       = lazy(() => import('@/pages/schedules/WorkflowsPage'))
 const WorkflowCreatePage  = lazy(() => import('@/pages/schedules/WorkflowCreatePage'))
+const ScheduleDetailPage  = lazy(() => import('@/pages/schedules/ScheduleDetailPage'))
 const ServingPage         = lazy(() => import('@/pages/serving/ServingPage'))
 const ServingHistoryPage  = lazy(() => import('@/pages/serving/ServingHistoryPage'))
 const WorkersPage           = lazy(() => import('@/pages/system/WorkersPage'))
@@ -272,7 +276,7 @@ function AppSidebar() {
   )
 }
 
-function ProjectRoutes() {
+function RoutedContent() {
   const location = useLocation()
   const { user, capabilities, loading } = useAuth()
 
@@ -286,63 +290,10 @@ function ProjectRoutes() {
     return <Navigate to="/login" replace />
   }
 
-  return (
-    <Routes>
-      <Route path="projects/:project_id/*" element={
-        <Routes>
-          <Route path="schedules" element={<WorkflowsPage />} />
-          <Route path="schedules/create" element={<WorkflowCreatePage />} />
-          <Route path="pipelines" element={<PipelinesListPage />} />
-          <Route path="pipelines/editor" element={<PipelineEditorPage />} />
-          <Route path="history" element={<HistoryPage />} />
-          <Route path="experiments" element={<ExperimentsPage />} />
-          <Route path="serving" element={<ServingPage />} />
-          <Route path="serving/history" element={<ServingHistoryPage />} />
-          <Route path="notebooks" element={<NotebooksPage />} />
-          <Route path="notebooks/create" element={<NotebookCreatePage />} />
-          <Route path="notebook-volumes" element={<NotebookVolumesPage />} />
-          <Route path="storage" element={<StoragePage />} />
-          <Route path="*" element={<Navigate to="schedules" replace />} />
-        </Routes>
-      } />
-
-      {/* System routes (no project) */}
-      <Route path="workers" element={<WorkersPage />} />
-      <Route path="kubernetes/pod-policies" element={<PodPoliciesPage />} />
-      <Route path="kubernetes/pod-policies/new" element={<PodPoliciesCreatePage />} />
-      <Route path="login" element={<LoginPage />} />
-
-      {/* Root redirect */}
-      <Route path="/" element={<RootRedirect />} />
-
-      {/* Legacy redirects */}
-      <Route path="schedules" element={<LegacyProjectRedirect to="schedules" />} />
-      <Route path="pipelines" element={<LegacyProjectRedirect to="pipelines" />} />
-      <Route path="history" element={<LegacyProjectRedirect to="history" />} />
-      <Route path="serving" element={<LegacyProjectRedirect to="serving" />} />
-      <Route path="notebooks" element={<LegacyProjectRedirect to="notebooks" />} />
-      <Route path="notebook-volumes" element={<LegacyProjectRedirect to="notebook-volumes" />} />
-      <Route path="storage" element={<LegacyProjectRedirect to="storage" />} />
-
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  )
+  return <Outlet />
 }
 
-function RootRedirect() {
-  const { projectId, loading } = useProjectContext()
-  if (loading) return null
-  if (projectId) return <Navigate to={`/projects/${projectId}/schedules`} replace />
-  return <Navigate to="/workers" replace />
-}
-
-function LegacyProjectRedirect({ to }: { to: string }) {
-  const { projectId } = useProjectContext()
-  if (projectId) return <Navigate to={`/projects/${projectId}/${to}`} replace />
-  return <Navigate to="/" replace />
-}
-
-export default function App() {
+function AppLayout() {
   return (
     <AuthProvider>
       <ProjectProvider>
@@ -356,7 +307,7 @@ export default function App() {
               <SidebarInset>
                 <div className="flex flex-col flex-1 min-h-0">
                   <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>}>
-                    <ProjectRoutes />
+                    <RoutedContent />
                   </Suspense>
                 </div>
               </SidebarInset>
@@ -366,4 +317,97 @@ export default function App() {
       </ProjectProvider>
     </AuthProvider>
   )
+}
+
+function RootRedirect() {
+  const { projectId, loading } = useProjectContext()
+  if (loading) return null
+  return <RedirectTo to={projectId ? `/projects/${projectId}/schedules` : '/workers'} />
+}
+
+function ProjectScopedFallback() {
+  const { projectId } = useProjectContext()
+  return <RedirectTo to={projectId ? `/projects/${projectId}/schedules` : '/'} />
+}
+
+function LegacyProjectRedirect({ to }: { to: string }) {
+  const { projectId } = useProjectContext()
+  return <RedirectTo to={projectId ? `/projects/${projectId}/${to}` : '/'} />
+}
+
+function RedirectTo({ to }: { to: string }) {
+  const navigate = useNavigate()
+  useEffect(() => {
+    void navigate(to, { replace: true })
+  }, [navigate, to])
+  return null
+}
+
+const rootRoute = createRootRoute({
+  component: AppLayout,
+})
+
+const indexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/',
+  component: RootRedirect,
+})
+
+const projectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'projects/$project_id',
+})
+
+const projectRoutes = [
+  createRoute({ getParentRoute: () => projectRoute, path: 'schedules', component: WorkflowsPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'schedules/create', component: WorkflowCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'schedules/$id', component: ScheduleDetailPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'pipelines', component: PipelinesListPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'pipelines/editor', component: PipelineEditorPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'history', component: HistoryPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'runs/$id', component: RunDetailPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'experiments', component: ExperimentsPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'serving', component: ServingPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'serving/history', component: ServingHistoryPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'notebooks', component: NotebooksPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/create', component: NotebookCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'notebook-volumes', component: NotebookVolumesPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'storage', component: StoragePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: '$', component: ProjectScopedFallback }),
+]
+
+const legacyProjectRoutes = [
+  createRoute({ getParentRoute: () => rootRoute, path: 'schedules', component: () => <LegacyProjectRedirect to="schedules" /> }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'pipelines', component: () => <LegacyProjectRedirect to="pipelines" /> }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'history', component: () => <LegacyProjectRedirect to="history" /> }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'serving', component: () => <LegacyProjectRedirect to="serving" /> }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'notebooks', component: () => <LegacyProjectRedirect to="notebooks" /> }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'notebook-volumes', component: () => <LegacyProjectRedirect to="notebook-volumes" /> }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'storage', component: () => <LegacyProjectRedirect to="storage" /> }),
+]
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  projectRoute.addChildren(projectRoutes),
+  createRoute({ getParentRoute: () => rootRoute, path: 'workers', component: WorkersPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'kubernetes/pod-policies', component: PodPoliciesPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'kubernetes/pod-policies/new', component: PodPoliciesCreatePage }),
+  createRoute({ getParentRoute: () => rootRoute, path: 'login', component: LoginPage }),
+  ...legacyProjectRoutes,
+  createRoute({ getParentRoute: () => rootRoute, path: '$', component: () => <RedirectTo to="/" /> }),
+])
+
+export const router = createRouter({
+  routeTree,
+  basepath: '/ui',
+})
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router
+  }
+}
+
+export default function App() {
+  return <RouterProvider router={router} />
 }

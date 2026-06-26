@@ -25,6 +25,7 @@ type ExecConfig struct {
 	GPUs           string   // CUDA_VISIBLE_DEVICES value, e.g. "0,1" (bare-metal only)
 	PythonBin      string   // python executable for isolated task environments
 	PapermillBin   string   // papermill executable for notebook steps
+	JupyterDataDir string   // Jupyter data directory for isolated notebook kernels
 	EnvPathPrepend []string // directories prepended to PATH for child processes
 	Params         map[string]any
 	SourceCfg      srcfetch.Config
@@ -67,6 +68,13 @@ func (c ExecConfig) Env() []string {
 	}
 	if c.PythonBin != "" {
 		env = append(env, "PIPER_PYTHON_BIN="+c.PythonBin)
+	}
+	if c.JupyterDataDir != "" {
+		env = append(env,
+			"JUPYTER_DATA_DIR="+c.JupyterDataDir,
+			"JUPYTER_CONFIG_DIR="+filepath.Join(filepath.Dir(c.JupyterDataDir), "jupyter-config"),
+			"JUPYTER_RUNTIME_DIR="+filepath.Join(filepath.Dir(c.JupyterDataDir), "jupyter-runtime"),
+		)
 	}
 	return env
 }

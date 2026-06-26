@@ -1,4 +1,4 @@
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from '@/lib/router'
 import { useCreateNotebook, useNotebookVolumes, useNotebookWorkers } from '@/features/notebooks/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import { NotebookK8sForm } from '@/features/notebooks/components/NotebookK8sForm'

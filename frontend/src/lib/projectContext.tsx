@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, type ReactNode } from 'react'
-import { useLocation, matchPath } from 'react-router-dom'
+import { useLocation } from '@/lib/router'
 import { useAuth } from '@/features/auth/context'
 import { useProjects } from '@/features/projects/hooks'
 import type { Project } from '@/features/projects/types'
@@ -24,12 +24,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     capabilities.login_routes &&
     !user
   const { data: projects = [], isLoading } = useProjects(!authLoading && !loginRequired)
-  const routeProjectId = matchPath(
-    { path: '/projects/:project_id/*' },
-    location.pathname,
-  )?.params.project_id
+  const [, projectsSegment, routeProjectId] = location.pathname.split('/')
+  const projectIdFromRoute = projectsSegment === 'projects' ? routeProjectId : undefined
   const fallbackProject = projects.find(project => project.id === 'default') ?? projects[0]
-  const projectId = routeProjectId ?? fallbackProject?.id ?? ''
+  const projectId = projectIdFromRoute ?? fallbackProject?.id ?? ''
 
   return (
     <ProjectContext.Provider value={{ projectId, projects, loading: authLoading || isLoading }}>

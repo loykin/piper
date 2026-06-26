@@ -114,6 +114,33 @@ func TestRun_isolatedPythonPrependsVenvAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestRun_isolatedPythonSkipsPlainCommand(t *testing.T) {
+	out := t.TempDir()
+	r, err := agent.New(agent.Config{OutputDir: out, IsolatedPython: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := pipeline.Step{
+		Name: "shell",
+		Run: pipeline.Run{
+			Command: []string{"sh", "-c", `printf "%s" "${PIPER_PYTHON_BIN:-}" > "$PIPER_OUTPUT_DIR/python-bin.txt"`},
+		},
+	}
+
+	result := r.Run(context.Background(), makeTask(t, step))
+	if result.Status != proto.TaskStatusDone {
+		t.Fatalf("status = %q, error = %s", result.Status, result.Error)
+	}
+
+	stepOut := filepath.Join(out, "run-test", "shell")
+	if got := readFile(t, filepath.Join(stepOut, "python-bin.txt")); got != "" {
+		t.Fatalf("plain command PIPER_PYTHON_BIN = %q, want empty", got)
+	}
+	if _, err := os.Stat(filepath.Join(stepOut, ".task-venv")); !os.IsNotExist(err) {
+		t.Fatalf("plain command should not create task venv: %v", err)
+	}
+}
+
 func TestRun_failedStepOmitsFinalMetrics(t *testing.T) {
 	r, _ := agent.New(agent.Config{OutputDir: t.TempDir()})
 	task := makeTask(t, pipeline.Step{Name: "fail", Run: pipeline.Run{Command: []string{"sh", "-c", `echo '{"x":1}' > "$PIPER_OUTPUT_DIR/.metrics.json"; exit 1`}}})

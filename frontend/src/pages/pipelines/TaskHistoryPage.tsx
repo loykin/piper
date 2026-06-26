@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { getRun, listRuns, type Step } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -97,7 +97,7 @@ export default function TaskHistoryPage() {
         cell: ({ row }) => (
           <button
             type="button"
-            onClick={() => navigate(`/runs/${row.original.runId}`)}
+            onClick={() => navigate(`/projects/${projectId}/runs/${row.original.runId}`)}
             className="font-mono text-xs text-indigo-400 hover:text-indigo-300"
           >
             {row.original.runId}
@@ -157,7 +157,7 @@ export default function TaskHistoryPage() {
         cell: ({ row }) => <span className="block truncate text-xs text-red-400">{row.original.error ?? '-'}</span>,
       },
     ],
-    [navigate],
+    [navigate, projectId],
   )
 
   return (
@@ -180,7 +180,7 @@ export default function TaskHistoryPage() {
               tableHeight="auto"
               rowHeight={44}
               rowCursor
-              onRowClick={(row) => navigate(`/runs/${row.runId}`)}
+              onRowClick={(row) => navigate(`/projects/${projectId}/runs/${row.runId}`)}
               pagination={{ pageSize: 15 }}
               footer={(table) => <DataGridPaginationBar table={table} className="px-4 py-2" pageSizes={[15, 30, 50]} />}
               classNames={{

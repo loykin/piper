@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { RefreshCw, Square, Trash2 } from 'lucide-react'
 import { DetailBodyTemplate } from '@loykin/designkit'
@@ -96,7 +96,7 @@ export default function ServingDetailPage() {
             <dt className="text-xs text-muted-foreground">Source Run</dt>
             <dd className="mt-1 text-sm">
               {service.run_id ? (
-                <Link to={`/runs/${service.run_id}`} className="font-mono text-primary hover:underline">
+                <Link to={`/projects/${projectId}/runs/${service.run_id}`} className="font-mono text-primary hover:underline">
                   {service.run_id}
                 </Link>
               ) : '—'}

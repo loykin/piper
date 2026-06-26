@@ -184,7 +184,7 @@ func (r *Runner) execute(
 		},
 	}
 
-	if r.cfg.IsolatedPython {
+	if r.cfg.IsolatedPython && needsIsolatedPython(step) {
 		pyEnv, cleanup, err := prepareIsolatedPython(ctx, step, outputDir, stdoutW, stderrW)
 		if cleanup != nil {
 			defer cleanup()
@@ -196,6 +196,7 @@ func (r *Runner) execute(
 		}
 		cfg.PythonBin = pyEnv.python
 		cfg.PapermillBin = pyEnv.papermill
+		cfg.JupyterDataDir = pyEnv.jupyterDataDir
 		cfg.EnvPathPrepend = []string{pyEnv.binDir}
 	}
 
@@ -206,11 +207,12 @@ func (r *Runner) execute(
 }
 
 type isolatedPythonEnv struct {
-	dir       string
-	binDir    string
-	python    string
-	pip       string
-	papermill string
+	dir            string
+	binDir         string
+	python         string
+	pip            string
+	papermill      string
+	jupyterDataDir string
 }
 
 func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir string, stdout, stderr io.Writer) (*isolatedPythonEnv, func(), error) {
@@ -238,10 +240,16 @@ func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir s
 	env.python = filepath.Join(env.binDir, "python")
 	env.pip = filepath.Join(env.binDir, "pip")
 	env.papermill = filepath.Join(env.binDir, "papermill")
+	env.jupyterDataDir = filepath.Join(env.dir, "share", "jupyter")
 
-	if needsPapermill(step) && !fileExists(env.papermill) {
-		if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "papermill"); err != nil {
-			return nil, cleanup, fmt.Errorf("install papermill in task python env: %w", err)
+	if needsPapermill(step) {
+		if !fileExists(env.papermill) || !hasPythonModule(ctx, env.python, "ipykernel") {
+			if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "papermill", "ipykernel"); err != nil {
+				return nil, cleanup, fmt.Errorf("install notebook dependencies in task python env: %w", err)
+			}
+		}
+		if err := writeVenvKernelSpec(env.dir, env.python); err != nil {
+			return nil, cleanup, fmt.Errorf("write notebook kernel spec in task python env: %w", err)
 		}
 	}
 
@@ -250,6 +258,12 @@ func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir s
 
 func needsPapermill(step *pipeline.Step) bool {
 	return step.Run.Type == "notebook" || step.Run.Notebook != ""
+}
+
+func needsIsolatedPython(step *pipeline.Step) bool {
+	return needsPapermill(step) ||
+		step.Run.Type == "python" ||
+		len(step.Run.Prepare) > 0
 }
 
 func runSetupCommand(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
@@ -263,6 +277,34 @@ func runSetupCommand(ctx context.Context, dir string, stdout, stderr io.Writer, 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func hasPythonModule(ctx context.Context, python, module string) bool {
+	cmd := exec.CommandContext(ctx, python, "-c", "import "+module)
+	return cmd.Run() == nil
+}
+
+func writeVenvKernelSpec(venvDir, python string) error {
+	kernelDir := filepath.Join(venvDir, "share", "jupyter", "kernels", "python3")
+	if err := os.MkdirAll(kernelDir, 0755); err != nil {
+		return err
+	}
+	spec := map[string]any{
+		"argv": []string{
+			python,
+			"-m",
+			"ipykernel_launcher",
+			"-f",
+			"{connection_file}",
+		},
+		"display_name": "Python 3",
+		"language":     "python",
+	}
+	data, err := json.MarshalIndent(spec, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(kernelDir, "kernel.json"), data, 0644)
 }
 
 // lineWriter writes complete lines locally while teeing stdout/stderr to the

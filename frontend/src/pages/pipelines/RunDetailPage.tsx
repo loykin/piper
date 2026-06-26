@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { RotateCcw, RefreshCw, XCircle, Trash2 } from 'lucide-react'
 import { DetailBodyTemplate } from '@loykin/designkit'
@@ -91,7 +91,7 @@ export default function RunDetailPage() {
           onSelect={setSelectedStep}
           onRetry={(stepName) => {
             retryStep({ runId: run.id, stepId: stepName }, {
-              onSuccess: (data) => navigate(`/runs/${data.run_id}`),
+              onSuccess: (data) => navigate(`/projects/${projectId}/runs/${data.run_id}`),
               onError: (err) => alert(err.message),
             })
           }}

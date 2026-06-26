@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { CalendarClock, Play, Plus, Trash2, X } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'

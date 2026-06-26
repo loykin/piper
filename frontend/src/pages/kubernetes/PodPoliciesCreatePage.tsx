@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '@/lib/router'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { PodPolicyForm } from '@/features/workers/components/PodPolicyForm'
 

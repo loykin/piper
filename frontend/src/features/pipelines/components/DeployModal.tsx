@@ -1,5 +1,6 @@
 // pipelines feature — Deploy to schedule modal component
 import { CalendarClock } from 'lucide-react'
+import { useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,12 +23,18 @@ export function DeployModal({
   onClose, onDeployed, error,
 }: DeployModalProps) {
   const { mutateAsync: deployPipeline, isPending: deploying } = useDeployPipeline()
+  const [localError, setLocalError] = useState('')
 
   async function handleDeploy() {
     if (!template) return
-    await deployPipeline({ id: template.id, req: { cron, enabled } })
-    onDeployed()
-    onClose()
+    setLocalError('')
+    try {
+      await deployPipeline({ id: template.id, req: { cron, enabled } })
+      onDeployed()
+      onClose()
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   return (
@@ -58,7 +65,7 @@ export function DeployModal({
           />
           <label htmlFor="deploy-enabled" className="text-xs">Enable immediately</label>
         </div>
-        {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+        {(localError || error) && <p className="mb-3 text-xs text-destructive">{localError || error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={deploying}>Cancel</Button>
           <Button size="sm" onClick={() => void handleDeploy()} disabled={deploying || !cron.trim()}>

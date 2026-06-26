@@ -76,23 +76,7 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			workerToken := p.Config().Server.WorkerToken
 			storageToken := p.Config().Storage.Token
 
-			wCfg := worker.Config{
-				Agent: worker.AgentConfig{
-					MasterURL:   localMaster,
-					WorkerToken: workerToken,
-					ID:          pipelineID,
-					Concurrency: localConcurrency,
-				},
-				Store: worker.StoreConfig{
-					StorageToken: storageToken,
-					OutputDir:    root.Server.DataDir,
-					StorageURL:   root.Storage.URL,
-					GitUser:      root.Source.Git.User,
-					GitToken:     root.Source.Git.Token,
-				},
-				Runtime:   worker.RuntimeBaremetal,
-				Baremetal: worker.BaremetalConfig{MetaDir: filepath.Join(localStateDir, "pipeline-meta")},
-			}
+			wCfg := embeddedPipelineWorkerConfig(root, p, localMaster, pipelineID, localStateDir, localConcurrency, workerToken, storageToken)
 			var w *worker.Worker
 			if root.Server.Local.Pipeline {
 				w, err = worker.New(wCfg)
@@ -145,6 +129,26 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 	cmd.Flags().Int("local-concurrency", 0, "concurrency for the embedded local worker")
 
 	return cmd
+}
+
+func embeddedPipelineWorkerConfig(root cliconfig.RootConfig, p *piper.Piper, localMaster, pipelineID, localStateDir string, localConcurrency int, workerToken, storageToken string) worker.Config {
+	return worker.Config{
+		Agent: worker.AgentConfig{
+			MasterURL:   localMaster,
+			WorkerToken: workerToken,
+			ID:          pipelineID,
+			Concurrency: localConcurrency,
+		},
+		Store: worker.StoreConfig{
+			StorageToken: storageToken,
+			OutputDir:    root.Server.DataDir,
+			StorageURL:   p.SourceConfig().StorageURL,
+			GitUser:      root.Source.Git.User,
+			GitToken:     root.Source.Git.Token,
+		},
+		Runtime:   worker.RuntimeBaremetal,
+		Baremetal: worker.BaremetalConfig{MetaDir: filepath.Join(localStateDir, "pipeline-meta")},
+	}
 }
 
 // localMasterURL converts a listen address like ":8080" or "0.0.0.0:8080"

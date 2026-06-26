@@ -238,9 +238,15 @@ func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir s
 	env.papermill = filepath.Join(env.binDir, "papermill")
 	env.jupyterDataDir = filepath.Join(env.dir, "share", "jupyter")
 
+	// Python 3.12+ venvs no longer include setuptools; install it unconditionally
+	// so that prepare commands using --no-build-isolation can find setuptools.build_meta.
+	if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "--quiet", "setuptools"); err != nil {
+		return nil, cleanup, fmt.Errorf("install setuptools in task python env: %w", err)
+	}
+
 	if needsPapermill(step) {
 		if !fileExists(env.papermill) || !hasPythonModule(ctx, env.python, "ipykernel") {
-			if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "setuptools", "papermill", "ipykernel"); err != nil {
+			if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "papermill", "ipykernel"); err != nil {
 				return nil, cleanup, fmt.Errorf("install notebook dependencies in task python env: %w", err)
 			}
 		}

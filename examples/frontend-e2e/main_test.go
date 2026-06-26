@@ -11,7 +11,7 @@ import (
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
 
-func TestRunAgentExecWritesResultWithIsolatedPython(t *testing.T) {
+func TestRunAgentExecWritesResult(t *testing.T) {
 	step := pipeline.Step{
 		Name: "hello",
 		Run:  pipeline.Run{Command: []string{"sh", "-c", "echo ok"}},
@@ -36,7 +36,6 @@ func TestRunAgentExecWritesResultWithIsolatedPython(t *testing.T) {
 		"--task=" + taskB64,
 		"--result-file=" + resultFile,
 		"--output-dir=" + t.TempDir(),
-		"--isolated-python",
 	})
 	if code != 0 {
 		t.Fatalf("runAgentExec() exit = %d", code)

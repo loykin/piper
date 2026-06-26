@@ -1,4 +1,4 @@
-package k8smeta
+package k8s
 
 import "strings"
 

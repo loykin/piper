@@ -14,7 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/piper/piper/pkg/internal/k8smeta"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -24,9 +24,9 @@ func makeReadyViewerPod(t *testing.T, client *fake.Clientset, volumeID, ns, _, t
 	t.Helper()
 	podName := viewerPodName(volumeID)
 	labels := map[string]string{
-		k8smeta.LabelManagedBy:    k8smeta.ManagedByPiper,
-		k8smeta.LabelWorkloadKind: viewerLabelKind,
-		k8smeta.LabelWorkloadID:   k8smeta.LabelValue(volumeID),
+		k8smanifest.LabelManagedBy:    k8smanifest.ManagedByPiper,
+		k8smanifest.LabelWorkloadKind: viewerLabelKind,
+		k8smanifest.LabelWorkloadID:   k8smanifest.LabelValue(volumeID),
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -34,8 +34,8 @@ func makeReadyViewerPod(t *testing.T, client *fake.Clientset, volumeID, ns, _, t
 			Namespace: ns,
 			Labels:    labels,
 			Annotations: map[string]string{
-				k8smeta.AnnotationVolumeID:   volumeID,
-				viewerAnnotationLastAccessed: time.Now().UTC().Format(time.RFC3339),
+				k8smanifest.AnnotationVolumeID: volumeID,
+				viewerAnnotationLastAccessed:   time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 		Spec: corev1.PodSpec{

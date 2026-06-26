@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/internal/k8smeta"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 	"github.com/piper/piper/pkg/pipeline/worker/driver"
 	k8slauncher "github.com/piper/piper/pkg/pipeline/worker/driver/k8slauncher"
@@ -177,9 +177,9 @@ func (d *Driver) StopRun(ctx context.Context, runID, namespace string) error {
 // Recover rebuilds the in-memory watch set from K8s Job annotations after restart.
 func (d *Driver) Recover(ctx context.Context) ([]driver.Handle, error) {
 	if len(d.cfg.Namespaces) == 0 {
-		selector := k8smeta.ManagedSelector()
+		selector := k8smanifest.ManagedSelector()
 		if d.cfg.WorkerID != "" {
-			selector = k8smeta.WorkerSelector(d.cfg.WorkerID)
+			selector = k8smanifest.WorkerSelector(d.cfg.WorkerID)
 		}
 		jobs, err := d.cfg.K8sClient.BatchV1().Jobs("").List(ctx, metav1.ListOptions{LabelSelector: selector})
 		if err != nil {

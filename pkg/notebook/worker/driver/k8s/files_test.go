@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/piper/piper/pkg/internal/k8smeta"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -55,7 +55,7 @@ func notebookPod(name, ns, pvcName string, ready bool) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
-			Labels:    map[string]string{k8smeta.LabelWorkloadKind: "notebook"},
+			Labels:    map[string]string{k8smanifest.LabelWorkloadKind: "notebook"},
 		},
 		Spec: corev1.PodSpec{
 			Volumes: []corev1.Volume{{
@@ -89,10 +89,10 @@ func viewerPod(volumeID, ns, pvcName string, ready bool) *corev1.Pod {
 			Name:      name,
 			Namespace: ns,
 			Labels: map[string]string{
-				k8smeta.LabelWorkloadKind: viewerLabelKind,
-				k8smeta.LabelWorkloadID:   k8smeta.LabelValue(volumeID),
+				k8smanifest.LabelWorkloadKind: viewerLabelKind,
+				k8smanifest.LabelWorkloadID:   k8smanifest.LabelValue(volumeID),
 			},
-			Annotations: map[string]string{k8smeta.AnnotationVolumeID: volumeID},
+			Annotations: map[string]string{k8smanifest.AnnotationVolumeID: volumeID},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{
@@ -123,10 +123,10 @@ func desiredReplicasStatefulSet(name, ns, volumeID string, replicas int32) *apps
 			Name:      name,
 			Namespace: ns,
 			Labels: map[string]string{
-				k8smeta.LabelManagedBy:    k8smeta.ManagedByPiper,
-				k8smeta.LabelWorkloadKind: "notebook",
+				k8smanifest.LabelManagedBy:    k8smanifest.ManagedByPiper,
+				k8smanifest.LabelWorkloadKind: "notebook",
 			},
-			Annotations: map[string]string{k8smeta.AnnotationVolumeID: volumeID},
+			Annotations: map[string]string{k8smanifest.AnnotationVolumeID: volumeID},
 		},
 		Spec: appsv1.StatefulSetSpec{Replicas: &replicas},
 	}

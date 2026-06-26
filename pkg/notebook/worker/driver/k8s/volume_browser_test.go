@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/piper/piper/pkg/internal/k8smeta"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 )
 
 const testNS = "notebooks"
@@ -91,8 +91,8 @@ func TestReconcile_DeletesIdlePod(t *testing.T) {
 			Namespace: testNS,
 			Labels:    labels,
 			Annotations: map[string]string{
-				k8smeta.AnnotationVolumeID:   volumeID,
-				viewerAnnotationLastAccessed: old,
+				k8smanifest.AnnotationVolumeID: volumeID,
+				viewerAnnotationLastAccessed:   old,
 			},
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},
@@ -121,7 +121,7 @@ func TestReconcile_DeletesFailedPod(t *testing.T) {
 			Namespace: testNS,
 			Labels:    labels,
 			Annotations: map[string]string{
-				k8smeta.AnnotationVolumeID: volumeID,
+				k8smanifest.AnnotationVolumeID: volumeID,
 			},
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodFailed},
@@ -176,8 +176,8 @@ func TestReconcile_KeepsActivePod(t *testing.T) {
 			Namespace: testNS,
 			Labels:    labels,
 			Annotations: map[string]string{
-				k8smeta.AnnotationVolumeID:   volumeID,
-				viewerAnnotationLastAccessed: recent,
+				k8smanifest.AnnotationVolumeID: volumeID,
+				viewerAnnotationLastAccessed:   recent,
 			},
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning},

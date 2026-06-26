@@ -26,8 +26,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/manifest"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 )
@@ -204,7 +204,7 @@ func (l *Launcher) ReconcileJobs(ctx context.Context, report func(context.Contex
 	l.mu.Unlock()
 
 	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: k8smeta.ManagedSelector(),
+		LabelSelector: k8smanifest.ManagedSelector(),
 	})
 	if err != nil {
 		return
@@ -328,9 +328,9 @@ func (l *Launcher) ActiveJobs() []JobHandle {
 
 // RecoverJobs rebuilds the in-memory watch set after a worker restart.
 func (l *Launcher) RecoverJobs(ctx context.Context) {
-	selector := k8smeta.ManagedSelector()
+	selector := k8smanifest.ManagedSelector()
 	if l.cfg.WorkerID != "" {
-		selector = k8smeta.WorkerSelector(l.cfg.WorkerID)
+		selector = k8smanifest.WorkerSelector(l.cfg.WorkerID)
 	}
 	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
@@ -342,7 +342,7 @@ func (l *Launcher) RecoverJobs(ctx context.Context) {
 	defer l.mu.Unlock()
 	for i := range jobs.Items {
 		job := &jobs.Items[i]
-		taskID := job.Annotations[k8smeta.AnnotationTaskID]
+		taskID := job.Annotations[k8smanifest.AnnotationTaskID]
 		if taskID == "" {
 			continue
 		}
@@ -353,17 +353,17 @@ func (l *Launcher) RecoverJobs(ctx context.Context) {
 		if startedAt.IsZero() {
 			startedAt = time.Now().UTC()
 		}
-		attempt, _ := strconv.Atoi(job.Annotations[k8smeta.AnnotationAttempt])
+		attempt, _ := strconv.Atoi(job.Annotations[k8smanifest.AnnotationAttempt])
 		if attempt < 1 {
 			attempt = 1
 		}
-		runID := job.Annotations[k8smeta.AnnotationRunID]
+		runID := job.Annotations[k8smanifest.AnnotationRunID]
 		if runID == "" {
-			runID = job.Labels[k8smeta.LabelRunID]
+			runID = job.Labels[k8smanifest.LabelRunID]
 		}
-		stepName := job.Annotations[k8smeta.AnnotationStepName]
+		stepName := job.Annotations[k8smanifest.AnnotationStepName]
 		if stepName == "" {
-			stepName = job.Labels[k8smeta.LabelStepName]
+			stepName = job.Labels[k8smanifest.LabelStepName]
 		}
 		l.watched[job.Name] = watchedJob{
 			TaskID:    taskID,
@@ -429,7 +429,7 @@ func k8sJobFailureMessage(job batchv1.Job) string {
 
 // CancelRun deletes all piper Jobs associated with a run.
 func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
-	selector := k8smeta.LabelRunID + "=" + k8smeta.LabelValue(runID)
+	selector := k8smanifest.LabelRunID + "=" + k8smanifest.LabelValue(runID)
 	jobs, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -446,12 +446,12 @@ func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
 
 func (l *Launcher) jobLabels(task *proto.Task) map[string]string {
 	labels := map[string]string{
-		k8smeta.LabelManagedBy: k8smeta.ManagedByPiper,
-		k8smeta.LabelRunID:     k8smeta.LabelValue(task.RunID),
-		k8smeta.LabelStepName:  k8smeta.LabelValue(task.StepName),
+		k8smanifest.LabelManagedBy: k8smanifest.ManagedByPiper,
+		k8smanifest.LabelRunID:     k8smanifest.LabelValue(task.RunID),
+		k8smanifest.LabelStepName:  k8smanifest.LabelValue(task.StepName),
 	}
 	if l.cfg.WorkerID != "" {
-		labels[k8smeta.LabelWorkerID] = k8smeta.LabelValue(l.cfg.WorkerID)
+		labels[k8smanifest.LabelWorkerID] = k8smanifest.LabelValue(l.cfg.WorkerID)
 	}
 	return labels
 }
@@ -469,10 +469,10 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, 
 			Name:      jobName(task),
 			Namespace: l.cfg.Namespace,
 			Annotations: map[string]string{
-				k8smeta.AnnotationTaskID:   task.ID,
-				k8smeta.AnnotationAttempt:  strconv.Itoa(max(task.Attempt, 1)),
-				k8smeta.AnnotationRunID:    task.RunID,
-				k8smeta.AnnotationStepName: task.StepName,
+				k8smanifest.AnnotationTaskID:   task.ID,
+				k8smanifest.AnnotationAttempt:  strconv.Itoa(max(task.Attempt, 1)),
+				k8smanifest.AnnotationRunID:    task.RunID,
+				k8smanifest.AnnotationStepName: task.StepName,
 			},
 			Labels: l.jobLabels(task),
 		},

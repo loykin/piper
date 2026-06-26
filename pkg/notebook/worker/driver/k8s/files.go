@@ -8,7 +8,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/piper/piper/pkg/internal/k8smeta"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -105,7 +105,7 @@ func (a *Worker) resolveVolumeSnapshot(ctx context.Context, ns, volumeID string)
 		if !podUsesPVC(pod, pvcName) {
 			continue
 		}
-		kind := pod.Labels[k8smeta.LabelWorkloadKind]
+		kind := pod.Labels[k8smanifest.LabelWorkloadKind]
 		isTerminating := pod.DeletionTimestamp != nil
 
 		switch kind {
@@ -132,12 +132,12 @@ func (a *Worker) resolveVolumeSnapshot(ctx context.Context, ns, volumeID string)
 	}
 
 	stsList, err := a.cfg.Client.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{
-		LabelSelector: k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=notebook",
+		LabelSelector: k8smanifest.ManagedSelector() + "," + k8smanifest.LabelWorkloadKind + "=notebook",
 	})
 	if err == nil {
 		for i := range stsList.Items {
 			sts := &stsList.Items[i]
-			if sts.Annotations[k8smeta.AnnotationVolumeID] == volumeID {
+			if sts.Annotations[k8smanifest.AnnotationVolumeID] == volumeID {
 				if sts.Spec.Replicas != nil {
 					snap.stsDesiredReplicas = *sts.Spec.Replicas
 				}

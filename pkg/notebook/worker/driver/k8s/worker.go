@@ -21,7 +21,7 @@ import (
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/pkg/internal/k8smeta"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/notebook"
 	"k8s.io/client-go/kubernetes"
 )
@@ -107,7 +107,7 @@ func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.Worke
 			Namespace: ns,
 			Labels:    a.k8sLabels("notebook-volume", req.VolumeID),
 			Annotations: map[string]string{
-				k8smeta.AnnotationVolumeID: req.VolumeID,
+				k8smanifest.AnnotationVolumeID: req.VolumeID,
 			},
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
@@ -230,9 +230,9 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 		})
 	}
 
-	ann := k8smeta.WorkloadAnnotations(spec.Metadata.Name)
-	ann[k8smeta.AnnotationProjectID] = req.ProjectID
-	ann[k8smeta.AnnotationVolumeID] = req.VolumeID
+	ann := k8smanifest.WorkloadAnnotations(spec.Metadata.Name)
+	ann[k8smanifest.AnnotationProjectID] = req.ProjectID
+	ann[k8smanifest.AnnotationVolumeID] = req.VolumeID
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -265,8 +265,8 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 				if existing.Annotations == nil {
 					existing.Annotations = make(map[string]string)
 				}
-				existing.Annotations[k8smeta.AnnotationProjectID] = req.ProjectID
-				existing.Annotations[k8smeta.AnnotationVolumeID] = req.VolumeID
+				existing.Annotations[k8smanifest.AnnotationProjectID] = req.ProjectID
+				existing.Annotations[k8smanifest.AnnotationVolumeID] = req.VolumeID
 				_, err = a.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{})
 				return err
 			})
@@ -430,7 +430,7 @@ func (a *Worker) observeOnce(ctx context.Context) {
 }
 
 func (a *Worker) observeNamespace(ctx context.Context, ns string) {
-	selector := k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=notebook"
+	selector := k8smanifest.ManagedSelector() + "," + k8smanifest.LabelWorkloadKind + "=notebook"
 	items, err := a.cfg.Client.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
@@ -447,16 +447,16 @@ func (a *Worker) observeNamespace(ctx context.Context, ns string) {
 			desired = *sts.Spec.Replicas
 		}
 		if desired > 0 {
-			if vid := sts.Annotations[k8smeta.AnnotationVolumeID]; vid != "" {
+			if vid := sts.Annotations[k8smanifest.AnnotationVolumeID]; vid != "" {
 				activeVolumeIDs[vid] = true
 			}
 		}
 
-		name := sts.Annotations[k8smeta.AnnotationWorkloadID]
+		name := sts.Annotations[k8smanifest.AnnotationWorkloadID]
 		if name == "" {
 			continue
 		}
-		projectID := sts.Annotations[k8smeta.AnnotationProjectID]
+		projectID := sts.Annotations[k8smanifest.AnnotationProjectID]
 		if projectID == "" {
 			continue
 		}
@@ -597,11 +597,11 @@ func (a *Worker) findVolumeNamespace(ctx context.Context, volumeID string) (stri
 }
 
 func (a *Worker) k8sLabels(kind, id string) map[string]string {
-	return k8smeta.WorkloadLabels(a.cfg.ClusterName, kind, id)
+	return k8smanifest.WorkloadLabels(a.cfg.ClusterName, kind, id)
 }
 
 func notebookWorkloadName(projectID, name string) string {
-	return "piper-nb-" + k8smeta.SafeName(projectID) + "-" + k8smeta.SafeName(name)
+	return "piper-nb-" + k8smanifest.SafeName(projectID) + "-" + k8smanifest.SafeName(name)
 }
 
 func notebookPVCName(volumeID string) string {

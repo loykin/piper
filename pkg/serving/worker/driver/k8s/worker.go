@@ -20,8 +20,8 @@ import (
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/process"
-	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/manifest"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/serving"
 	"k8s.io/client-go/kubernetes"
 )
@@ -138,8 +138,8 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	name := servingResourceName(req.ProjectID, svc.Metadata.Name)
 	workloadID := servingKey(req.ProjectID, svc.Metadata.Name)
 	labels := a.k8sLabels("serving", workloadID)
-	annotations := k8smeta.WorkloadAnnotations(svc.Metadata.Name)
-	annotations[k8smeta.AnnotationProjectID] = req.ProjectID
+	annotations := k8smanifest.WorkloadAnnotations(svc.Metadata.Name)
+	annotations[k8smanifest.AnnotationProjectID] = req.ProjectID
 
 	var res manifest.ResourceSpec
 	if svc.Spec.Driver.K8s != nil {
@@ -318,7 +318,7 @@ func (a *Worker) Observe(ctx context.Context) {
 }
 
 func (a *Worker) observeOnce(ctx context.Context) {
-	selector := k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=serving"
+	selector := k8smanifest.ManagedSelector() + "," + k8smanifest.LabelWorkloadKind + "=serving"
 	namespaces := a.observedNamespaces()
 	seenNamespaces := make(map[string]struct{}, len(namespaces))
 	for _, namespace := range namespaces {
@@ -335,8 +335,8 @@ func (a *Worker) observeOnce(ctx context.Context) {
 		}
 		for i := range items.Items {
 			deployment := &items.Items[i]
-			name := deployment.Annotations[k8smeta.AnnotationWorkloadID]
-			projectID := deployment.Annotations[k8smeta.AnnotationProjectID]
+			name := deployment.Annotations[k8smanifest.AnnotationWorkloadID]
+			projectID := deployment.Annotations[k8smanifest.AnnotationProjectID]
 			status := observedDeploymentStatus(deployment)
 			if projectID == "" || name == "" || status == "" || !a.statusChanged(servingKey(projectID, name), status) {
 				continue
@@ -467,7 +467,7 @@ func (a *Worker) ensureServingLogStream(ctx context.Context, projectID, name str
 }
 
 func (a *Worker) k8sLabels(kind, id string) map[string]string {
-	return k8smeta.WorkloadLabels(a.cfg.ClusterName, kind, id)
+	return k8smanifest.WorkloadLabels(a.cfg.ClusterName, kind, id)
 }
 
 func servingKey(projectID, name string) string {
@@ -475,5 +475,5 @@ func servingKey(projectID, name string) string {
 }
 
 func servingResourceName(projectID, name string) string {
-	return k8smeta.SafeName(projectID + "--" + name)
+	return k8smanifest.SafeName(projectID + "--" + name)
 }

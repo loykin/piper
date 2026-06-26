@@ -17,7 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/piper/piper/pkg/internal/k8smeta"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -113,14 +113,14 @@ func (m *volumeBrowserManager) ViewerExists(ctx context.Context, volumeID string
 // Reconcile deletes idle/failed viewer resources. Called from the Observe loop.
 func (m *volumeBrowserManager) Reconcile(ctx context.Context) {
 	pods, err := m.client.CoreV1().Pods(m.ns).List(ctx, metav1.ListOptions{
-		LabelSelector: k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=" + viewerLabelKind,
+		LabelSelector: k8smanifest.ManagedSelector() + "," + k8smanifest.LabelWorkloadKind + "=" + viewerLabelKind,
 	})
 	if err != nil {
 		return
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		volumeID := pod.Annotations[k8smeta.AnnotationVolumeID]
+		volumeID := pod.Annotations[k8smanifest.AnnotationVolumeID]
 
 		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
 			_ = m.deletePodAndService(ctx, volumeID)
@@ -139,7 +139,7 @@ func (m *volumeBrowserManager) Reconcile(ctx context.Context) {
 
 	// Clean up orphan services.
 	svcs, err := m.client.CoreV1().Services(m.ns).List(ctx, metav1.ListOptions{
-		LabelSelector: k8smeta.ManagedSelector() + "," + k8smeta.LabelWorkloadKind + "=" + viewerLabelKind,
+		LabelSelector: k8smanifest.ManagedSelector() + "," + k8smanifest.LabelWorkloadKind + "=" + viewerLabelKind,
 	})
 	if err != nil {
 		return
@@ -210,8 +210,8 @@ func (m *volumeBrowserManager) createPodAndService(ctx context.Context, volumeID
 	pvcName := notebookPVCName(volumeID)
 	labels := m.viewerLabels(volumeID)
 	annotations := map[string]string{
-		k8smeta.AnnotationVolumeID:   volumeID,
-		viewerAnnotationLastAccessed: time.Now().UTC().Format(time.RFC3339),
+		k8smanifest.AnnotationVolumeID: volumeID,
+		viewerAnnotationLastAccessed:   time.Now().UTC().Format(time.RFC3339),
 	}
 
 	allowPrivilegeEscalation := false
@@ -355,10 +355,10 @@ func (m *volumeBrowserManager) endpointFromPod(pod *corev1.Pod) *browserEndpoint
 
 func (m *volumeBrowserManager) viewerLabels(volumeID string) map[string]string {
 	return map[string]string{
-		k8smeta.LabelManagedBy:    k8smeta.ManagedByPiper,
-		k8smeta.LabelWorkloadKind: viewerLabelKind,
-		k8smeta.LabelWorkloadID:   k8smeta.LabelValue(volumeID),
-		k8smeta.LabelWorkerID:     k8smeta.LabelValue(m.workerID),
+		k8smanifest.LabelManagedBy:    k8smanifest.ManagedByPiper,
+		k8smanifest.LabelWorkloadKind: viewerLabelKind,
+		k8smanifest.LabelWorkloadID:   k8smanifest.LabelValue(volumeID),
+		k8smanifest.LabelWorkerID:     k8smanifest.LabelValue(m.workerID),
 	}
 }
 

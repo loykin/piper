@@ -13,8 +13,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/internal/k8smeta"
 	"github.com/piper/piper/pkg/manifest"
+	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/pipeline"
 	agentpkg "github.com/piper/piper/pkg/pipeline/worker/agent"
 	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
@@ -128,14 +128,14 @@ func TestDriverRecoverScansAllowedNamespaceAndMetadata(t *testing.T) {
 			Name:      "piper-run-step-a2",
 			Namespace: "dynamic-jobs",
 			Labels: map[string]string{
-				k8smeta.LabelManagedBy: k8smeta.ManagedByPiper,
-				k8smeta.LabelWorkerID:  "worker-1",
+				k8smanifest.LabelManagedBy: k8smanifest.ManagedByPiper,
+				k8smanifest.LabelWorkerID:  "worker-1",
 			},
 			Annotations: map[string]string{
-				k8smeta.AnnotationTaskID:   "run/1:step",
-				k8smeta.AnnotationRunID:    "run/1",
-				k8smeta.AnnotationStepName: "step",
-				k8smeta.AnnotationAttempt:  "2",
+				k8smanifest.AnnotationTaskID:   "run/1:step",
+				k8smanifest.AnnotationRunID:    "run/1",
+				k8smanifest.AnnotationStepName: "step",
+				k8smanifest.AnnotationAttempt:  "2",
 			},
 		},
 	})

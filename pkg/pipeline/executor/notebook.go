@@ -37,7 +37,10 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 		return fmt.Errorf("resolve notebook path: %w", err)
 	}
 
-	outputNb := filepath.Join(cfg.OutputDir, filepath.Base(notebookPath))
+	outputNb, err := filepath.Abs(filepath.Join(cfg.OutputDir, filepath.Base(notebookPath)))
+	if err != nil {
+		return fmt.Errorf("resolve notebook output path: %w", err)
+	}
 
 	args := []string{notebookPath, outputNb}
 	for k, v := range cfg.Params {

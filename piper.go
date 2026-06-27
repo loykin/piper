@@ -203,6 +203,7 @@ func New(cfg Config) (*Piper, error) {
 			p.storageURL = storageURL
 		}
 	}
+	q.SetStorageConfig(p.storageURL, cfg.Storage.Token)
 	p.resolver = &piperArtifactResolver{
 		runRepo:    repos.Run,
 		outputDir:  cfg.OutputDir,
@@ -508,7 +509,6 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 	}
 	defer func() { _ = os.RemoveAll(metaDir) }()
 
-	storageToken := p.cfg.Storage.Token
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
 			MasterURL:   masterURL,
@@ -517,9 +517,8 @@ func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opt
 			Concurrency: concurrency,
 		},
 		Store: worker.StoreConfig{
-			StorageToken: storageToken,
-			OutputDir:    outputDir,
-			StorageURL:   p.storageURL,
+			OutputDir:        outputDir,
+			LocalStoreAccess: true,
 		},
 		Baremetal: worker.BaremetalConfig{
 			MetaDir: metaDir,

@@ -18,6 +18,8 @@ type scheduleRow struct {
 	ID           string     `db:"id"`
 	Name         string     `db:"name"`
 	PipelineYAML string     `db:"pipeline_yaml"`
+	TemplateID   string     `db:"template_id"`
+	VersionID    string     `db:"template_version_id"`
 	ScheduleType string     `db:"schedule_type"`
 	CronExpr     string     `db:"cron_expr"`
 	EnabledInt   int        `db:"enabled"`
@@ -34,6 +36,8 @@ func (s scheduleRow) toSchedule() *schedule.Schedule {
 		ID:           s.ID,
 		Name:         s.Name,
 		PipelineYAML: s.PipelineYAML,
+		TemplateID:   s.TemplateID,
+		VersionID:    s.VersionID,
 		ScheduleType: s.ScheduleType,
 		CronExpr:     s.CronExpr,
 		Enabled:      s.EnabledInt == 1,
@@ -49,13 +53,13 @@ func (s scheduleRow) toSchedule() *schedule.Schedule {
 	return sc
 }
 
-const scheduleSelectCols = `project_id, id, name, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type`
+const scheduleSelectCols = `project_id, id, name, pipeline_yaml, template_id, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type`
 
 func (r *scheduleRepo) Create(ctx context.Context, sc *schedule.Schedule) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO schedules (project_id, id, name, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sc.ProjectID, sc.ID, sc.Name, sc.PipelineYAML, sc.CronExpr, sc.ParamsJSON,
+		`INSERT INTO schedules (project_id, id, name, pipeline_yaml, template_id, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sc.ProjectID, sc.ID, sc.Name, sc.PipelineYAML, sc.TemplateID, sc.VersionID, sc.CronExpr, sc.ParamsJSON,
 		boolToInt(sc.Enabled), sc.LastRunAt, sc.NextRunAt, sc.CreatedAt, sc.UpdatedAt, sc.ScheduleType,
 	)
 	return err

@@ -74,9 +74,8 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			}
 
 			workerToken := p.Config().Server.WorkerToken
-			storageToken := p.Config().Storage.Token
 
-			wCfg := embeddedPipelineWorkerConfig(root, p, localMaster, pipelineID, localStateDir, localConcurrency, workerToken, storageToken)
+			wCfg := embeddedPipelineWorkerConfig(root, localMaster, pipelineID, localStateDir, localConcurrency, workerToken)
 			var w *worker.Worker
 			if root.Server.Local.Pipeline {
 				w, err = worker.New(wCfg)
@@ -131,7 +130,7 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 	return cmd
 }
 
-func embeddedPipelineWorkerConfig(root cliconfig.RootConfig, p *piper.Piper, localMaster, pipelineID, localStateDir string, localConcurrency int, workerToken, storageToken string) worker.Config {
+func embeddedPipelineWorkerConfig(root cliconfig.RootConfig, localMaster, pipelineID, localStateDir string, localConcurrency int, workerToken string) worker.Config {
 	return worker.Config{
 		Agent: worker.AgentConfig{
 			MasterURL:   localMaster,
@@ -140,11 +139,10 @@ func embeddedPipelineWorkerConfig(root cliconfig.RootConfig, p *piper.Piper, loc
 			Concurrency: localConcurrency,
 		},
 		Store: worker.StoreConfig{
-			StorageToken: storageToken,
-			OutputDir:    root.Server.DataDir,
-			StorageURL:   p.SourceConfig().StorageURL,
-			GitUser:      root.Source.Git.User,
-			GitToken:     root.Source.Git.Token,
+			OutputDir:        root.Server.DataDir,
+			LocalStoreAccess: true,
+			GitUser:          root.Source.Git.User,
+			GitToken:         root.Source.Git.Token,
 		},
 		Runtime:   worker.RuntimeBaremetal,
 		Baremetal: worker.BaremetalConfig{MetaDir: filepath.Join(localStateDir, "pipeline-meta")},

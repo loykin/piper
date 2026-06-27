@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,8 +26,8 @@ type Dispatcher = *grpcagent.Dispatcher
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to K8s Job pods via piper agent exec arguments.
 type StoreConfig struct {
-	StorageToken string
-	StorageURL   string
+	MasterURL   string
+	WorkerToken string
 }
 
 // K8sConfig holds Kubernetes-specific driver and placement options.
@@ -131,12 +132,13 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		return fmt.Errorf("k8s pipeline worker: namespace %q is not in the allowed list", namespace)
 	}
 
+	storageURL, storageToken := taskStorageForK8sWorker(task, a.cfg.Store.MasterURL, a.cfg.Store.WorkerToken)
 	spec := pdriver.ExecSpec{
 		RuntimeKey:   pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
 		Image:        image,
 		Namespace:    namespace,
-		StorageToken: a.cfg.Store.StorageToken,
-		StorageURL:   a.cfg.Store.StorageURL,
+		StorageToken: storageToken,
+		StorageURL:   storageURL,
 	}
 	if a.cfg.LogClient != nil {
 		spec.LogSink = logsink.NewGRPCLogSink(task.ProjectID, a.cfg.LogClient)
@@ -160,6 +162,21 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 
 	go a.observe(waitCtx, handle)
 	return nil
+}
+
+func taskStorageForK8sWorker(task *proto.Task, masterURL, workerToken string) (storageURL, storageToken string) {
+	if task == nil {
+		return "", ""
+	}
+	storageURL = task.StorageURL
+	storageToken = task.StorageToken
+	if strings.HasPrefix(storageURL, "file://") {
+		storageURL = strings.TrimRight(strings.TrimSpace(masterURL), "/") + "/store"
+		if storageToken == "" {
+			storageToken = workerToken
+		}
+	}
+	return storageURL, storageToken
 }
 
 func (a *Worker) observe(ctx context.Context, handle pdriver.Handle) {

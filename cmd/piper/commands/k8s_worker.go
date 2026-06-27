@@ -21,10 +21,8 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 		Use:   "k8s-worker",
 		Short: "Start a Kubernetes worker",
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			loader.MustBindFlag("storage.url", cmd.Flags().Lookup("storage-url"))
 			loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
 			loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
-			loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
 			loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
 			loader.MustBindFlag("worker.k8s.cluster", cmd.Flags().Lookup("cluster"))
 			loader.MustBindFlag("worker.k8s.namespaces", cmd.Flags().Lookup("namespaces"))
@@ -57,10 +55,6 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			storageToken := common.StorageToken
-			if storageToken == "" {
-				storageToken = root.Storage.Token
-			}
 			return k8sworker.New(k8sworker.Config{
 				Agent: k8sworker.AgentConfig{
 					MasterURL:   common.MasterURL,
@@ -69,7 +63,6 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 					ClusterName: cluster,
 					Labels:      common.Labels,
 				},
-				StorageToken: storageToken,
 				K8s: k8sworker.K8sConfig{
 					Client:                        k8sClient,
 					Namespaces:                    c.Namespaces,
@@ -78,7 +71,6 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 					PipelineRunnerImage:           k8sPipelineRunnerImage(*c, root.Worker.Capabilities),
 					PipelineRunnerImagePullPolicy: k8sPipelinePullPolicy(*c, root.Worker.Capabilities),
 				},
-				StorageURL:      root.Storage.URL,
 				ResultOutboxDir: c.ResultOutboxDir,
 			}).Run(ctx)
 		},
@@ -96,8 +88,10 @@ func newK8sWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().String("pipeline-runner-image", "", "image containing the piper CLI for pipeline Job init containers")
 	cmd.Flags().String("pipeline-runner-image-pull-policy", "", "image pull policy for pipeline Job init containers")
 	cmd.Flags().String("result-outbox-dir", "", "durable directory for unacknowledged pipeline results (default: system temp directory)")
-	cmd.Flags().String("storage-url", "", "artifact storage URL (e.g. s3://bucket?endpoint=...)")
-	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
+	cmd.Flags().String("storage-url", "", "deprecated; artifact storage is configured on the master")
+	cmd.Flags().String("storage-token", "", "deprecated; artifact storage is provided by the master task payload")
+	_ = cmd.Flags().MarkDeprecated("storage-url", "artifact storage is configured on the master and delivered with each task")
+	_ = cmd.Flags().MarkDeprecated("storage-token", "artifact storage is configured on the master and delivered with each task")
 	return cmd
 }
 

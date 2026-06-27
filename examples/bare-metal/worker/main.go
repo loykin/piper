@@ -33,7 +33,7 @@ func main() {
 
 	master := flag.String("master", "http://localhost:8080", "single piper master endpoint")
 	workerToken := flag.String("worker-token", "", "worker-to-master authentication token")
-	storageToken := flag.String("storage-token", "", "artifact storage authentication token")
+	_ = flag.String("storage-token", "", "deprecated; artifact storage is provided by the master task payload")
 	label := flag.String("label", "", "worker label (e.g. gpu, cpu, large-mem)")
 	concurrency := flag.Int("concurrency", 4, "max parallel tasks")
 	metaDir := flag.String("meta-dir", "", "metadata directory for job state (default: $TMPDIR/piper-meta)")
@@ -47,8 +47,7 @@ func main() {
 			Concurrency: *concurrency,
 		},
 		Store: worker.StoreConfig{
-			StorageToken: *storageToken,
-			OutputDir:    os.TempDir() + "/piper-worker-outputs",
+			OutputDir: os.TempDir() + "/piper-worker-outputs",
 		},
 		Baremetal: worker.BaremetalConfig{
 			MetaDir: *metaDir,

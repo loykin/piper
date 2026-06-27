@@ -1,27 +1,36 @@
 import { useState } from 'react'
+import type { Row } from '@tanstack/react-table'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
-import { CalendarClock, Play, Plus, Trash2, X } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { DataGrid } from '@loykin/gridkit'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { Button } from '@/components/ui/button'
-import { IconButton } from '@/components/ui/icon-button'
 import { usePipelines, useDeletePipeline, useRunPipeline } from '@/features/pipelines/hooks'
+import { usePipelineColumns } from '@/features/pipelines/columns'
 import { DeployModal } from '@/features/pipelines/components/DeployModal'
-import type { PipelineTemplate } from '@/features/pipelines/api'
+import { PipelineDetailPanel } from '@/features/pipelines/components/PipelineDetailPanel'
+import type { PipelineTemplate } from '@/features/pipelines/types'
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const min = Math.floor(diff / 60000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min}m ago`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  return `${Math.floor(hr / 24)}d ago`
+function GroupHeader({ row }: { row: Row<PipelineTemplate> }) {
+  const first = row.subRows[0]?.original
+  const name = first?.name ?? '—'
+  const description = first?.description
+  const count = row.subRows.length
+  return (
+    <span className="flex items-baseline gap-2">
+      <span className="font-medium text-foreground">{name}</span>
+      {description && <span className="text-xs text-muted-foreground">{description}</span>}
+      <span className="text-xs font-normal text-muted-foreground">{count} version{count !== 1 ? 's' : ''}</span>
+    </span>
+  )
 }
 
-export default function PipelinesListPage() {
+function PipelinesListPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
+  const { open } = useSidePanel()
   const [searchParams] = useSearchParams()
   const filterName = searchParams.get('name') ?? ''
 
@@ -45,7 +54,7 @@ export default function PipelinesListPage() {
   }
 
   async function handleDelete(t: PipelineTemplate) {
-    if (!confirm(`Delete pipeline template "${t.name}" (${t.id.slice(0, 8)}…)? This also deletes the S3 snapshot.`)) return
+    if (!confirm(`Delete "${t.name}" v${t.version} (${t.id.slice(0, 8)}…)? This also deletes the snapshot for this version.`)) return
     setActionError('')
     try {
       await deletePipeline(t.id)
@@ -61,93 +70,72 @@ export default function PipelinesListPage() {
     setActionError('')
   }
 
-  // Group by name, sorted by most recent first within each group
-  const grouped = templates.reduce<Map<string, PipelineTemplate[]>>((acc, t) => {
-    const list = acc.get(t.name) ?? []
-    list.push(t)
-    acc.set(t.name, list)
-    return acc
-  }, new Map())
+  function openNewVersionFrom(t: PipelineTemplate) {
+    const params = new URLSearchParams({
+      template_id: t.template_id,
+      from_version: t.id,
+      name: t.name,
+      source: t.volume_id ? 'notebook-volume' : 'local',
+    })
+    if (t.volume_id) params.set('volume', t.volume_id)
+    else params.set('root', '.')
+    navigate(`/projects/${projectId}/pipelines/editor?${params.toString()}`)
+  }
+
+  function openDetail(t: PipelineTemplate) {
+    open(
+      <PipelineDetailPanel
+        template={t}
+        onRun={(x) => void handleRun(x)}
+        onDeploy={openDeploy}
+        onNewVersion={openNewVersionFrom}
+        onDelete={(x) => void handleDelete(x)}
+      />,
+      { size: 520 },
+    )
+  }
+
+  const columns = usePipelineColumns({
+    onRun: (t) => void handleRun(t),
+    onDeploy: openDeploy,
+    onNewVersion: openNewVersionFrom,
+    onDelete: (t) => void handleDelete(t),
+  })
 
   return (
-    <DataBodyTemplate
-      title="Pipeline Templates"
-      description="Each submit creates a new versioned snapshot. Deploy to schedule or run on demand."
-      actions={
-        <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
-          <Plus size={14} className="mr-1.5" /> New Pipeline
-        </Button>
-      }
-    >
-      <DataBodyTemplate.Body>
-        {loadError && <p className="mb-4 text-sm text-destructive">Failed to load pipeline templates.</p>}
-        {actionError && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {actionError}
-            <button type="button" onClick={() => setActionError('')} className="ml-auto"><X size={14} /></button>
-          </div>
-        )}
-
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : grouped.size === 0 ? (
-          <div className="py-16 text-center">
-            <p className="text-sm text-muted-foreground">No pipeline templates yet.</p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
-              <Plus size={14} className="mr-1.5" /> Create your first pipeline
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {Array.from(grouped.entries()).map(([name, rows]) => (
-              <DataBodyTemplate.Group
-                key={name}
-                variant="bordered"
-                title={name}
-                description={`${rows.length} submission${rows.length !== 1 ? 's' : ''}`}
-              >
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-border text-muted-foreground">
-                      <th className="py-2 text-left font-medium">ID</th>
-                      <th className="py-2 text-left font-medium">Snapshot</th>
-                      <th className="py-2 text-left font-medium">Volume</th>
-                      <th className="py-2 text-left font-medium">Submitted</th>
-                      <th className="py-2 text-right font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(t => (
-                      <tr key={t.id} className="border-b border-border/40 last:border-0">
-                        <td className="py-2 font-mono text-foreground">{t.id.slice(0, 8)}…</td>
-                        <td className="py-2 font-mono text-muted-foreground">{t.snapshot_id.slice(0, 8)}…</td>
-                        <td className="py-2 text-muted-foreground">{t.volume_id || '—'}</td>
-                        <td className="py-2 text-muted-foreground" title={t.created_at}>{relativeTime(t.created_at)}</td>
-                        <td className="py-2">
-                          <div className="flex items-center justify-end gap-0.5">
-                            <IconButton icon={<Play />} label="Run" onClick={() => void handleRun(t)} />
-                            <IconButton
-                              icon={<CalendarClock />}
-                              label="Deploy to schedule"
-                              onClick={() => openDeploy(t)}
-                            />
-                            <IconButton
-                              icon={<Trash2 />}
-                              label="Delete"
-                              onClick={() => void handleDelete(t)}
-                              className="text-destructive hover:bg-destructive/10"
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </DataBodyTemplate.Group>
-            ))}
-          </div>
-        )}
-      </DataBodyTemplate.Body>
+    <>
+      <DataBodyTemplate
+        title="Pipeline Templates"
+        description="Each submit creates a new versioned snapshot. Deploy to schedule or run on demand."
+        actions={
+          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
+            <Plus size={14} className="mr-1.5" /> New Template
+          </Button>
+        }
+      >
+        <DataBodyTemplate.Body>
+          {loadError && (
+            <p className="mb-4 text-sm text-destructive">Failed to load pipeline templates.</p>
+          )}
+          {actionError && (
+            <p className="mb-4 text-sm text-destructive">{actionError}</p>
+          )}
+          <DataGrid
+            data={templates}
+            columns={columns}
+            isLoading={isLoading}
+            enableGrouping
+            grouping={['template_id']}
+            visibilityState={{ template_id: false }}
+            renderGroupRow={(row) => <GroupHeader row={row} />}
+            emptyMessage="No pipeline templates yet."
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => openDetail(row)}
+          />
+        </DataBodyTemplate.Body>
+      </DataBodyTemplate>
 
       <DeployModal
         template={deployTarget}
@@ -156,9 +144,17 @@ export default function PipelinesListPage() {
         onCronChange={setDeployCron}
         onEnabledChange={setDeployEnabled}
         onClose={() => setDeployTarget(null)}
-        onDeployed={() => navigate(`/projects/${projectId}/schedules`)}
+        onDeployed={(scheduleId) => navigate(`/projects/${projectId}/schedules/${scheduleId}`)}
         error={actionError}
       />
-    </DataBodyTemplate>
+    </>
+  )
+}
+
+export default function PipelinesListPage() {
+  return (
+    <SidePanelProvider defaultSize={520} defaultMinSize={380} defaultMaxSize={900}>
+      <PipelinesListPageInner />
+    </SidePanelProvider>
   )
 }

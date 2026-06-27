@@ -11,6 +11,8 @@ type Schedule struct {
 	ProjectID    string     `json:"project_id"            db:"project_id"`
 	Name         string     `json:"name"                  db:"name"`
 	PipelineYAML string     `json:"pipeline_yaml"         db:"pipeline_yaml"`
+	TemplateID   string     `json:"template_id,omitempty" db:"template_id"`
+	VersionID    string     `json:"template_version_id,omitempty" db:"template_version_id"`
 	ScheduleType string     `json:"schedule_type"         db:"schedule_type"`
 	CronExpr     string     `json:"cron_expr,omitempty"   db:"cron_expr"`
 	Enabled      bool       `json:"enabled"               db:"enabled"`

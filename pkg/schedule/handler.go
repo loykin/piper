@@ -134,21 +134,14 @@ func (h *Handler) createSchedule(c *gin.Context) {
 
 	switch req.Type {
 	case "cron":
-		if strings.TrimSpace(req.Cron) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "cron is required for type=cron"})
+		if err := ApplyCron(sc, req.Cron, now, h.deps.NextTime); err != nil {
+			status := http.StatusBadRequest
+			if err == ErrNextTimeMissing {
+				status = http.StatusInternalServerError
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
-		if h.deps.NextTime == nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "NextTime not configured"})
-			return
-		}
-		nextRunAt, err := h.deps.NextTime(req.Cron, now)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cron expression"})
-			return
-		}
-		sc.CronExpr = req.Cron
-		sc.NextRunAt = nextRunAt
 
 	case "once":
 		if req.RunAt == nil || req.RunAt.IsZero() {

@@ -384,8 +384,7 @@ func TestExampleArtifacts(t *testing.T) {
 			Concurrency: 4,
 		},
 		Store: worker.StoreConfig{
-			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
-			StorageURL: serverURL + "/store",
+			OutputDir: filepath.Join(tmpDir, "worker-outputs"),
 		},
 		Baremetal: worker.BaremetalConfig{
 			MetaDir: filepath.Join(tmpDir, "piper-meta"),
@@ -474,8 +473,7 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 			Concurrency: 2,
 		},
 		Store: worker.StoreConfig{
-			OutputDir:  filepath.Join(tmpDir, "worker-outputs"),
-			StorageURL: serverURL + "/store",
+			OutputDir: filepath.Join(tmpDir, "worker-outputs"),
 		},
 		Baremetal: worker.BaremetalConfig{
 			MetaDir: filepath.Join(tmpDir, "piper-meta"),

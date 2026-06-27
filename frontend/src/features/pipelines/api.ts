@@ -1,9 +1,9 @@
 export type {
-  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest, UpdateMetaRequest,
 } from './types'
 
 import type {
-  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest, UpdateMetaRequest,
 } from './types'
 import { projectApi } from '@/lib/api'
 
@@ -27,6 +27,10 @@ export async function createPipeline(
   return projectApi(projectId).post<PipelineTemplate>('/pipelines', req)
 }
 
+export async function getPipeline(projectId: string, id: string): Promise<PipelineTemplate> {
+  return projectApi(projectId).get<PipelineTemplate>(`/pipelines/${id}`)
+}
+
 export async function deletePipeline(projectId: string, id: string): Promise<void> {
   return projectApi(projectId).delete(`/pipelines/${id}`)
 }
@@ -39,10 +43,18 @@ export async function runPipeline(
   return projectApi(projectId).post<{ id: string }>(`/pipelines/${id}/run`, req ?? {})
 }
 
+export async function updateTemplateMeta(
+  projectId: string,
+  versionId: string,
+  req: UpdateMetaRequest,
+): Promise<void> {
+  return projectApi(projectId).patch(`/pipelines/${versionId}/meta`, req)
+}
+
 export async function deployPipeline(
   projectId: string,
   id: string,
   req: DeployRequest,
-): Promise<unknown> {
+): Promise<import('@/features/schedules/api').Schedule> {
   return projectApi(projectId).post(`/pipelines/${id}/deploy`, { enabled: true, ...req })
 }

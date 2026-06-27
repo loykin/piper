@@ -47,10 +47,9 @@ type AgentConfig struct {
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to every piper agent exec subprocess.
 type StoreConfig struct {
-	StorageToken string
-	StorageURL   string
-	OutputDir    string
-	RemoteStore  bool // true when using a remote store (S3, HTTP); false for local file://
+	OutputDir        string
+	RemoteStore      bool // true when using a remote store (S3, HTTP); false for local file://
+	LocalStoreAccess bool // true only for embedded workers sharing the master's filesystem
 	// Git source credentials forwarded as PIPER_GIT_USER / PIPER_GIT_TOKEN.
 	// Falls back to environment variables when empty.
 	GitUser  string
@@ -259,12 +258,13 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	w.mu.Unlock()
 
 	runtimeKey := pdriver.RuntimeKey(w.cfg.Agent.ID, task.RunID, task.StepName, task.Attempt)
+	storageURL, storageToken := taskStorageForWorker(task, w.cfg.Agent.MasterURL, w.cfg.Agent.WorkerToken, w.cfg.Store.LocalStoreAccess)
 
 	spec := pdriver.ExecSpec{
 		RuntimeKey:   runtimeKey,
 		OutputDir:    w.cfg.Store.OutputDir,
-		StorageToken: w.cfg.Store.StorageToken,
-		StorageURL:   w.cfg.Store.StorageURL,
+		StorageToken: storageToken,
+		StorageURL:   storageURL,
 		Env:          w.gitEnv(),
 		LogSink:      logsink.NewGRPCLogSink(task.ProjectID, w.client),
 	}
@@ -294,6 +294,21 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	go w.observe(taskCtx, handle)
 	slog.Info("pipeline step dispatched", "task_id", task.ID, "runtime_key", runtimeKey)
 	return nil
+}
+
+func taskStorageForWorker(task *proto.Task, masterURL, workerToken string, localStoreAccess bool) (storageURL, storageToken string) {
+	if task == nil {
+		return "", ""
+	}
+	storageURL = task.StorageURL
+	storageToken = task.StorageToken
+	if strings.HasPrefix(storageURL, "file://") && !localStoreAccess {
+		storageURL = strings.TrimRight(strings.TrimSpace(masterURL), "/") + "/store"
+		if storageToken == "" {
+			storageToken = workerToken
+		}
+	}
+	return storageURL, storageToken
 }
 
 // observe waits for a job to finish and pushes the result to the master.

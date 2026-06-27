@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	cliconfig "github.com/piper/piper/cmd/piper/config"
@@ -21,7 +20,6 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 			loader.MustBindFlag("worker.state_dir", cmd.Flags().Lookup("state-dir"))
 			loader.MustBindFlag("worker.master_url", cmd.Flags().Lookup("master-url"))
 			loader.MustBindFlag("worker.worker_token", cmd.Flags().Lookup("worker-token"))
-			loader.MustBindFlag("worker.storage_token", cmd.Flags().Lookup("storage-token"))
 			return loadAndLog(loader)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -44,10 +42,6 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 
 			c := selection.Capability
 			runtime := worker.RuntimeType(selection.Infrastructure)
-			storageToken := common.StorageToken
-			if storageToken == "" {
-				storageToken = root.Storage.Token
-			}
 
 			cfg := worker.Config{
 				Agent: worker.AgentConfig{
@@ -60,12 +54,9 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 					Concurrency: c.Concurrency,
 				},
 				Store: worker.StoreConfig{
-					StorageToken: storageToken,
-					StorageURL:   root.Storage.URL,
-					OutputDir:    c.OutputDir,
-					RemoteStore:  root.Storage.URL != "" && !strings.HasPrefix(root.Storage.URL, "file://"),
-					GitUser:      root.Source.Git.User,
-					GitToken:     root.Source.Git.Token,
+					OutputDir: c.OutputDir,
+					GitUser:   root.Source.Git.User,
+					GitToken:  root.Source.Git.Token,
 				},
 				Runtime: runtime,
 				Baremetal: worker.BaremetalConfig{
@@ -91,12 +82,13 @@ func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd.Flags().String("label", "", "worker label for task routing")
 	cmd.Flags().String("master-url", "", "single piper master endpoint for the worker tunnel")
 	cmd.Flags().String("worker-token", "", "worker tunnel authentication token")
-	cmd.Flags().String("storage-token", "", "artifact storage authentication token")
+	cmd.Flags().String("storage-token", "", "deprecated; artifact storage is provided by the master task payload")
 	cmd.Flags().Int("concurrency", 0, "max parallel tasks")
 	cmd.Flags().String("infrastructure", "", "worker infrastructure: baremetal or docker")
 	cmd.Flags().String("output-dir", "", "output directory")
 	cmd.Flags().String("meta-dir", "", "metadata sidecar directory (default: $TMPDIR/piper-meta)")
 	cmd.Flags().String("docker-network", "", "Docker network for step containers")
+	_ = cmd.Flags().MarkDeprecated("storage-token", "artifact storage is configured on the master and delivered with each task")
 
 	return cmd
 }

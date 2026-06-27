@@ -12,13 +12,13 @@ type scheduleRepo struct{ db *sqlx.DB }
 
 func NewScheduleRepo(db *sqlx.DB) schedule.Repository { return &scheduleRepo{db: db} }
 
-const scheduleSelectCols = `project_id, id, name, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type`
+const scheduleSelectCols = `project_id, id, name, pipeline_yaml, template_id, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type`
 
 func (r *scheduleRepo) Create(ctx context.Context, sc *schedule.Schedule) error {
-	q := r.db.Rebind(`INSERT INTO schedules (project_id, id, name, pipeline_yaml, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	q := r.db.Rebind(`INSERT INTO schedules (project_id, id, name, pipeline_yaml, template_id, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := r.db.ExecContext(ctx, q,
-		sc.ProjectID, sc.ID, sc.Name, sc.PipelineYAML, sc.CronExpr, sc.ParamsJSON,
+		sc.ProjectID, sc.ID, sc.Name, sc.PipelineYAML, sc.TemplateID, sc.VersionID, sc.CronExpr, sc.ParamsJSON,
 		sc.Enabled, sc.LastRunAt, sc.NextRunAt, sc.CreatedAt, sc.UpdatedAt, sc.ScheduleType,
 	)
 	return err

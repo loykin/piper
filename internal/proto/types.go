@@ -51,6 +51,11 @@ type Task struct {
 	Attempt   int            `json:"attempt,omitempty"`
 	Vars      BuiltinVars    `json:"vars,omitempty"`
 	RunParams map[string]any `json:"run_params,omitempty"` // run-level params; override step-level YAML params
+
+	// Storage settings are master-owned and attached when the task is created.
+	// Workers must not independently choose artifact/source storage.
+	StorageURL   string `json:"storage_url,omitempty"`
+	StorageToken string `json:"storage_token,omitempty"`
 }
 
 // TaskResult is the result a worker reports back to the server

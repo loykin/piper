@@ -68,6 +68,8 @@ type Queue struct {
 	serverCtx    context.Context                   // cancelled on server shutdown; used for backend dispatch
 	maxAttempts  int                               // total attempts, including the first try
 	retryDelay   time.Duration
+	storageURL   string
+	storageToken string
 	OnRunSuccess func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
 	events       event.Publisher
 }
@@ -97,6 +99,15 @@ func (q *Queue) SetBackend(b pipelinedispatch.ExecutionBackend) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.backend = b
+}
+
+// SetStorageConfig installs the master-owned effective artifact/source storage
+// settings copied into every newly-created task.
+func (q *Queue) SetStorageConfig(storageURL, storageToken string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.storageURL = storageURL
+	q.storageToken = storageToken
 }
 
 // SetRetryPolicy configures queue-owned retries for distributed execution.
@@ -168,6 +179,9 @@ func (q *Queue) Add(ctx context.Context, projectID string, pl *pipeline.Pipeline
 			}(),
 			Vars:      vars,
 			RunParams: runParams,
+
+			StorageURL:   q.storageURL,
+			StorageToken: q.storageToken,
 		}
 		sCopy := s
 		r.tasks[s.Name] = &taskEntry{task: task, step: &sCopy, status: taskPending, maxAttempts: q.maxAttempts}
@@ -231,6 +245,9 @@ func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipe
 			}(),
 			Vars:      vars,
 			RunParams: runParams,
+
+			StorageURL:   q.storageURL,
+			StorageToken: q.storageToken,
 		}
 		sCopy := s
 		entry := &taskEntry{task: task, step: &sCopy, status: taskPending, maxAttempts: q.maxAttempts}

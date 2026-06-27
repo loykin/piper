@@ -134,7 +134,6 @@ func main() {
 		},
 		Store: worker.StoreConfig{
 			OutputDir:   filepath.Join(tmpDir, "worker-outputs"),
-			StorageURL:  s3URL,
 			RemoteStore: true,
 		},
 		Baremetal: worker.BaremetalConfig{

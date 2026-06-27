@@ -33,7 +33,8 @@ type HandlerDeps struct {
 	Parse    func(yaml []byte) (*pipeline.Pipeline, error)
 	StartRun func(ctx context.Context, yaml string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
 
-	GenID func() string // generates a schedule ID; may be nil
+	NextTime func(expr string, from time.Time) (time.Time, error)
+	GenID    func() string // generates a schedule ID; may be nil
 }
 
 // Handler is the Gin HTTP handler for the /pipelines domain.
@@ -49,21 +50,35 @@ func NewHandler(deps HandlerDeps) *Handler {
 // RegisterRoutes mounts all /pipelines routes.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/pipelines", h.list)
+	rg.GET("/pipelines/:id", h.get)
 
 	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
 	member.POST("/pipelines", h.submit)
 	member.DELETE("/pipelines/:id", h.delete)
 	member.POST("/pipelines/:id/run", h.triggerRun)
 	member.POST("/pipelines/:id/deploy", h.deploy)
+	member.PATCH("/pipelines/:id/meta", h.patchMeta)
+}
+
+// GET /pipelines/:id — get one pipeline template version
+func (h *Handler) get(c *gin.Context) {
+	projectContext, _ := project.FromContext(c.Request.Context())
+	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template version not found"})
+		return
+	}
+	c.JSON(http.StatusOK, t)
 }
 
 // POST /pipelines — submit a new pipeline template
 func (h *Handler) submit(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	var req struct {
-		Name     string `json:"name"`
-		YAML     string `json:"yaml"`
-		VolumeID string `json:"volume_id"`
+		TemplateID string `json:"template_id"`
+		Name       string `json:"name"`
+		YAML       string `json:"yaml"`
+		VolumeID   string `json:"volume_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -126,6 +141,7 @@ func (h *Handler) submit(c *gin.Context) {
 
 	t := &Template{
 		ProjectID:  projectContext.ID,
+		TemplateID: strings.TrimSpace(req.TemplateID),
 		ID:         uuid.New().String(),
 		Name:       req.Name,
 		YAML:       req.YAML,
@@ -264,13 +280,20 @@ func (h *Handler) deploy(c *gin.Context) {
 		ProjectID:    projectContext.ID,
 		Name:         t.Name,
 		PipelineYAML: rewrittenYAML,
-		ScheduleType: "cron",
-		CronExpr:     req.Cron,
+		TemplateID:   t.TemplateID,
+		VersionID:    t.ID,
 		Enabled:      req.Enabled,
 		ParamsJSON:   paramsJSON,
-		NextRunAt:    now,
 		CreatedAt:    now,
 		UpdatedAt:    now,
+	}
+	if err := schedule.ApplyCron(sc, req.Cron, now, h.deps.NextTime); err != nil {
+		status := http.StatusBadRequest
+		if err == schedule.ErrNextTimeMissing {
+			status = http.StatusInternalServerError
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
 	}
 	if err := h.deps.Schedules.Create(c.Request.Context(), sc); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -278,6 +301,34 @@ func (h *Handler) deploy(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, sc)
+}
+
+// PATCH /pipelines/:id/meta — update description and tags on the template group
+func (h *Handler) patchMeta(c *gin.Context) {
+	projectContext, _ := project.FromContext(c.Request.Context())
+	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template version not found"})
+		return
+	}
+
+	var req struct {
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Tags == nil {
+		req.Tags = []string{}
+	}
+
+	if err := h.deps.Templates.UpdateMeta(c.Request.Context(), projectContext.ID, t.TemplateID, req.Description, req.Tags); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"description": req.Description, "tags": req.Tags})
 }
 
 // extractLocalPaths returns all source paths (entry point + deps) from steps where source is local or empty.

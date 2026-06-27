@@ -16,15 +16,3 @@ func TestWorkerConfig_defaults(t *testing.T) {
 	}
 	_ = w
 }
-
-// TestWorkerConfig_StorageURL verifies that StorageURL set on StoreConfig is preserved.
-func TestWorkerConfig_StorageURL(t *testing.T) {
-	url := "s3://my-bucket?region=us-east-1"
-	cfg := worker.Config{
-		Agent: worker.AgentConfig{MasterURL: "http://localhost:8080", ID: "test"},
-		Store: worker.StoreConfig{StorageURL: url},
-	}
-	if cfg.Store.StorageURL != url {
-		t.Fatalf("StorageURL = %q, want %q", cfg.Store.StorageURL, url)
-	}
-}

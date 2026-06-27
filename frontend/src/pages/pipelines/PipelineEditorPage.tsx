@@ -17,6 +17,7 @@ import PipelineCanvas from '@/shared/components/PipelineCanvas'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
 import { createPipeline } from '@/features/pipelines/api'
+import { getPipeline } from '@/features/pipelines/api'
 import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
@@ -342,6 +343,8 @@ export default function PipelineEditorPage() {
   const editorVolumeId  = searchParams.get('volume') ?? ''
   const editorRoot      = searchParams.get('root')   ?? ''
   const editorName      = searchParams.get('name')   ?? initialDraft.name
+  const editorTemplateId = searchParams.get('template_id') ?? ''
+  const editorFromVersion = searchParams.get('from_version') ?? ''
 
   // Setup form — local state before user commits to URL
   const [formName,       setFormName]       = useState(editorName)
@@ -377,6 +380,26 @@ export default function PipelineEditorPage() {
     if (!projectId) return
     listNotebookVolumes(projectId).then(setVolumes).catch(() => setVolumes([]))
   }, [projectId])
+
+  useEffect(() => {
+    if (!projectId || !editorFromVersion) return
+    let cancelled = false
+    getPipeline(projectId, editorFromVersion).then(template => {
+      if (cancelled) return
+      const parsed = parsePipelineDraftYaml(template.yaml)
+      setPipelineName(template.name)
+      setFormName(template.name)
+      setTasks(parsed.steps)
+      setPositions(buildPositions(parsed.steps))
+      setSelectedId(parsed.steps[0]?.id ?? '')
+      setEditingId(null)
+      setYamlText(buildPipelineDraftYaml({ name: template.name, steps: parsed.steps }))
+      setError('')
+    }).catch(err => {
+      if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+    })
+    return () => { cancelled = true }
+  }, [projectId, editorFromVersion])
 
   useEffect(() => {
     if (!fileBrowserOpen && !artifactBrowseKey) return
@@ -564,7 +587,12 @@ export default function PipelineEditorPage() {
     setError('')
     try {
       const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
-      await createPipeline(projectId, { name: pipelineName, yaml, volume_id: submitVolumeId || undefined })
+      await createPipeline(projectId, {
+        template_id: editorTemplateId || undefined,
+        name: pipelineName,
+        yaml,
+        volume_id: submitVolumeId || undefined,
+      })
       setSubmitModalOpen(false)
       navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(pipelineName)}`)
     } catch (err) {
@@ -704,7 +732,7 @@ export default function PipelineEditorPage() {
   return (
     <>
       <WorkbenchBodyTemplate
-        title="Pipeline Editor"
+        title={editorFromVersion ? 'New Version' : 'Pipeline Editor'}
         description="Build a Piper Pipeline YAML from a source workspace, a task canvas, and a separate YAML tab."
         actions={
           <>

@@ -50,11 +50,8 @@ type K8sConfig struct {
 }
 
 type Config struct {
-	Agent        AgentConfig
-	StorageToken string
-	K8s          K8sConfig
-	// StorageURL is the artifact store URL forwarded to pipeline Job pods.
-	StorageURL string
+	Agent AgentConfig
+	K8s   K8sConfig
 	// ResultOutboxDir is the durable directory for unacknowledged pipeline results.
 	ResultOutboxDir string
 }
@@ -159,8 +156,8 @@ func New(cfg Config) *Worker {
 			pipelineObserver = k8spipeline.Register(client.Dispatcher(), k8spipeline.Config{
 				WorkerID: cfg.Agent.ID,
 				Store: k8spipeline.StoreConfig{
-					StorageToken: cfg.StorageToken,
-					StorageURL:   cfg.StorageURL,
+					MasterURL:   cfg.Agent.MasterURL,
+					WorkerToken: cfg.Agent.WorkerToken,
 				},
 				K8s: k8spipeline.K8sConfig{
 					Client:               cfg.K8s.Client,

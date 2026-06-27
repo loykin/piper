@@ -212,8 +212,12 @@ type isolatedPythonEnv struct {
 }
 
 func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir string, stdout, stderr io.Writer) (*isolatedPythonEnv, func(), error) {
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve task output dir: %w", err)
+	}
 	env := &isolatedPythonEnv{
-		dir: filepath.Join(outputDir, ".task-venv"),
+		dir: filepath.Join(absOutputDir, ".task-venv"),
 	}
 	cleanup := func() {
 		if err := os.RemoveAll(env.dir); err != nil {

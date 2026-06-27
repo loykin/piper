@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { useDeployPipeline } from '../hooks'
 import type { PipelineTemplate } from '../types'
 
@@ -14,7 +15,7 @@ interface DeployModalProps {
   onCronChange: (cron: string) => void
   onEnabledChange: (enabled: boolean) => void
   onClose: () => void
-  onDeployed: () => void
+  onDeployed: (scheduleId: string) => void
   error?: string
 }
 
@@ -29,9 +30,9 @@ export function DeployModal({
     if (!template) return
     setLocalError('')
     try {
-      await deployPipeline({ id: template.id, req: { cron, enabled } })
-      onDeployed()
+      const schedule = await deployPipeline({ id: template.id, req: { cron, enabled } })
       onClose()
+      onDeployed(schedule.id)
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : String(err))
     }
@@ -44,7 +45,7 @@ export function DeployModal({
           <DialogTitle>Deploy to Schedule</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-muted-foreground">
-          Creates a new schedule with a snapshot of <strong>{template?.name}</strong>.
+          Creates a new schedule from <strong>{template?.name}</strong>{template ? ` v${template.version}` : ''}.
           The schedule is independent — updating the template later does not affect it.
         </p>
         <div className="mb-4">
@@ -56,12 +57,10 @@ export function DeployModal({
           />
         </div>
         <div className="mb-4 flex items-center gap-2">
-          <input
+          <Switch
             id="deploy-enabled"
-            type="checkbox"
             checked={enabled}
-            onChange={e => onEnabledChange(e.target.checked)}
-            className="rounded"
+            onCheckedChange={onEnabledChange}
           />
           <label htmlFor="deploy-enabled" className="text-xs">Enable immediately</label>
         </div>

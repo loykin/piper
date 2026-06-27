@@ -334,7 +334,8 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 		StartRun: func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 			return p.startRunFromAPI(ctx, yaml, params, vars, experiment)
 		},
-		GenID: genScheduleID,
+		NextTime: nextScheduleTime,
+		GenID:    genScheduleID,
 	}).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
 	// Built-in file server: expose /store/* routes only when using a LocalStore.

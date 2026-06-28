@@ -499,6 +499,158 @@ func TestBackfillScheduleCreatesRunsForCronRange(t *testing.T) {
 	}
 }
 
+func TestScheduleFiredCronClaimsAndCreatesRun(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := context.Background()
+	const projectID = "schedule-fire"
+	if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+
+	plannedAt := time.Now().UTC().Add(-1 * time.Second).Truncate(time.Second)
+	p.startedAt = plannedAt.Add(-1 * time.Minute)
+	sc := &schedule.Schedule{
+		ID:           "sch-fire",
+		ProjectID:    projectID,
+		Name:         "train",
+		PipelineYAML: testScheduleYAML(),
+		ScheduleType: "cron",
+		CronExpr:     "* * * * *",
+		Enabled:      true,
+		NextRunAt:    plannedAt,
+		CreatedAt:    plannedAt,
+		UpdatedAt:    plannedAt,
+	}
+	if err := p.repos.Schedule.Create(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+
+	p.scheduleFired(ctx, projectID, sc.ID)
+
+	runs, err := p.repos.Run.List(ctx, projectID, run.RunFilter{ScheduleID: sc.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(runs))
+	}
+	if runs[0].ScheduledAt == nil || !runs[0].ScheduledAt.Equal(plannedAt) {
+		t.Fatalf("ScheduledAt = %v, want %v", runs[0].ScheduledAt, plannedAt)
+	}
+	got, err := p.repos.Schedule.Get(ctx, projectID, sc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastRunAt == nil {
+		t.Fatal("LastRunAt = nil, want claim timestamp")
+	}
+	if !got.NextRunAt.After(plannedAt) {
+		t.Fatalf("NextRunAt = %v, want after %v", got.NextRunAt, plannedAt)
+	}
+}
+
+func TestScheduleFiredIgnoresFutureCronTick(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := context.Background()
+	const projectID = "schedule-future"
+	if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	plannedAt := now.Add(1 * time.Hour)
+	p.startedAt = now.Add(-1 * time.Minute)
+	sc := &schedule.Schedule{
+		ID:           "sch-future",
+		ProjectID:    projectID,
+		Name:         "train",
+		PipelineYAML: testScheduleYAML(),
+		ScheduleType: "cron",
+		CronExpr:     "* * * * *",
+		Enabled:      true,
+		NextRunAt:    plannedAt,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := p.repos.Schedule.Create(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+
+	p.scheduleFired(ctx, projectID, sc.ID)
+
+	runs, err := p.repos.Run.List(ctx, projectID, run.RunFilter{ScheduleID: sc.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %d, want 0 for future stale callback", len(runs))
+	}
+	got, err := p.repos.Schedule.Get(ctx, projectID, sc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastRunAt != nil {
+		t.Fatalf("LastRunAt = %v, want nil", got.LastRunAt)
+	}
+	if !got.NextRunAt.Equal(plannedAt) {
+		t.Fatalf("NextRunAt = %v, want unchanged %v", got.NextRunAt, plannedAt)
+	}
+}
+
+func TestScheduleFiredMisfireSkipAdvancesWithoutRun(t *testing.T) {
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Schedule:  ScheduleConfig{MisfirePolicy: "skip"},
+	})
+	ctx := context.Background()
+	const projectID = "schedule-skip"
+	if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+
+	plannedAt := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
+	p.startedAt = plannedAt.Add(30 * time.Minute)
+	sc := &schedule.Schedule{
+		ID:           "sch-skip",
+		ProjectID:    projectID,
+		Name:         "train",
+		PipelineYAML: testScheduleYAML(),
+		ScheduleType: "cron",
+		CronExpr:     "* * * * *",
+		Enabled:      true,
+		NextRunAt:    plannedAt,
+		CreatedAt:    plannedAt,
+		UpdatedAt:    plannedAt,
+	}
+	if err := p.repos.Schedule.Create(ctx, sc); err != nil {
+		t.Fatal(err)
+	}
+
+	p.scheduleFired(ctx, projectID, sc.ID)
+
+	runs, err := p.repos.Run.List(ctx, projectID, run.RunFilter{ScheduleID: sc.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("runs = %d, want 0 for skipped misfire", len(runs))
+	}
+	got, err := p.repos.Schedule.Get(ctx, projectID, sc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastRunAt != nil {
+		t.Fatalf("LastRunAt = %v, want nil on skip", got.LastRunAt)
+	}
+	if !got.NextRunAt.After(plannedAt) {
+		t.Fatalf("NextRunAt = %v, want advanced after %v", got.NextRunAt, plannedAt)
+	}
+}
+
+func testScheduleYAML() string {
+	return "metadata:\n  name: train\nspec:\n  steps:\n    - name: step\n      run:\n        command: [\"true\"]\n"
+}
+
 func hasRoute(router *gin.Engine, method, path string) bool {
 	for _, route := range router.Routes() {
 		if route.Method == method && route.Path == path {

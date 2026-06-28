@@ -101,6 +101,10 @@ func (r *stubScheduleRepo) List(context.Context, string) ([]*schedule.Schedule, 
 	return nil, nil
 }
 
+func (r *stubScheduleRepo) ListWithMaxRuns(context.Context) ([]*schedule.Schedule, error) {
+	return nil, nil
+}
+
 func (r *stubScheduleRepo) ListEnabled(context.Context) ([]*schedule.Schedule, error) {
 	return nil, nil
 }

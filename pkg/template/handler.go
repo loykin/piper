@@ -280,6 +280,7 @@ func (h *Handler) deploy(c *gin.Context) {
 	var req struct {
 		Cron    string         `json:"cron"`
 		Enabled bool           `json:"enabled"`
+		MaxRuns int            `json:"max_runs,omitempty"`
 		Params  map[string]any `json:"params,omitempty"`
 	}
 	req.Enabled = true
@@ -289,6 +290,10 @@ func (h *Handler) deploy(c *gin.Context) {
 	}
 	if req.Cron == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cron is required"})
+		return
+	}
+	if req.MaxRuns < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "max_runs must be greater than or equal to 0"})
 		return
 	}
 
@@ -315,6 +320,7 @@ func (h *Handler) deploy(c *gin.Context) {
 		PipelineYAML: rewrittenYAML,
 		VersionID:    t.ID,
 		Enabled:      req.Enabled,
+		MaxRuns:      req.MaxRuns,
 		ParamsJSON:   paramsJSON,
 		CreatedAt:    now,
 		UpdatedAt:    now,

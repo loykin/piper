@@ -1,6 +1,6 @@
 // pipelines feature — Deploy to schedule modal component
 import { CalendarClock } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,12 +25,23 @@ export function DeployModal({
 }: DeployModalProps) {
   const { mutateAsync: deployPipeline, isPending: deploying } = useDeployPipeline()
   const [localError, setLocalError] = useState('')
+  const [maxRuns, setMaxRuns] = useState('')
+
+  useEffect(() => {
+    setLocalError('')
+    setMaxRuns('')
+  }, [template?.id])
 
   async function handleDeploy() {
     if (!template) return
     setLocalError('')
+    const parsedMaxRuns = maxRuns.trim() === '' ? 0 : Number(maxRuns)
+    if (!Number.isInteger(parsedMaxRuns) || parsedMaxRuns < 0) {
+      setLocalError('Max runs must be a non-negative integer.')
+      return
+    }
     try {
-      const schedule = await deployPipeline({ id: template.id, req: { cron, enabled } })
+      const schedule = await deployPipeline({ id: template.id, req: { cron, enabled, max_runs: parsedMaxRuns } })
       onClose()
       onDeployed(schedule.id)
     } catch (err) {
@@ -63,6 +74,18 @@ export function DeployModal({
             onCheckedChange={onEnabledChange}
           />
           <label htmlFor="deploy-enabled" className="text-xs">Enable immediately</label>
+        </div>
+        <div className="mb-4">
+          <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Max Runs</label>
+          <Input
+            type="number"
+            min={0}
+            step={1}
+            value={maxRuns}
+            onChange={e => setMaxRuns(e.target.value)}
+            placeholder="0"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">0 keeps all completed runs.</p>
         </div>
         {(localError || error) && <p className="mb-3 text-xs text-destructive">{localError || error}</p>}
         <div className="flex justify-end gap-2">

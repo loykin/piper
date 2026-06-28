@@ -30,6 +30,7 @@ func injectProjectContext(id string) gin.HandlerFunc {
 type capturingRunRepo struct {
 	filter RunFilter
 	run    *Run
+	runs   []*Run
 }
 
 func (r *capturingRunRepo) Create(context.Context, *Run) error { return nil }
@@ -38,7 +39,7 @@ func (r *capturingRunRepo) Get(context.Context, string, string) (*Run, error) {
 }
 func (r *capturingRunRepo) List(_ context.Context, _ string, filter RunFilter) ([]*Run, error) {
 	r.filter = filter
-	return []*Run{}, nil
+	return r.runs, nil
 }
 func (r *capturingRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
 	return nil
@@ -58,6 +59,18 @@ func (r emptyStepRepo) List(context.Context, string, string) ([]*Step, error) {
 	return []*Step{}, nil
 }
 func (r emptyStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
+
+type capturingStepRepo struct {
+	calls int
+	steps []*Step
+}
+
+func (r *capturingStepRepo) Upsert(context.Context, *Step) error { return nil }
+func (r *capturingStepRepo) List(context.Context, string, string) ([]*Step, error) {
+	r.calls++
+	return r.steps, nil
+}
+func (r *capturingStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
 
 // ── metric filter ─────────────────────────────────────────────────────────────
 
@@ -177,6 +190,73 @@ func TestListRunsPipelineNameQuery(t *testing.T) {
 	}
 	if repo.filter.Experiment != "exp-v2" {
 		t.Fatalf("Experiment = %q, want exp-v2", repo.filter.Experiment)
+	}
+}
+
+func TestListRunsScheduleFilterAndIncludeSteps(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &capturingRunRepo{runs: []*Run{{
+		ID:           "run-1",
+		ProjectID:    "test-proj",
+		ScheduleID:   "sch-1",
+		PipelineName: "train",
+		Status:       StatusSuccess,
+		StartedAt:    time.Now().UTC(),
+		PipelineYAML: "metadata:\n  name: train\n",
+	}}}
+	steps := &capturingStepRepo{steps: []*Step{{RunID: "run-1", StepName: "fit", Status: "done", Attempts: 1}}}
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:  repo,
+		Steps: steps,
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	req := httptest.NewRequest(http.MethodGet, "/runs?schedule_id=sch-1&include_steps=true", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if repo.filter.ScheduleID != "sch-1" {
+		t.Fatalf("ScheduleID = %q, want sch-1", repo.filter.ScheduleID)
+	}
+	if steps.calls != 1 {
+		t.Fatalf("step List calls = %d, want 1", steps.calls)
+	}
+	if !strings.Contains(rec.Body.String(), `"steps":[`) {
+		t.Fatalf("response did not include steps: %s", rec.Body.String())
+	}
+}
+
+func TestListRunsDefaultOmitsSteps(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &capturingRunRepo{runs: []*Run{{
+		ID:           "run-1",
+		ProjectID:    "test-proj",
+		PipelineName: "train",
+		Status:       StatusSuccess,
+		StartedAt:    time.Now().UTC(),
+	}}}
+	steps := &capturingStepRepo{steps: []*Step{{RunID: "run-1", StepName: "fit", Status: "done", Attempts: 1}}}
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Runs:  repo,
+		Steps: steps,
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if steps.calls != 0 {
+		t.Fatalf("step List calls = %d, want 0", steps.calls)
+	}
+	if strings.Contains(rec.Body.String(), `"steps"`) {
+		t.Fatalf("response should omit steps by default: %s", rec.Body.String())
 	}
 }
 

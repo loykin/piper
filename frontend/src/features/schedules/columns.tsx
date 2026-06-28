@@ -37,6 +37,16 @@ export const scheduleColumns: DataGridColumnDef<Schedule>[] = [
     ),
   },
   {
+    id: 'max_runs',
+    header: 'Retention',
+    meta: { minWidth: 110 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {row.original.max_runs > 0 ? `${row.original.max_runs} runs` : 'All runs'}
+      </span>
+    ),
+  },
+  {
     id: 'last_run_at',
     header: 'Last Run',
     meta: { minWidth: 130 },

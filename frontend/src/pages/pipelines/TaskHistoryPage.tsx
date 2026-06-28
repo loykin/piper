@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { getRun, listRuns, type Step } from '@/features/runs/api'
+import { listRuns, type Step } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useProjectId } from '@/lib/projectContext'
 
@@ -42,17 +42,13 @@ export default function TaskHistoryPage() {
   const load = async () => {
     if (!projectId) return
     try {
-      const runs = await listRuns(projectId)
+      const runs = await listRuns(projectId, { include_steps: true })
       const recentRuns = (Array.isArray(runs) ? runs : []).slice(0, 30)
-      const details = await Promise.allSettled(recentRuns.map((r) => getRun(projectId, r.id)))
 
       const merged: TaskHistoryRow[] = []
 
-      details.forEach((result, index) => {
-        const run = recentRuns[index]
-        if (!run || result.status !== 'fulfilled') return
-
-        const steps = result.value.steps ?? []
+      recentRuns.forEach((run) => {
+        const steps = run.steps ?? []
         for (const step of steps) {
           merged.push({
             runId: run.id,

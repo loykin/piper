@@ -381,28 +381,58 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 func (p *Piper) cleanupRetention(ctx context.Context) {
 	runTTL := p.cfg.Retention.RunTTL
 	artifactTTL := p.cfg.Retention.ArtifactTTL
-	if runTTL <= 0 && artifactTTL <= 0 {
-		return
-	}
-	runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{})
-	if err != nil {
-		slog.Warn("retention list runs failed", "err", err)
-		return
-	}
-	now := time.Now().UTC()
-	for _, r := range runs {
-		if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
-			continue
+	if runTTL > 0 || artifactTTL > 0 {
+		runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{})
+		if err != nil {
+			slog.Warn("retention list runs failed", "err", err)
+			return
 		}
-		if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
-			if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
-				slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
+		now := time.Now().UTC()
+		for _, r := range runs {
+			if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
+				continue
 			}
+			if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
+				if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
+					slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
+				}
+				continue
+			}
+			if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
+				if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, r.ID); err != nil {
+					slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
+				}
+			}
+		}
+	}
+	p.cleanupScheduleRetention(ctx)
+}
+
+func (p *Piper) cleanupScheduleRetention(ctx context.Context) {
+	schedules, err := p.repos.Schedule.ListWithMaxRuns(ctx)
+	if err != nil {
+		slog.Warn("retention list schedules with max_runs failed", "err", err)
+		return
+	}
+	for _, sc := range schedules {
+		// List returns runs newest-first (started_at DESC); we keep the first
+		// max_runs terminal runs and delete the remainder.
+		runs, err := p.repos.Run.List(ctx, sc.ProjectID, run.RunFilter{ScheduleID: sc.ID})
+		if err != nil {
+			slog.Warn("retention list schedule runs failed", "project_id", sc.ProjectID, "schedule_id", sc.ID, "err", err)
 			continue
 		}
-		if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
-			if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, r.ID); err != nil {
-				slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
+		kept := 0
+		for _, r := range runs {
+			if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
+				continue
+			}
+			if kept < sc.MaxRuns {
+				kept++
+				continue
+			}
+			if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
+				slog.Warn("retention delete schedule run failed", "run_id", r.ID, "schedule_id", sc.ID, "err", err)
 			}
 		}
 	}

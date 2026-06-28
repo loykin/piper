@@ -11,6 +11,7 @@ export interface Schedule {
   schedule_type: 'immediate' | 'once' | 'cron'
   cron_expr?: string
   enabled: boolean
+  max_runs: number
   last_run_at?: string
   next_run_at: string
   created_at: string
@@ -23,6 +24,7 @@ export interface CreateScheduleOptions {
   type: 'immediate' | 'once' | 'cron'
   cron?: string
   run_at?: string
+  max_runs?: number
   owner_id?: string
   params?: Record<string, unknown>
 }

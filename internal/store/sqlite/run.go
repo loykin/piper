@@ -58,8 +58,22 @@ LEFT JOIN (SELECT project_id, run_id, MAX(value) AS mv FROM run_metrics WHERE pr
 		args = append(args, projectID, filter.MetricStep, filter.MetricKey)
 		where = append(where, "r.project_id=?")
 		args = append(args, projectID)
-		where = append(where, "r.experiment=?")
-		args = append(args, filter.Experiment)
+		if filter.Experiment != "" {
+			where = append(where, "r.experiment=?")
+			args = append(args, filter.Experiment)
+		}
+		if filter.PipelineName != "" {
+			where = append(where, "r.pipeline_name=?")
+			args = append(args, filter.PipelineName)
+		}
+		if filter.ScheduleID != "" {
+			where = append(where, "r.schedule_id=?")
+			args = append(args, filter.ScheduleID)
+		}
+		if filter.Status != "" {
+			where = append(where, "r.status=?")
+			args = append(args, filter.Status)
+		}
 	} else {
 		query = `SELECT ` + runSelectCols + ` FROM runs`
 		where = append(where, "project_id=?")

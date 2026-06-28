@@ -10,6 +10,7 @@ type Repository interface {
 	Create(ctx context.Context, sc *Schedule) error
 	Get(ctx context.Context, projectID, id string) (*Schedule, error)
 	List(ctx context.Context, projectID string) ([]*Schedule, error)
+	ListWithMaxRuns(ctx context.Context) ([]*Schedule, error)
 	// ListEnabled returns all enabled schedules across all projects.
 	// Used on server startup to seed the in-memory Scheduler.
 	ListEnabled(ctx context.Context) ([]*Schedule, error)

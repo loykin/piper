@@ -25,6 +25,6 @@ export interface TriggerRunRequest {
 export interface DeployRequest {
   cron: string
   enabled?: boolean
+  max_runs?: number
   params?: Record<string, unknown>
 }
-

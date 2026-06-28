@@ -16,6 +16,8 @@ export async function listRuns(projectId: string, filter?: RunFilter): Promise<R
   if (filter?.metric_step) params.set('metric_step', filter.metric_step)
   if (filter?.metric_key) params.set('metric_key', filter.metric_key)
   if (filter?.metric_order) params.set('metric_order', filter.metric_order)
+  if (filter?.schedule_id) params.set('schedule_id', filter.schedule_id)
+  if (filter?.include_steps) params.set('include_steps', 'true')
   const qs = params.toString()
   const data = await projectApi(projectId).get<Run[]>(`/runs${qs ? `?${qs}` : ''}`)
   return Array.isArray(data) ? data : []

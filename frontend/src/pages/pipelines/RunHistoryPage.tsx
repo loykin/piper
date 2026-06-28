@@ -12,7 +12,7 @@ import type { Run } from '@/features/runs/api'
 export default function RunHistoryPage() {
   const navigate = useNavigate()
   const projectId = useProjectId()
-  const { data: runs = [], isLoading } = useRuns()
+  const { data: runs = [], isLoading } = useRuns({ include_steps: true })
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
 

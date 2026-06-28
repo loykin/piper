@@ -56,6 +56,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
   const [scheduleType, setScheduleType] = useState<ScheduleType>('immediate')
   const [runAt, setRunAt] = useState('')
   const [cronExpr, setCronExpr] = useState('0 * * * *')
+  const [maxRuns, setMaxRuns] = useState('')
   const [error, setError] = useState('')
 
   const runAtISO = useMemo(() => {
@@ -73,6 +74,11 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
     if (!trimmedYaml) { setError('Pipeline YAML is required.'); return }
     if (scheduleType === 'once' && !runAtISO) { setError('Run time is required for once type.'); return }
     if (scheduleType === 'cron' && !cronExpr.trim()) { setError('Cron expression is required.'); return }
+    const parsedMaxRuns = maxRuns.trim() === '' ? 0 : Number(maxRuns)
+    if (!Number.isInteger(parsedMaxRuns) || parsedMaxRuns < 0) {
+      setError('Max runs must be a non-negative integer.')
+      return
+    }
 
     try {
       const normalizedYaml = applyPipelineName(trimmedYaml, trimmedName)
@@ -82,6 +88,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
         type: scheduleType,
         cron: scheduleType === 'cron' ? cronExpr.trim() : undefined,
         run_at: scheduleType === 'once' ? runAtISO : undefined,
+        max_runs: parsedMaxRuns,
       })
       onCreated(result.schedule_id)
     } catch (e: unknown) {
@@ -144,6 +151,19 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
           <p className="mt-1 text-xs text-muted-foreground">minute hour day month weekday — e.g. <code>*/15 * * * *</code></p>
         </div>
       )}
+
+      <div>
+        <label className="mb-2 block text-sm font-medium">Max Runs</label>
+        <Input
+          type="number"
+          min={0}
+          step={1}
+          value={maxRuns}
+          onChange={(e) => setMaxRuns(e.target.value)}
+          placeholder="0"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">0 keeps all completed runs.</p>
+      </div>
 
       <div>
         <label className="mb-2 block text-sm font-medium">Pipeline YAML</label>

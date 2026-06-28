@@ -87,12 +87,13 @@ func (h *Handler) listSchedules(c *gin.Context) {
 // POST /schedules
 func (h *Handler) createSchedule(c *gin.Context) {
 	var req struct {
-		Name   string         `json:"name"`
-		YAML   string         `json:"yaml"`
-		Type   string         `json:"type"` // immediate | once | cron
-		Cron   string         `json:"cron"`
-		RunAt  *time.Time     `json:"run_at,omitempty"`
-		Params map[string]any `json:"params,omitempty"`
+		Name    string         `json:"name"`
+		YAML    string         `json:"yaml"`
+		Type    string         `json:"type"` // immediate | once | cron
+		Cron    string         `json:"cron"`
+		RunAt   *time.Time     `json:"run_at,omitempty"`
+		MaxRuns int            `json:"max_runs,omitempty"`
+		Params  map[string]any `json:"params,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -104,6 +105,10 @@ func (h *Handler) createSchedule(c *gin.Context) {
 	}
 	if req.Type != "immediate" && req.Type != "once" && req.Type != "cron" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be immediate, once, or cron"})
+		return
+	}
+	if req.MaxRuns < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "max_runs must be greater than or equal to 0"})
 		return
 	}
 
@@ -143,6 +148,7 @@ func (h *Handler) createSchedule(c *gin.Context) {
 		ScheduleType: req.Type,
 		ParamsJSON:   paramsJSON,
 		Enabled:      true,
+		MaxRuns:      req.MaxRuns,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

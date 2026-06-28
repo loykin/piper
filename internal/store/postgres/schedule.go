@@ -15,15 +15,15 @@ func NewScheduleRepo(exec *dbstore.Executor, source string) schedule.Repository 
 	return &scheduleRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
-const scheduleSelectCols = `project_id, id, name, pipeline_yaml, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type`
+const scheduleSelectCols = `project_id, id, name, pipeline_yaml, template_version_id, cron_expr, params_json, enabled, max_runs, last_run_at, next_run_at, created_at, updated_at, schedule_type`
 
 func (r *scheduleRepo) Create(ctx context.Context, sc *schedule.Schedule) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`INSERT INTO schedules (project_id, id, name, pipeline_yaml, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		q := db.Rebind(`INSERT INTO schedules (project_id, id, name, pipeline_yaml, template_version_id, cron_expr, params_json, enabled, max_runs, last_run_at, next_run_at, created_at, updated_at, schedule_type)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		_, err := db.ExecContext(ctx, q,
 			sc.ProjectID, sc.ID, sc.Name, sc.PipelineYAML, sc.VersionID, sc.CronExpr, sc.ParamsJSON,
-			sc.Enabled, sc.LastRunAt, sc.NextRunAt, sc.CreatedAt, sc.UpdatedAt, sc.ScheduleType,
+			sc.Enabled, sc.MaxRuns, sc.LastRunAt, sc.NextRunAt, sc.CreatedAt, sc.UpdatedAt, sc.ScheduleType,
 		)
 		return err
 	})
@@ -49,6 +49,23 @@ func (r *scheduleRepo) List(ctx context.Context, projectID string) ([]*schedule.
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		q := db.Rebind(`SELECT ` + scheduleSelectCols + ` FROM schedules WHERE project_id=? ORDER BY created_at DESC`)
 		return db.SelectContext(ctx, &rows, q, projectID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, sc := range rows {
+		if sc.ScheduleType == "" {
+			sc.ScheduleType = "cron"
+		}
+	}
+	return rows, nil
+}
+
+func (r *scheduleRepo) ListWithMaxRuns(ctx context.Context) ([]*schedule.Schedule, error) {
+	var rows []*schedule.Schedule
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT ` + scheduleSelectCols + ` FROM schedules WHERE max_runs > ? ORDER BY project_id ASC, created_at ASC`)
+		return db.SelectContext(ctx, &rows, q, 0)
 	})
 	if err != nil {
 		return nil, err

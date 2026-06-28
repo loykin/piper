@@ -110,6 +110,7 @@ func (h *Handler) listRuns(c *gin.Context) {
 	filter.MetricStep = c.Query("metric_step")
 	filter.MetricKey = c.Query("metric_key")
 	filter.MetricOrder = c.Query("metric_order")
+	filter.ScheduleID = c.Query("schedule_id")
 	if pipelineName := c.Query("pipeline_name"); pipelineName != "" {
 		if filter.PipelineName != "" && filter.PipelineName != pipelineName {
 			c.JSON(http.StatusOK, []any{})
@@ -122,6 +123,19 @@ func (h *Handler) listRuns(c *gin.Context) {
 	runs, err := h.deps.Runs.List(c.Request.Context(), projectID, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	includeSteps := c.Query("include_steps") == "true" || c.Query("include_steps") == "1"
+	if !includeSteps {
+		result := make([]*Run, 0, len(runs))
+		for _, r := range runs {
+			version := r.VersionFromYAML()
+			r = r.Redact()
+			r.PipelineVersion = version
+			result = append(result, r)
+		}
+		c.JSON(http.StatusOK, result)
 		return
 	}
 

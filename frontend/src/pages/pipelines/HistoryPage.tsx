@@ -12,7 +12,7 @@ import type { Run } from '@/features/runs/api'
 
 function HistoryPageInner() {
   const { open } = useSidePanel()
-  const { data: runs = [], isLoading } = useRuns()
+  const { data: runs = [], isLoading } = useRuns({ include_steps: true })
   const { data: schedules = [] } = useSchedules()
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()

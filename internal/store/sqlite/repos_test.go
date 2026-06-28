@@ -111,6 +111,42 @@ func TestScheduleTimeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestScheduleMaxRunsRoundTrip(t *testing.T) {
+	repos, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+	ctx := context.Background()
+	if err := repos.Project.Create(ctx, &project.Project{ID: "p1", Name: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := &schedule.Schedule{
+		ProjectID:    "p1",
+		ID:           "sch-max",
+		Name:         "max",
+		ScheduleType: "cron",
+		CronExpr:     "0 * * * *",
+		Enabled:      true,
+		MaxRuns:      3,
+		NextRunAt:    time.Now().UTC().Add(time.Hour),
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := repos.Schedule.Create(ctx, sc); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := repos.Schedule.Get(ctx, "p1", "sch-max")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.MaxRuns != 3 {
+		t.Fatalf("MaxRuns = %d, want 3", got.MaxRuns)
+	}
+}
+
 func TestScheduleAtomicTransitions(t *testing.T) {
 	repos, err := store.Open(":memory:")
 	if err != nil {

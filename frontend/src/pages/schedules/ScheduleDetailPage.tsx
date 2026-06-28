@@ -64,19 +64,7 @@ export default function ScheduleDetailPage() {
   const { mutate: toggleSchedule } = useToggleSchedule()
   const runColumns = useMemo(() => makeRunColumns(projectId), [projectId])
 
-  const loading = scheduleLoading || runsLoading
-
-  if (loading) {
-    return (
-      <DetailBodyTemplate title="Loading…">
-        <DetailBodyTemplate.Section>
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        </DetailBodyTemplate.Section>
-      </DetailBodyTemplate>
-    )
-  }
-
-  if (!schedule) {
+  if (!scheduleLoading && !schedule) {
     return (
       <DetailBodyTemplate title="Not Found">
         <DetailBodyTemplate.Section>
@@ -86,14 +74,14 @@ export default function ScheduleDetailPage() {
     )
   }
 
-  const isCron = schedule.schedule_type === 'cron'
+  const isCron = schedule?.schedule_type === 'cron'
 
   return (
     <DetailBodyTemplate
       eyebrow={<Link to={`/projects/${projectId}/schedules`} className="hover:text-foreground transition-colors">← Schedules</Link>}
-      title={schedule.name}
-      description={`${TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type} schedule`}
-      actions={
+      title={schedule?.name ?? '…'}
+      description={schedule ? `${TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type} schedule` : ''}
+      actions={schedule && (
         <div className="flex items-center gap-0.5">
           {isCron && (
             <IconButton icon={<Power />} label={schedule.enabled ? 'Disable' : 'Enable'}
@@ -108,48 +96,58 @@ export default function ScheduleDetailPage() {
             }}
             className="text-destructive hover:bg-destructive/10" />
         </div>
-      }
+      )}
     >
       <DetailBodyTemplate.Section title="Details" surface="bordered">
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {isCron && (
+        {scheduleLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : schedule ? (
+          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {isCron && (
+              <div>
+                <dt className="text-xs text-muted-foreground">Cron Expression</dt>
+                <dd className="mt-1 font-mono text-sm">{schedule.cron_expr || '-'}</dd>
+              </div>
+            )}
+            {schedule.schedule_type === 'once' && (
+              <div>
+                <dt className="text-xs text-muted-foreground">Scheduled At</dt>
+                <dd className="mt-1 text-sm">{new Date(schedule.next_run_at).toLocaleString()}</dd>
+              </div>
+            )}
             <div>
-              <dt className="text-xs text-muted-foreground">Cron Expression</dt>
-              <dd className="mt-1 font-mono text-sm">{schedule.cron_expr || '-'}</dd>
+              <dt className="text-xs text-muted-foreground">Status</dt>
+              <dd className="mt-1 text-sm">
+                {schedule.enabled ? (isCron ? 'Active' : 'Waiting') : (schedule.schedule_type === 'cron' ? 'Disabled' : 'Done')}
+              </dd>
             </div>
-          )}
-          {schedule.schedule_type === 'once' && (
             <div>
-              <dt className="text-xs text-muted-foreground">Scheduled At</dt>
-              <dd className="mt-1 text-sm">{new Date(schedule.next_run_at).toLocaleString()}</dd>
+              <dt className="text-xs text-muted-foreground">Last Run</dt>
+              <dd className="mt-1 text-sm">
+                {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '-'}
+              </dd>
             </div>
-          )}
-          <div>
-            <dt className="text-xs text-muted-foreground">Status</dt>
-            <dd className="mt-1 text-sm">
-              {schedule.enabled ? (isCron ? 'Active' : 'Waiting') : (schedule.schedule_type === 'cron' ? 'Disabled' : 'Done')}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Last Run</dt>
-            <dd className="mt-1 text-sm">
-              {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '-'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Created</dt>
-            <dd className="mt-1 text-sm">{new Date(schedule.created_at).toLocaleString()}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Total Runs</dt>
-            <dd className="mt-1 text-sm font-semibold">{runs.length}</dd>
-          </div>
-        </dl>
+            <div>
+              <dt className="text-xs text-muted-foreground">Retention</dt>
+              <dd className="mt-1 text-sm">
+                {schedule.max_runs > 0 ? `Keep last ${schedule.max_runs}` : 'Unlimited'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Created</dt>
+              <dd className="mt-1 text-sm">{new Date(schedule.created_at).toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Total Runs</dt>
+              <dd className="mt-1 text-sm font-semibold">{runs.length}</dd>
+            </div>
+          </dl>
+        ) : null}
       </DetailBodyTemplate.Section>
 
       <DetailBodyTemplate.Section surface="bordered">
         <RunDAG
-          pipelineYaml={schedule.pipeline_yaml}
+          pipelineYaml={schedule?.pipeline_yaml ?? ''}
           steps={[]}
           selected={null}
           onSelectStep={() => {}}
@@ -157,9 +155,11 @@ export default function ScheduleDetailPage() {
       </DetailBodyTemplate.Section>
 
       <DetailBodyTemplate.Section title="Run History" surface="plain">
-        {runs.length === 0 ? (
+        {runsLoading ? (
+          <p className="py-4 text-sm text-muted-foreground">Loading…</p>
+        ) : runs.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">
-            {schedule.schedule_type === 'immediate' ? 'Running...' : 'No runs yet.'}
+            {schedule?.schedule_type === 'immediate' ? 'Running...' : 'No runs yet.'}
           </p>
         ) : (
           <DataGrid
@@ -179,7 +179,7 @@ export default function ScheduleDetailPage() {
       </DetailBodyTemplate.Section>
 
       <DetailBodyTemplate.Section title="Pipeline YAML" surface="bordered">
-        <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">{schedule.pipeline_yaml || '(empty)'}</pre>
+        <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">{schedule?.pipeline_yaml || '(empty)'}</pre>
       </DetailBodyTemplate.Section>
     </DetailBodyTemplate>
   )

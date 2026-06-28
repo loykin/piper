@@ -15,6 +15,7 @@ type Schedule struct {
 	ScheduleType string     `json:"schedule_type"         db:"schedule_type"`
 	CronExpr     string     `json:"cron_expr,omitempty"   db:"cron_expr"`
 	Enabled      bool       `json:"enabled"               db:"enabled"`
+	MaxRuns      int        `json:"max_runs"              db:"max_runs"`
 	LastRunAt    *time.Time `json:"last_run_at,omitempty" db:"last_run_at"`
 	NextRunAt    time.Time  `json:"next_run_at"           db:"next_run_at"`
 	ParamsJSON   string     `json:"params_json,omitempty" db:"params_json"`

@@ -752,6 +752,77 @@ func TestAuthFactoryRunsDuringNew(t *testing.T) {
 	}
 }
 
+func TestCleanupScheduleRetentionKeepsNewestTerminalRuns(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := context.Background()
+	projectID := project.DefaultID
+	now := time.Now().UTC()
+
+	sc := &schedule.Schedule{
+		ProjectID:    projectID,
+		ID:           "sch-retention",
+		Name:         "retention",
+		ScheduleType: "cron",
+		CronExpr:     "0 * * * *",
+		Enabled:      true,
+		MaxRuns:      2,
+		NextRunAt:    now.Add(time.Hour),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := p.repos.Schedule.Create(ctx, sc); err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+
+	createRun := func(id string, status string, startedAt time.Time, endedAt *time.Time) {
+		t.Helper()
+		r := &run.Run{
+			ProjectID:    projectID,
+			ID:           id,
+			ScheduleID:   sc.ID,
+			PipelineName: "retention-pipeline",
+			Status:       status,
+			StartedAt:    startedAt,
+			ScheduledAt:  &startedAt,
+			PipelineYAML: "metadata:\n  name: retention-pipeline\nspec:\n  steps: []",
+			ParamsJSON:   "{}",
+		}
+		if err := p.repos.Run.Create(ctx, r); err != nil {
+			t.Fatalf("create run %s: %v", id, err)
+		}
+		if endedAt != nil {
+			if err := p.repos.Run.UpdateStatus(ctx, projectID, id, status, endedAt); err != nil {
+				t.Fatalf("finish run %s: %v", id, err)
+			}
+		}
+	}
+
+	oldEnd := now.Add(-3 * time.Hour)
+	midEnd := now.Add(-2 * time.Hour)
+	newEnd := now.Add(-1 * time.Hour)
+	createRun("run-old", run.StatusSuccess, oldEnd, &oldEnd)
+	createRun("run-mid", run.StatusSuccess, midEnd, &midEnd)
+	createRun("run-new", run.StatusSuccess, newEnd, &newEnd)
+	createRun("run-running", run.StatusRunning, now.Add(-4*time.Hour), nil)
+
+	p.cleanupScheduleRetention(ctx)
+
+	if got, err := p.repos.Run.Get(ctx, projectID, "run-old"); err != nil {
+		t.Fatalf("get old run: %v", err)
+	} else if got != nil {
+		t.Fatalf("oldest terminal run was not deleted")
+	}
+	for _, id := range []string{"run-mid", "run-new", "run-running"} {
+		got, err := p.repos.Run.Get(ctx, projectID, id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if got == nil {
+			t.Fatalf("%s should be retained", id)
+		}
+	}
+}
+
 func TestAuthCapabilitiesControlRouteRegistration(t *testing.T) {
 	provider := &testSecurityProvider{
 		identity: &security.Identity{ID: "admin", SystemAdmin: true},

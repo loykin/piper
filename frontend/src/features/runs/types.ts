@@ -67,6 +67,8 @@ export interface RunFilter {
   metric_step?: string
   metric_key?: string
   metric_order?: string
+  schedule_id?: string
+  include_steps?: boolean
 }
 
 export interface SweepTrial {

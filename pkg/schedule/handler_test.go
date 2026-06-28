@@ -49,6 +49,15 @@ func (r *stubScheduleRepo) List(_ context.Context, _ string) ([]*Schedule, error
 	}
 	return out, nil
 }
+func (r *stubScheduleRepo) ListWithMaxRuns(_ context.Context) ([]*Schedule, error) {
+	out := make([]*Schedule, 0, len(r.schedules))
+	for _, sc := range r.schedules {
+		if sc.MaxRuns > 0 {
+			out = append(out, sc)
+		}
+	}
+	return out, nil
+}
 func (r *stubScheduleRepo) ListEnabled(_ context.Context) ([]*Schedule, error) {
 	var out []*Schedule
 	for _, sc := range r.schedules {
@@ -177,6 +186,50 @@ func TestCreateSchedule_Immediate(t *testing.T) {
 	}
 	if len(sched.added) != 1 {
 		t.Errorf("expected sched.Add to be called once, got %d", len(sched.added))
+	}
+	got := repo.schedules[resp["schedule_id"]]
+	if got.MaxRuns != 0 {
+		t.Errorf("MaxRuns = %d, want 0", got.MaxRuns)
+	}
+}
+
+func TestCreateSchedule_PersistsMaxRuns(t *testing.T) {
+	repo := newStubScheduleRepo()
+	router := newTestRouter(repo)
+
+	rec := doJSON(router, http.MethodPost, "/schedules", map[string]any{
+		"name":     "my-pipeline",
+		"yaml":     "metadata:\n  name: my-pipeline\nspec:\n  steps: []",
+		"type":     "cron",
+		"cron":     "0 * * * *",
+		"max_runs": 5,
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	got := repo.schedules["sch-test-id"]
+	if got == nil {
+		t.Fatal("schedule was not persisted")
+	}
+	if got.MaxRuns != 5 {
+		t.Fatalf("MaxRuns = %d, want 5", got.MaxRuns)
+	}
+}
+
+func TestCreateSchedule_RejectsNegativeMaxRuns(t *testing.T) {
+	router := newTestRouter(newStubScheduleRepo())
+
+	rec := doJSON(router, http.MethodPost, "/schedules", map[string]any{
+		"name":     "my-pipeline",
+		"yaml":     "metadata:\n  name: my-pipeline\nspec:\n  steps: []",
+		"type":     "cron",
+		"cron":     "0 * * * *",
+		"max_runs": -1,
+	})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 }
 

@@ -134,6 +134,12 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
             </dd>
           </div>
           <div>
+            <dt className="text-xs text-muted-foreground">Retention</dt>
+            <dd className="mt-0.5 text-xs">
+              {schedule.max_runs > 0 ? `Keep ${schedule.max_runs} completed runs` : 'Keep all runs'}
+            </dd>
+          </div>
+          <div>
             <dt className="text-xs text-muted-foreground">Created</dt>
             <dd className="mt-0.5 text-xs">{new Date(schedule.created_at).toLocaleString()}</dd>
           </div>

@@ -524,10 +524,9 @@ func TestE2E_WorkerS3Artifacts(t *testing.T) {
 		t.Fatalf("create bucket: %v", err)
 	}
 
-	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
-		cfg.Store.StorageURL = fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
-	})
+	s3URL := fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
+	_, srv := newE2EServerWithDirAndStorage(t, t.TempDir(), s3URL)
+	startE2EWorker(t, srv.URL)
 
 	yaml := `
 metadata:
@@ -768,10 +767,9 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 
 	startE2EServingWorker(t, srv.URL, "fake-serving-worker")
 
-	// Worker shares the same storage backend as the server.
+	// Worker shares the same storage backend as the server (URL comes via task dispatch).
 	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
 		cfg.Store.OutputDir = outputDir
-		cfg.Store.StorageURL = storageURL
 	})
 
 	// Pipeline YAML with on_success.deploy wired to our service.

@@ -72,7 +72,6 @@ function PipelinesListPageInner() {
 
   function openNewVersionFrom(t: PipelineTemplate) {
     const params = new URLSearchParams({
-      template_id: t.template_id,
       from_version: t.id,
       name: t.name,
       source: t.volume_id ? 'notebook-volume' : 'local',
@@ -125,8 +124,8 @@ function PipelinesListPageInner() {
             columns={columns}
             isLoading={isLoading}
             enableGrouping
-            grouping={['template_id']}
-            visibilityState={{ template_id: false }}
+            grouping={['name']}
+            visibilityState={{ name: false }}
             renderGroupRow={(row) => <GroupHeader row={row} />}
             emptyMessage="No pipeline templates yet."
             tableWidthMode="fill-last"

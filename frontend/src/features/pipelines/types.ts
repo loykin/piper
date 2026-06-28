@@ -2,20 +2,18 @@
 
 export interface PipelineTemplate {
   id: string
-  template_id: string
   name: string
+  version: number
   description: string
   tags: string[]
-  version: number
   yaml: string
   snapshot_id: string
   volume_id: string
   created_at: string
+  updated_at: string
 }
 
 export interface CreatePipelineRequest {
-  template_id?: string
-  name: string
   yaml: string
   volume_id?: string
 }
@@ -30,7 +28,3 @@ export interface DeployRequest {
   params?: Record<string, unknown>
 }
 
-export interface UpdateMetaRequest {
-  description: string
-  tags: string[]
-}

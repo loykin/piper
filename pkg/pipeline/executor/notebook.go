@@ -42,7 +42,7 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 		return fmt.Errorf("resolve notebook output path: %w", err)
 	}
 
-	args := []string{notebookPath, outputNb}
+	args := []string{notebookPath, outputNb, "--log-output"}
 	for k, v := range cfg.Params {
 		args = append(args, "-p", k, fmt.Sprintf("%v", v))
 	}

@@ -132,7 +132,9 @@ func (h *Handler) listRuns(c *gin.Context) {
 	}
 	result := make([]runWithSteps, 0, len(runs))
 	for _, r := range runs {
+		version := r.VersionFromYAML()
 		r = r.Redact()
+		r.PipelineVersion = version
 		steps, _ := h.deps.Steps.List(c.Request.Context(), projectID, r.ID)
 		if steps == nil {
 			steps = []*Step{}
@@ -227,7 +229,10 @@ func (h *Handler) getRun(c *gin.Context) {
 	if err != nil {
 		slog.Warn("list steps failed", "run_id", runID, "err", err)
 	}
-	c.JSON(http.StatusOK, gin.H{"run": r.Redact(), "steps": steps})
+	version := r.VersionFromYAML()
+	redacted := r.Redact()
+	redacted.PipelineVersion = version
+	c.JSON(http.StatusOK, gin.H{"run": redacted, "steps": steps})
 }
 
 // POST /runs/:id/cancel

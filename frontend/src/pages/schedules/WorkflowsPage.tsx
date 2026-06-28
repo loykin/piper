@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { Power, Plus, Trash2 } from 'lucide-react'
@@ -9,6 +10,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { scheduleColumns } from '@/features/schedules/columns'
 import { ScheduleDetailPanel } from '@/features/schedules/components/ScheduleDetailPanel'
 import { useSchedules, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
+import { usePipelines } from '@/features/pipelines/hooks'
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import type { Schedule } from '@/features/schedules/api'
 
@@ -17,17 +19,39 @@ function WorkflowsPageInner() {
   const projectId = useProjectId()
   const { open } = useSidePanel()
   const { data: schedules = [], isLoading, isError } = useSchedules()
+  const { data: pipelines = [] } = usePipelines()
   const { mutate: deleteSchedule } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
 
-  const actionColumn: DataGridColumnDef<Schedule> = {
+  const pipelineByVersionId = useMemo(
+    () => new Map(pipelines.map(p => [p.id, p])),
+    [pipelines],
+  )
+
+  const nameVersionColumn: DataGridColumnDef<Schedule> = useMemo(() => ({
+    id: 'name',
+    header: 'Name',
+    meta: { flex: 1, minWidth: 160 },
+    cell: ({ row }) => {
+      const vid = row.original.template_version_id
+      const tpl = vid ? pipelineByVersionId.get(vid) : undefined
+      return (
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-sm font-medium">{row.original.name}</span>
+          {tpl && <span className="text-xs text-muted-foreground">v{tpl.version}</span>}
+        </span>
+      )
+    },
+  }), [pipelineByVersionId])
+
+  const actionColumn: DataGridColumnDef<Schedule> = useMemo(() => ({
     id: 'actions',
     header: '',
-    meta: { minWidth: 120 },
+    size: 72,
     cell: ({ row }) => {
       const s = row.original
       return (
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center justify-end gap-0.5">
           {s.schedule_type === 'cron' && (
             <IconButton icon={<Power />} label={s.enabled ? 'Disable' : 'Enable'}
               onClick={(e) => {
@@ -46,9 +70,13 @@ function WorkflowsPageInner() {
         </div>
       )
     },
-  }
+  }), [toggleSchedule, deleteSchedule])
 
-  const columns = [...scheduleColumns, actionColumn]
+  // Replace base name column with name+version combined column
+  const columns = useMemo(
+    () => [nameVersionColumn, ...scheduleColumns.slice(1), actionColumn],
+    [nameVersionColumn, actionColumn],
+  )
 
   return (
     <DataBodyTemplate

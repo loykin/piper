@@ -49,11 +49,26 @@ func (r *stubScheduleRepo) List(_ context.Context, _ string) ([]*Schedule, error
 	}
 	return out, nil
 }
+func (r *stubScheduleRepo) ListEnabled(_ context.Context) ([]*Schedule, error) {
+	var out []*Schedule
+	for _, sc := range r.schedules {
+		if sc.Enabled {
+			out = append(out, sc)
+		}
+	}
+	return out, nil
+}
 func (r *stubScheduleRepo) ListDue(_ context.Context, _ time.Time) ([]*Schedule, error) {
 	return nil, nil
 }
-func (r *stubScheduleRepo) UpdateRun(_ context.Context, _, _ string, _, _ time.Time) error {
-	return nil
+func (r *stubScheduleRepo) ClaimRun(_ context.Context, _, _ string, _, _, _ time.Time) (bool, error) {
+	return true, nil
+}
+func (r *stubScheduleRepo) AdvanceNextRun(_ context.Context, _, _ string, _, _ time.Time) (bool, error) {
+	return true, nil
+}
+func (r *stubScheduleRepo) ClaimOneShotRun(_ context.Context, _, _ string, _, _ time.Time) (bool, error) {
+	return true, nil
 }
 func (r *stubScheduleRepo) SetEnabled(_ context.Context, _, id string, enabled bool) error {
 	if sc, ok := r.schedules[id]; ok {
@@ -64,6 +79,20 @@ func (r *stubScheduleRepo) SetEnabled(_ context.Context, _, id string, enabled b
 func (r *stubScheduleRepo) Delete(_ context.Context, _, id string) error {
 	delete(r.schedules, id)
 	return nil
+}
+
+// stubScheduler records Add/Remove calls for assertion.
+type stubScheduler struct {
+	added   []string // schedule IDs passed to Add
+	removed []string // schedule IDs passed to Remove
+}
+
+func (s *stubScheduler) Add(sc *Schedule) error {
+	s.added = append(s.added, sc.ID)
+	return nil
+}
+func (s *stubScheduler) Remove(id string) {
+	s.removed = append(s.removed, id)
 }
 
 type stubRunRepo struct{}
@@ -124,9 +153,9 @@ func doJSON(router *gin.Engine, method, path string, body any) *httptest.Respons
 
 func TestCreateSchedule_Immediate(t *testing.T) {
 	repo := newStubScheduleRepo()
-	triggered := false
+	sched := &stubScheduler{}
 	router := newTestRouter(repo, func(d *HandlerDeps) {
-		d.Trigger = func(_ context.Context, _ *Schedule) { triggered = true }
+		d.Sched = sched
 	})
 
 	rec := doJSON(router, http.MethodPost, "/schedules", map[string]any{
@@ -146,10 +175,8 @@ func TestCreateSchedule_Immediate(t *testing.T) {
 	if len(repo.schedules) != 1 {
 		t.Errorf("expected 1 schedule in repo, got %d", len(repo.schedules))
 	}
-	// Trigger runs async; give it a moment.
-	time.Sleep(10 * time.Millisecond)
-	if !triggered {
-		t.Error("expected Trigger to be called for immediate schedule")
+	if len(sched.added) != 1 {
+		t.Errorf("expected sched.Add to be called once, got %d", len(sched.added))
 	}
 }
 
@@ -306,5 +333,92 @@ func TestListScheduleRuns(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "[") {
 		t.Errorf("expected JSON array in response, got: %s", body)
+	}
+}
+
+// --- Scheduler sync tests ---
+
+func TestCreateSchedule_Cron_CallsSchedAdd(t *testing.T) {
+	repo := newStubScheduleRepo()
+	sched := &stubScheduler{}
+	router := newTestRouter(repo, func(d *HandlerDeps) {
+		d.Sched = sched
+	})
+
+	rec := doJSON(router, http.MethodPost, "/schedules", map[string]any{
+		"name": "nightly",
+		"yaml": "metadata:\n  name: nightly\nspec:\n  steps: []",
+		"type": "cron",
+		"cron": "0 0 * * *",
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if len(sched.added) != 1 {
+		t.Errorf("expected sched.Add called once, got %d", len(sched.added))
+	}
+	if len(sched.removed) != 0 {
+		t.Errorf("expected no sched.Remove calls, got %d", len(sched.removed))
+	}
+}
+
+func TestPatchSchedule_Enable_CallsSchedAdd(t *testing.T) {
+	repo := newStubScheduleRepo()
+	repo.schedules["sch-1"] = &Schedule{ID: "sch-1", Enabled: false}
+	sched := &stubScheduler{}
+	router := newTestRouter(repo, func(d *HandlerDeps) {
+		d.Sched = sched
+	})
+
+	rec := doJSON(router, http.MethodPatch, "/schedules/sch-1", map[string]any{"enabled": true})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if len(sched.added) != 1 || sched.added[0] != "sch-1" {
+		t.Errorf("expected sched.Add(sch-1), got %v", sched.added)
+	}
+	if len(sched.removed) != 0 {
+		t.Errorf("expected no Remove calls, got %v", sched.removed)
+	}
+}
+
+func TestPatchSchedule_Disable_CallsSchedRemove(t *testing.T) {
+	repo := newStubScheduleRepo()
+	repo.schedules["sch-1"] = &Schedule{ID: "sch-1", Enabled: true}
+	sched := &stubScheduler{}
+	router := newTestRouter(repo, func(d *HandlerDeps) {
+		d.Sched = sched
+	})
+
+	rec := doJSON(router, http.MethodPatch, "/schedules/sch-1", map[string]any{"enabled": false})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if len(sched.removed) != 1 || sched.removed[0] != "sch-1" {
+		t.Errorf("expected sched.Remove(sch-1), got %v", sched.removed)
+	}
+	if len(sched.added) != 0 {
+		t.Errorf("expected no Add calls, got %v", sched.added)
+	}
+}
+
+func TestDeleteSchedule_CallsSchedRemove(t *testing.T) {
+	repo := newStubScheduleRepo()
+	repo.schedules["sch-1"] = &Schedule{ID: "sch-1"}
+	sched := &stubScheduler{}
+	router := newTestRouter(repo, func(d *HandlerDeps) {
+		d.Sched = sched
+	})
+
+	rec := doJSON(router, http.MethodDelete, "/schedules/sch-1", nil)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if len(sched.removed) != 1 || sched.removed[0] != "sch-1" {
+		t.Errorf("expected sched.Remove(sch-1), got %v", sched.removed)
 	}
 }

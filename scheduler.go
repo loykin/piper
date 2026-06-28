@@ -57,12 +57,16 @@ func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.T
 		if len(runIDs) >= 1000 {
 			return nil, fmt.Errorf("backfill range creates more than 1000 runs")
 		}
+		intervalEnd := cronSchedule.Next(scheduledAt)
 		runID, err := p.startRun(ctx, pl, dag, StartRunOptions{
 			ProjectID:  sc.ProjectID,
 			ScheduleID: sc.ID,
 			Params:     params,
-			Vars:       proto.BuiltinVars{ScheduledAt: &scheduledAt},
-			YAML:       sc.PipelineYAML,
+			Vars: proto.BuiltinVars{
+				ScheduledAt:     &scheduledAt,
+				DataIntervalEnd: &intervalEnd,
+			},
+			YAML: sc.PipelineYAML,
 		})
 		if err != nil {
 			return nil, err
@@ -72,73 +76,101 @@ func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.T
 	return runIDs, nil
 }
 
-func (p *Piper) runScheduler(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+// scheduleFired is the FireFunc passed to the in-memory Scheduler.
+// Reads fresh state from DB on every call so the Scheduler holds no sc copies.
+func (p *Piper) scheduleFired(ctx context.Context, projectID, scheduleID string) {
+	sc, err := p.repos.Schedule.Get(ctx, projectID, scheduleID)
+	if err != nil || sc == nil {
+		slog.Warn("scheduler: schedule not found", "id", scheduleID, "err", err)
+		return
+	}
+	if !sc.Enabled {
+		slog.Info("scheduler: stale callback ignored for disabled schedule", "id", scheduleID)
+		return
+	}
 
-	for {
-		select {
-		case <-ctx.Done():
+	now := time.Now().UTC()
+	slog.Info("scheduler: fired", "schedule_id", sc.ID, "type", sc.ScheduleType, "planned_at", sc.NextRunAt, "now", now)
+
+	switch sc.ScheduleType {
+	case "cron":
+		plannedAt := sc.NextRunAt
+		next, err := nextScheduleTime(sc.CronExpr, now)
+		if err != nil {
+			slog.Warn("scheduler: invalid cron expression, disabling", "id", scheduleID, "err", err)
+			_ = p.repos.Schedule.SetEnabled(ctx, projectID, scheduleID, false)
+			p.scheduler.Remove(scheduleID)
 			return
-		case <-ticker.C:
-			now := time.Now().UTC()
-			due, err := p.repos.Schedule.ListDue(p.ctx, now)
-			if err != nil {
-				slog.Warn("list due schedules failed", "err", err)
-				continue
-			}
-			for _, sc := range due {
-				go p.triggerSchedule(ctx, sc)
+		}
+
+		// Misfire: planned tick predates this process start — decide fire or skip.
+		if plannedAt.Before(p.startedAt) {
+			switch p.cfg.Schedule.MisfirePolicy {
+			case "skip":
+				slog.Info("scheduler: misfire skipped (policy=skip)", "id", scheduleID, "planned_at", plannedAt)
+				if ok, err := p.repos.Schedule.AdvanceNextRun(ctx, projectID, scheduleID, plannedAt, next); !ok || err != nil {
+					slog.Warn("scheduler: AdvanceNextRun failed or lost race", "id", scheduleID, "err", err)
+				}
+				return
+			default: // run_once
+				grace := p.cfg.Schedule.MisfireGracePeriod
+				if grace > 0 && now.Sub(plannedAt) > grace {
+					slog.Info("scheduler: misfire outside grace period, skipping", "id", scheduleID, "planned_at", plannedAt, "grace", grace)
+					if ok, err := p.repos.Schedule.AdvanceNextRun(ctx, projectID, scheduleID, plannedAt, next); !ok || err != nil {
+						slog.Warn("scheduler: AdvanceNextRun failed or lost race", "id", scheduleID, "err", err)
+					}
+					return
+				}
 			}
 		}
+		if plannedAt.After(now) {
+			slog.Info("scheduler: stale callback ignored for future tick", "id", scheduleID, "planned_at", plannedAt, "now", now)
+			return
+		}
+
+		// Atomic claim: disabled/deleted/modified/already-claimed → false
+		claimed, err := p.repos.Schedule.ClaimRun(ctx, projectID, scheduleID, plannedAt, now, next)
+		if err != nil {
+			slog.Warn("scheduler: ClaimRun error", "id", scheduleID, "err", err)
+			return
+		}
+		if !claimed {
+			slog.Info("scheduler: tick already claimed or schedule changed, skipping", "id", scheduleID, "planned_at", plannedAt)
+			return
+		}
+
+		p.fireSchedule(ctx, sc, proto.BuiltinVars{
+			ScheduledAt:     &plannedAt,
+			DataIntervalEnd: &next,
+		})
+
+	case "once", "immediate":
+		scheduledAt := sc.NextRunAt
+		claimed, err := p.repos.Schedule.ClaimOneShotRun(ctx, projectID, scheduleID, scheduledAt, now)
+		if err != nil {
+			slog.Warn("scheduler: ClaimOneShotRun error", "id", scheduleID, "err", err)
+			return
+		}
+		if !claimed {
+			slog.Info("scheduler: one-shot already claimed or disabled, skipping", "id", scheduleID)
+			return
+		}
+		p.fireSchedule(ctx, sc, proto.BuiltinVars{ScheduledAt: &scheduledAt})
 	}
 }
 
-func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
-	now := time.Now().UTC()
-
-	var nextRunAt time.Time
-	if sc.ScheduleType == "cron" {
-		var err error
-		nextRunAt, err = nextScheduleTime(sc.CronExpr, sc.NextRunAt)
-		if err != nil {
-			slog.Warn("invalid cron expression in schedule", "schedule_id", sc.ID, "cron", sc.CronExpr, "err", err)
-			_ = p.repos.Schedule.SetEnabled(ctx, sc.ProjectID, sc.ID, false)
-			return
-		}
-		if p.cfg.Schedule.MisfirePolicy != "run_once" && isCronMisfire(sc.NextRunAt, now, p.cfg.Schedule.MisfireGracePeriod) {
-			nextRunAt, err = nextScheduleTime(sc.CronExpr, now)
-			if err != nil {
-				slog.Warn("invalid cron expression in schedule", "schedule_id", sc.ID, "cron", sc.CronExpr, "err", err)
-				_ = p.repos.Schedule.SetEnabled(ctx, sc.ProjectID, sc.ID, false)
-				return
-			}
-			if err := p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt); err != nil {
-				slog.Warn("skip missed schedule update failed", "schedule_id", sc.ID, "err", err)
-			}
-			slog.Info("event", "type", "schedule.misfire_skipped", "schedule_id", sc.ID, "missed_at", sc.NextRunAt, "next_run_at", nextRunAt)
-			return
-		}
-	}
-
+// fireSchedule parses the pipeline and starts the run. Called from a goroutine.
+func (p *Piper) fireSchedule(ctx context.Context, sc *schedule.Schedule, vars proto.BuiltinVars) {
 	pl, err := p.Parse([]byte(sc.PipelineYAML))
 	if err != nil {
 		slog.Warn("parse schedule pipeline failed", "schedule_id", sc.ID, "err", err)
-		if sc.ScheduleType == "cron" {
-			_ = p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt)
-		}
 		return
 	}
 	dag, err := pipeline.BuildDAG(pl)
 	if err != nil {
 		slog.Warn("build schedule dag failed", "schedule_id", sc.ID, "err", err)
-		if sc.ScheduleType == "cron" {
-			_ = p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt)
-		}
 		return
 	}
-
-	scheduledAt := sc.NextRunAt
 
 	var params map[string]any
 	if sc.ParamsJSON != "" {
@@ -147,34 +179,25 @@ func (p *Piper) triggerSchedule(ctx context.Context, sc *schedule.Schedule) {
 		}
 	}
 
-	if _, err := p.startRun(ctx, pl, dag, StartRunOptions{
+	opts := StartRunOptions{
 		ProjectID:  sc.ProjectID,
 		ScheduleID: sc.ID,
 		Params:     params,
-		Vars:       proto.BuiltinVars{ScheduledAt: &scheduledAt},
+		Vars:       vars,
 		YAML:       sc.PipelineYAML,
-	}); err != nil {
-		slog.Warn("create run from schedule failed", "schedule_id", sc.ID, "err", err)
+	}
+	delays := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt <= len(delays); attempt++ {
+		if attempt > 0 {
+			time.Sleep(delays[attempt-1])
+			slog.Info("scheduler: retrying run creation", "schedule_id", sc.ID, "attempt", attempt+1)
+		}
+		if _, err := p.startRun(ctx, pl, dag, opts); err != nil {
+			lastErr = err
+			continue
+		}
 		return
 	}
-
-	switch sc.ScheduleType {
-	case "cron":
-		if err := p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, nextRunAt); err != nil {
-			slog.Warn("update schedule run failed", "schedule_id", sc.ID, "err", err)
-		}
-	case "once", "immediate":
-		// fire once then done
-		if err := p.repos.Schedule.SetEnabled(ctx, sc.ProjectID, sc.ID, false); err != nil {
-			slog.Warn("mark schedule done failed", "schedule_id", sc.ID, "err", err)
-		}
-		_ = p.repos.Schedule.UpdateRun(ctx, sc.ProjectID, sc.ID, now, now)
-	}
-}
-
-func isCronMisfire(dueAt, now time.Time, grace time.Duration) bool {
-	if grace < 0 {
-		grace = 0
-	}
-	return dueAt.Add(grace).Before(now)
+	slog.Error("scheduler: run creation failed after retries", "schedule_id", sc.ID, "err", lastErr)
 }

@@ -6,9 +6,9 @@ import { useSidePanel } from '@loykin/side-panel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import RunDAG from '@/shared/components/RunDAG'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useSchedule, useScheduleRuns, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
+import { usePipeline } from '@/features/pipelines/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import type { Run } from '@/features/runs/api'
 
@@ -51,6 +51,7 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
   const projectId = useProjectId()
   const { data: schedule, isLoading: scheduleLoading } = useSchedule(id)
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id)
+  const { data: templateVersion } = usePipeline(schedule?.template_version_id ?? '')
   const { mutate: deleteSchedule } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
 
@@ -140,17 +141,29 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
             <dt className="text-xs text-muted-foreground">Total Runs</dt>
             <dd className="mt-0.5 text-xs font-semibold">{runs.length}</dd>
           </div>
+          {templateVersion && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Pipeline Version</dt>
+              <dd className="mt-0.5 text-xs font-semibold">v{templateVersion.version}</dd>
+            </div>
+          )}
         </dl>
       </PanelTemplate.Section>
 
-      <PanelTemplate.Section title="Pipeline">
-        <RunDAG
-          pipelineYaml={schedule.pipeline_yaml}
-          steps={[]}
-          selected={null}
-          onSelectStep={() => {}}
-        />
-      </PanelTemplate.Section>
+      {(templateVersion?.description || (templateVersion?.tags && templateVersion.tags.length > 0)) && (
+        <PanelTemplate.Section title="Pipeline">
+          {templateVersion.description && (
+            <p className="mb-2 text-xs text-muted-foreground">{templateVersion.description}</p>
+          )}
+          {templateVersion.tags && templateVersion.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {templateVersion.tags.map(tag => (
+                <Badge key={tag} variant="secondary" className="text-[10px]">{tag}</Badge>
+              ))}
+            </div>
+          )}
+        </PanelTemplate.Section>
+      )}
 
       <PanelTemplate.Section title="Run History">
         {runs.length === 0 ? (

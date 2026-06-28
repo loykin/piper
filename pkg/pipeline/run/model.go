@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/piper/piper/internal/redact"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -15,17 +16,32 @@ const (
 )
 
 type Run struct {
-	ID           string     `json:"id"                     db:"id"`
-	ProjectID    string     `json:"project_id"             db:"project_id"`
-	ScheduleID   string     `json:"schedule_id,omitempty"  db:"schedule_id"`
-	Experiment   string     `json:"experiment,omitempty"   db:"experiment"`
-	PipelineName string     `json:"pipeline_name"          db:"pipeline_name"`
-	Status       string     `json:"status"                 db:"status"`
-	StartedAt    time.Time  `json:"started_at"             db:"started_at"`
-	EndedAt      *time.Time `json:"ended_at,omitempty"     db:"ended_at"`
-	ScheduledAt  *time.Time `json:"scheduled_at,omitempty" db:"scheduled_at"`
-	PipelineYAML string     `json:"pipeline_yaml,omitempty" db:"pipeline_yaml"`
-	ParamsJSON   string     `json:"params_json,omitempty" db:"params_json"`
+	ID              string     `json:"id"                        db:"id"`
+	ProjectID       string     `json:"project_id"                db:"project_id"`
+	ScheduleID      string     `json:"schedule_id,omitempty"     db:"schedule_id"`
+	Experiment      string     `json:"experiment,omitempty"      db:"experiment"`
+	PipelineName    string     `json:"pipeline_name"             db:"pipeline_name"`
+	PipelineVersion int        `json:"pipeline_version,omitempty" db:"-"`
+	Status          string     `json:"status"                    db:"status"`
+	StartedAt       time.Time  `json:"started_at"                db:"started_at"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"        db:"ended_at"`
+	ScheduledAt     *time.Time `json:"scheduled_at,omitempty"    db:"scheduled_at"`
+	PipelineYAML    string     `json:"pipeline_yaml,omitempty"   db:"pipeline_yaml"`
+	ParamsJSON      string     `json:"params_json,omitempty"     db:"params_json"`
+}
+
+// VersionFromYAML extracts metadata.version from the stored pipeline YAML.
+// Returns 0 if absent or parsing fails.
+func (r *Run) VersionFromYAML() int {
+	var doc struct {
+		Metadata struct {
+			Version int `yaml:"version"`
+		} `yaml:"metadata"`
+	}
+	if err := yaml.Unmarshal([]byte(r.PipelineYAML), &doc); err != nil {
+		return 0
+	}
+	return doc.Metadata.Version
 }
 
 type Step struct {

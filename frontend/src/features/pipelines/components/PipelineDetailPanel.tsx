@@ -1,13 +1,10 @@
-import { useState } from 'react'
 import { CalendarClock, CopyPlus, Play, Trash2, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
-import { useUpdateTemplateMeta } from '../hooks'
 import type { PipelineTemplate } from '../types'
 
 interface Props {
@@ -20,35 +17,6 @@ interface Props {
 
 export function PipelineDetailPanel({ template: t, onRun, onDeploy, onNewVersion, onDelete }: Props) {
   const { close } = useSidePanel()
-  const { mutate: updateMeta, isPending: saving } = useUpdateTemplateMeta()
-
-  const [description, setDescription] = useState(t.description ?? '')
-  const [tags, setTags] = useState<string[]>(t.tags ?? [])
-  const [tagInput, setTagInput] = useState('')
-  const [dirty, setDirty] = useState(false)
-
-  function handleDescriptionChange(v: string) {
-    setDescription(v)
-    setDirty(true)
-  }
-
-  function addTag(raw: string) {
-    const tag = raw.trim()
-    if (!tag || tags.includes(tag)) return
-    const next = [...tags, tag]
-    setTags(next)
-    setTagInput('')
-    setDirty(true)
-  }
-
-  function removeTag(tag: string) {
-    setTags(tags.filter(t => t !== tag))
-    setDirty(true)
-  }
-
-  function save() {
-    updateMeta({ id: t.id, req: { description, tags } }, { onSuccess: () => setDirty(false) })
-  }
 
   const closeBtn = (
     <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
@@ -101,47 +69,20 @@ export function PipelineDetailPanel({ template: t, onRun, onDeploy, onNewVersion
         </dl>
       </PanelTemplate.Section>
 
-      <PanelTemplate.Section title="Description">
-        <Input
-          value={description}
-          onChange={e => handleDescriptionChange(e.target.value)}
-          placeholder="Describe this pipeline…"
-          className="text-sm"
-        />
-      </PanelTemplate.Section>
+      {t.description && (
+        <PanelTemplate.Section title="Description">
+          <p className="text-sm text-muted-foreground">{t.description}</p>
+        </PanelTemplate.Section>
+      )}
 
-      <PanelTemplate.Section title="Tags">
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {tags.map(tag => (
-            <Badge key={tag} variant="secondary" className="gap-1 pr-1">
-              {tag}
-              <button type="button" onClick={() => removeTag(tag)} className="ml-0.5 text-muted-foreground hover:text-foreground">
-                <X className="h-3 w-3" />
-              </button>
-            </Badge>
-          ))}
-        </div>
-        <Input
-          value={tagInput}
-          onChange={e => setTagInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ',') {
-              e.preventDefault()
-              addTag(tagInput)
-            }
-          }}
-          onBlur={() => { if (tagInput.trim()) addTag(tagInput) }}
-          placeholder="Add tag, press Enter…"
-          className="text-sm"
-        />
-      </PanelTemplate.Section>
-
-      {dirty && (
-        <div className="px-4 pb-2">
-          <Button size="sm" onClick={save} disabled={saving} className="w-full">
-            {saving ? 'Saving…' : 'Save changes'}
-          </Button>
-        </div>
+      {t.tags && t.tags.length > 0 && (
+        <PanelTemplate.Section title="Tags">
+          <div className="flex flex-wrap gap-1.5">
+            {t.tags.map(tag => (
+              <Badge key={tag} variant="secondary">{tag}</Badge>
+            ))}
+          </div>
+        </PanelTemplate.Section>
       )}
 
       <PanelTemplate.Section title="Pipeline YAML">

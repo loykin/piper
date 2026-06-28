@@ -18,7 +18,6 @@ type scheduleRow struct {
 	ID           string     `db:"id"`
 	Name         string     `db:"name"`
 	PipelineYAML string     `db:"pipeline_yaml"`
-	TemplateID   string     `db:"template_id"`
 	VersionID    string     `db:"template_version_id"`
 	ScheduleType string     `db:"schedule_type"`
 	CronExpr     string     `db:"cron_expr"`
@@ -36,7 +35,6 @@ func (s scheduleRow) toSchedule() *schedule.Schedule {
 		ID:           s.ID,
 		Name:         s.Name,
 		PipelineYAML: s.PipelineYAML,
-		TemplateID:   s.TemplateID,
 		VersionID:    s.VersionID,
 		ScheduleType: s.ScheduleType,
 		CronExpr:     s.CronExpr,
@@ -53,13 +51,13 @@ func (s scheduleRow) toSchedule() *schedule.Schedule {
 	return sc
 }
 
-const scheduleSelectCols = `project_id, id, name, pipeline_yaml, template_id, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type`
+const scheduleSelectCols = `project_id, id, name, pipeline_yaml, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type`
 
 func (r *scheduleRepo) Create(ctx context.Context, sc *schedule.Schedule) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO schedules (project_id, id, name, pipeline_yaml, template_id, template_version_id, cron_expr, params_json, enabled, last_run_at, next_run_at, created_at, updated_at, schedule_type)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sc.ProjectID, sc.ID, sc.Name, sc.PipelineYAML, sc.TemplateID, sc.VersionID, sc.CronExpr, sc.ParamsJSON,
+		 VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sc.ProjectID, sc.ID, sc.Name, sc.PipelineYAML, sc.VersionID, sc.CronExpr, sc.ParamsJSON,
 		boolToInt(sc.Enabled), sc.LastRunAt, sc.NextRunAt, sc.CreatedAt, sc.UpdatedAt, sc.ScheduleType,
 	)
 	return err
@@ -89,6 +87,20 @@ func (r *scheduleRepo) List(ctx context.Context, projectID string) ([]*schedule.
 	return out, nil
 }
 
+func (r *scheduleRepo) ListEnabled(ctx context.Context) ([]*schedule.Schedule, error) {
+	var rows []scheduleRow
+	err := r.db.SelectContext(ctx, &rows,
+		`SELECT `+scheduleSelectCols+` FROM schedules WHERE enabled=1 ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*schedule.Schedule, len(rows))
+	for i, row := range rows {
+		out[i] = row.toSchedule()
+	}
+	return out, nil
+}
+
 func (r *scheduleRepo) ListDue(ctx context.Context, now time.Time) ([]*schedule.Schedule, error) {
 	var rows []scheduleRow
 	err := r.db.SelectContext(ctx, &rows,
@@ -103,11 +115,37 @@ func (r *scheduleRepo) ListDue(ctx context.Context, now time.Time) ([]*schedule.
 	return out, nil
 }
 
-func (r *scheduleRepo) UpdateRun(ctx context.Context, projectID, id string, lastRunAt, nextRunAt time.Time) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE schedules SET last_run_at=?, next_run_at=?, updated_at=? WHERE project_id=? AND id=?`,
-		lastRunAt, nextRunAt, time.Now().UTC(), projectID, id)
-	return err
+func (r *scheduleRepo) ClaimRun(ctx context.Context, projectID, id string, expectedAt, lastRunAt, nextRunAt time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE schedules SET last_run_at=?, next_run_at=?, updated_at=? WHERE project_id=? AND id=? AND enabled=1 AND next_run_at=?`,
+		lastRunAt, nextRunAt, time.Now().UTC(), projectID, id, expectedAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (r *scheduleRepo) AdvanceNextRun(ctx context.Context, projectID, id string, expectedAt, nextRunAt time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE schedules SET next_run_at=?, updated_at=? WHERE project_id=? AND id=? AND enabled=1 AND next_run_at=?`,
+		nextRunAt, time.Now().UTC(), projectID, id, expectedAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func (r *scheduleRepo) ClaimOneShotRun(ctx context.Context, projectID, id string, expectedAt, lastRunAt time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE schedules SET enabled=0, last_run_at=?, next_run_at=?, updated_at=? WHERE project_id=? AND id=? AND enabled=1 AND next_run_at=?`,
+		lastRunAt, lastRunAt, time.Now().UTC(), projectID, id, expectedAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 func (r *scheduleRepo) SetEnabled(ctx context.Context, projectID, id string, enabled bool) error {

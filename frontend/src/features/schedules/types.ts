@@ -7,7 +7,6 @@ export interface Schedule {
   name: string
   owner_id?: string
   pipeline_yaml: string
-  template_id?: string
   template_version_id?: string
   schedule_type: 'immediate' | 'once' | 'cron'
   cron_expr?: string

@@ -54,8 +54,11 @@ export const runColumns: DataGridColumnDef<Run>[] = [
     header: 'Pipeline',
     meta: { minWidth: 140, flex: 1 },
     cell: ({ row }) => (
-      <span className="block truncate text-sm" title={row.original.pipeline_name}>
-        {row.original.pipeline_name}
+      <span className="flex items-baseline gap-1.5 truncate" title={row.original.pipeline_name}>
+        <span className="truncate text-sm">{row.original.pipeline_name}</span>
+        {row.original.pipeline_version != null && row.original.pipeline_version > 0 && (
+          <span className="shrink-0 text-xs text-muted-foreground">v{row.original.pipeline_version}</span>
+        )}
       </span>
     ),
   },

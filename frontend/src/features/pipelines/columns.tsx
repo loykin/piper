@@ -26,8 +26,8 @@ export function usePipelineColumns(callbacks: PipelineColumnCallbacks): DataGrid
   return useMemo<DataGridColumnDef<PipelineTemplate>[]>(() => [
     {
       // grouping key — hidden via visibilityState
-      accessorKey: 'template_id',
-      header: 'Template',
+      accessorKey: 'name',
+      header: 'Name',
     },
     {
       id: 'version',

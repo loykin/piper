@@ -59,9 +59,13 @@ func (c ExecConfig) Env() []string {
 		"PIPER_STEP_NAME=" + c.StepName,
 	}
 	if v := c.Vars.ScheduledAt; v != nil {
-		// RFC3339 UTC matches Airflow's execution_date semantics:
-		// the logical/scheduled time regardless of when the run actually started.
 		env = append(env, "PIPER_SCHEDULED_AT="+v.UTC().Format(time.RFC3339))
+	}
+	if v := c.Vars.RunStartedAt; v != nil {
+		env = append(env, "PIPER_RUN_STARTED_AT="+v.UTC().Format(time.RFC3339))
+	}
+	if v := c.Vars.DataIntervalEnd; v != nil {
+		env = append(env, "PIPER_DATA_INTERVAL_END="+v.UTC().Format(time.RFC3339))
 	}
 	if c.GPUs != "" {
 		env = append(env, "CUDA_VISIBLE_DEVICES="+c.GPUs)

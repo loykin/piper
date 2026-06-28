@@ -25,6 +25,7 @@ import (
 	"github.com/piper/piper/internal/pipelinedispatch"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/internal/queue"
+	ischeduler "github.com/piper/piper/internal/scheduler"
 	"github.com/piper/piper/internal/srcfetch"
 	"github.com/piper/piper/pkg/notebook"
 	notebookdispatch "github.com/piper/piper/pkg/notebook/dispatch"
@@ -68,6 +69,8 @@ type Piper struct {
 	resolver        artifact.Resolver // central artifact resolver
 	backend         pipelinedispatch.ExecutionBackend
 	events          *event.Hub
+	scheduler       *ischeduler.Scheduler
+	startedAt       time.Time // wall-clock when New() ran; used for misfire detection
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 	wg      sync.WaitGroup
@@ -216,14 +219,20 @@ func New(cfg Config) (*Piper, error) {
 	p.serving.manager.SetEventPublisher(p.events)
 	p.notebookManager.SetEventPublisher(p.events)
 	p.recoverInterruptedRuns(context.Background())
-	p.wg.Add(2)
+
+	// Start the in-memory scheduler and seed it from the DB.
+	// startedAt is set before LoadFromRepo so misfire detection works on first Add.
+	p.startedAt = time.Now().UTC()
+	p.scheduler = ischeduler.New(p.scheduleFired)
+	p.scheduler.Start()
+	if err := ischeduler.LoadFromRepo(context.Background(), p.repos.Schedule, p.scheduler); err != nil {
+		slog.Warn("load schedules from repo failed", "err", err)
+	}
+
+	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		p.runCleanup(p.ctx)
-	}()
-	go func() {
-		defer p.wg.Done()
-		p.runScheduler(p.ctx)
 	}()
 	return p, nil
 }
@@ -400,7 +409,8 @@ func (p *Piper) cleanupRetention(ctx context.Context) {
 
 // Close stops background goroutines and closes the store.
 func (p *Piper) Close() error {
-	p.stopCtx() // cancel runCleanup, runScheduler, and any pending dispatches
+	p.stopCtx() // cancel runCleanup and any pending dispatches
+	p.scheduler.Stop()
 	p.wg.Wait()
 	return p.repos.Close()
 }
@@ -703,6 +713,9 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 	runID := genRunID()
 	outputDir := filepath.Join(p.cfg.OutputDir, runID)
 	now := time.Now().UTC()
+	if opts.Vars.RunStartedAt == nil {
+		opts.Vars.RunStartedAt = &now
+	}
 
 	r := &run.Run{
 		ID:           runID,

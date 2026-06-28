@@ -66,7 +66,8 @@ type stubTemplateRepo struct {
 	templates map[string]*Template
 }
 
-func (r *stubTemplateRepo) Create(context.Context, *Template) error { return nil }
+func (r *stubTemplateRepo) NextVersion(context.Context, string, string) (int, error) { return 1, nil }
+func (r *stubTemplateRepo) Create(context.Context, *Template) error                  { return nil }
 
 func (r *stubTemplateRepo) Get(_ context.Context, projectID, id string) (*Template, error) {
 	t := r.templates[id]
@@ -100,12 +101,23 @@ func (r *stubScheduleRepo) List(context.Context, string) ([]*schedule.Schedule, 
 	return nil, nil
 }
 
+func (r *stubScheduleRepo) ListEnabled(context.Context) ([]*schedule.Schedule, error) {
+	return nil, nil
+}
 func (r *stubScheduleRepo) ListDue(context.Context, time.Time) ([]*schedule.Schedule, error) {
 	return nil, nil
 }
 
-func (r *stubScheduleRepo) UpdateRun(context.Context, string, string, time.Time, time.Time) error {
-	return nil
+func (r *stubScheduleRepo) ClaimRun(context.Context, string, string, time.Time, time.Time, time.Time) (bool, error) {
+	return true, nil
+}
+
+func (r *stubScheduleRepo) AdvanceNextRun(context.Context, string, string, time.Time, time.Time) (bool, error) {
+	return true, nil
+}
+
+func (r *stubScheduleRepo) ClaimOneShotRun(context.Context, string, string, time.Time, time.Time) (bool, error) {
+	return true, nil
 }
 
 func (r *stubScheduleRepo) SetEnabled(context.Context, string, string, bool) error { return nil }
@@ -122,7 +134,8 @@ func TestDeployComputesCronNextRunAt(t *testing.T) {
 				ProjectID: "proj-1",
 				ID:        "tpl-1",
 				Name:      "daily",
-				YAML:      "metadata:\n  name: daily\nspec:\n  steps: []\n",
+				Version:   1,
+				YAML:      "metadata:\n  name: daily\n  version: 1\nspec:\n  steps: []\n",
 			},
 		}},
 		Schedules: schedules,

@@ -175,8 +175,8 @@ func DefaultConfig() Config {
 			Addr: ":8080",
 		},
 		Schedule: ScheduleConfig{
-			MisfirePolicy:      "skip",
-			MisfireGracePeriod: time.Minute,
+			MisfirePolicy:      "run_once",
+			MisfireGracePeriod: 5 * time.Minute,
 		},
 	}
 }

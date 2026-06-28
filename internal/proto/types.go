@@ -29,10 +29,22 @@ func MergeParams(stepParams, runParams map[string]any) map[string]any {
 // BuiltinVars holds system-injected variables that are propagated to every step.
 // Add new scheduled/contextual metadata here — each field becomes a PIPER_* env var.
 type BuiltinVars struct {
-	// ScheduledAt is the logical/scheduled execution time (Airflow-style execution_date).
-	// Set by cron or external schedulers. Nil means an ad-hoc/manual run.
+	// ScheduledAt is the logical/scheduled execution time (Airflow-style logical_date /
+	// data_interval_start). Set by the scheduler to the exact cron tick time.
+	// Nil for ad-hoc/manual runs.
 	// Exposed as PIPER_SCHEDULED_AT (RFC3339 UTC).
 	ScheduledAt *time.Time `json:"scheduled_at,omitempty"`
+
+	// RunStartedAt is the wall-clock time when the run was actually dispatched.
+	// Always set. Subtract ScheduledAt to get scheduling delay.
+	// Exposed as PIPER_RUN_STARTED_AT (RFC3339 UTC).
+	RunStartedAt *time.Time `json:"run_started_at,omitempty"`
+
+	// DataIntervalEnd is the next scheduled cron time after ScheduledAt
+	// (Airflow-style data_interval_end). Set for cron and backfill runs only.
+	// Use [ScheduledAt, DataIntervalEnd) to bound the data window being processed.
+	// Exposed as PIPER_DATA_INTERVAL_END (RFC3339 UTC).
+	DataIntervalEnd *time.Time `json:"data_interval_end,omitempty"`
 }
 
 // Task is the unit of work the server delivers to a worker

@@ -3,6 +3,7 @@ package template
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -29,6 +30,9 @@ type HandlerDeps struct {
 	Volumes   notebook.VolumeRepository
 	Schedules schedule.Repository
 	Store     storage.Store // nil when object storage is not configured
+	// Sched keeps the in-memory Scheduler in sync when a deploy creates a schedule.
+	// If nil, the schedule is persisted to DB only.
+	Sched schedule.SchedulerAPI
 
 	Parse    func(yaml []byte) (*pipeline.Pipeline, error)
 	StartRun func(ctx context.Context, yaml string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
@@ -57,7 +61,6 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	member.DELETE("/pipelines/:id", h.delete)
 	member.POST("/pipelines/:id/run", h.triggerRun)
 	member.POST("/pipelines/:id/deploy", h.deploy)
-	member.PATCH("/pipelines/:id/meta", h.patchMeta)
 }
 
 // GET /pipelines/:id — get one pipeline template version
@@ -75,31 +78,27 @@ func (h *Handler) get(c *gin.Context) {
 func (h *Handler) submit(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	var req struct {
-		TemplateID string `json:"template_id"`
-		Name       string `json:"name"`
-		YAML       string `json:"yaml"`
-		VolumeID   string `json:"volume_id"`
+		YAML     string `json:"yaml"`
+		VolumeID string `json:"volume_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	req.Name = strings.TrimSpace(req.Name)
 	req.YAML = strings.TrimSpace(req.YAML)
-	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
-		return
-	}
 	if req.YAML == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "yaml is required"})
 		return
 	}
 
-	// Validate YAML
 	pl, err := h.deps.Parse([]byte(req.YAML))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid pipeline yaml: %s", err)})
+		return
+	}
+	if strings.TrimSpace(pl.Metadata.Name) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "metadata.name is required in pipeline yaml"})
 		return
 	}
 
@@ -139,17 +138,51 @@ func (h *Handler) submit(c *gin.Context) {
 		}
 	}
 
+	// Determine version: explicit in YAML takes precedence, otherwise auto-assign.
+	version := pl.Metadata.Version
+	if version == 0 {
+		var err error
+		version, err = h.deps.Templates.NextVersion(c.Request.Context(), projectContext.ID, pl.Metadata.Name)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	// Embed the assigned version into the YAML so stored YAML is self-contained.
+	pl.Metadata.Version = version
+	versionedYAML, err := yaml.Marshal(pl)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	t := &Template{
-		ProjectID:  projectContext.ID,
-		TemplateID: strings.TrimSpace(req.TemplateID),
-		ID:         uuid.New().String(),
-		Name:       req.Name,
-		YAML:       req.YAML,
-		SnapshotID: snapshotID,
-		VolumeID:   req.VolumeID,
-		CreatedAt:  time.Now().UTC(),
+		ProjectID:   projectContext.ID,
+		ID:          uuid.New().String(),
+		Name:        pl.Metadata.Name,
+		Version:     version,
+		Description: pl.Metadata.Description,
+		Tags:        pl.Metadata.Tags,
+		YAML:        string(versionedYAML),
+		SnapshotID:  snapshotID,
+		VolumeID:    req.VolumeID,
+		CreatedAt:   time.Now().UTC(),
 	}
 	if err := h.deps.Templates.Create(c.Request.Context(), t); err != nil {
+		if len(localPaths) > 0 && h.deps.Store != nil {
+			if objs, _ := h.deps.Store.List(c.Request.Context(), "snapshots/"+snapshotID+"/"); len(objs) > 0 {
+				keys := make([]string, len(objs))
+				for i, o := range objs {
+					keys[i] = o.Key
+				}
+				_ = h.deps.Store.Delete(c.Request.Context(), keys...)
+			}
+		}
+		if errors.Is(err, ErrVersionExists) {
+			c.JSON(http.StatusConflict, gin.H{"error": "concurrent submit conflict, please retry"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -280,7 +313,6 @@ func (h *Handler) deploy(c *gin.Context) {
 		ProjectID:    projectContext.ID,
 		Name:         t.Name,
 		PipelineYAML: rewrittenYAML,
-		TemplateID:   t.TemplateID,
 		VersionID:    t.ID,
 		Enabled:      req.Enabled,
 		ParamsJSON:   paramsJSON,
@@ -299,36 +331,11 @@ func (h *Handler) deploy(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if h.deps.Sched != nil && sc.Enabled {
+		_ = h.deps.Sched.Add(sc)
+	}
 
 	c.JSON(http.StatusCreated, sc)
-}
-
-// PATCH /pipelines/:id/meta — update description and tags on the template group
-func (h *Handler) patchMeta(c *gin.Context) {
-	projectContext, _ := project.FromContext(c.Request.Context())
-	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template version not found"})
-		return
-	}
-
-	var req struct {
-		Description string   `json:"description"`
-		Tags        []string `json:"tags"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if req.Tags == nil {
-		req.Tags = []string{}
-	}
-
-	if err := h.deps.Templates.UpdateMeta(c.Request.Context(), projectContext.ID, t.TemplateID, req.Description, req.Tags); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"description": req.Description, "tags": req.Tags})
 }
 
 // extractLocalPaths returns all source paths (entry point + deps) from steps where source is local or empty.
@@ -406,6 +413,7 @@ func rewriteLocalSources(yamlText, snapshotID, templateName string) string {
 	}
 
 	pl.Metadata.Name = templateName
+	// version is already in the YAML (set at submit time); preserve it.
 
 	for i, step := range pl.Spec.Steps {
 		if step.Run.Source != "" && step.Run.Source != "local" {

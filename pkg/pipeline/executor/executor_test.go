@@ -7,7 +7,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
@@ -325,6 +327,70 @@ func TestCommandExecutor_localSource_usesWorkDir(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "local script") {
 		t.Errorf("stdout: %q", buf.String())
+	}
+}
+
+// ─── ExecConfig.Env ──────────────────────────────────────────────────────────
+
+func TestEnv_builtinVars(t *testing.T) {
+	scheduledAt := time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC)
+	runStartedAt := time.Date(2026, 6, 27, 14, 0, 5, 0, time.UTC) // 5s late
+	intervalEnd := time.Date(2026, 6, 27, 15, 0, 0, 0, time.UTC)
+
+	c := ExecConfig{
+		RunID:    "run-1",
+		StepName: "step-1",
+		Vars: proto.BuiltinVars{
+			ScheduledAt:     &scheduledAt,
+			RunStartedAt:    &runStartedAt,
+			DataIntervalEnd: &intervalEnd,
+		},
+	}
+	env := c.Env()
+	find := func(prefix string) string {
+		for _, e := range env {
+			if strings.HasPrefix(e, prefix) {
+				return strings.TrimPrefix(e, prefix)
+			}
+		}
+		return ""
+	}
+
+	if got := find("PIPER_SCHEDULED_AT="); got != "2026-06-27T14:00:00Z" {
+		t.Errorf("PIPER_SCHEDULED_AT = %q", got)
+	}
+	if got := find("PIPER_RUN_STARTED_AT="); got != "2026-06-27T14:00:05Z" {
+		t.Errorf("PIPER_RUN_STARTED_AT = %q", got)
+	}
+	if got := find("PIPER_DATA_INTERVAL_END="); got != "2026-06-27T15:00:00Z" {
+		t.Errorf("PIPER_DATA_INTERVAL_END = %q", got)
+	}
+}
+
+func TestEnv_adHocRun_noScheduledVars(t *testing.T) {
+	runStartedAt := time.Now().UTC()
+	c := ExecConfig{
+		RunID:    "run-2",
+		StepName: "step-2",
+		Vars:     proto.BuiltinVars{RunStartedAt: &runStartedAt},
+	}
+	env := c.Env()
+	for _, e := range env {
+		if strings.HasPrefix(e, "PIPER_SCHEDULED_AT=") {
+			t.Error("PIPER_SCHEDULED_AT should not be set for ad-hoc run")
+		}
+		if strings.HasPrefix(e, "PIPER_DATA_INTERVAL_END=") {
+			t.Error("PIPER_DATA_INTERVAL_END should not be set for ad-hoc run")
+		}
+	}
+	found := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "PIPER_RUN_STARTED_AT=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("PIPER_RUN_STARTED_AT should be set for all runs")
 	}
 }
 

@@ -20,12 +20,27 @@ type HandlerDeps struct {
 	Schedules Repository
 	Runs      run.Repository
 	Parse     func(yaml []byte) (*pipeline.Pipeline, error)
-	Trigger   func(ctx context.Context, sc *Schedule)
-	NextTime  func(expr string, from time.Time) (time.Time, error)
-	Backfill  func(ctx context.Context, id string, from, to time.Time) ([]string, error)
+	// Sched keeps the in-memory Scheduler in sync with DB changes.
+	// If nil, schedule mutations are persisted to DB only (useful in tests).
+	Sched    SchedulerAPI
+	NextTime func(expr string, from time.Time) (time.Time, error)
+	Backfill func(ctx context.Context, id string, from, to time.Time) ([]string, error)
 	// GenID generates a unique schedule ID prefix (e.g. "sch-run-xxx").
 	GenID func() string
 }
+
+// sched returns a no-op SchedulerAPI when none is configured.
+func (h *Handler) sched() SchedulerAPI {
+	if h.deps.Sched != nil {
+		return h.deps.Sched
+	}
+	return noopScheduler{}
+}
+
+type noopScheduler struct{}
+
+func (noopScheduler) Add(*Schedule) error { return nil }
+func (noopScheduler) Remove(string)       {}
 
 // Handler is the Gin HTTP handler for the /schedules domain.
 type Handler struct {
@@ -159,9 +174,9 @@ func (h *Handler) createSchedule(c *gin.Context) {
 		return
 	}
 
-	// For immediate type: trigger a run right now.
-	if req.Type == "immediate" && h.deps.Trigger != nil {
-		go h.deps.Trigger(c.Request.Context(), sc)
+	if err := h.sched().Add(sc); err != nil {
+		// Non-fatal: schedule is persisted; warn but don't fail the request.
+		_ = err
 	}
 
 	c.JSON(http.StatusOK, gin.H{"schedule_id": sc.ID})
@@ -192,13 +207,19 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled is required"})
 		return
 	}
-	if _, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id); err != nil {
+	sc, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
 		return
 	}
 	if err := h.deps.Schedules.SetEnabled(c.Request.Context(), currentProjectID(c), id, *req.Enabled); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if *req.Enabled {
+		_ = h.sched().Add(sc)
+	} else {
+		h.sched().Remove(id)
 	}
 	c.JSON(http.StatusOK, gin.H{"id": id, "enabled": *req.Enabled})
 }
@@ -214,6 +235,7 @@ func (h *Handler) deleteSchedule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	h.sched().Remove(id)
 	c.Status(http.StatusNoContent)
 }
 

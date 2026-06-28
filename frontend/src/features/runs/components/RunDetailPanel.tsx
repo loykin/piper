@@ -98,6 +98,19 @@ export function RunDetailPanel({ id }: { id: string }) {
         />
       </PanelTemplate.Section>
 
+      {run.status === 'failed' && steps.some(s => s.status === 'failed' && s.error) && (
+        <PanelTemplate.Section>
+          <div className="space-y-1.5">
+            {steps.filter(s => s.status === 'failed' && s.error).map(s => (
+              <div key={s.step_name} className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2">
+                <p className="text-xs font-medium text-destructive">{s.step_name}</p>
+                <p className="mt-1 whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">{s.error}</p>
+              </div>
+            ))}
+          </div>
+        </PanelTemplate.Section>
+      )}
+
       <PanelTemplate.Section title="Steps">
         <StepList
           steps={steps}

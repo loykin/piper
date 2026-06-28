@@ -65,7 +65,8 @@ func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 		agentInfo, selectErr := b.router.Reserve(iagent.WorkloadPipeline, placement)
 		if selectErr != nil {
 			b.runMu.Unlock()
-			return selectErr
+			// No available worker — retryable so the queue re-attempts after a short delay.
+			return &DispatchError{Retryable: true, Err: selectErr}
 		}
 		runAgent = &pipelineRunAgent{
 			AgentID:   agentInfo.ID,

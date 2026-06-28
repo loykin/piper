@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import type { CreatePipelineRequest, TriggerRunRequest, DeployRequest, UpdateMetaRequest } from './types'
+import type { CreatePipelineRequest, TriggerRunRequest, DeployRequest } from './types'
 import { useProjectId } from '@/lib/projectContext'
 import { scheduleKeys } from '@/features/schedules/hooks'
 
@@ -53,16 +53,6 @@ export function useRunPipeline() {
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req?: TriggerRunRequest }) =>
       api.runPipeline(projectId, id, req),
-  })
-}
-
-export function useUpdateTemplateMeta() {
-  const projectId = useProjectId()
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, req }: { id: string; req: UpdateMetaRequest }) =>
-      api.updateTemplateMeta(projectId, id, req),
-    onSuccess: () => qc.invalidateQueries({ queryKey: pipelineKeys.all(projectId) }),
   })
 }
 

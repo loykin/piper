@@ -281,9 +281,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},
-		Trigger: func(ctx context.Context, sc *schedule.Schedule) {
-			p.triggerSchedule(p.ctx, sc)
-		},
+		Sched:    p.scheduler,
 		NextTime: nextScheduleTime,
 		Backfill: p.BackfillSchedule,
 		GenID:    genScheduleID,
@@ -328,6 +326,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 		Volumes:   p.repos.NotebookVolume,
 		Schedules: p.repos.Schedule,
 		Store:     p.store,
+		Sched:     p.scheduler,
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},

@@ -255,13 +255,12 @@ func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipe
 			if rs.Done {
 				entry.status = taskDone
 			} else if !rs.StartedAt.IsZero() {
-				// Step was in-flight when the server crashed. Keep it as running so
-				// the existing K8s Job or worker can still report completion.
-				// Cleanup() will expire it if it never reports back.
-				entry.status = taskRunning
-				entry.attempts = 1
-				entry.startedAt = &rs.StartedAt
-				entry.leaseAt = &rs.StartedAt
+				// Step was in-flight when the server crashed. Reset to pending so it
+				// gets re-dispatched immediately. For K8s this may cause at-most-once
+				// duplication (old pod + new dispatch), but the stale result is rejected
+				// by the worker-ownership check in Complete(). For embedded/bare-metal
+				// workers the previous process is gone and re-dispatch is required.
+				entry.status = taskPending
 			}
 		}
 		r.tasks[s.Name] = entry
@@ -457,6 +456,7 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 				continue
 			default:
 				q.stopRetryTimerLocked(entry)
+				startedAt := entry.startedAt
 				entry.status = taskCanceled
 				entry.startedAt = nil
 				now := time.Now()
@@ -465,6 +465,7 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 					RunID:     runID,
 					StepName:  entry.step.Name,
 					Status:    string(taskCanceled),
+					StartedAt: startedAt,
 					EndedAt:   &now,
 					Attempts:  entry.attempts,
 				}); err != nil {

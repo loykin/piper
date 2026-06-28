@@ -6,6 +6,7 @@ export interface Run {
   owner_id?: string
   experiment?: string
   pipeline_name: string
+  pipeline_version?: number
   status: 'scheduled' | 'running' | 'success' | 'failed' | 'canceled'
   started_at: string
   ended_at?: string

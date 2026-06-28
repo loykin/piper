@@ -343,7 +343,6 @@ export default function PipelineEditorPage() {
   const editorVolumeId  = searchParams.get('volume') ?? ''
   const editorRoot      = searchParams.get('root')   ?? ''
   const editorName      = searchParams.get('name')   ?? initialDraft.name
-  const editorTemplateId = searchParams.get('template_id') ?? ''
   const editorFromVersion = searchParams.get('from_version') ?? ''
 
   // Setup form — local state before user commits to URL
@@ -588,8 +587,6 @@ export default function PipelineEditorPage() {
     try {
       const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
       await createPipeline(projectId, {
-        template_id: editorTemplateId || undefined,
-        name: pipelineName,
         yaml,
         volume_id: submitVolumeId || undefined,
       })

@@ -1,9 +1,9 @@
 export type {
-  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest, UpdateMetaRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
 } from './types'
 
 import type {
-  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest, UpdateMetaRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
 } from './types'
 import { projectApi } from '@/lib/api'
 
@@ -41,14 +41,6 @@ export async function runPipeline(
   req?: TriggerRunRequest,
 ): Promise<{ id: string }> {
   return projectApi(projectId).post<{ id: string }>(`/pipelines/${id}/run`, req ?? {})
-}
-
-export async function updateTemplateMeta(
-  projectId: string,
-  versionId: string,
-  req: UpdateMetaRequest,
-): Promise<void> {
-  return projectApi(projectId).patch(`/pipelines/${versionId}/meta`, req)
 }
 
 export async function deployPipeline(

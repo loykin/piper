@@ -7,13 +7,20 @@ import { IconButton } from '@/components/ui/icon-button'
 import { runColumns } from '@/features/runs/columns'
 import { RunDetailPanel } from '@/features/runs/components/RunDetailPanel'
 import { useRuns, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
+import { useSchedules } from '@/features/schedules/hooks'
 import type { Run } from '@/features/runs/api'
 
 function HistoryPageInner() {
   const { open } = useSidePanel()
   const { data: runs = [], isLoading } = useRuns()
+  const { data: schedules = [] } = useSchedules()
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
+
+  const scheduleById = useMemo(
+    () => new Map(schedules.map(s => [s.id, s])),
+    [schedules],
+  )
 
   const handleDelete = (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
@@ -53,7 +60,21 @@ function HistoryPageInner() {
     ),
   }
 
-  const columns = useMemo(() => [...runColumns, actionColumn], [deleting, deletingId])
+  const scheduleColumn: DataGridColumnDef<Run> = useMemo(() => ({
+    id: 'schedule',
+    header: 'Schedule',
+    meta: { minWidth: 140 },
+    cell: ({ row }) => {
+      if (!row.original.schedule_id) return <span className="text-xs text-muted-foreground">—</span>
+      const sc = scheduleById.get(row.original.schedule_id)
+      return <span className="block truncate text-xs">{sc?.name ?? row.original.schedule_id.slice(0, 8)}</span>
+    },
+  }), [scheduleById])
+
+  const columns = useMemo(
+    () => [scheduleColumn, ...runColumns, actionColumn],
+    [scheduleColumn, deleting, deletingId],
+  )
 
   return (
     <DataBodyTemplate

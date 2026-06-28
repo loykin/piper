@@ -3,7 +3,10 @@
 // can be satisfied by any backend (Loki, S3, etc.).
 package logstore
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Line is a single log line emitted by a pipeline step.
 type Line struct {
@@ -29,7 +32,8 @@ type Metric struct {
 // LogStore is the interface for appending and querying step logs.
 type LogStore interface {
 	// Append persists a batch of log lines.
-	Append(lines []*Line) error
+	// ctx is respected for cancellation and timeout; callers should pass a meaningful deadline.
+	Append(ctx context.Context, lines []*Line) error
 
 	// Query returns log lines for a step.
 	// If afterID > 0, only lines with ID > afterID are returned (for incremental polling).
@@ -37,6 +41,6 @@ type LogStore interface {
 }
 
 type MetricStore interface {
-	AppendMetrics(metrics []*Metric) error
+	AppendMetrics(ctx context.Context, metrics []*Metric) error
 	QueryMetrics(projectID, runID, stepName string) ([]*Metric, error)
 }

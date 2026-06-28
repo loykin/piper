@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/loykin/dbstore"
 	corev1 "k8s.io/api/core/v1"
 
 	iagent "github.com/piper/piper/internal/agent"
 )
 
-type workerPodPolicyRepo struct{ db *sqlx.DB }
+type workerPodPolicyRepo struct{ dbstore.BaseRepo }
 
-func NewWorkerPodPolicyRepo(db *sqlx.DB) iagent.WorkerPodPolicyRepository {
-	return &workerPodPolicyRepo{db: db}
+func NewWorkerPodPolicyRepo(exec *dbstore.Executor, source string) iagent.WorkerPodPolicyRepository {
+	return &workerPodPolicyRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
 func (r *workerPodPolicyRepo) List(ctx context.Context) ([]iagent.WorkerPodPolicy, error) {
@@ -26,9 +27,11 @@ func (r *workerPodPolicyRepo) List(ctx context.Context) ([]iagent.WorkerPodPolic
 		UpdatedAt   time.Time `db:"updated_at"`
 		UpdatedBy   string    `db:"updated_by"`
 	}
-	q := r.db.Rebind(`SELECT worker_id, pod_template, updated_at, updated_by
-	                   FROM worker_pod_policies ORDER BY updated_at DESC`)
-	if err := r.db.SelectContext(ctx, &rows, q); err != nil {
+	if err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT worker_id, pod_template, updated_at, updated_by
+		                 FROM worker_pod_policies ORDER BY updated_at DESC`)
+		return db.SelectContext(ctx, &rows, q)
+	}); err != nil {
 		return nil, err
 	}
 	out := make([]iagent.WorkerPodPolicy, 0, len(rows))
@@ -55,9 +58,11 @@ func (r *workerPodPolicyRepo) Get(ctx context.Context, workerID string) (*iagent
 		UpdatedAt   time.Time `db:"updated_at"`
 		UpdatedBy   string    `db:"updated_by"`
 	}
-	q := r.db.Rebind(`SELECT worker_id, pod_template, updated_at, updated_by
-	                   FROM worker_pod_policies WHERE worker_id = ?`)
-	err := r.db.GetContext(ctx, &row, q, workerID)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT worker_id, pod_template, updated_at, updated_by
+		                 FROM worker_pod_policies WHERE worker_id = ?`)
+		return db.GetContext(ctx, &row, q, workerID)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -82,19 +87,23 @@ func (r *workerPodPolicyRepo) Set(ctx context.Context, p iagent.WorkerPodPolicy)
 	if err != nil {
 		return err
 	}
-	q := r.db.Rebind(`
-		INSERT INTO worker_pod_policies (worker_id, pod_template, updated_at, updated_by)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT (worker_id) DO UPDATE SET
-		    pod_template = EXCLUDED.pod_template,
-		    updated_at   = EXCLUDED.updated_at,
-		    updated_by   = EXCLUDED.updated_by`)
-	_, err = r.db.ExecContext(ctx, q, p.WorkerID, string(raw), time.Now(), p.UpdatedBy)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`
+			INSERT INTO worker_pod_policies (worker_id, pod_template, updated_at, updated_by)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT (worker_id) DO UPDATE SET
+			    pod_template = EXCLUDED.pod_template,
+			    updated_at   = EXCLUDED.updated_at,
+			    updated_by   = EXCLUDED.updated_by`)
+		_, err := db.ExecContext(ctx, q, p.WorkerID, string(raw), time.Now(), p.UpdatedBy)
+		return err
+	})
 }
 
 func (r *workerPodPolicyRepo) Delete(ctx context.Context, workerID string) error {
-	q := r.db.Rebind(`DELETE FROM worker_pod_policies WHERE worker_id = ?`)
-	_, err := r.db.ExecContext(ctx, q, workerID)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`DELETE FROM worker_pod_policies WHERE worker_id = ?`)
+		_, err := db.ExecContext(ctx, q, workerID)
+		return err
+	})
 }

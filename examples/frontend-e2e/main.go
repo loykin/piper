@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
-	_ "modernc.org/sqlite"
 
 	piper "github.com/piper/piper"
 	"github.com/piper/piper/internal/store"
@@ -61,17 +59,11 @@ func main() {
 	}
 	defer stopS3()
 
-	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "piper.db"))
+	repos, err := store.Open(filepath.Join(tmpDir, "piper.db"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
-	defer func() { _ = db.Close() }()
-
-	repos, err := store.New(db)
-	if err != nil {
-		log.Fatal(err)
-	}
+	defer func() { _ = repos.Close() }()
 
 	workspace, err := filepath.Abs("examples/frontend-e2e/workspace")
 	if err != nil {

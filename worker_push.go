@@ -58,15 +58,14 @@ func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, 
 					metricRows = append(metricRows, &logstore.Metric{ProjectID: req.ProjectID, RunID: req.RunID, StepName: req.StepName, Key: key, Value: value, Ts: l.Ts})
 				}
 			}
-			if err := logs.Append(lines); err != nil {
+			if err := logs.Append(pushCtx, lines); err != nil {
 				slog.Warn("log append push write failed", "agent_id", agentID, "run_id", req.RunID, "err", err)
 			}
 			if metrics != nil && len(metricRows) > 0 {
-				if err := metrics.AppendMetrics(metricRows); err != nil {
+				if err := metrics.AppendMetrics(pushCtx, metricRows); err != nil {
 					slog.Warn("metric append push failed", "agent_id", agentID, "run_id", req.RunID, "err", err)
 				}
 			}
-			_ = pushCtx
 		case iagent.MethodNotebookStatusUpdate:
 			if err := handleNotebookStatusPush(pushCtx, agentID, payload, nbMgr); err != nil {
 				slog.Warn("notebook status push failed", "agent_id", agentID, "err", err)
@@ -99,7 +98,7 @@ func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, 
 					for key, value := range result.Metrics {
 						rows = append(rows, &logstore.Metric{ProjectID: result.ProjectID, RunID: runID, StepName: stepName, Key: key, Value: value, Ts: now})
 					}
-					if err := metrics.AppendMetrics(rows); err != nil {
+					if err := metrics.AppendMetrics(pushCtx, rows); err != nil {
 						slog.Warn("pipeline metrics push failed", "agent_id", agentID, "task_id", result.TaskID, "err", err)
 					}
 				}

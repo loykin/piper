@@ -116,6 +116,7 @@ func New(cfg Config) (*Piper, error) {
 			DB:            repos.DB(),
 			Driver:        repos.Driver(),
 			SecureCookies: cfg.Server.TLS.Enabled,
+			Executor:      repos.Executor(),
 		})
 		if err != nil {
 			_ = repos.Close()
@@ -417,17 +418,13 @@ func (p *Piper) Close() error {
 
 // openStore creates a Repos according to the Config priority rules:
 //
-//	Repos (external) > DB (injected sqlite) > DBDriver+DBDSN > DBPath (sqlite default)
+//	Repos (external) > DBDriver+DBDSN > DBPath (sqlite default)
 func openStore(cfg Config) (*storemod.Repos, error) {
 	// 1. Externally-constructed Repos — caller manages migrations and lifecycle.
 	if cfg.Repos != nil {
 		return cfg.Repos, nil
 	}
-	// 2. Directly injected *sql.DB (SQLite assumed)
-	if cfg.DB != nil {
-		return storemod.New(cfg.DB)
-	}
-	// 3. Explicit driver selection
+	// 2. Explicit driver selection
 	switch cfg.DBDriver {
 	case "postgres", "postgresql":
 		if cfg.DBDSN == "" {

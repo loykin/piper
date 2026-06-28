@@ -20,7 +20,6 @@ import (
 // LogQuerier abstracts log storage for the run handler.
 type LogQuerier interface {
 	Query(projectID, runID, stepName string, afterID int64) ([]*logstore.Line, error)
-	Append(lines []*logstore.Line) error
 }
 
 // ArtifactStore abstracts artifact storage for the run handler.

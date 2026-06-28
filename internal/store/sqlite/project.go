@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/loykin/dbstore"
 	"github.com/piper/piper/pkg/project"
 )
 
-type projectRepo struct{ db *sqlx.DB }
+type projectRepo struct{ dbstore.BaseRepo }
 
-func NewProjectRepo(db *sqlx.DB) project.Repository {
-	return &projectRepo{db: db}
+func NewProjectRepo(exec *dbstore.Executor, source string) project.Repository {
+	return &projectRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
 func (r *projectRepo) Create(ctx context.Context, p *project.Project) error {
@@ -21,17 +22,21 @@ func (r *projectRepo) Create(ctx context.Context, p *project.Project) error {
 		p.CreatedAt = now
 	}
 	p.UpdatedAt = now
-	_, err := r.db.NamedExecContext(ctx,
-		`INSERT INTO projects (id, name, description, created_at, updated_at)
-		 VALUES (:id, :name, :description, :created_at, :updated_at)`,
-		p)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.NamedExecContext(ctx,
+			`INSERT INTO projects (id, name, description, created_at, updated_at)
+			 VALUES (:id, :name, :description, :created_at, :updated_at)`,
+			p)
+		return err
+	})
 }
 
 func (r *projectRepo) Get(ctx context.Context, id string) (*project.Project, error) {
 	var p project.Project
-	err := r.db.GetContext(ctx, &p,
-		`SELECT id, name, description, created_at, updated_at FROM projects WHERE id=?`, id)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &p,
+			`SELECT id, name, description, created_at, updated_at FROM projects WHERE id=?`, id)
+	})
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -43,8 +48,10 @@ func (r *projectRepo) Get(ctx context.Context, id string) (*project.Project, err
 
 func (r *projectRepo) List(ctx context.Context) ([]*project.Project, error) {
 	var projects []*project.Project
-	err := r.db.SelectContext(ctx, &projects,
-		`SELECT id, name, description, created_at, updated_at FROM projects ORDER BY created_at ASC`)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.SelectContext(ctx, &projects,
+			`SELECT id, name, description, created_at, updated_at FROM projects ORDER BY created_at ASC`)
+	})
 	if projects == nil {
 		projects = []*project.Project{}
 	}
@@ -52,6 +59,8 @@ func (r *projectRepo) List(ctx context.Context) ([]*project.Project, error) {
 }
 
 func (r *projectRepo) Delete(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM projects WHERE id=?`, id)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.ExecContext(ctx, `DELETE FROM projects WHERE id=?`, id)
+		return err
+	})
 }

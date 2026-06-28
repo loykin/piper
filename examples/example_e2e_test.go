@@ -11,7 +11,6 @@ package examples
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,9 +23,8 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	piper "github.com/piper/piper"
+	"github.com/piper/piper/internal/store"
 	"github.com/piper/piper/pkg/notebook"
 	notebookworker "github.com/piper/piper/pkg/notebook/worker"
 	"github.com/piper/piper/pkg/pipeline"
@@ -347,22 +345,14 @@ func TestExampleArtifacts(t *testing.T) {
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	tmpDir := t.TempDir()
 
-	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "example-notebook.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
 	storeDir := filepath.Join(tmpDir, "store")
 	if err := os.MkdirAll(storeDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	p, err := piper.New(piper.Config{
-		DB:        db,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
+		DBPath:    filepath.Join(tmpDir, "example-notebook.db"),
 		Auth:      piper.AuthConfig{Trusted: true},
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
@@ -428,19 +418,17 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	port := freePort(t)
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	tmpDir := t.TempDir()
-	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "pipeline-template.db"))
+
+	repos, err := store.Open(filepath.Join(tmpDir, "pipeline-template.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	t.Cleanup(func() { _ = db.Close() })
 
 	storeDir := filepath.Join(tmpDir, "store")
 
 	p, err := piper.New(piper.Config{
-		DB:        db,
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
+		Repos:     repos,
 		Auth:      piper.AuthConfig{Trusted: true},
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
@@ -454,11 +442,15 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	const projectID = "default"
 	projectAPI := serverURL + "/api/projects/" + projectID
 	now := time.Now()
-	if _, err := db.Exec(
-		`INSERT INTO notebook_volumes (project_id, id, label, work_dir, status, worker_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		projectID, volumeID, "notebook-template", workspace, notebook.VolumeStatusReleased, "", now, now,
-	); err != nil {
+	if err := repos.NotebookVolume.Create(context.Background(), &notebook.NotebookVolume{
+		ProjectID: projectID,
+		ID:        volumeID,
+		Label:     "notebook-template",
+		WorkDir:   workspace,
+		Status:    notebook.VolumeStatusReleased,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
 		t.Fatalf("register notebook volume: %v", err)
 	}
 
@@ -610,15 +602,8 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	tmpDir := t.TempDir()
 
-	db, err := sql.Open("sqlite", filepath.Join(tmpDir, "example-notebook.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
 	p, err := piper.New(piper.Config{
-		DB:     db,
+		DBPath: filepath.Join(tmpDir, "example-notebook.db"),
 		Auth:   piper.AuthConfig{Trusted: true},
 		Server: piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
 	})

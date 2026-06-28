@@ -30,7 +30,7 @@ func seedRun(t *testing.T, repo run.Repository, projectID, id, experiment string
 // seedMetric inserts a single metric row.
 func seedMetric(t *testing.T, ms logstore.MetricStore, projectID, runID, step, key string, value float64) {
 	t.Helper()
-	err := ms.AppendMetrics([]*logstore.Metric{{
+	err := ms.AppendMetrics(context.Background(), []*logstore.Metric{{
 		ProjectID: projectID,
 		RunID:     runID,
 		StepName:  step,

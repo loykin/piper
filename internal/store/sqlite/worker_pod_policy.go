@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/loykin/dbstore"
 	corev1 "k8s.io/api/core/v1"
 
 	iagent "github.com/piper/piper/internal/agent"
 )
 
-type workerPodPolicyRepo struct{ db *sqlx.DB }
+type workerPodPolicyRepo struct{ dbstore.BaseRepo }
 
-func NewWorkerPodPolicyRepo(db *sqlx.DB) iagent.WorkerPodPolicyRepository {
-	return &workerPodPolicyRepo{db: db}
+func NewWorkerPodPolicyRepo(exec *dbstore.Executor, source string) iagent.WorkerPodPolicyRepository {
+	return &workerPodPolicyRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
 func (r *workerPodPolicyRepo) List(ctx context.Context) ([]iagent.WorkerPodPolicy, error) {
@@ -26,9 +27,11 @@ func (r *workerPodPolicyRepo) List(ctx context.Context) ([]iagent.WorkerPodPolic
 		UpdatedAt   time.Time `db:"updated_at"`
 		UpdatedBy   string    `db:"updated_by"`
 	}
-	if err := r.db.SelectContext(ctx, &rows,
-		`SELECT worker_id, pod_template, updated_at, updated_by
-		 FROM worker_pod_policies ORDER BY updated_at DESC`); err != nil {
+	if err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.SelectContext(ctx, &rows,
+			`SELECT worker_id, pod_template, updated_at, updated_by
+			 FROM worker_pod_policies ORDER BY updated_at DESC`)
+	}); err != nil {
 		return nil, err
 	}
 	out := make([]iagent.WorkerPodPolicy, 0, len(rows))
@@ -55,9 +58,11 @@ func (r *workerPodPolicyRepo) Get(ctx context.Context, workerID string) (*iagent
 		UpdatedAt   time.Time `db:"updated_at"`
 		UpdatedBy   string    `db:"updated_by"`
 	}
-	err := r.db.GetContext(ctx, &row,
-		`SELECT worker_id, pod_template, updated_at, updated_by
-		 FROM worker_pod_policies WHERE worker_id = ?`, workerID)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &row,
+			`SELECT worker_id, pod_template, updated_at, updated_by
+			 FROM worker_pod_policies WHERE worker_id = ?`, workerID)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -82,19 +87,23 @@ func (r *workerPodPolicyRepo) Set(ctx context.Context, p iagent.WorkerPodPolicy)
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx,
-		`INSERT INTO worker_pod_policies (worker_id, pod_template, updated_at, updated_by)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(worker_id) DO UPDATE SET
-		     pod_template = excluded.pod_template,
-		     updated_at   = excluded.updated_at,
-		     updated_by   = excluded.updated_by`,
-		p.WorkerID, string(raw), time.Now(), p.UpdatedBy)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO worker_pod_policies (worker_id, pod_template, updated_at, updated_by)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT(worker_id) DO UPDATE SET
+			     pod_template = excluded.pod_template,
+			     updated_at   = excluded.updated_at,
+			     updated_by   = excluded.updated_by`,
+			p.WorkerID, string(raw), time.Now(), p.UpdatedBy)
+		return err
+	})
 }
 
 func (r *workerPodPolicyRepo) Delete(ctx context.Context, workerID string) error {
-	_, err := r.db.ExecContext(ctx,
-		`DELETE FROM worker_pod_policies WHERE worker_id = ?`, workerID)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.ExecContext(ctx,
+			`DELETE FROM worker_pod_policies WHERE worker_id = ?`, workerID)
+		return err
+	})
 }

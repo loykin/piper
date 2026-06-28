@@ -8,6 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/loykin/dbstore"
 	_ "modernc.org/sqlite"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -39,9 +40,12 @@ type Repos struct {
 	Log              logstore.LogStore
 	Metric           logstore.MetricStore
 
+	// db is owned by pool; retained here for DB() and deleteRunQueries rebind.
+	// Callers must not use DB() after Close.
 	db        *sqlx.DB
+	pool      *dbstore.Pool
+	executor  *dbstore.Executor
 	driver    string
-	ownsDB    bool
 	closeFunc func() error
 	deleteRun func(ctx context.Context, projectID, id string) error
 }
@@ -68,115 +72,180 @@ type ExternalReposConfig struct {
 
 // Open opens a SQLite file and returns Repos with all repositories wired.
 func Open(path string) (*Repos, error) {
-	db, err := sqlx.Open("sqlite", path+"?_journal=WAL&_timeout=5000")
+	db, pool, executor, err := openDBStore("sqlite", path+"?_journal=WAL&_timeout=5000", sqlitePoolConfig())
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	configureSQLiteDB(db)
-	return newRepos(db, "sqlite", true)
-}
-
-// New creates Repos from an externally injected *sql.DB (SQLite assumed).
-// Calling Close does not close db — the caller retains ownership.
-func New(db *sql.DB) (*Repos, error) {
-	return newRepos(sqlx.NewDb(db, "sqlite"), "sqlite", false)
+	return newReposFromDBStore(db, "sqlite", pool, executor)
 }
 
 // OpenPostgres opens a PostgreSQL connection and returns Repos with all repositories wired.
 func OpenPostgres(dsn string) (*Repos, error) {
-	db, err := sqlx.Open("postgres", dsn)
+	db, pool, executor, err := openDBStore("postgres", dsn, postgresPoolConfig())
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
-	configurePostgresDB(db)
-	return newRepos(db, "postgres", true)
+	return newReposFromDBStore(db, "postgres", pool, executor)
 }
 
-func configureSQLiteDB(db *sqlx.DB) {
-	// SQLite is sensitive to concurrent writers. Keep the pool conservative so
-	// the database/sql pool does not create avoidable lock contention.
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
+// PrimarySource is the datasource name registered in the pool.
+const PrimarySource = "primary"
+
+type driverAdapter struct {
+	driver string
+	db     *sqlx.DB
+	apply  func(*sqlx.DB, dbstore.PoolConfig)
 }
 
-func configurePostgresDB(db *sqlx.DB) {
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+func (d *driverAdapter) Open(cfg dbstore.DriverConfig) (*sqlx.DB, error) {
+	db, err := sqlx.Connect(d.driver, cfg.DSN)
+	if err != nil {
+		return nil, err
+	}
+	d.db = db
+	return db, nil
 }
 
-func newRepos(db *sqlx.DB, driver string, ownsDB bool) (*Repos, error) {
-	if err := migrate(context.Background(), db, driver); err != nil {
-		if ownsDB {
-			_ = db.Close()
-		}
-		return nil, fmt.Errorf("migrate: %w", err)
+func (d *driverAdapter) ApplyPoolConfig(db *sqlx.DB, cfg dbstore.PoolConfig) {
+	d.apply(db, cfg)
+}
+
+func openDBStore(driver, dsn string, cfg dbstore.PoolConfig) (*sqlx.DB, *dbstore.Pool, *dbstore.Executor, error) {
+	adapter := &driverAdapter{driver: driver, apply: dbstore.DefaultApplyPoolConfig}
+	if driver == "sqlite" {
+		adapter.apply = applySQLitePoolConfig
 	}
 
+	registry := dbstore.NewDriverRegistry()
+	registry.Register(driver, adapter)
+	pool := dbstore.NewPool(registry)
+	if err := pool.Register(PrimarySource, dbstore.DriverConfig{
+		Driver:     driver,
+		DSN:        dsn,
+		PoolConfig: cfg,
+	}); err != nil {
+		return nil, nil, nil, err
+	}
+	return adapter.db, pool, dbstore.NewExecutor(pool), nil
+}
+
+func sqlitePoolConfig() dbstore.PoolConfig {
+	return dbstore.PoolConfig{
+		MaxOpenConns:   1,
+		MaxIdleConns:   1,
+		MaxLifetime:    0,
+		MaxIdleTime:    5 * time.Minute,
+		MaxConcurrency: 1,
+	}
+}
+
+func postgresPoolConfig() dbstore.PoolConfig {
+	return dbstore.PoolConfig{
+		MaxOpenConns:   25,
+		MaxIdleConns:   5,
+		MaxLifetime:    5 * time.Minute,
+		MaxIdleTime:    5 * time.Minute,
+		MaxConcurrency: 25,
+	}
+}
+
+func applySQLitePoolConfig(db *sqlx.DB, cfg dbstore.PoolConfig) {
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxIdleTime(cfg.MaxIdleTime)
+	db.SetConnMaxLifetime(cfg.MaxLifetime)
+}
+
+func newReposFromDBStore(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstore.Executor) (*Repos, error) {
+	if !supportedDriver(driver) {
+		pool.RemoveAll()
+		return nil, fmt.Errorf("unsupported db driver: %s", driver)
+	}
+	if err := migrate(context.Background(), db, driver); err != nil {
+		pool.RemoveAll()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	return buildRepos(db, driver, pool, executor), nil
+}
+
+func supportedDriver(driver string) bool {
+	switch driver {
+	case "sqlite", "sqlite3", "", "postgres", "postgresql":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstore.Executor) *Repos {
 	switch driver {
 	case "sqlite", "sqlite3", "":
 		return &Repos{
-			Project:          sqlite.NewProjectRepo(db),
-			Run:              sqlite.NewRunRepo(db),
-			Step:             sqlite.NewStepRepo(db),
-			Schedule:         sqlite.NewScheduleRepo(db),
-			Serving:          sqlite.NewServingRepo(db),
-			Notebook:         sqlite.NewNotebookRepo(db),
-			NotebookVolume:   sqlite.NewNotebookVolumeRepo(db),
-			PipelineTemplate: sqlite.NewPipelineRepo(db),
-			Viewer:           sqlite.NewViewerRepo(db),
-			WorkerPodPolicy:  sqlite.NewWorkerPodPolicyRepo(db),
-			Log:              logstore.NewSQLite(db.DB),
-			Metric:           logstore.NewSQLite(db.DB),
+			Project:          sqlite.NewProjectRepo(executor, PrimarySource),
+			Run:              sqlite.NewRunRepo(executor, PrimarySource),
+			Step:             sqlite.NewStepRepo(executor, PrimarySource),
+			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
+			Serving:          sqlite.NewServingRepo(executor, PrimarySource),
+			Notebook:         sqlite.NewNotebookRepo(executor, PrimarySource),
+			NotebookVolume:   sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
+			PipelineTemplate: sqlite.NewPipelineRepo(executor, PrimarySource),
+			Viewer:           sqlite.NewViewerRepo(executor, PrimarySource),
+			WorkerPodPolicy:  sqlite.NewWorkerPodPolicyRepo(executor, PrimarySource),
+			Log:              logstore.NewSQLite(executor, PrimarySource),
+			Metric:           logstore.NewSQLite(executor, PrimarySource),
 			db:               db,
+			pool:             pool,
+			executor:         executor,
 			driver:           driver,
-			ownsDB:           ownsDB,
-		}, nil
+		}
 	case "postgres", "postgresql":
 		return &Repos{
-			Project:          postgres.NewProjectRepo(db),
-			Run:              postgres.NewRunRepo(db),
-			Step:             postgres.NewStepRepo(db),
-			Schedule:         postgres.NewScheduleRepo(db),
-			Serving:          postgres.NewServingRepo(db),
-			Notebook:         postgres.NewNotebookRepo(db),
-			NotebookVolume:   postgres.NewNotebookVolumeRepo(db),
-			PipelineTemplate: postgres.NewPipelineRepo(db),
-			Viewer:           postgres.NewViewerRepo(db),
-			WorkerPodPolicy:  postgres.NewWorkerPodPolicyRepo(db),
-			Log:              logstore.NewPostgres(db.DB),
-			Metric:           logstore.NewPostgres(db.DB),
+			Project:          postgres.NewProjectRepo(executor, PrimarySource),
+			Run:              postgres.NewRunRepo(executor, PrimarySource),
+			Step:             postgres.NewStepRepo(executor, PrimarySource),
+			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
+			Serving:          postgres.NewServingRepo(executor, PrimarySource),
+			Notebook:         postgres.NewNotebookRepo(executor, PrimarySource),
+			NotebookVolume:   postgres.NewNotebookVolumeRepo(executor, PrimarySource),
+			PipelineTemplate: postgres.NewPipelineRepo(executor, PrimarySource),
+			Viewer:           postgres.NewViewerRepo(executor, PrimarySource),
+			WorkerPodPolicy:  postgres.NewWorkerPodPolicyRepo(executor, PrimarySource),
+			Log:              logstore.NewPostgres(executor, PrimarySource),
+			Metric:           logstore.NewPostgres(executor, PrimarySource),
 			db:               db,
+			pool:             pool,
+			executor:         executor,
 			driver:           driver,
-			ownsDB:           ownsDB,
-		}, nil
-
-	default:
-		if ownsDB {
-			_ = db.Close()
 		}
-		return nil, fmt.Errorf("unsupported db driver: %s", driver)
 	}
+	return &Repos{db: db, pool: pool, executor: executor, driver: driver}
 }
 
-// Close closes the underlying DB if owned, or calls the custom closer if set.
+// Close closes the underlying pool, or calls the custom closer if set.
 func (r *Repos) Close() error {
 	if r.closeFunc != nil {
 		return r.closeFunc()
 	}
-	if r.ownsDB && r.db != nil {
-		return r.db.Close()
+	if r.pool != nil {
+		r.pool.RemoveAll()
+		return nil
 	}
 	return nil
 }
 
-// DB returns the underlying *sql.DB, or nil for externally-supplied repos.
+// DB returns the underlying *sql.DB. Retained for external auth factory integrations.
+// Must not be used after Close.
 func (r *Repos) DB() *sql.DB {
 	if r.db == nil {
 		return nil
 	}
 	return r.db.DB
+}
+
+// Executor returns the dbstore Executor for constructing additional repositories
+// (e.g. auth repos) that share the same pool and throttle policy.
+func (r *Repos) Executor() *dbstore.Executor {
+	return r.executor
 }
 
 // Driver returns the normalized database driver used by these repositories.
@@ -196,20 +265,24 @@ func (r *Repos) DeleteRun(ctx context.Context, projectID, id string) error {
 	if r.deleteRun != nil {
 		return r.deleteRun(ctx, projectID, id)
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	if r.executor == nil {
+		return fmt.Errorf("DeleteRun: no executor configured — set ExternalReposConfig.DeleteRun")
 	}
-	for _, q := range []string{
-		r.db.Rebind(`DELETE FROM run_metrics WHERE project_id=? AND run_id=?`),
-		r.db.Rebind(`DELETE FROM logs WHERE project_id=? AND run_id=?`),
-		r.db.Rebind(`DELETE FROM steps WHERE project_id=? AND run_id=?`),
-		r.db.Rebind(`DELETE FROM runs WHERE project_id=? AND id=?`),
-	} {
-		if _, err := tx.ExecContext(ctx, q, projectID, id); err != nil {
-			_ = tx.Rollback()
-			return err
+	return r.executor.RunTx(ctx, PrimarySource, func(ctx context.Context, tx *sqlx.Tx) error {
+		for _, q := range deleteRunQueries(r.db) {
+			if _, err := tx.ExecContext(ctx, q, projectID, id); err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+}
+
+func deleteRunQueries(db *sqlx.DB) []string {
+	return []string{
+		db.Rebind(`DELETE FROM run_metrics WHERE project_id=? AND run_id=?`),
+		db.Rebind(`DELETE FROM logs WHERE project_id=? AND run_id=?`),
+		db.Rebind(`DELETE FROM steps WHERE project_id=? AND run_id=?`),
+		db.Rebind(`DELETE FROM runs WHERE project_id=? AND id=?`),
 	}
-	return tx.Commit()
 }

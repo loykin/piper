@@ -3,9 +3,9 @@ package commands
 import (
 	"fmt"
 
-	"github.com/jmoiron/sqlx"
 	piper "github.com/piper/piper"
 	cliconfig "github.com/piper/piper/cmd/piper/config"
+	storemod "github.com/piper/piper/internal/store"
 	"github.com/piper/piper/internal/store/postgres"
 	sqlitestore "github.com/piper/piper/internal/store/sqlite"
 	"github.com/piper/piper/pkg/auth"
@@ -42,17 +42,20 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 		cfg.Auth = piper.AuthConfig{Trusted: true}
 	} else {
 		cfg.Auth = piper.AuthConfig{Factory: func(deps piper.AuthDependencies) (piper.AuthConfig, error) {
-			if deps.DB == nil {
+			if deps.Executor == nil {
 				return piper.AuthConfig{}, fmt.Errorf("server.auth_signing_key requires a database")
 			}
-			db := sqlx.NewDb(deps.DB, deps.Driver)
 			var users auth.UserRepository
 			var members security.ProjectMemberRepository
 			var sessions auth.SessionRepository
 			if deps.Driver == "postgres" {
-				users, members, sessions = postgres.NewUserRepo(db), postgres.NewMemberRepo(db), postgres.NewSessionRepo(db)
+				users = postgres.NewUserRepo(deps.Executor, storemod.PrimarySource)
+				members = postgres.NewMemberRepo(deps.Executor, storemod.PrimarySource)
+				sessions = postgres.NewSessionRepo(deps.Executor, storemod.PrimarySource)
 			} else {
-				users, members, sessions = sqlitestore.NewUserRepo(db), sqlitestore.NewMemberRepo(db), sqlitestore.NewSessionRepo(db)
+				users = sqlitestore.NewUserRepo(deps.Executor, storemod.PrimarySource)
+				members = sqlitestore.NewMemberRepo(deps.Executor, storemod.PrimarySource)
+				sessions = sqlitestore.NewSessionRepo(deps.Executor, storemod.PrimarySource)
 			}
 			provider := auth.New(auth.Config{SigningKey: []byte(signingKey)}, users, members, sessions)
 			return piper.AuthConfig{LoginRoutes: auth.NewHandler(provider, provider, deps.SecureCookies), Authenticator: provider, Authorizer: provider, UserDirectory: provider, UserManager: provider, ProjectMemberManager: provider}, nil

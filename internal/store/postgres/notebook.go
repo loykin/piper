@@ -5,14 +5,16 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/loykin/dbstore"
 
 	"github.com/piper/piper/pkg/notebook"
 )
 
-type notebookRepo struct{ db *sqlx.DB }
+type notebookRepo struct{ dbstore.BaseRepo }
 
-// NewNotebookRepo returns a notebook.Repository backed by PostgreSQL.
-func NewNotebookRepo(db *sqlx.DB) notebook.Repository { return &notebookRepo{db: db} }
+func NewNotebookRepo(exec *dbstore.Executor, source string) notebook.Repository {
+	return &notebookRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+}
 
 const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_at, updated_at`
 
@@ -20,19 +22,23 @@ func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) 
 	now := time.Now()
 	nb.CreatedAt = now
 	nb.UpdatedAt = now
-	q := r.db.Rebind(
-		`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	_, err := r.db.ExecContext(ctx, q,
-		nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.YAML,
-		nb.CreatedAt, nb.UpdatedAt)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(
+			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		_, err := db.ExecContext(ctx, q,
+			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.YAML,
+			nb.CreatedAt, nb.UpdatedAt)
+		return err
+	})
 }
 
 func (r *notebookRepo) Get(ctx context.Context, projectID, name string) (*notebook.NotebookServer, error) {
 	var nb notebook.NotebookServer
-	q := r.db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE project_id=? AND name=?`)
-	err := r.db.GetContext(ctx, &nb, q, projectID, name)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE project_id=? AND name=?`)
+		return db.GetContext(ctx, &nb, q, projectID, name)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -41,23 +47,29 @@ func (r *notebookRepo) Get(ctx context.Context, projectID, name string) (*notebo
 
 func (r *notebookRepo) Update(ctx context.Context, nb *notebook.NotebookServer) error {
 	nb.UpdatedAt = time.Now()
-	q := r.db.Rebind(
-		`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, worker_id=?, volume_id=?, image=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`)
-	_, err := r.db.ExecContext(ctx, q,
-		nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.YAML, nb.UpdatedAt, nb.ProjectID, nb.Name)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(
+			`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, worker_id=?, volume_id=?, image=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`)
+		_, err := db.ExecContext(ctx, q,
+			nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.YAML, nb.UpdatedAt, nb.ProjectID, nb.Name)
+		return err
+	})
 }
 
 func (r *notebookRepo) SetStatus(ctx context.Context, projectID, name, status string) error {
-	q := r.db.Rebind(`UPDATE notebook_servers SET status=?, updated_at=? WHERE project_id=? AND name=?`)
-	_, err := r.db.ExecContext(ctx, q, status, time.Now(), projectID, name)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`UPDATE notebook_servers SET status=?, updated_at=? WHERE project_id=? AND name=?`)
+		_, err := db.ExecContext(ctx, q, status, time.Now(), projectID, name)
+		return err
+	})
 }
 
 func (r *notebookRepo) List(ctx context.Context, projectID string) ([]*notebook.NotebookServer, error) {
 	var out []*notebook.NotebookServer
-	q := r.db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE project_id=? ORDER BY created_at DESC`)
-	err := r.db.SelectContext(ctx, &out, q, projectID)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE project_id=? ORDER BY created_at DESC`)
+		return db.SelectContext(ctx, &out, q, projectID)
+	})
 	if out == nil {
 		out = []*notebook.NotebookServer{}
 	}
@@ -66,15 +78,19 @@ func (r *notebookRepo) List(ctx context.Context, projectID string) ([]*notebook.
 
 func (r *notebookRepo) ListByWorker(ctx context.Context, workerID string) ([]*notebook.NotebookServer, error) {
 	var out []*notebook.NotebookServer
-	q := r.db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE worker_id=? ORDER BY created_at DESC`)
-	err := r.db.SelectContext(ctx, &out, q, workerID)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE worker_id=? ORDER BY created_at DESC`)
+		return db.SelectContext(ctx, &out, q, workerID)
+	})
 	return out, err
 }
 
 func (r *notebookRepo) GetByVolumeID(ctx context.Context, projectID, volumeID string) (*notebook.NotebookServer, error) {
 	var nb notebook.NotebookServer
-	q := r.db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE project_id=? AND volume_id=? ORDER BY updated_at DESC LIMIT 1`)
-	err := r.db.GetContext(ctx, &nb, q, projectID, volumeID)
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE project_id=? AND volume_id=? ORDER BY updated_at DESC LIMIT 1`)
+		return db.GetContext(ctx, &nb, q, projectID, volumeID)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +98,9 @@ func (r *notebookRepo) GetByVolumeID(ctx context.Context, projectID, volumeID st
 }
 
 func (r *notebookRepo) Delete(ctx context.Context, projectID, name string) error {
-	q := r.db.Rebind(`DELETE FROM notebook_servers WHERE project_id=? AND name=?`)
-	_, err := r.db.ExecContext(ctx, q, projectID, name)
-	return err
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`DELETE FROM notebook_servers WHERE project_id=? AND name=?`)
+		_, err := db.ExecContext(ctx, q, projectID, name)
+		return err
+	})
 }

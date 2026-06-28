@@ -5,12 +5,12 @@ package piper
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +21,6 @@ import (
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
-	_ "modernc.org/sqlite"
 
 	"github.com/piper/piper/internal/testutil"
 	worker "github.com/piper/piper/pkg/pipeline/worker"
@@ -36,23 +35,12 @@ const e2eProjectID = "e2e"
 
 // newE2EServer starts an in-process piper server and returns the Piper instance
 // and the test HTTP server. Both are closed/stopped via t.Cleanup.
-//
-// An in-memory SQLite DB (single connection) is used to avoid SQLITE_BUSY
-// contention between concurrent goroutines across sequential tests.
 func newE2EServer(t *testing.T) (*Piper, *testutil.Server) {
 	t.Helper()
 
-	// in-memory SQLite with a single connection avoids WAL file locking between tests
-	db, err := sql.Open("sqlite", "file::memory:?cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
 	p, err := New(Config{
 		OutputDir: t.TempDir(),
-		DB:        db,
+		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 	})
 	if err != nil {
@@ -365,17 +353,10 @@ spec:
 }
 
 func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
-	db, err := sql.Open("sqlite", "file:e2e_baremetal_worker?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
 	serverPort := freeE2EPort(t)
 	p, err := New(Config{
 		OutputDir: t.TempDir(),
-		DB:        db,
+		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 		Server: ServerConfig{
 			Addr: fmt.Sprintf("127.0.0.1:%d", serverPort),
@@ -610,26 +591,12 @@ func newE2ES3Client(t *testing.T, endpoint string) *s3sdk.Client {
 // newE2EServerWithDir starts an in-process piper server using the given outputDir.
 // This allows the server and worker to share the same artifact directory so that
 // the local artifact resolver can find files produced by the worker.
-//
-// Each call uses a unique in-memory SQLite database identified by t.Name() to
-// avoid collisions between parallel or sequential tests.
 func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Server) {
 	t.Helper()
 
-	// Sanitize t.Name(): SQLite URI names cannot contain '/' characters.
-	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-	dsn := fmt.Sprintf("file:e2e_%s?mode=memory&cache=shared", safeName)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Single connection prevents SQLITE_BUSY under concurrent goroutines.
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
 	p, err := New(Config{
 		OutputDir: outputDir,
-		DB:        db,
+		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 	})
 	if err != nil {
@@ -644,18 +611,9 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Serv
 func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (*Piper, *testutil.Server) {
 	t.Helper()
 
-	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name() + "-storage")
-	dsn := fmt.Sprintf("file:e2e_%s?mode=memory&cache=shared", safeName)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = db.Close() })
-
 	p, err := New(Config{
 		OutputDir: outputDir,
-		DB:        db,
+		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 		Storage:   StorageConfig{URL: storageURL},
 	})

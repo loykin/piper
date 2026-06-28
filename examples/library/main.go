@@ -8,13 +8,11 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
 
 	piper "github.com/piper/piper"
-	_ "modernc.org/sqlite"
 )
 
 const pipelineYAML = `
@@ -57,15 +55,9 @@ spec:
 `
 
 func main() {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-
 	p, err := piper.New(piper.Config{
 		Auth:      piper.AuthConfig{Trusted: true},
-		DB:        db,
+		DBPath:    ":memory:",
 		OutputDir: os.TempDir() + "/piper-example-library",
 	})
 	if err != nil {

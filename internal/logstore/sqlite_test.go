@@ -1,45 +1,32 @@
 package logstore_test
 
 import (
-	"database/sql"
+	"context"
 	"testing"
 	"time"
 
 	"github.com/piper/piper/internal/logstore"
-	_ "modernc.org/sqlite"
+	"github.com/piper/piper/internal/store"
 )
 
-func openTestDB(t *testing.T) *sql.DB {
+func openTestStore(t *testing.T) *logstore.SQLiteLogStore {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	repos, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`CREATE TABLE logs (
-		id        INTEGER PRIMARY KEY AUTOINCREMENT,
-		project_id TEXT NOT NULL,
-		run_id    TEXT NOT NULL,
-		step_name TEXT NOT NULL,
-		ts        DATETIME NOT NULL,
-		stream    TEXT NOT NULL,
-		line      TEXT NOT NULL
-	)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return db
+	t.Cleanup(func() { _ = repos.Close() })
+	return repos.Log.(*logstore.SQLiteLogStore)
 }
 
 func TestSQLiteLogStore_AppendAndQuery(t *testing.T) {
-	db := openTestDB(t)
-	ls := logstore.NewSQLite(db)
+	ls := openTestStore(t)
 
 	lines := []*logstore.Line{
 		{ProjectID: "project-a", RunID: "r1", StepName: "train", Ts: time.Now(), Stream: "stdout", Line: "epoch 1"},
 		{ProjectID: "project-a", RunID: "r1", StepName: "train", Ts: time.Now(), Stream: "stdout", Line: "epoch 2"},
 	}
-	if err := ls.Append(lines); err != nil {
+	if err := ls.Append(context.Background(), lines); err != nil {
 		t.Fatal(err)
 	}
 
@@ -56,11 +43,10 @@ func TestSQLiteLogStore_AppendAndQuery(t *testing.T) {
 }
 
 func TestSQLiteLogStore_QueryAfterID(t *testing.T) {
-	db := openTestDB(t)
-	ls := logstore.NewSQLite(db)
+	ls := openTestStore(t)
 
 	for i := 0; i < 5; i++ {
-		_ = ls.Append([]*logstore.Line{
+		_ = ls.Append(context.Background(), []*logstore.Line{
 			{ProjectID: "project-a", RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "line"},
 		})
 	}
@@ -70,7 +56,6 @@ func TestSQLiteLogStore_QueryAfterID(t *testing.T) {
 		t.Fatalf("expected 5, got %d", len(all))
 	}
 
-	// Query only lines after the 3rd
 	tail, err := ls.Query("project-a", "r1", "s1", all[2].ID)
 	if err != nil {
 		t.Fatal(err)
@@ -81,18 +66,16 @@ func TestSQLiteLogStore_QueryAfterID(t *testing.T) {
 }
 
 func TestSQLiteLogStore_EmptyAppend(t *testing.T) {
-	db := openTestDB(t)
-	ls := logstore.NewSQLite(db)
-	if err := ls.Append(nil); err != nil {
+	ls := openTestStore(t)
+	if err := ls.Append(context.Background(), nil); err != nil {
 		t.Error("empty append should not fail")
 	}
 }
 
 func TestSQLiteLogStore_QueryDifferentSteps(t *testing.T) {
-	db := openTestDB(t)
-	ls := logstore.NewSQLite(db)
+	ls := openTestStore(t)
 
-	_ = ls.Append([]*logstore.Line{
+	_ = ls.Append(context.Background(), []*logstore.Line{
 		{ProjectID: "project-a", RunID: "r1", StepName: "step-a", Ts: time.Now(), Stream: "stdout", Line: "a"},
 		{ProjectID: "project-a", RunID: "r1", StepName: "step-b", Ts: time.Now(), Stream: "stdout", Line: "b"},
 	})
@@ -108,10 +91,9 @@ func TestSQLiteLogStore_QueryDifferentSteps(t *testing.T) {
 }
 
 func TestSQLiteLogStore_RedactsSecrets(t *testing.T) {
-	db := openTestDB(t)
-	ls := logstore.NewSQLite(db)
+	ls := openTestStore(t)
 
-	if err := ls.Append([]*logstore.Line{
+	if err := ls.Append(context.Background(), []*logstore.Line{
 		{ProjectID: "project-a", RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "token=supersecret"},
 	}); err != nil {
 		t.Fatal(err)

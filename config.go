@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/dbstore"
 	storemod "github.com/piper/piper/internal/store"
 	"github.com/piper/piper/pkg/security"
 )
@@ -13,9 +14,8 @@ import (
 // Config is the global piper configuration. Accepts a struct and can be embedded.
 type Config struct {
 	OutputDir string `yaml:"output_dir"   mapstructure:"output_dir"`
-	// DB configuration — specify only one. Priority: Repos > DB > DBDriver+DBDSN > DBPath.
-	DBPath string  `yaml:"db_path"   mapstructure:"db_path"` // sqlite file path (default: output_dir/piper.db)
-	DB     *sql.DB `yaml:"-" mapstructure:"-"`               // directly injected sqlite *sql.DB
+	// DB configuration — specify only one. Priority: Repos > DBDriver+DBDSN > DBPath.
+	DBPath string `yaml:"db_path"   mapstructure:"db_path"` // sqlite file path (default: output_dir/piper.db)
 	// DBDriver selects the database driver: "sqlite" (default) or "postgres".
 	DBDriver string `yaml:"db_driver" mapstructure:"db_driver"`
 	// DBDSN is the connection string for non-SQLite databases.
@@ -118,6 +118,7 @@ type AuthDependencies struct {
 	DB            *sql.DB
 	Driver        string
 	SecureCookies bool
+	Executor      *dbstore.Executor
 }
 
 type AuthFactory func(AuthDependencies) (AuthConfig, error)

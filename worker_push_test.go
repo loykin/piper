@@ -45,7 +45,7 @@ type recordingLogStore struct {
 
 type recordingMetricStore struct{ metrics []*logstore.Metric }
 
-func (s *recordingMetricStore) AppendMetrics(metrics []*logstore.Metric) error {
+func (s *recordingMetricStore) AppendMetrics(_ context.Context, metrics []*logstore.Metric) error {
 	s.metrics = append(s.metrics, metrics...)
 	return nil
 }
@@ -53,7 +53,7 @@ func (s *recordingMetricStore) QueryMetrics(_, _, _ string) ([]*logstore.Metric,
 	return s.metrics, nil
 }
 
-func (s *recordingLogStore) Append(lines []*logstore.Line) error {
+func (s *recordingLogStore) Append(_ context.Context, lines []*logstore.Line) error {
 	s.mu.Lock()
 	s.lines = append(s.lines, lines...)
 	s.mu.Unlock()

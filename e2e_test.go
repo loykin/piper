@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -862,11 +861,20 @@ spec:
 	runID := postRun(t, srv.URL, yaml)
 	waitRunStatus(t, srv.URL, runID, "success", 20*time.Second)
 
-	// Read the artifact file that the step wrote.
-	cudaFile := outputDir + "/" + runID + "/check-cuda/cuda.txt"
-	data, err := os.ReadFile(cudaFile)
+	// Read through the artifact API so the test follows the same path as UI and
+	// serving consumers instead of depending on worker-local output layout.
+	resp, err := http.Get(srv.URL + e2eBase() + "/runs/" + runID + "/artifacts/check-cuda/cuda/cuda.txt")
 	if err != nil {
-		t.Fatalf("could not read cuda.txt: %v", err)
+		t.Fatalf("download cuda artifact: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("download cuda artifact status = %d: %s", resp.StatusCode, body)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read cuda artifact: %v", err)
 	}
 	if got := strings.TrimSpace(string(data)); got != "mock-0,mock-1" {
 		t.Errorf("CUDA_VISIBLE_DEVICES = %q, want mock-0,mock-1", got)

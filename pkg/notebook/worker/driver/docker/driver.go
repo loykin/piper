@@ -377,6 +377,7 @@ func (r *Driver) containerCreateOptions(req driver.StartRequest) (dockerclient.C
 			User:         user,
 			WorkingDir:   notebook.ContainerWorkDir,
 			Labels:       labels,
+			Env:          req.ExtraEnv,
 			ExposedPorts: network_.PortSet{port: struct{}{}},
 		},
 		HostConfig: &container.HostConfig{

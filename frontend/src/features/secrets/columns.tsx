@@ -17,16 +17,10 @@ export const secretColumns: DataGridColumnDef<SecretMetadata>[] = [
     cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
   },
   {
-    accessorKey: 'type',
-    header: 'Type',
-    meta: { minWidth: 110 },
-    cell: ({ row }) => <Badge variant="outline">{row.original.type}</Badge>,
-  },
-  {
     accessorKey: 'provider',
     header: 'Provider',
     meta: { minWidth: 150 },
-    cell: ({ row }) => <span className="text-sm text-muted-foreground">{row.original.provider}</span>,
+    cell: ({ row }) => <Badge variant="outline">{row.original.provider}</Badge>,
   },
   {
     id: 'keys',

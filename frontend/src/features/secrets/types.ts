@@ -1,9 +1,7 @@
-export type SecretType = 'git' | 'env'
 export type SecretProvider = 'piper-managed'
 
 export interface SecretMetadata {
   name: string
-  type: SecretType
   provider: SecretProvider
   keys: string[]
   disabled: boolean
@@ -14,7 +12,6 @@ export interface SecretMetadata {
 
 export interface CreateSecretRequest {
   name: string
-  type: SecretType
   provider: SecretProvider
   data: Record<string, string>
 }

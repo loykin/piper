@@ -1,4 +1,4 @@
-import{n as e}from"./rolldown-runtime.js";import{o as t,s as n}from"./vendor-codemirror.js";import{a as r}from"./vendor-loykin.js";import{v as i,y as a}from"./index.js";import{t as o}from"./yaml-mirror.js";import{n as s}from"./hooks.js";var c=e(n(),1),l=t(),u=[{label:`GPU (NVIDIA)`,description:`Schedule notebooks on NVIDIA GPU nodes with the nvidia runtime.`,yaml:`spec:
+import{n as e}from"./rolldown-runtime.js";import{o as t,s as n}from"./vendor-codemirror.js";import{a as r}from"./vendor-loykin.js";import{b as i,x as a}from"./index.js";import{t as o}from"./yaml-mirror.js";import{n as s}from"./hooks.js";var c=e(n(),1),l=t(),u=[{label:`GPU (NVIDIA)`,description:`Schedule notebooks on NVIDIA GPU nodes with the nvidia runtime.`,yaml:`spec:
   nodeSelector:
     nvidia.com/gpu: "true"
   tolerations:

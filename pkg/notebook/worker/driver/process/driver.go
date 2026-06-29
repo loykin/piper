@@ -147,6 +147,13 @@ func (r *Driver) Start(_ context.Context, req driver.StartRequest) (*driver.Star
 		r.mu.Unlock()
 	}
 
+	extraEnvMap := make(map[string]string, len(req.ExtraEnv))
+	for _, kv := range req.ExtraEnv {
+		if idx := strings.IndexByte(kv, '='); idx > 0 {
+			extraEnvMap[kv[:idx]] = kv[idx+1:]
+		}
+	}
+
 	metaPath := r.metaFile(req.RuntimeName)
 	pid, endpoint, err := r.supervisor.Start(process.ProcessSpec{
 		Name:    req.RuntimeName,
@@ -154,6 +161,7 @@ func (r *Driver) Start(_ context.Context, req driver.StartRequest) (*driver.Star
 		Dir:     req.WorkDir,
 		Port:    req.Port,
 		GPUs:    gpus,
+		Env:     extraEnvMap,
 		PIDFile: r.pidFile(req.RuntimeName),
 		LogFile: logFile,
 	}, func(status string) {

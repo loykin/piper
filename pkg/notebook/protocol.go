@@ -42,10 +42,11 @@ type WorkerProvisionVolumeResponse struct {
 }
 
 type WorkerStartRequest struct {
-	ProjectID string `json:"project_id"`
-	YAML      string `json:"yaml"`
-	WorkDir   string `json:"work_dir"`
-	VolumeID  string `json:"volume_id"`
+	ProjectID string   `json:"project_id"`
+	YAML      string   `json:"yaml"`
+	WorkDir   string   `json:"work_dir"`
+	VolumeID  string   `json:"volume_id"`
+	Env       []string `json:"env,omitempty"` // pre-resolved secret env vars from master
 }
 
 type WorkerStartResponse struct {

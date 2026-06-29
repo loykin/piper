@@ -27,6 +27,7 @@ import (
 	"github.com/piper/piper/internal/queue"
 	ischeduler "github.com/piper/piper/internal/scheduler"
 	"github.com/piper/piper/internal/srcfetch"
+	"github.com/piper/piper/pkg/connection"
 	"github.com/piper/piper/pkg/notebook"
 	notebookdispatch "github.com/piper/piper/pkg/notebook/dispatch"
 	"github.com/piper/piper/pkg/pipeline"
@@ -66,6 +67,7 @@ type Piper struct {
 	grpcAgentServer *grpcagent.Server
 	store           storage.Store // nil when no artifact store configured
 	secrets         *secret.Store
+	connections     *connection.Store
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
 	resolver        artifact.Resolver // central artifact resolver
@@ -113,13 +115,20 @@ func New(cfg Config) (*Piper, error) {
 		_ = repos.Close()
 		return nil, fmt.Errorf("ensure default project: %w", err)
 	}
-	var secretStore *secret.Store
-	if cfg.Server.SecretEncryptionKey != "" {
-		secretStore, err = secret.NewStore(repos.Secret, cfg.Server.SecretEncryptionKey)
-		if err != nil {
-			_ = repos.Close()
-			return nil, fmt.Errorf("create secret store: %w", err)
-		}
+	secretKey := cfg.Server.SecretEncryptionKey
+	if secretKey == "" {
+		secretKey = "sha256:piper-dev-insecure-key-change-in-production"
+		slog.Warn("server.secret_encryption_key is not set — using an insecure dev key; set it before production use")
+	}
+	secretStore, err := secret.NewStore(repos.Secret, secretKey)
+	if err != nil {
+		_ = repos.Close()
+		return nil, fmt.Errorf("create secret store: %w", err)
+	}
+	connectionStore, err := connection.NewStoreFromKey(repos.Connection, secretKey)
+	if err != nil {
+		_ = repos.Close()
+		return nil, fmt.Errorf("create connection store: %w", err)
 	}
 	if cfg.Auth.Factory != nil {
 		authConfig, err := cfg.Auth.Factory(AuthDependencies{
@@ -174,10 +183,12 @@ func New(cfg Config) (*Piper, error) {
 		agentReg.Remove,
 	)
 
-	servingDriver := servingdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Serving, repos.WorkerPodPolicy)
+	servingDriver := servingdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Serving, repos.WorkerPodPolicy).
+		WithEnvResolver(secretStore.ResolveEnv)
 	servingMgr := serving.New(repos.Serving, servingDriver)
 
-	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook, repos.WorkerPodPolicy))
+	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook, repos.WorkerPodPolicy).
+		WithEnvResolver(secretStore.ResolveEnv))
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
@@ -190,13 +201,14 @@ func New(cfg Config) (*Piper, error) {
 	})
 
 	p := &Piper{
-		cfg:     cfg,
-		ctx:     bgCtx,
-		repos:   repos,
-		logs:    repos.Log,
-		metrics: repos.Metric,
-		secrets: secretStore,
-		queue:   q,
+		cfg:         cfg,
+		ctx:         bgCtx,
+		repos:       repos,
+		logs:        repos.Log,
+		metrics:     repos.Metric,
+		secrets:     secretStore,
+		connections: connectionStore,
+		queue:       q,
 		serving: servingBundle{
 			manager: servingMgr,
 			proxy:   serving.NewProxy(repos.Serving),
@@ -859,20 +871,55 @@ func (p *Piper) sourceConfig() srcfetch.Config {
 	}
 }
 
+// resolveGitEnv resolves git credentials for a step using priority:
+// connectionRef (explicit) > credentialRef (legacy secret) > endpoint auto-match (lowest).
+// Returns nil env (no error) when no credential is configured.
+func (p *Piper) resolveGitEnv(ctx context.Context, projectID, connectionRef string, credentialRef *pipeline.SecretRef, repoURL string) ([]string, error) {
+	if p.connections != nil && strings.TrimSpace(connectionRef) != "" {
+		return p.connections.GitEnv(ctx, projectID, connectionRef, repoURL)
+	}
+	if credentialRef != nil && strings.TrimSpace(credentialRef.Name) != "" {
+		return p.secrets.GitEnv(ctx, projectID, credentialRef.Name)
+	}
+	// Auto-match: find connection whose endpoint covers repoURL
+	if p.connections != nil {
+		best, err := p.connections.FindByRepo(ctx, projectID, repoURL)
+		if err != nil {
+			return nil, err
+		}
+		if best != nil {
+			return p.connections.GitEnv(ctx, projectID, best.Name, repoURL)
+		}
+	}
+	return nil, nil
+}
+
 func (p *Piper) resolvePipelineSecretEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline) (map[string][]string, error) {
 	envByStep := map[string][]string{}
 	for _, step := range pl.Spec.Steps {
-		if strings.TrimSpace(step.Run.Source) != "git" || step.Run.CredentialRef == nil || strings.TrimSpace(step.Run.CredentialRef.Name) == "" {
-			continue
+		var env []string
+
+		// Git credential resolution: connectionRef > credentialRef > auto-match by endpoint
+		if strings.TrimSpace(step.Run.Source) == "git" && strings.TrimSpace(step.Run.Repo) != "" {
+			gitEnv, err := p.resolveGitEnv(ctx, projectID, step.Run.ConnectionRef, step.Run.CredentialRef, step.Run.Repo)
+			if err != nil {
+				return nil, fmt.Errorf("step %q git credential: %w", step.Name, err)
+			}
+			env = append(env, gitEnv...)
 		}
-		if p.secrets == nil {
-			return nil, fmt.Errorf("step %q references git credential %q but secret store is not configured", step.Name, step.Run.CredentialRef.Name)
+
+		// options.env: plain values + secretKeyRef resolution
+		if len(step.Options.Env) > 0 {
+			optEnv, err := p.secrets.ResolveEnv(ctx, projectID, step.Options.Env)
+			if err != nil {
+				return nil, fmt.Errorf("step %q env: %w", step.Name, err)
+			}
+			env = append(env, optEnv...)
 		}
-		env, err := p.secrets.GitEnv(ctx, projectID, step.Run.CredentialRef.Name)
-		if err != nil {
-			return nil, fmt.Errorf("step %q git credential: %w", step.Name, err)
+
+		if len(env) > 0 {
+			envByStep[step.Name] = env
 		}
-		envByStep[step.Name] = env
 	}
 	return envByStep, nil
 }

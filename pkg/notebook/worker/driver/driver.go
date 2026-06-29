@@ -47,6 +47,7 @@ type StartRequest struct {
 	Port        int
 	Token       string
 	BaseURL     string
+	ExtraEnv    []string // merged plain + resolved secret env vars ("KEY=value")
 	OnExit      func(status string)
 	LogSink     logsink.LogSink
 }

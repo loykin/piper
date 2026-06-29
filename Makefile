@@ -1,15 +1,28 @@
-.PHONY: build ui docker test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto
+.PHONY: build ui docker test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto check-deps
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
 NOTEBOOK_IMAGE ?= jupyter/minimal-notebook:latest
+
+# Check build prerequisites
+check-deps:
+	@command -v go >/dev/null 2>&1 || { echo "ERROR: go is not installed"; exit 1; }
+	@bash -c 'source $$HOME/.nvm/nvm.sh 2>/dev/null; \
+	  REQUIRED=$$(cat .nvmrc | tr -d "[:space:]"); \
+	  CURRENT=$$(node --version 2>/dev/null | sed "s/v//"); \
+	  MAJOR=$${CURRENT%%.*}; \
+	  if [ "$$MAJOR" -lt "$$REQUIRED" ] 2>/dev/null; then \
+	    echo "ERROR: Node $$REQUIRED required, got $$CURRENT — run: nvm use $$REQUIRED"; exit 1; \
+	  fi'
+	@command -v pnpm >/dev/null 2>&1 || { echo "ERROR: pnpm is not installed — run: npm i -g pnpm"; exit 1; }
+	@echo "✓ dependencies OK"
 
 # Regenerate protobuf / gRPC Go code from proto/agent.proto
 proto:
 	PATH="$(shell go env GOPATH)/bin:$$PATH" buf generate
 
 # Full build (UI → Go)
-build: ui
+build: check-deps ui
 	go build -o bin/piper ./cmd/piper
 
 # Static build for linux/amd64 (Dockerfile uses bin/piper-amd64)
@@ -24,7 +37,7 @@ build-linux-arm64:
 
 # Build the React UI and update pkg/ui/dist (commit after building)
 ui:
-	cd frontend && pnpm run build
+	bash -c 'source $$HOME/.nvm/nvm.sh && nvm use --silent && cd frontend && pnpm run build'
 	rm -rf pkg/ui/dist
 	cp -r frontend/dist pkg/ui/dist
 	@echo "UI built. Commit pkg/ui/dist/ to include in go install."

@@ -38,7 +38,7 @@ type Record struct {
 
 type CreateRequest struct {
 	Name     string            `json:"name"`
-	Type     Type              `json:"type"`
+	Type     Type              `json:"type,omitempty"` // informational; defaults to TypeEnv
 	Provider Provider          `json:"provider"`
 	Data     map[string]string `json:"data"`
 }

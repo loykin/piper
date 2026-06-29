@@ -4,7 +4,6 @@ export type {
   RotateSecretRequest,
   PatchSecretRequest,
   SecretProvider,
-  SecretType,
 } from './types'
 
 import { projectApi } from '@/lib/api'

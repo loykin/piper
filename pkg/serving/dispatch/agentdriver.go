@@ -8,6 +8,7 @@ import (
 
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/artifact"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/serving"
 )
 
@@ -15,11 +16,16 @@ type AgentRPC interface {
 	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
 }
 
+// EnvResolver resolves manifest.EnvVar entries (including secretKeyRef) into
+// "KEY=value" strings. Implement with (*secret.Store).ResolveEnv.
+type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvVar) ([]string, error)
+
 type AgentDriver struct {
 	router      *iagent.Router
 	rpc         AgentRPC
 	repo        serving.Repository
 	podPolicies iagent.WorkerPodPolicyRepository
+	envResolver EnvResolver // optional; nil = no secret resolution
 }
 
 func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository, policies ...iagent.WorkerPodPolicyRepository) *AgentDriver {
@@ -27,6 +33,13 @@ func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository
 	if len(policies) > 0 {
 		d.podPolicies = policies[0]
 	}
+	return d
+}
+
+// WithEnvResolver sets the resolver used to expand secretKeyRef entries in
+// spec.Spec.Options.Env before dispatch.
+func (d *AgentDriver) WithEnvResolver(r EnvResolver) *AgentDriver {
+	d.envResolver = r
 	return d
 }
 
@@ -47,6 +60,16 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 			}
 		}
 	}
+
+	// Resolve secret refs in options.env before sending to the worker.
+	var resolvedEnv []string
+	if d.envResolver != nil && len(spec.Spec.Options.Env) > 0 {
+		resolvedEnv, err = d.envResolver(ctx, spec.Metadata.ProjectID, spec.Spec.Options.Env)
+		if err != nil {
+			return nil, fmt.Errorf("serving env resolution: %w", err)
+		}
+	}
+
 	var result struct {
 		Endpoint string `json:"endpoint"`
 	}
@@ -55,6 +78,7 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 		"yaml":       yamlStr,
 		"local_path": art.LocalPath,
 		"s3_uri":     art.S3URI,
+		"env":        resolvedEnv,
 	}, &result); err != nil {
 		return nil, fmt.Errorf("serving agent deploy: %w", err)
 	}

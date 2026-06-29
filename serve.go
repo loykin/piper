@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/piper/piper/internal/event"
+	"github.com/piper/piper/pkg/connection"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/run"
@@ -179,6 +180,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	// Project management — logged-in users can list; create/delete is system-admin.
 	project.NewHandler(p.repos.Project, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
 	secret.NewHandler(p.repos.Secret, p.secrets).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+	connection.NewHandler(p.connections).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 	projectStorage := userAPI.Group("/projects/:project_id/storage", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
 	projectStorageMember := projectStorage.Group("", project.RequireRole(security.ProjectRoleMember))
 	projectStorageMember.POST("/object", func(c *gin.Context) {

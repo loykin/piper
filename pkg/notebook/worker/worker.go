@@ -20,6 +20,7 @@ import (
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logsink"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/notebook"
 	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
 	notebookdocker "github.com/piper/piper/pkg/notebook/worker/driver/docker"
@@ -235,6 +236,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		// Create the sink before Start so we can stop it on start error.
 		// The runtime's OnExit wrapper calls sink.Stop() on process exit.
 		nbSink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
+		extraEnv := buildNotebookEnv(spec.Spec.Options.Env, req.Env)
 		started, err := w.driver.Start(context.Background(), notebookdriver.StartRequest{
 			RuntimeName: rn,
 			ProjectID:   req.ProjectID,
@@ -244,6 +246,7 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 			Port:        port,
 			Token:       token,
 			BaseURL:     baseURL,
+			ExtraEnv:    extraEnv,
 			LogSink:     nbSink,
 			OnExit: func(status string) {
 				slog.Info("notebook runtime exited", "name", name, "status", status)
@@ -553,4 +556,21 @@ func (w *Worker) recoverContainers(ctx context.Context) {
 		slog.Warn("notebook worker: driver recovery failed", "err", err)
 		return
 	}
+}
+
+// buildNotebookEnv merges plain SpecOptions.Env entries with pre-resolved
+// secret env vars received from the master ("KEY=value" strings).
+// Secret entries from resolvedEnv take precedence over plain values.
+func buildNotebookEnv(optionsEnv []manifest.EnvVar, resolvedEnv []string) []string {
+	out := make([]string, 0, len(optionsEnv)+len(resolvedEnv))
+	for _, e := range optionsEnv {
+		if e.ValueFrom != nil {
+			continue // resolved by master; skip placeholder
+		}
+		if e.Name != "" && e.Value != "" {
+			out = append(out, e.Name+"="+e.Value)
+		}
+	}
+	out = append(out, resolvedEnv...)
+	return out
 }

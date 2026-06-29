@@ -65,6 +65,9 @@ func (h *Handler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Type == "" {
+		req.Type = TypeEnv
+	}
 	item, err := h.store.Create(c.Request.Context(), projectContext.ID, req)
 	if err != nil {
 		respondError(c, err)

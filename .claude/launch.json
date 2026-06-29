@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "piper",
+      "runtimeExecutable": "./bin/piper",
+      "runtimeArgs": ["server", "--local"],
+      "port": 8080
+    }
+  ]
+}

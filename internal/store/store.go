@@ -15,6 +15,7 @@ import (
 	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/store/postgres"
 	"github.com/piper/piper/internal/store/sqlite"
+	"github.com/piper/piper/pkg/connection"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/project"
@@ -33,6 +34,7 @@ type Repos struct {
 	Step             run.StepRepository
 	Schedule         schedule.Repository
 	Secret           secret.Repository
+	Connection       connection.Repository
 	Viewer           viewer.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
@@ -189,6 +191,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Step:             sqlite.NewStepRepo(executor, PrimarySource),
 			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
 			Secret:           sqlite.NewSecretRepo(executor, PrimarySource),
+			Connection:       sqlite.NewConnectionRepo(executor, PrimarySource),
 			Serving:          sqlite.NewServingRepo(executor, PrimarySource),
 			Notebook:         sqlite.NewNotebookRepo(executor, PrimarySource),
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
@@ -209,6 +212,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Step:             postgres.NewStepRepo(executor, PrimarySource),
 			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
 			Secret:           postgres.NewSecretRepo(executor, PrimarySource),
+			Connection:       postgres.NewConnectionRepo(executor, PrimarySource),
 			Serving:          postgres.NewServingRepo(executor, PrimarySource),
 			Notebook:         postgres.NewNotebookRepo(executor, PrimarySource),
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(executor, PrimarySource),

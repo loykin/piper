@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	iagent "github.com/piper/piper/internal/agent"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/notebook"
 )
 
@@ -17,11 +18,16 @@ type AgentRPC interface {
 	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
 }
 
+// EnvResolver resolves manifest.EnvVar entries (including secretKeyRef) into
+// "KEY=value" strings. Implement with (*secret.Store).ResolveEnv.
+type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvVar) ([]string, error)
+
 type AgentDriver struct {
 	router      *iagent.Router
 	rpc         AgentRPC
 	repo        notebook.Repository
 	podPolicies iagent.WorkerPodPolicyRepository
+	envResolver EnvResolver // optional; nil = no secret resolution
 }
 
 // NewAgentDriver constructs a notebook agent driver with an optional pod policy repository.
@@ -30,6 +36,13 @@ func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo notebook.Repositor
 	if len(policies) > 0 {
 		d.podPolicies = policies[0]
 	}
+	return d
+}
+
+// WithEnvResolver sets the resolver used to expand secretKeyRef entries in
+// spec.Spec.Options.Env before dispatch.
+func (d *AgentDriver) WithEnvResolver(r EnvResolver) *AgentDriver {
+	d.envResolver = r
 	return d
 }
 
@@ -93,12 +106,22 @@ func (d *AgentDriver) Start(ctx context.Context, spec notebook.Notebook, vol *no
 		}
 	}
 
+	// Resolve secret refs in options.env before sending to the worker.
+	var resolvedEnv []string
+	if d.envResolver != nil && len(spec.Spec.Options.Env) > 0 {
+		resolvedEnv, err = d.envResolver(ctx, projectID, spec.Spec.Options.Env)
+		if err != nil {
+			return nil, fmt.Errorf("notebook env resolution: %w", err)
+		}
+	}
+
 	var result notebook.WorkerStartResponse
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodNotebookStart, notebook.WorkerStartRequest{
 		ProjectID: projectID,
 		YAML:      dispatchYAML,
 		WorkDir:   workDir,
 		VolumeID:  volumeID,
+		Env:       resolvedEnv,
 	}, &result); err != nil {
 		return nil, fmt.Errorf("notebook agent start: %w", err)
 	}

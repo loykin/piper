@@ -12,6 +12,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/piper/piper/pkg/manifest"
 )
 
 type Store struct {
@@ -134,6 +136,32 @@ func (s *Store) GitEnv(ctx context.Context, projectID, name string) ([]string, e
 		env = append(env, "PIPER_GIT_USER="+user)
 	}
 	return env, nil
+}
+
+// ResolveEnv resolves env vars that reference secrets and returns them as
+// "NAME=value" strings. Plain-value entries (ValueFrom == nil) are passed
+// through as-is. Callers can pass the result directly into ExecSpec.Env.
+func (s *Store) ResolveEnv(ctx context.Context, projectID string, env []manifest.EnvVar) ([]string, error) {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if e.ValueFrom == nil || e.ValueFrom.SecretKeyRef == nil {
+			if e.Value != "" {
+				out = append(out, e.Name+"="+e.Value)
+			}
+			continue
+		}
+		ref := e.ValueFrom.SecretKeyRef
+		value, err := s.Resolve(ctx, projectID, ref.Name)
+		if err != nil {
+			return nil, fmt.Errorf("env %q: resolve secret %q: %w", e.Name, ref.Name, err)
+		}
+		v, ok := value.Data[ref.Key]
+		if !ok {
+			return nil, fmt.Errorf("env %q: secret %q has no key %q", e.Name, ref.Name, ref.Key)
+		}
+		out = append(out, e.Name+"="+v)
+	}
+	return out, nil
 }
 
 func normalizeCreate(projectID string, req CreateRequest) (*Metadata, Value, error) {

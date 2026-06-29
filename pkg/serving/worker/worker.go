@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,10 +130,11 @@ type servingStopRequest struct {
 }
 
 type deployRequest struct {
-	ProjectID string `json:"project_id"`
-	YAML      string `json:"yaml"`
-	LocalPath string `json:"local_path"`
-	S3URI     string `json:"s3_uri"`
+	ProjectID string   `json:"project_id"`
+	YAML      string   `json:"yaml"`
+	LocalPath string   `json:"local_path"`
+	S3URI     string   `json:"s3_uri"`
+	Env       []string `json:"env,omitempty"` // pre-resolved secret env vars from master
 }
 
 // serviceKey returns the composite map key "projectID:name".
@@ -192,6 +194,19 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		return nil, err
 	}
 
+	// Merge: base system vars ← plain options.env ← pre-resolved secrets (highest precedence).
+	deployEnv := map[string]string{"PIPER_MODEL_DIR": modelDir, "PIPER_SERVICE_NAME": name}
+	for _, e := range svc.Spec.Options.Env {
+		if e.ValueFrom == nil && e.Name != "" && e.Value != "" {
+			deployEnv[e.Name] = e.Value
+		}
+	}
+	for _, kv := range req.Env {
+		if idx := strings.IndexByte(kv, '='); idx > 0 {
+			deployEnv[kv[:idx]] = kv[idx+1:]
+		}
+	}
+
 	sink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
 	endpoint, err = w.driver.Deploy(context.Background(), servingdriver.DeployRequest{
 		ProjectID:   req.ProjectID,
@@ -199,7 +214,7 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		RuntimeName: rn,
 		Image:       image,
 		Command:     rt.Command,
-		Env:         map[string]string{"PIPER_MODEL_DIR": modelDir, "PIPER_SERVICE_NAME": name},
+		Env:         deployEnv,
 		Port:        rt.Port,
 		HealthPath:  rt.HealthPath,
 		GPUs:        gpus,

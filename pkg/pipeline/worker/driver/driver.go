@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/piper/piper/internal/logsink"
@@ -101,6 +102,17 @@ type Driver interface {
 	// Returns handles for all units that are still running or whose results
 	// have not yet been collected.
 	Recover(ctx context.Context) ([]Handle, error)
+}
+
+// EnvValue returns the value for key from KEY=value env entries.
+func EnvValue(env []string, key string) string {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return strings.TrimPrefix(kv, prefix)
+		}
+	}
+	return ""
 }
 
 // Observable is an optional interface implemented by drivers that require a

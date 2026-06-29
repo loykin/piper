@@ -24,3 +24,18 @@ func TestBuildAgentExecHasNoMasterCallbackArguments(t *testing.T) {
 		t.Fatalf("child args contain legacy callback configuration: %s", joined)
 	}
 }
+
+func TestBuildAgentExecIncludesGitCredentialFlags(t *testing.T) {
+	args, err := BuildAgentExec(&proto.Task{ID: "run:step"}, AgentExecConfig{
+		ResultFile: "/tmp/result.json",
+		GitUser:    "git-user",
+		GitToken:   "git-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--git-user=git-user") || !strings.Contains(joined, "--git-token=git-token") {
+		t.Fatalf("child args missing git credential flags: %s", joined)
+	}
+}

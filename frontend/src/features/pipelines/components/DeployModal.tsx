@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { parseMaxRuns } from '@/features/schedules/maxRuns'
 import { useDeployPipeline } from '../hooks'
 import type { PipelineTemplate } from '../types'
 
@@ -35,8 +36,8 @@ export function DeployModal({
   async function handleDeploy() {
     if (!template) return
     setLocalError('')
-    const parsedMaxRuns = maxRuns.trim() === '' ? 0 : Number(maxRuns)
-    if (!Number.isInteger(parsedMaxRuns) || parsedMaxRuns < 0) {
+    const parsedMaxRuns = parseMaxRuns(maxRuns)
+    if (parsedMaxRuns == null) {
       setLocalError('Max runs must be a non-negative integer.')
       return
     }

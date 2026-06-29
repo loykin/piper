@@ -138,6 +138,10 @@ func SplitTaskID(id string) (runID, stepName string, err error) {
 
 // Add registers a pipeline in the queue and immediately marks steps with no dependencies as ready.
 func (q *Queue) Add(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any) {
+	q.AddWithEnv(ctx, projectID, pl, dag, runID, workDir, outputDir, vars, runParams, nil)
+}
+
+func (q *Queue) AddWithEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, envByStep map[string][]string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -179,6 +183,7 @@ func (q *Queue) Add(ctx context.Context, projectID string, pl *pipeline.Pipeline
 			}(),
 			Vars:      vars,
 			RunParams: runParams,
+			Env:       append([]string{}, envByStep[s.Name]...),
 
 			StorageURL:   q.storageURL,
 			StorageToken: q.storageToken,
@@ -204,6 +209,10 @@ type RecoveredStep struct {
 // Recover re-adds an interrupted run from a previous server session.
 // recovered lists every step whose state was persisted; absent steps are treated as pending.
 func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep) {
+	q.RecoverWithEnv(ctx, projectID, pl, dag, runID, workDir, outputDir, vars, runParams, recovered, nil)
+}
+
+func (q *Queue) RecoverWithEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep, envByStep map[string][]string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -245,6 +254,7 @@ func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipe
 			}(),
 			Vars:      vars,
 			RunParams: runParams,
+			Env:       append([]string{}, envByStep[s.Name]...),
 
 			StorageURL:   q.storageURL,
 			StorageToken: q.storageToken,

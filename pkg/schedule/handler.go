@@ -204,30 +204,46 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
 		Enabled *bool `json:"enabled"`
+		MaxRuns *int  `json:"max_runs"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Enabled == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled is required"})
+	if req.Enabled == nil && req.MaxRuns == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled or max_runs is required"})
 		return
 	}
-	sc, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id)
+	if req.MaxRuns != nil && *req.MaxRuns < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "max_runs must be >= 0"})
+		return
+	}
+	projectID := currentProjectID(c)
+	sc, err := h.deps.Schedules.Get(c.Request.Context(), projectID, id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
 		return
 	}
-	if err := h.deps.Schedules.SetEnabled(c.Request.Context(), currentProjectID(c), id, *req.Enabled); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if req.MaxRuns != nil {
+		if err := h.deps.Schedules.SetMaxRuns(c.Request.Context(), projectID, id, *req.MaxRuns); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		sc.MaxRuns = *req.MaxRuns
 	}
-	if *req.Enabled {
-		_ = h.sched().Add(sc)
-	} else {
-		h.sched().Remove(id)
+	if req.Enabled != nil {
+		if err := h.deps.Schedules.SetEnabled(c.Request.Context(), projectID, id, *req.Enabled); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		sc.Enabled = *req.Enabled
+		if *req.Enabled {
+			_ = h.sched().Add(sc)
+		} else {
+			h.sched().Remove(id)
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"id": id, "enabled": *req.Enabled})
+	c.JSON(http.StatusOK, sc.Redact())
 }
 
 // DELETE /schedules/:id

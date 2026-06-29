@@ -85,6 +85,12 @@ func (r *stubScheduleRepo) SetEnabled(_ context.Context, _, id string, enabled b
 	}
 	return nil
 }
+func (r *stubScheduleRepo) SetMaxRuns(_ context.Context, _, id string, maxRuns int) error {
+	if sc, ok := r.schedules[id]; ok {
+		sc.MaxRuns = maxRuns
+	}
+	return nil
+}
 func (r *stubScheduleRepo) Delete(_ context.Context, _, id string) error {
 	delete(r.schedules, id)
 	return nil
@@ -307,7 +313,34 @@ func TestPatchSchedule_Disable(t *testing.T) {
 	}
 }
 
-func TestPatchSchedule_MissingEnabled(t *testing.T) {
+func TestPatchSchedule_MaxRuns(t *testing.T) {
+	repo := newStubScheduleRepo()
+	repo.schedules["sch-1"] = &Schedule{ID: "sch-1", Enabled: true, MaxRuns: 1}
+	router := newTestRouter(repo)
+
+	rec := doJSON(router, http.MethodPatch, "/schedules/sch-1", map[string]any{"max_runs": 7})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	if repo.schedules["sch-1"].MaxRuns != 7 {
+		t.Fatalf("MaxRuns = %d, want 7", repo.schedules["sch-1"].MaxRuns)
+	}
+}
+
+func TestPatchSchedule_RejectsNegativeMaxRuns(t *testing.T) {
+	repo := newStubScheduleRepo()
+	repo.schedules["sch-1"] = &Schedule{ID: "sch-1", MaxRuns: 1}
+	router := newTestRouter(repo)
+
+	rec := doJSON(router, http.MethodPatch, "/schedules/sch-1", map[string]any{"max_runs": -1})
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestPatchSchedule_MissingPatchField(t *testing.T) {
 	repo := newStubScheduleRepo()
 	repo.schedules["sch-1"] = &Schedule{ID: "sch-1"}
 	router := newTestRouter(repo)

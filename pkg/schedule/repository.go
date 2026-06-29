@@ -33,5 +33,6 @@ type Repository interface {
 	ClaimOneShotRun(ctx context.Context, projectID, id string, expectedAt, lastRunAt time.Time) (bool, error)
 
 	SetEnabled(ctx context.Context, projectID, id string, enabled bool) error
+	SetMaxRuns(ctx context.Context, projectID, id string, maxRuns int) error
 	Delete(ctx context.Context, projectID, id string) error
 }

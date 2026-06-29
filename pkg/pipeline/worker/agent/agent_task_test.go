@@ -33,6 +33,7 @@ func TestTaskCodecPreservesContract(t *testing.T) {
 		Attempt:   2,
 		Vars:      proto.BuiltinVars{ScheduledAt: &scheduledAt},
 		RunParams: map[string]any{"lr": "0.2"},
+		Env:       []string{"PIPER_GIT_TOKEN=tok", "PIPER_GIT_USER=user"},
 	}
 	encoded, err := agent.EncodeTask(original)
 	if err != nil {

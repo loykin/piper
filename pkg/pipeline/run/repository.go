@@ -21,5 +21,6 @@ type Repository interface {
 type StepRepository interface {
 	Upsert(ctx context.Context, s *Step) error
 	List(ctx context.Context, projectID, runID string) ([]*Step, error)
+	ListByRuns(ctx context.Context, projectID string, runIDs []string) (map[string][]*Step, error)
 	DeleteByRun(ctx context.Context, projectID, runID string) error
 }

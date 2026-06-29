@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/secret"
 )
 
 func ProjectRepoSuite(t *testing.T, repo project.Repository) {
@@ -52,6 +53,44 @@ func ProjectRepoSuite(t *testing.T, repo project.Repository) {
 	if deleted != nil {
 		t.Fatalf("deleted project still exists: %#v", deleted)
 	}
+}
+
+func SecretRepoSuite(t *testing.T, repo secret.Repository, projectID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	t.Run("Create_disabled_name_recreates_and_enables", func(t *testing.T) {
+		meta := &secret.Metadata{
+			ProjectID: projectID,
+			Name:      "github",
+			Type:      secret.TypeGit,
+			Provider:  secret.ProviderPiperManaged,
+			Keys:      []string{"token"},
+		}
+		if err := repo.Create(ctx, meta, []byte("old")); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := repo.Delete(ctx, projectID, "github"); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if err := repo.Create(ctx, meta, []byte("new")); err != nil {
+			t.Fatalf("Create after disabled: %v", err)
+		}
+		got, err := repo.Get(ctx, projectID, "github")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got == nil || got.Disabled {
+			t.Fatalf("recreated secret = %#v, want enabled", got)
+		}
+		value, err := repo.GetActiveValue(ctx, projectID, "github")
+		if err != nil {
+			t.Fatalf("GetActiveValue: %v", err)
+		}
+		if string(value) != "new" {
+			t.Fatalf("active value = %q, want new", string(value))
+		}
+	})
 }
 
 // RunRepoSuite runs a full CRUD contract test against any run.Repository implementation.
@@ -254,6 +293,30 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		}
 		if steps[0].Status != "done" {
 			t.Errorf("status mismatch: got %q want %q", steps[0].Status, "done")
+		}
+	})
+
+	t.Run("ListByRuns", func(t *testing.T) {
+		runA := uuid.NewString()
+		runB := uuid.NewString()
+		for _, step := range []*run.Step{
+			{ProjectID: projectID, RunID: runA, StepName: "a1", Status: "pending"},
+			{ProjectID: projectID, RunID: runA, StepName: "a2", Status: "done"},
+			{ProjectID: projectID, RunID: runB, StepName: "b1", Status: "running"},
+		} {
+			if err := repo.Upsert(ctx, step); err != nil {
+				t.Fatalf("Upsert %q: %v", step.StepName, err)
+			}
+		}
+		grouped, err := repo.ListByRuns(ctx, projectID, []string{runA, runB})
+		if err != nil {
+			t.Fatalf("ListByRuns: %v", err)
+		}
+		if len(grouped[runA]) != 2 {
+			t.Fatalf("runA steps = %d, want 2", len(grouped[runA]))
+		}
+		if len(grouped[runB]) != 1 {
+			t.Fatalf("runB steps = %d, want 1", len(grouped[runB]))
 		}
 	})
 

@@ -126,6 +126,8 @@ func (r *stubScheduleRepo) ClaimOneShotRun(context.Context, string, string, time
 
 func (r *stubScheduleRepo) SetEnabled(context.Context, string, string, bool) error { return nil }
 
+func (r *stubScheduleRepo) SetMaxRuns(context.Context, string, string, int) error { return nil }
+
 func (r *stubScheduleRepo) Delete(context.Context, string, string) error { return nil }
 
 func TestDeployComputesCronNextRunAt(t *testing.T) {

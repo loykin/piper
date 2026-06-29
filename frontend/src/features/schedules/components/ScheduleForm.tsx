@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useCreateSchedule } from '../hooks'
+import { parseMaxRuns } from '../maxRuns'
 
 type ScheduleType = 'immediate' | 'once' | 'cron'
 
@@ -74,8 +75,8 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
     if (!trimmedYaml) { setError('Pipeline YAML is required.'); return }
     if (scheduleType === 'once' && !runAtISO) { setError('Run time is required for once type.'); return }
     if (scheduleType === 'cron' && !cronExpr.trim()) { setError('Cron expression is required.'); return }
-    const parsedMaxRuns = maxRuns.trim() === '' ? 0 : Number(maxRuns)
-    if (!Number.isInteger(parsedMaxRuns) || parsedMaxRuns < 0) {
+    const parsedMaxRuns = parseMaxRuns(maxRuns)
+    if (parsedMaxRuns == null) {
       setError('Max runs must be a non-negative integer.')
       return
     }

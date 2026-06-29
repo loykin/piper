@@ -1,6 +1,7 @@
 package pipelineworker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/piper/piper/internal/proto"
@@ -17,6 +18,34 @@ func TestTaskStorageForWorkerUsesTaskStorage(t *testing.T) {
 	}
 	if gotToken != task.StorageToken {
 		t.Fatalf("storageToken = %q, want %q", gotToken, task.StorageToken)
+	}
+}
+
+func TestMergeExecutionEnvTokenOnlySecretDoesNotInheritGlobalGitUser(t *testing.T) {
+	got := mergeExecutionEnv(
+		[]string{"PIPER_GIT_USER=global-user", "PIPER_GIT_TOKEN=global-token", "OTHER=base"},
+		[]string{"PIPER_GIT_TOKEN=step-token"},
+	)
+	joined := strings.Join(got, "\n")
+	if strings.Contains(joined, "PIPER_GIT_USER=") {
+		t.Fatalf("env inherited global git user: %#v", got)
+	}
+	if !strings.Contains(joined, "PIPER_GIT_TOKEN=step-token") {
+		t.Fatalf("env missing step token: %#v", got)
+	}
+	if !strings.Contains(joined, "OTHER=base") {
+		t.Fatalf("env dropped unrelated base value: %#v", got)
+	}
+}
+
+func TestMergeExecutionEnvStepGitUserOverridesGlobalGitUser(t *testing.T) {
+	got := mergeExecutionEnv(
+		[]string{"PIPER_GIT_USER=global-user", "PIPER_GIT_TOKEN=global-token"},
+		[]string{"PIPER_GIT_TOKEN=step-token", "PIPER_GIT_USER=step-user"},
+	)
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "PIPER_GIT_USER=step-user") || !strings.Contains(joined, "PIPER_GIT_TOKEN=step-token") {
+		t.Fatalf("env did not use step git credential: %#v", got)
 	}
 }
 

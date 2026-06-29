@@ -19,6 +19,7 @@ import (
 	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
+	"github.com/piper/piper/pkg/secret"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/template"
 	"github.com/piper/piper/pkg/viewer"
@@ -31,6 +32,7 @@ type Repos struct {
 	Run              run.Repository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
+	Secret           secret.Repository
 	Viewer           viewer.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
@@ -57,6 +59,7 @@ type ExternalReposConfig struct {
 	Run              run.Repository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
+	Secret           secret.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
 	NotebookVolume   notebook.VolumeRepository
@@ -185,6 +188,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Run:              sqlite.NewRunRepo(executor, PrimarySource),
 			Step:             sqlite.NewStepRepo(executor, PrimarySource),
 			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
+			Secret:           sqlite.NewSecretRepo(executor, PrimarySource),
 			Serving:          sqlite.NewServingRepo(executor, PrimarySource),
 			Notebook:         sqlite.NewNotebookRepo(executor, PrimarySource),
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
@@ -204,6 +208,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Run:              postgres.NewRunRepo(executor, PrimarySource),
 			Step:             postgres.NewStepRepo(executor, PrimarySource),
 			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
+			Secret:           postgres.NewSecretRepo(executor, PrimarySource),
 			Serving:          postgres.NewServingRepo(executor, PrimarySource),
 			Notebook:         postgres.NewNotebookRepo(executor, PrimarySource),
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(executor, PrimarySource),
@@ -278,11 +283,54 @@ func (r *Repos) DeleteRun(ctx context.Context, projectID, id string) error {
 	})
 }
 
+// DeleteRuns removes multiple runs and all their steps, logs, and metrics atomically.
+func (r *Repos) DeleteRuns(ctx context.Context, projectID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if r.deleteRun != nil {
+		for _, id := range ids {
+			if err := r.deleteRun(ctx, projectID, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if r.executor == nil {
+		return fmt.Errorf("DeleteRuns: no executor configured — set ExternalReposConfig.DeleteRun")
+	}
+	return r.executor.RunTx(ctx, PrimarySource, func(ctx context.Context, tx *sqlx.Tx) error {
+		for _, spec := range deleteRunsQueries() {
+			query, args, err := sqlx.In(spec.query, projectID, ids)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, r.db.Rebind(query), args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func deleteRunQueries(db *sqlx.DB) []string {
 	return []string{
 		db.Rebind(`DELETE FROM run_metrics WHERE project_id=? AND run_id=?`),
 		db.Rebind(`DELETE FROM logs WHERE project_id=? AND run_id=?`),
 		db.Rebind(`DELETE FROM steps WHERE project_id=? AND run_id=?`),
 		db.Rebind(`DELETE FROM runs WHERE project_id=? AND id=?`),
+	}
+}
+
+func deleteRunsQueries() []struct {
+	query string
+} {
+	return []struct {
+		query string
+	}{
+		{`DELETE FROM run_metrics WHERE project_id=? AND run_id IN (?)`},
+		{`DELETE FROM logs WHERE project_id=? AND run_id IN (?)`},
+		{`DELETE FROM steps WHERE project_id=? AND run_id IN (?)`},
+		{`DELETE FROM runs WHERE project_id=? AND id IN (?)`},
 	}
 }

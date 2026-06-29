@@ -63,6 +63,7 @@ type Task struct {
 	Attempt   int            `json:"attempt,omitempty"`
 	Vars      BuiltinVars    `json:"vars,omitempty"`
 	RunParams map[string]any `json:"run_params,omitempty"` // run-level params; override step-level YAML params
+	Env       []string       `json:"env,omitempty"`        // master-resolved execution env, may contain secrets
 
 	// Storage settings are master-owned and attached when the task is created.
 	// Workers must not independently choose artifact/source storage.

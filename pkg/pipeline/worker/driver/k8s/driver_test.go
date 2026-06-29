@@ -52,7 +52,7 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 		Namespace:    "jobs",        // pre-resolved by the worker layer
 		StorageToken: "storage-token",
 		StorageURL:   "s3://bucket",
-		Env:          []string{"PIPER_GIT_USER=test-user"},
+		Env:          []string{"PIPER_GIT_USER=test-user", "PIPER_GIT_TOKEN=test-token"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +67,9 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	if got := job.Spec.Template.Spec.InitContainers[0].Image; got != "piper:test" {
 		t.Fatalf("agent image = %q", got)
 	}
-	if env := job.Spec.Template.Spec.Containers[0].Env; len(env) != 1 ||
-		env[0].Name != "PIPER_GIT_USER" || env[0].Value != "test-user" {
+	if env := job.Spec.Template.Spec.Containers[0].Env; len(env) != 2 ||
+		env[0].Name != "PIPER_GIT_TOKEN" || env[0].Value != "test-token" ||
+		env[1].Name != "PIPER_GIT_USER" || env[1].Value != "test-user" {
 		t.Fatalf("job env = %#v", env)
 	}
 	args := job.Spec.Template.Spec.Containers[0].Args
@@ -76,6 +77,8 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 		"--storage-token=storage-token",
 		"--storage-url=s3://bucket",
 		"--result-file=/dev/termination-log",
+		"--git-user=test-user",
+		"--git-token=test-token",
 	} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("job args missing %q: %v", want, args)

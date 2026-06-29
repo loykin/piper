@@ -74,3 +74,14 @@ func TestStepRepo_Postgres(t *testing.T) {
 	}
 	repotest.StepRepoSuite(t, repos.Step, projectID)
 }
+
+func TestSecretRepo_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+
+	const projectID = "secret-repo"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.SecretRepoSuite(t, repos.Secret, projectID)
+}

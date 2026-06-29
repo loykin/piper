@@ -97,18 +97,23 @@ type Step struct {
 }
 
 type Run struct {
-	Type           string     `yaml:"type"`   // notebook | python | command
-	Source         string     `yaml:"source"` // git | s3 | http | local
-	Repo           string     `yaml:"repo"`
-	Branch         string     `yaml:"branch"`
-	Path           string     `yaml:"path"`
-	Notebook       string     `yaml:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
-	Deps           []string   `yaml:"deps,omitempty"`     // extra files/dirs to snapshot alongside the entry point
-	Prepare        [][]string `yaml:"prepare,omitempty"`  // commands run before the entry point
-	Dir            string     `yaml:"dir"`                // sub-directory name for the source checkout
-	URL            string     `yaml:"url"`                // http/https URL (source: http)
-	Command        []string   `yaml:"command"`
-	SnapshotPrefix string     `yaml:"snapshot_prefix,omitempty"` // set at runtime after submit
+	Type           string     `yaml:"type" json:"type,omitempty"`     // notebook | python | command
+	Source         string     `yaml:"source" json:"source,omitempty"` // git | s3 | http | local
+	Repo           string     `yaml:"repo" json:"repo,omitempty"`
+	Branch         string     `yaml:"branch" json:"branch,omitempty"`
+	Path           string     `yaml:"path" json:"path,omitempty"`
+	CredentialRef  *SecretRef `yaml:"credentialRef,omitempty" json:"credentialRef,omitempty"`
+	Notebook       string     `yaml:"notebook,omitempty" json:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
+	Deps           []string   `yaml:"deps,omitempty" json:"deps,omitempty"`         // extra files/dirs to snapshot alongside the entry point
+	Prepare        [][]string `yaml:"prepare,omitempty" json:"prepare,omitempty"`   // commands run before the entry point
+	Dir            string     `yaml:"dir" json:"dir,omitempty"`                     // sub-directory name for the source checkout
+	URL            string     `yaml:"url" json:"url,omitempty"`                     // http/https URL (source: http)
+	Command        []string   `yaml:"command" json:"command,omitempty"`
+	SnapshotPrefix string     `yaml:"snapshot_prefix,omitempty" json:"snapshot_prefix,omitempty"` // set at runtime after submit
+}
+
+type SecretRef struct {
+	Name string `yaml:"name" json:"name,omitempty"`
 }
 
 type Artifact struct {

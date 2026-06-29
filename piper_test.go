@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,11 +20,13 @@ import (
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/logstore"
+	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
+	"github.com/piper/piper/pkg/secret"
 	"github.com/piper/piper/pkg/security"
 	"github.com/piper/piper/pkg/storage"
 )
@@ -58,6 +61,29 @@ func (p *testSecurityProvider) ProjectRole(_ context.Context, _ *security.Identi
 }
 func (p *testSecurityProvider) AuthorizeSystem(_ context.Context, _ *security.Identity) error {
 	return nil
+}
+
+type captureBackend struct {
+	mu   sync.Mutex
+	task *proto.Task
+}
+
+func (b *captureBackend) Dispatch(_ context.Context, task *proto.Task) error {
+	cp := *task
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.task = &cp
+	return nil
+}
+
+func (b *captureBackend) snapshot() *proto.Task {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.task == nil {
+		return nil
+	}
+	cp := *b.task
+	return &cp
 }
 
 func newTestPiper(t *testing.T, cfg Config) *Piper {
@@ -108,6 +134,107 @@ func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 	oldLayout := filepath.Join(outputDir, "train", "result.txt")
 	if _, err := os.Stat(oldLayout); !os.IsNotExist(err) {
 		t.Fatalf("old artifact layout should not exist at %s", oldLayout)
+	}
+}
+
+func TestResolvePipelineSecretEnvForGitCredentialRef(t *testing.T) {
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Server: ServerConfig{
+			SecretEncryptionKey: "12345678901234567890123456789012",
+		},
+	})
+	const projectID = "default"
+	if _, err := p.secrets.Create(context.Background(), projectID, secret.CreateRequest{
+		Name: "github",
+		Data: map[string]string{
+			"username": "git-user",
+			"token":    "git-token",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pl := &pipeline.Pipeline{
+		Metadata: manifest.ObjectMeta{Name: "git-secret"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{{
+			Name: "clone",
+			Run: pipeline.Run{
+				Source:        "git",
+				Repo:          "https://example.invalid/repo.git",
+				Path:          "run.sh",
+				Command:       []string{"sh", "run.sh"},
+				CredentialRef: &pipeline.SecretRef{Name: "github"},
+			},
+		}}},
+	}
+
+	envByStep, err := p.resolvePipelineSecretEnv(context.Background(), projectID, pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(envByStep["clone"], "\n")
+	if !strings.Contains(got, "PIPER_GIT_USER=git-user") || !strings.Contains(got, "PIPER_GIT_TOKEN=git-token") {
+		t.Fatalf("env = %#v", envByStep["clone"])
+	}
+}
+
+func TestStartRunPassesGitCredentialRefEnvToTask(t *testing.T) {
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Server: ServerConfig{
+			SecretEncryptionKey: "12345678901234567890123456789012",
+		},
+	})
+	backend := &captureBackend{}
+	p.SetBackend(backend)
+	const projectID = "default"
+	if _, err := p.secrets.Create(context.Background(), projectID, secret.CreateRequest{
+		Name: "github",
+		Data: map[string]string{
+			"username": "git-user",
+			"token":    "git-token",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pl, err := pipeline.Parse([]byte(`
+metadata:
+  name: git-secret
+spec:
+  steps:
+    - name: clone
+      run:
+        source: git
+        repo: https://example.invalid/repo.git
+        path: run.sh
+        credentialRef:
+          name: github
+        command: [sh, run.sh]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.startRun(context.Background(), pl, dag, StartRunOptions{ProjectID: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	var task *proto.Task
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if task = backend.snapshot(); task != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if task == nil {
+		t.Fatal("backend did not receive task")
+	}
+	got := strings.Join(task.Env, "\n")
+	if !strings.Contains(got, "PIPER_GIT_USER=git-user") || !strings.Contains(got, "PIPER_GIT_TOKEN=git-token") {
+		t.Fatalf("task env = %#v", task.Env)
 	}
 }
 

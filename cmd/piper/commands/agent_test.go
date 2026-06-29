@@ -10,6 +10,7 @@ import (
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
+	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
 )
 
 func TestAgentExecWritesResultForParentWorker(t *testing.T) {
@@ -39,5 +40,18 @@ func TestAgentExecWritesResultForParentWorker(t *testing.T) {
 	}
 	if result.TaskID != task.ID || result.Status != proto.TaskStatusDone {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestDriverEnvValueReadsGitCredentialEnv(t *testing.T) {
+	env := []string{"OTHER=value", "PIPER_GIT_USER=git-user", "PIPER_GIT_TOKEN=git-token"}
+	if got := pdriver.EnvValue(env, "PIPER_GIT_USER"); got != "git-user" {
+		t.Fatalf("PIPER_GIT_USER = %q", got)
+	}
+	if got := pdriver.EnvValue(env, "PIPER_GIT_TOKEN"); got != "git-token" {
+		t.Fatalf("PIPER_GIT_TOKEN = %q", got)
+	}
+	if got := pdriver.EnvValue(env, "MISSING"); got != "" {
+		t.Fatalf("MISSING = %q", got)
 	}
 }

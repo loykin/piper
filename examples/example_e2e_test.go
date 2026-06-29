@@ -423,6 +423,12 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	closeRepos := true
+	t.Cleanup(func() {
+		if closeRepos {
+			_ = repos.Close()
+		}
+	})
 
 	storeDir := filepath.Join(tmpDir, "store")
 
@@ -436,6 +442,7 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	closeRepos = false
 	t.Cleanup(func() { _ = p.Close() })
 
 	const volumeID = "notebook-template-volume"

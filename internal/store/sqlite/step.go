@@ -40,6 +40,33 @@ func (r *stepRepo) List(ctx context.Context, projectID, runID string) ([]*run.St
 	return steps, err
 }
 
+func (r *stepRepo) ListByRuns(ctx context.Context, projectID string, runIDs []string) (map[string][]*run.Step, error) {
+	out := make(map[string][]*run.Step, len(runIDs))
+	if len(runIDs) == 0 {
+		return out, nil
+	}
+	var steps []*run.Step
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		query, args, err := sqlx.In(
+			`SELECT project_id, run_id, step_name, status, started_at, ended_at, error, attempts
+			 FROM steps WHERE project_id=? AND run_id IN (?)`,
+			projectID, runIDs,
+		)
+		if err != nil {
+			return err
+		}
+		query = db.Rebind(query)
+		return db.SelectContext(ctx, &steps, query, args...)
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, step := range steps {
+		out[step.RunID] = append(out[step.RunID], step)
+	}
+	return out, nil
+}
+
 func (r *stepRepo) DeleteByRun(ctx context.Context, projectID, runID string) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx, `DELETE FROM steps WHERE project_id=? AND run_id=?`, projectID, runID)

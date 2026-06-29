@@ -63,7 +63,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = repos.Close() }()
 
 	workspace, err := filepath.Abs("examples/frontend-e2e/workspace")
 	if err != nil {

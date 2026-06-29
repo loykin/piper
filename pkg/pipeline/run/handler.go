@@ -143,12 +143,21 @@ func (h *Handler) listRuns(c *gin.Context) {
 		*Run
 		Steps []*Step `json:"steps"`
 	}
+	runIDs := make([]string, 0, len(runs))
+	for _, r := range runs {
+		runIDs = append(runIDs, r.ID)
+	}
+	stepsByRun, err := h.deps.Steps.ListByRuns(c.Request.Context(), projectID, runIDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	result := make([]runWithSteps, 0, len(runs))
 	for _, r := range runs {
 		version := r.VersionFromYAML()
 		r = r.Redact()
 		r.PipelineVersion = version
-		steps, _ := h.deps.Steps.List(c.Request.Context(), projectID, r.ID)
+		steps := stepsByRun[r.ID]
 		if steps == nil {
 			steps = []*Step{}
 		}

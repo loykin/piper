@@ -265,7 +265,7 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 		OutputDir:    w.cfg.Store.OutputDir,
 		StorageToken: storageToken,
 		StorageURL:   storageURL,
-		Env:          w.gitEnv(),
+		Env:          mergeExecutionEnv(w.gitEnv(), task.Env),
 		LogSink:      logsink.NewGRPCLogSink(task.ProjectID, w.client),
 	}
 
@@ -294,6 +294,54 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	go w.observe(taskCtx, handle)
 	slog.Info("pipeline step dispatched", "task_id", task.ID, "runtime_key", runtimeKey)
 	return nil
+}
+
+func mergeEnv(base, override []string) []string {
+	if len(base) == 0 {
+		return append([]string{}, override...)
+	}
+	out := append([]string{}, base...)
+	index := make(map[string]int, len(out))
+	for i, item := range out {
+		if eq := strings.IndexByte(item, '='); eq > 0 {
+			index[item[:eq]] = i
+		}
+	}
+	for _, item := range override {
+		eq := strings.IndexByte(item, '=')
+		if eq <= 0 {
+			out = append(out, item)
+			continue
+		}
+		key := item[:eq]
+		if i, ok := index[key]; ok {
+			out[i] = item
+		} else {
+			index[key] = len(out)
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func mergeExecutionEnv(base, override []string) []string {
+	merged := mergeEnv(base, override)
+	if pdriver.EnvValue(override, "PIPER_GIT_TOKEN") != "" && pdriver.EnvValue(override, "PIPER_GIT_USER") == "" {
+		merged = removeEnvKey(merged, "PIPER_GIT_USER")
+	}
+	return merged
+}
+
+func removeEnvKey(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func taskStorageForWorker(task *proto.Task, masterURL, workerToken string, localStoreAccess bool) (storageURL, storageToken string) {
@@ -451,10 +499,14 @@ func (w *Worker) gitEnv() []string {
 	if token == "" {
 		token = os.Getenv("PIPER_GIT_TOKEN")
 	}
-	return []string{
-		"PIPER_GIT_USER=" + user,
-		"PIPER_GIT_TOKEN=" + token,
+	env := make([]string, 0, 2)
+	if user != "" {
+		env = append(env, "PIPER_GIT_USER="+user)
 	}
+	if token != "" {
+		env = append(env, "PIPER_GIT_TOKEN="+token)
+	}
+	return env
 }
 
 // sanitizeName normalises a string to be a safe process name (lowercase alnum + dash).

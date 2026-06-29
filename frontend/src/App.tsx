@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, Boxes, ChevronRight } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, Boxes, ChevronRight, KeyRound } from 'lucide-react'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
@@ -43,6 +43,7 @@ const WorkflowCreatePage  = lazy(() => import('@/pages/schedules/WorkflowCreateP
 const ScheduleDetailPage  = lazy(() => import('@/pages/schedules/ScheduleDetailPage'))
 const ServingPage         = lazy(() => import('@/pages/serving/ServingPage'))
 const ServingHistoryPage  = lazy(() => import('@/pages/serving/ServingHistoryPage'))
+const SecretsPage         = lazy(() => import('@/pages/secrets/SecretsPage'))
 const WorkersPage           = lazy(() => import('@/pages/system/WorkersPage'))
 const StoragePage           = lazy(() => import('@/pages/system/StoragePage'))
 const PodPoliciesPage       = lazy(() => import('@/pages/kubernetes/PodPoliciesPage'))
@@ -85,6 +86,7 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
         { id: 'schedules',   label: 'Schedules',   icon: CalendarClock, to: `${base}/schedules` },
         { id: 'history',     label: 'History',     icon: History,       to: `${base}/history` },
         { id: 'experiments', label: 'Experiments', icon: FlaskConical,  to: `${base}/experiments` },
+        { id: 'secrets',     label: 'Secrets',     icon: KeyRound,      to: `${base}/secrets` },
       ],
     },
     {
@@ -367,6 +369,7 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'history', component: HistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'runs/$id', component: RunDetailPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'experiments', component: ExperimentsPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'secrets', component: SecretsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'serving', component: ServingPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'serving/history', component: ServingHistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks', component: NotebooksPage }),

@@ -58,6 +58,9 @@ func (r emptyStepRepo) Upsert(context.Context, *Step) error { return nil }
 func (r emptyStepRepo) List(context.Context, string, string) ([]*Step, error) {
 	return []*Step{}, nil
 }
+func (r emptyStepRepo) ListByRuns(context.Context, string, []string) (map[string][]*Step, error) {
+	return map[string][]*Step{}, nil
+}
 func (r emptyStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
 
 type capturingStepRepo struct {
@@ -69,6 +72,14 @@ func (r *capturingStepRepo) Upsert(context.Context, *Step) error { return nil }
 func (r *capturingStepRepo) List(context.Context, string, string) ([]*Step, error) {
 	r.calls++
 	return r.steps, nil
+}
+func (r *capturingStepRepo) ListByRuns(context.Context, string, []string) (map[string][]*Step, error) {
+	r.calls++
+	out := make(map[string][]*Step)
+	for _, step := range r.steps {
+		out[step.RunID] = append(out[step.RunID], step)
+	}
+	return out, nil
 }
 func (r *capturingStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
 

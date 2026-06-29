@@ -9,6 +9,7 @@ import (
 
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
+	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
 	"github.com/spf13/cobra"
 )
 
@@ -52,24 +53,32 @@ func newAgentExecCmd() *cobra.Command {
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
 	cmd.Flags().StringVar(&f.storageURL, "storage-url", "", "artifact store URL (s3://, file://, http://)")
 	cmd.Flags().StringVar(&f.resultFile, "result-file", "", "path to write AgentResult JSON (required)")
+	cmd.Flags().StringVar(&f.gitUser, "git-user", "", "git username for source fetch")
+	cmd.Flags().StringVar(&f.gitToken, "git-token", "", "git token/password for source fetch")
 
 	return cmd
 }
 
 func runAgentExec(ctx context.Context, f agentExecFlags) error {
+	task, err := agent.DecodeTask(f.taskB64)
+	if err != nil {
+		return err
+	}
+
 	// Git credentials: prefer flags, fall back to environment variables.
 	gitUser := f.gitUser
 	if gitUser == "" {
 		gitUser = os.Getenv("PIPER_GIT_USER")
 	}
+	if gitUser == "" {
+		gitUser = pdriver.EnvValue(task.Env, "PIPER_GIT_USER")
+	}
 	gitToken := f.gitToken
 	if gitToken == "" {
 		gitToken = os.Getenv("PIPER_GIT_TOKEN")
 	}
-
-	task, err := agent.DecodeTask(f.taskB64)
-	if err != nil {
-		return err
+	if gitToken == "" {
+		gitToken = pdriver.EnvValue(task.Env, "PIPER_GIT_TOKEN")
 	}
 
 	r, err := agent.New(agent.Config{

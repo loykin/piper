@@ -22,6 +22,90 @@ paths:
             text/event-stream:
               schema:
                 type: string
+  /api/projects/{project_id}/secrets:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project secret metadata. Secret values are never returned.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Secret" }
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSecretRequest" }
+      responses:
+        "201":
+          description: Created secret metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "409":
+          description: Secret already exists.
+  /api/projects/{project_id}/secrets/{name}:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/SecretName"
+      responses:
+        "200":
+          description: Project secret metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "404":
+          description: Secret not found.
+    patch:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/SecretName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchSecretRequest" }
+      responses:
+        "200":
+          description: Secret enabled state updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "404":
+          description: Secret not found.
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/SecretName"
+      responses:
+        "204":
+          description: Secret disabled.
+        "404":
+          description: Secret not found.
+  /api/projects/{project_id}/secrets/{name}/rotate:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/SecretName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RotateSecretRequest" }
+      responses:
+        "204":
+          description: Secret value rotated.
+        "404":
+          description: Secret not found.
+        "409":
+          description: Secret is disabled.
   /runs:
     get:
       parameters:
@@ -252,6 +336,16 @@ components:
       type: http
       scheme: bearer
   parameters:
+    ProjectID:
+      name: project_id
+      in: path
+      required: true
+      schema: { type: string }
+    SecretName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
     RunID:
       name: id
       in: path
@@ -263,6 +357,41 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    Secret:
+      type: object
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [git, env] }
+        provider: { type: string, enum: [piper-managed] }
+        keys:
+          type: array
+          items: { type: string }
+        disabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+    CreateSecretRequest:
+      type: object
+      required: [name, data]
+      properties:
+        name: { type: string }
+        type: { type: string, enum: [git, env], default: git }
+        provider: { type: string, enum: [piper-managed], default: piper-managed }
+        data:
+          type: object
+          additionalProperties: { type: string }
+    RotateSecretRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: { type: string }
+    PatchSecretRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
     Run:
       type: object
       properties:

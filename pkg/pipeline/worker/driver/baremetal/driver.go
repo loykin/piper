@@ -118,6 +118,8 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 		StorageURL:   spec.StorageURL,
 		OutputDir:    spec.OutputDir,
 		InputDir:     spec.OutputDir,
+		GitUser:      driver.EnvValue(spec.Env, "PIPER_GIT_USER"),
+		GitToken:     driver.EnvValue(spec.Env, "PIPER_GIT_TOKEN"),
 		ResultFile:   resultPath,
 	})
 	if err != nil {

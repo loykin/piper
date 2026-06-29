@@ -83,6 +83,9 @@ func (r *memoryStepRepo) Upsert(_ context.Context, step *run.Step) error {
 func (r *memoryStepRepo) List(context.Context, string, string) ([]*run.Step, error) {
 	return nil, nil
 }
+func (r *memoryStepRepo) ListByRuns(context.Context, string, []string) (map[string][]*run.Step, error) {
+	return map[string][]*run.Step{}, nil
+}
 func (r *memoryStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
 
 type recordingBackend struct {

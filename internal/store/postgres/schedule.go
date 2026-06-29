@@ -171,6 +171,14 @@ func (r *scheduleRepo) SetEnabled(ctx context.Context, projectID, id string, ena
 	})
 }
 
+func (r *scheduleRepo) SetMaxRuns(ctx context.Context, projectID, id string, maxRuns int) error {
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`UPDATE schedules SET max_runs=?, updated_at=? WHERE project_id=? AND id=?`)
+		_, err := db.ExecContext(ctx, q, maxRuns, time.Now().UTC(), projectID, id)
+		return err
+	})
+}
+
 func (r *scheduleRepo) Delete(ctx context.Context, projectID, id string) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		q := db.Rebind(`DELETE FROM schedules WHERE project_id=? AND id=?`)

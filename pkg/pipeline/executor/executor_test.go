@@ -3,13 +3,17 @@ package executor
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/internal/srcfetch"
 	"github.com/piper/piper/internal/testutil"
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/pipeline"
@@ -289,6 +293,32 @@ func TestCommandExecutor_httpSource_workDirIsFetchDir(t *testing.T) {
 	}
 }
 
+func TestCommandExecutor_gitSourceWithBasicAuth(t *testing.T) {
+	repoURL := startAuthenticatedExecutorGitHTTPRepo(t, "run.sh", "echo git-source-ok\n", "git-user", "git-token")
+	var buf bytes.Buffer
+	step := &pipeline.Step{
+		Name: "git-run",
+		Run: pipeline.Run{
+			Source:  "git",
+			Repo:    repoURL,
+			Branch:  "main",
+			Path:    "run.sh",
+			Command: []string{"sh", "-c", "sh $PIPER_SCRIPT_PATH"},
+		},
+	}
+	c := cfg(t)
+	c.Stdout = &buf
+	c.SourceCfg = srcfetch.Config{GitUser: "git-user", GitToken: "git-token"}
+
+	ex := &CommandExecutor{}
+	if err := ex.Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "git-source-ok") {
+		t.Fatalf("expected git script output, got %q", buf.String())
+	}
+}
+
 func TestCommandExecutor_unknownSource(t *testing.T) {
 	step := &pipeline.Step{
 		Name: "bad",
@@ -299,6 +329,107 @@ func TestCommandExecutor_unknownSource(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown source")
 	}
+}
+
+func startAuthenticatedExecutorGitHTTPRepo(t *testing.T, fileName, content, user, token string) string {
+	t.Helper()
+	repoDir := t.TempDir()
+	runExecutorGit(t, repoDir, "init", "-b", "main")
+	runExecutorGit(t, repoDir, "config", "user.email", "test@test")
+	runExecutorGit(t, repoDir, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(repoDir, fileName), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runExecutorGit(t, repoDir, "add", fileName)
+	runExecutorGit(t, repoDir, "commit", "-m", "init")
+
+	bareDir := filepath.Join(t.TempDir(), "repo.git")
+	runExecutorGit(t, "", "clone", "--bare", repoDir, bareDir)
+
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotToken, ok := r.BasicAuth()
+		if !ok || gotUser != user || gotToken != token {
+			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		serveExecutorGitHTTPBackend(t, w, r, filepath.Dir(bareDir))
+	}))
+	return srv.URL + "/repo.git"
+}
+
+func runExecutorGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func serveExecutorGitHTTPBackend(t *testing.T, w http.ResponseWriter, r *http.Request, projectRoot string) {
+	t.Helper()
+	var body []byte
+	if r.Body != nil {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("git", "http-backend")
+	cmd.Env = append(os.Environ(),
+		"GIT_PROJECT_ROOT="+projectRoot,
+		"GIT_HTTP_EXPORT_ALL=1",
+		"REQUEST_METHOD="+r.Method,
+		"PATH_INFO="+r.URL.Path,
+		"QUERY_STRING="+r.URL.RawQuery,
+		"CONTENT_TYPE="+r.Header.Get("Content-Type"),
+		"CONTENT_LENGTH="+r.Header.Get("Content-Length"),
+	)
+	cmd.Stdin = bytes.NewReader(body)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git http-backend: %v", err)
+	}
+	header, payload, ok := bytes.Cut(out, []byte("\r\n\r\n"))
+	if !ok {
+		header, payload, ok = bytes.Cut(out, []byte("\n\n"))
+	}
+	if !ok {
+		t.Fatalf("git http-backend returned malformed response: %q", string(out))
+	}
+	status := http.StatusOK
+	for _, line := range bytes.Split(header, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		name, value, ok := bytes.Cut(line, []byte(":"))
+		if !ok {
+			continue
+		}
+		key := string(bytes.TrimSpace(name))
+		val := string(bytes.TrimSpace(value))
+		if strings.EqualFold(key, "Status") {
+			if strings.HasPrefix(val, "403") {
+				status = http.StatusForbidden
+			} else if strings.HasPrefix(val, "404") {
+				status = http.StatusNotFound
+			}
+			continue
+		}
+		w.Header().Add(key, val)
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(payload)
 }
 
 // ─── CommandExecutor (source: local) ─────────────────────────────────────────

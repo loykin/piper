@@ -32,16 +32,17 @@ type GitConfig struct {
 }
 
 type ServerConfig struct {
-	HTTPAddr       string          `mapstructure:"http_addr" yaml:"http_addr"`
-	WorkerToken    string          `mapstructure:"worker_token" yaml:"worker_token"`
-	AuthSigningKey string          `mapstructure:"auth_signing_key" yaml:"auth_signing_key"`
-	TLS            TLSConfig       `mapstructure:"tls" yaml:"tls"`
-	DB             DBConfig        `mapstructure:"db" yaml:"db"`
-	DataDir        string          `mapstructure:"data_dir" yaml:"data_dir"`
-	Retention      RetentionConfig `mapstructure:"retention" yaml:"retention"`
-	Schedule       ScheduleConfig  `mapstructure:"schedule" yaml:"schedule"`
-	Serving        ServerServing   `mapstructure:"serving" yaml:"serving"`
-	Local          LocalConfig     `mapstructure:"local" yaml:"local"`
+	HTTPAddr            string          `mapstructure:"http_addr" yaml:"http_addr"`
+	WorkerToken         string          `mapstructure:"worker_token" yaml:"worker_token"`
+	AuthSigningKey      string          `mapstructure:"auth_signing_key" yaml:"auth_signing_key"`
+	SecretEncryptionKey string          `mapstructure:"secret_encryption_key" yaml:"secret_encryption_key"`
+	TLS                 TLSConfig       `mapstructure:"tls" yaml:"tls"`
+	DB                  DBConfig        `mapstructure:"db" yaml:"db"`
+	DataDir             string          `mapstructure:"data_dir" yaml:"data_dir"`
+	Retention           RetentionConfig `mapstructure:"retention" yaml:"retention"`
+	Schedule            ScheduleConfig  `mapstructure:"schedule" yaml:"schedule"`
+	Serving             ServerServing   `mapstructure:"serving" yaml:"serving"`
+	Local               LocalConfig     `mapstructure:"local" yaml:"local"`
 }
 
 type TLSConfig struct {

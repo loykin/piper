@@ -57,6 +57,7 @@ func newConfigShowCmd(loader *cliconfig.Loader) *cobra.Command {
 			cfg.Source.Git.Token = redact(cfg.Source.Git.Token)
 			cfg.Server.WorkerToken = redact(cfg.Server.WorkerToken)
 			cfg.Server.AuthSigningKey = redact(cfg.Server.AuthSigningKey)
+			cfg.Server.SecretEncryptionKey = redact(cfg.Server.SecretEncryptionKey)
 			cfg.Worker.WorkerToken = redact(cfg.Worker.WorkerToken)
 			cfg.Worker.StorageToken = redact(cfg.Worker.StorageToken)
 			data, err := yaml.Marshal(cfg)

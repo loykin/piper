@@ -23,6 +23,7 @@ import (
 	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
+	"github.com/piper/piper/pkg/secret"
 	"github.com/piper/piper/pkg/security"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/storage"
@@ -177,6 +178,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 
 	// Project management — logged-in users can list; create/delete is system-admin.
 	project.NewHandler(p.repos.Project, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
+	secret.NewHandler(p.repos.Secret, p.secrets).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 	projectStorage := userAPI.Group("/projects/:project_id/storage", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
 	projectStorageMember := projectStorage.Group("", project.RequireRole(security.ProjectRoleMember))
 	projectStorageMember.POST("/object", func(c *gin.Context) {
@@ -868,6 +870,16 @@ func (p *Piper) deleteRunWithArtifacts(ctx context.Context, runID string) error 
 	}
 	projectContext, _ := project.FromContext(ctx)
 	return p.repos.DeleteRun(ctx, projectContext.ID, runID)
+}
+
+func (p *Piper) deleteRunsWithArtifacts(ctx context.Context, runIDs []string) error {
+	for _, runID := range runIDs {
+		if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, runID); err != nil {
+			slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
+		}
+	}
+	projectContext, _ := project.FromContext(ctx)
+	return p.repos.DeleteRuns(ctx, projectContext.ID, runIDs)
 }
 
 // ── piperRunHooks — bridges Hooks into run.RunHooks ──────────────────────────

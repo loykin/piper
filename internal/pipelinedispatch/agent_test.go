@@ -97,6 +97,32 @@ func TestAgentBackendDispatchUsesPipelinePlacement(t *testing.T) {
 	}
 }
 
+func TestAgentBackendDispatchPreservesTaskEnv(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{ID: "agent-1", Capabilities: []string{iagent.CapabilityPipeline}})
+	rpc := &recordingPipelineAgentRPC{}
+	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
+	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{})
+	task := &proto.Task{
+		ID:       "run-1:clone",
+		RunID:    "run-1",
+		Pipeline: pipelineJSON,
+		Env:      []string{"PIPER_GIT_TOKEN=tok", "PIPER_GIT_USER=user"},
+	}
+
+	if err := backend.Dispatch(context.Background(), task); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	calls := rpc.snapshot()
+	sentTask, ok := calls[0].Payload.(*proto.Task)
+	if !ok {
+		t.Fatalf("payload type = %T", calls[0].Payload)
+	}
+	if got := sentTask.Env; len(got) != 2 || got[0] != "PIPER_GIT_TOKEN=tok" || got[1] != "PIPER_GIT_USER=user" {
+		t.Fatalf("env = %#v", got)
+	}
+}
+
 func TestAgentBackendCancelUsesDispatchAgent(t *testing.T) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{ID: "agent-1", Infrastructure: iagent.InfrastructureK8s, Capabilities: []string{iagent.CapabilityPipeline}})

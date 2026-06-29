@@ -94,6 +94,29 @@ spec:
 	}
 }
 
+func TestParseGitCredentialRef(t *testing.T) {
+	p, err := Parse([]byte(`
+metadata:
+  name: git-credential
+spec:
+  steps:
+    - name: clone
+      run:
+        source: git
+        repo: https://git.example/repo.git
+        credentialRef:
+          name: gitea-ci
+        command: [echo, ok]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := p.Spec.Steps[0].Run.CredentialRef
+	if ref == nil || ref.Name != "gitea-ci" {
+		t.Fatalf("credentialRef = %#v", ref)
+	}
+}
+
 func TestParseRejectsLegacyCommonImage(t *testing.T) {
 	_, err := Parse([]byte(`
 metadata:

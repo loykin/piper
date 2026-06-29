@@ -16,6 +16,7 @@ import (
 	"os"
 
 	agentpkg "github.com/piper/piper/pkg/pipeline/worker/agent"
+	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
 )
 
 func init() {
@@ -33,6 +34,8 @@ func runEmbeddedAgentExec() int {
 	inputDir := fs.String("input-dir", "", "")
 	storageURL := fs.String("storage-url", "", "")
 	resultFile := fs.String("result-file", "", "")
+	gitUser := fs.String("git-user", "", "")
+	gitToken := fs.String("git-token", "", "")
 
 	args := os.Args[3:] // strip "agent exec"
 	if err := fs.Parse(args); err != nil {
@@ -50,12 +53,28 @@ func runEmbeddedAgentExec() int {
 		slog.Error("agent exec: decode task", "err", err)
 		return 1
 	}
+	resolvedGitUser := *gitUser
+	if resolvedGitUser == "" {
+		resolvedGitUser = os.Getenv("PIPER_GIT_USER")
+	}
+	if resolvedGitUser == "" {
+		resolvedGitUser = pdriver.EnvValue(task.Env, "PIPER_GIT_USER")
+	}
+	resolvedGitToken := *gitToken
+	if resolvedGitToken == "" {
+		resolvedGitToken = os.Getenv("PIPER_GIT_TOKEN")
+	}
+	if resolvedGitToken == "" {
+		resolvedGitToken = pdriver.EnvValue(task.Env, "PIPER_GIT_TOKEN")
+	}
 
 	r, err := agentpkg.New(agentpkg.Config{
 		StorageToken: *storageToken,
 		OutputDir:    *outputDir,
 		InputDir:     *inputDir,
 		StorageURL:   *storageURL,
+		GitUser:      resolvedGitUser,
+		GitToken:     resolvedGitToken,
 	})
 	if err != nil {
 		slog.Error("agent exec: init runner", "err", err)

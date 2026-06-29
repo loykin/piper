@@ -10,6 +10,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -283,6 +285,25 @@ func postRun(t *testing.T, serverURL, yaml string) string {
 	return result.RunID
 }
 
+func postE2ESecret(t *testing.T, serverURL, name string, data map[string]string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"name":     name,
+		"type":     "git",
+		"provider": "piper-managed",
+		"data":     data,
+	})
+	resp, err := http.Post(serverURL+e2eBase()+"/secrets", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /secrets: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		payload, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /secrets status = %d: %s", resp.StatusCode, payload)
+	}
+}
+
 // waitRunStatus polls GET /projects/:project/runs/{id} until run.status matches wantStatus or timeout.
 func waitRunStatus(t *testing.T, serverURL, runID, wantStatus string, timeout time.Duration) {
 	t.Helper()
@@ -304,7 +325,143 @@ func waitRunStatus(t *testing.T, serverURL, runID, wantStatus string, timeout ti
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	dumpE2ERunLogs(t, serverURL, runID)
 	t.Fatalf("run %s did not reach status %q within %s", runID, wantStatus, timeout)
+}
+
+func dumpE2ERunLogs(t *testing.T, serverURL, runID string) {
+	t.Helper()
+	resp, err := http.Get(serverURL + e2eBase() + "/runs/" + runID)
+	if err != nil {
+		t.Logf("dump run %s: %v", runID, err)
+		return
+	}
+	var result struct {
+		Run struct {
+			Status string `json:"status"`
+		} `json:"run"`
+		Steps []struct {
+			StepName string `json:"step_name"`
+			Status   string `json:"status"`
+			Error    string `json:"error"`
+		} `json:"steps"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+	t.Logf("run %s status=%s steps=%+v", runID, result.Run.Status, result.Steps)
+	for _, step := range result.Steps {
+		logsResp, err := http.Get(serverURL + e2eBase() + "/runs/" + runID + "/steps/" + step.StepName + "/logs")
+		if err != nil {
+			t.Logf("step %s logs: %v", step.StepName, err)
+			continue
+		}
+		body, _ := io.ReadAll(logsResp.Body)
+		logsResp.Body.Close()
+		if len(body) > 0 {
+			t.Logf("step %s logs:\n%s", step.StepName, body)
+		}
+	}
+}
+
+func startE2EAuthenticatedGitHTTPRepo(t *testing.T, fileName, content, user, token string) string {
+	t.Helper()
+	repoDir := t.TempDir()
+	runE2EGit(t, repoDir, "init", "-b", "main")
+	runE2EGit(t, repoDir, "config", "user.email", "test@test")
+	runE2EGit(t, repoDir, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(repoDir, fileName), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runE2EGit(t, repoDir, "add", fileName)
+	runE2EGit(t, repoDir, "commit", "-m", "init")
+
+	bareDir := filepath.Join(t.TempDir(), "repo.git")
+	runE2EGit(t, "", "clone", "--bare", repoDir, bareDir)
+
+	srv := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotToken, ok := r.BasicAuth()
+		if !ok || gotUser != user || gotToken != token {
+			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		serveE2EGitHTTPBackend(t, w, r, filepath.Dir(bareDir))
+	}))
+	return srv.URL + "/repo.git"
+}
+
+func runE2EGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func serveE2EGitHTTPBackend(t *testing.T, w http.ResponseWriter, r *http.Request, projectRoot string) {
+	t.Helper()
+	var body []byte
+	if r.Body != nil {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("git", "http-backend")
+	cmd.Env = append(os.Environ(),
+		"GIT_PROJECT_ROOT="+projectRoot,
+		"GIT_HTTP_EXPORT_ALL=1",
+		"REQUEST_METHOD="+r.Method,
+		"PATH_INFO="+r.URL.Path,
+		"QUERY_STRING="+r.URL.RawQuery,
+		"CONTENT_TYPE="+r.Header.Get("Content-Type"),
+		"CONTENT_LENGTH="+r.Header.Get("Content-Length"),
+	)
+	cmd.Stdin = bytes.NewReader(body)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git http-backend: %v", err)
+	}
+	header, payload, ok := bytes.Cut(out, []byte("\r\n\r\n"))
+	if !ok {
+		header, payload, ok = bytes.Cut(out, []byte("\n\n"))
+	}
+	if !ok {
+		t.Fatalf("git http-backend returned malformed response: %q", string(out))
+	}
+	status := http.StatusOK
+	for _, line := range bytes.Split(header, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		name, value, ok := bytes.Cut(line, []byte(":"))
+		if !ok {
+			continue
+		}
+		key := string(bytes.TrimSpace(name))
+		val := string(bytes.TrimSpace(value))
+		if strings.EqualFold(key, "Status") {
+			if strings.HasPrefix(val, "403") {
+				status = http.StatusForbidden
+			} else if strings.HasPrefix(val, "404") {
+				status = http.StatusNotFound
+			}
+			continue
+		}
+		w.Header().Add(key, val)
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(payload)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -349,6 +506,57 @@ spec:
 	metricsResp.Body.Close()
 	if !bytes.Contains(metricsBody, []byte(`"key":"score"`)) {
 		t.Fatalf("tunnel metrics missing score: %s", metricsBody)
+	}
+}
+
+func TestE2E_GitSourceCredentialRefUsesSecretStore(t *testing.T) {
+	p, err := New(Config{
+		OutputDir: t.TempDir(),
+		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
+		Auth:      AuthConfig{Trusted: true},
+		Server: ServerConfig{
+			SecretEncryptionKey: "12345678901234567890123456789012",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := testutil.NewIPv4Server(t, p.Handler(nil))
+	t.Cleanup(func() { _ = p.Close() })
+	createE2EProject(t, srv.URL)
+	startE2EWorker(t, srv.URL)
+
+	postE2ESecret(t, srv.URL, "gitea-ci", map[string]string{
+		"username": "git-user",
+		"token":    "git-token",
+	})
+	repoURL := startE2EAuthenticatedGitHTTPRepo(t, "run.sh", "echo git-secret-e2e\n", "git-user", "git-token")
+
+	runID := postRun(t, srv.URL, fmt.Sprintf(`
+metadata:
+  name: e2e-git-secret-source
+spec:
+  steps:
+    - name: clone-and-run
+      run:
+        source: git
+        repo: %s
+        branch: main
+        path: run.sh
+        credentialRef:
+          name: gitea-ci
+        command: ["sh", "-c", "sh \"$PIPER_SCRIPT_PATH\""]
+`, repoURL))
+	waitRunStatus(t, srv.URL, runID, "success", 20*time.Second)
+
+	logsResp, err := http.Get(srv.URL + e2eBase() + "/runs/" + runID + "/steps/clone-and-run/logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logsBody, _ := io.ReadAll(logsResp.Body)
+	logsResp.Body.Close()
+	if !bytes.Contains(logsBody, []byte("git-secret-e2e")) {
+		t.Fatalf("git credentialRef run logs missing output: %s", logsBody)
 	}
 }
 

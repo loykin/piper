@@ -19,6 +19,8 @@ type AgentExecConfig struct {
 	StorageURL   string
 	OutputDir    string
 	InputDir     string
+	GitUser      string
+	GitToken     string
 	// ResultFile is the path inside the execution environment where the agent
 	// writes the AgentResult JSON.
 	ResultFile string
@@ -53,6 +55,12 @@ func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 	}
 	if cfg.InputDir != "" {
 		args = append(args, "--input-dir="+cfg.InputDir)
+	}
+	if cfg.GitUser != "" {
+		args = append(args, "--git-user="+cfg.GitUser)
+	}
+	if cfg.GitToken != "" {
+		args = append(args, "--git-token="+cfg.GitToken)
 	}
 	return args, nil
 }

@@ -124,9 +124,10 @@ type AuthDependencies struct {
 type AuthFactory func(AuthDependencies) (AuthConfig, error)
 
 type ServerConfig struct {
-	Addr        string    `yaml:"addr"         mapstructure:"addr"`
-	WorkerToken string    `yaml:"worker_token" mapstructure:"worker_token"` // separate token for worker/agent auth
-	TLS         TLSConfig `yaml:"tls"          mapstructure:"tls"`
+	Addr                string    `yaml:"addr"                  mapstructure:"addr"`
+	WorkerToken         string    `yaml:"worker_token"          mapstructure:"worker_token"` // separate token for worker/agent auth
+	SecretEncryptionKey string    `yaml:"secret_encryption_key" mapstructure:"secret_encryption_key"`
+	TLS                 TLSConfig `yaml:"tls"                   mapstructure:"tls"`
 }
 
 type TLSConfig struct {

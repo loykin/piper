@@ -33,6 +33,7 @@ import (
 	"github.com/piper/piper/pkg/pipeline/run"
 	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/secret"
 	"github.com/piper/piper/pkg/serving"
 	servingdispatch "github.com/piper/piper/pkg/serving/dispatch"
 	"github.com/piper/piper/pkg/storage"
@@ -63,7 +64,8 @@ type Piper struct {
 	agentRegistry   *iagent.Registry
 	workloadRouter  *iagent.Router
 	grpcAgentServer *grpcagent.Server
-	store           storage.Store     // nil when no artifact store configured
+	store           storage.Store // nil when no artifact store configured
+	secrets         *secret.Store
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
 	resolver        artifact.Resolver // central artifact resolver
@@ -110,6 +112,14 @@ func New(cfg Config) (*Piper, error) {
 	if err := ensureDefaultProject(context.Background(), repos.Project); err != nil {
 		_ = repos.Close()
 		return nil, fmt.Errorf("ensure default project: %w", err)
+	}
+	var secretStore *secret.Store
+	if cfg.Server.SecretEncryptionKey != "" {
+		secretStore, err = secret.NewStore(repos.Secret, cfg.Server.SecretEncryptionKey)
+		if err != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("create secret store: %w", err)
+		}
 	}
 	if cfg.Auth.Factory != nil {
 		authConfig, err := cfg.Auth.Factory(AuthDependencies{
@@ -185,6 +195,7 @@ func New(cfg Config) (*Piper, error) {
 		repos:   repos,
 		logs:    repos.Log,
 		metrics: repos.Metric,
+		secrets: secretStore,
 		queue:   q,
 		serving: servingBundle{
 			manager: servingMgr,
@@ -374,7 +385,13 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
 		}
 		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
-		p.queue.Recover(ctx, r.ProjectID, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered)
+		envByStep, err := p.resolvePipelineSecretEnv(ctx, r.ProjectID, pl)
+		if err != nil {
+			slog.Warn("recover: resolve secret env failed", "run_id", r.ID, "err", err)
+			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
+			continue
+		}
+		p.queue.RecoverWithEnv(ctx, r.ProjectID, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered, envByStep)
 	}
 }
 
@@ -385,22 +402,22 @@ func (p *Piper) cleanupRetention(ctx context.Context) {
 		runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{})
 		if err != nil {
 			slog.Warn("retention list runs failed", "err", err)
-			return
-		}
-		now := time.Now().UTC()
-		for _, r := range runs {
-			if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
-				continue
-			}
-			if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
-				if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
-					slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
+		} else {
+			now := time.Now().UTC()
+			for _, r := range runs {
+				if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
+					continue
 				}
-				continue
-			}
-			if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
-				if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, r.ID); err != nil {
-					slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
+				if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
+					if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
+						slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
+					}
+					continue
+				}
+				if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
+					if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, r.ID); err != nil {
+						slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
+					}
 				}
 			}
 		}
@@ -423,6 +440,7 @@ func (p *Piper) cleanupScheduleRetention(ctx context.Context) {
 			continue
 		}
 		kept := 0
+		deleteIDs := make([]string, 0)
 		for _, r := range runs {
 			if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
 				continue
@@ -431,8 +449,11 @@ func (p *Piper) cleanupScheduleRetention(ctx context.Context) {
 				kept++
 				continue
 			}
-			if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
-				slog.Warn("retention delete schedule run failed", "run_id", r.ID, "schedule_id", sc.ID, "err", err)
+			deleteIDs = append(deleteIDs, r.ID)
+		}
+		if len(deleteIDs) > 0 {
+			if err := p.deleteRunsWithArtifacts(project.WithContext(ctx, project.Context{ID: sc.ProjectID}), deleteIDs); err != nil {
+				slog.Warn("retention delete schedule runs failed", "project_id", sc.ProjectID, "schedule_id", sc.ID, "count", len(deleteIDs), "err", err)
 			}
 		}
 	}
@@ -771,7 +792,14 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 		}
 	}
 
-	p.queue.Add(ctx, opts.ProjectID, pl, dag, runID, ".", outputDir, opts.Vars, opts.Params)
+	envByStep, err := p.resolvePipelineSecretEnv(ctx, opts.ProjectID, pl)
+	if err != nil {
+		now := time.Now().UTC()
+		_ = p.repos.Run.UpdateStatus(ctx, opts.ProjectID, runID, run.StatusFailed, &now)
+		return "", err
+	}
+
+	p.queue.AddWithEnv(ctx, opts.ProjectID, pl, dag, runID, ".", outputDir, opts.Vars, opts.Params, envByStep)
 	slog.Info("event", "type", "run.started", "run_id", runID, "pipeline", pl.Metadata.Name)
 
 	if p.cfg.Hooks.OnRunStart != nil {
@@ -829,6 +857,24 @@ func (p *Piper) sourceConfig() srcfetch.Config {
 		GitToken:   p.cfg.Git.Token,
 		StorageURL: p.storageURL,
 	}
+}
+
+func (p *Piper) resolvePipelineSecretEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline) (map[string][]string, error) {
+	envByStep := map[string][]string{}
+	for _, step := range pl.Spec.Steps {
+		if strings.TrimSpace(step.Run.Source) != "git" || step.Run.CredentialRef == nil || strings.TrimSpace(step.Run.CredentialRef.Name) == "" {
+			continue
+		}
+		if p.secrets == nil {
+			return nil, fmt.Errorf("step %q references git credential %q but secret store is not configured", step.Name, step.Run.CredentialRef.Name)
+		}
+		env, err := p.secrets.GitEnv(ctx, projectID, step.Run.CredentialRef.Name)
+		if err != nil {
+			return nil, fmt.Errorf("step %q git credential: %w", step.Name, err)
+		}
+		envByStep[step.Name] = env
+	}
+	return envByStep, nil
 }
 
 // SetBackend registers an external execution environment such as a K8s Job launcher.

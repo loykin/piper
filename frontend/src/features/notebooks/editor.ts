@@ -1,7 +1,9 @@
 // notebooks feature — YAML builder utilities
+import { appendEnvOptionsYaml, type EnvVarDraft } from '@/shared/env'
 
 export interface K8sFormState {
   name: string
+  env: EnvVarDraft[]
   image: string
   cpu: string
   memory: string
@@ -13,6 +15,7 @@ export interface K8sFormState {
 
 export const DEFAULT_K8S: K8sFormState = {
   name: '',
+  env: [],
   image: '',
   cpu: '',
   memory: '',
@@ -24,6 +27,7 @@ export const DEFAULT_K8S: K8sFormState = {
 
 export interface WorkerFormState {
   name: string
+  envVars: EnvVarDraft[]
   env: string
   gpus: string
   prepareBackend: 'process' | 'docker'
@@ -32,6 +36,7 @@ export interface WorkerFormState {
 
 export const DEFAULT_WORKER: WorkerFormState = {
   name: '',
+  envVars: [],
   env: '',
   gpus: '',
   prepareBackend: 'process',
@@ -48,6 +53,7 @@ export function buildK8sYAML(f: K8sFormState, workerID?: string): string {
   ]
 
   // volume (domain — PVC size)
+  appendEnvOptionsYaml(lines, '  ', f.env)
   if (f.storageSize) lines.push(`  volume:`, `    size: "${f.storageSize}"`)
 
   appendPrepareSteps(lines, f.prepare, f.prepareBackend)
@@ -98,6 +104,7 @@ export function buildWorkerYAMLWithBackend(
   ]
 
   appendPrepareSteps(lines, f.prepare, backend)
+  appendEnvOptionsYaml(lines, '  ', f.envVars)
 
   // driver block
   lines.push(`  driver:`)

@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ShellMirror } from '@/components/ui/shell-mirror'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
+import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
+import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 import type { NotebookVolume, NotebookWorkerInfo } from '../types'
 import {
   buildK8sYAML, buildWorkerYAML, buildWorkerYAMLWithBackend,
@@ -124,6 +126,30 @@ export function NotebookK8sForm({
     })
   }
 
+  function addK8sEnv() {
+    setK8sField('env', [...k8sForm.env, emptyEnvVarDraft()])
+  }
+
+  function updateK8sEnv(rowIndex: number, patch: Partial<EnvVarDraft>) {
+    setK8sField('env', k8sForm.env.map((item, i) => i === rowIndex ? { ...item, ...patch } : item))
+  }
+
+  function removeK8sEnv(rowIndex: number) {
+    setK8sField('env', k8sForm.env.filter((_, i) => i !== rowIndex))
+  }
+
+  function addWorkerEnv() {
+    setWorkerField('envVars', [...workerForm.envVars, emptyEnvVarDraft()])
+  }
+
+  function updateWorkerEnv(rowIndex: number, patch: Partial<EnvVarDraft>) {
+    setWorkerField('envVars', workerForm.envVars.map((item, i) => i === rowIndex ? { ...item, ...patch } : item))
+  }
+
+  function removeWorkerEnv(rowIndex: number) {
+    setWorkerField('envVars', workerForm.envVars.filter((_, i) => i !== rowIndex))
+  }
+
   function onWorkerChange(id: string | null) {
     setSelectedWorkerID(id ?? '')
     const w = workers.find(x => x.id === id) ?? null
@@ -209,6 +235,12 @@ export function NotebookK8sForm({
                   placeholder={`pip install -r requirements.txt\npython /work/preflight.py`}
                 />
               </DataBodyTemplate.Field>
+              <EnvVarEditor
+                items={k8sForm.env}
+                onAdd={addK8sEnv}
+                onRemove={removeK8sEnv}
+                onUpdate={updateK8sEnv}
+              />
             </DataBodyTemplate.Group>
             <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Resources" description="Optional CPU, memory, and GPU requests/limits.">
               <div className="grid grid-cols-3 gap-3">
@@ -259,6 +291,12 @@ export function NotebookK8sForm({
                 placeholder={`uv pip install jupyterlab ipykernel\npython -m ipykernel install --sys-prefix`}
               />
             </DataBodyTemplate.Field>
+            <EnvVarEditor
+              items={workerForm.envVars}
+              onAdd={addWorkerEnv}
+              onRemove={removeWorkerEnv}
+              onUpdate={updateWorkerEnv}
+            />
           </DataBodyTemplate.Group>
         )}
       </DataBodyTemplate.Tab>

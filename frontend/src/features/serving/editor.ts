@@ -1,5 +1,6 @@
 // serving feature — YAML builder utilities
 // Extracted from ServingPage
+import { appendEnvOptionsYaml, type EnvVarDraft } from '@/shared/env'
 
 export interface RuntimeTemplate {
   label: string
@@ -114,6 +115,7 @@ export const RUNTIME_TEMPLATES: Record<string, RuntimeTemplate> = {
 
 export interface FormState {
   name: string
+  env: EnvVarDraft[]
   pipeline: string
   run: string
   step: string
@@ -135,6 +137,7 @@ export interface FormState {
 
 export const DEFAULT_FORM: FormState = {
   name: '',
+  env: [],
   pipeline: '',
   run: 'latest',
   step: '',
@@ -157,6 +160,8 @@ export const DEFAULT_FORM: FormState = {
 export function buildYAML(f: FormState): string {
   const cmdLines = f.command.split('\n').filter(Boolean).map(c => `      - ${JSON.stringify(c)}`).join('\n')
   const isK8s = f.runtimeMode === 'k8s'
+  const optionsLines: string[] = []
+  appendEnvOptionsYaml(optionsLines, '  ', f.env)
 
   // driver block
   const driverLines: string[] = [`  driver:`]
@@ -193,6 +198,7 @@ kind: ModelService
 metadata:
   name: ${JSON.stringify(f.name || 'my-model')}
 spec:
+${optionsLines.length ? `${optionsLines.join('\n')}\n` : ''}
   model:
     from_artifact:
       pipeline: ${JSON.stringify(f.pipeline || 'my-pipeline')}

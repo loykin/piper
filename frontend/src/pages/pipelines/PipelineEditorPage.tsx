@@ -14,6 +14,8 @@ import { ShellMirror } from '@/components/ui/shell-mirror'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { IconButton } from '@/components/ui/icon-button'
 import PipelineCanvas from '@/shared/components/PipelineCanvas'
+import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
+import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
 import { createPipeline } from '@/features/pipelines/api'
@@ -629,12 +631,21 @@ export default function PipelineEditorPage() {
     }))
   }
 
-  function updatePairField(index: number, kind: 'params' | 'env', rowIndex: number, patch: Partial<PipelineKeyValueDraft>) {
+  function updateParamField(index: number, rowIndex: number, patch: Partial<PipelineKeyValueDraft>) {
     setTasks(current => current.map((task, i) => {
       if (i !== index) return task
-      const items = [...task[kind]]
+      const items = [...task.params]
       items[rowIndex] = { ...items[rowIndex], ...patch }
-      return { ...task, [kind]: items } as PipelineStepDraft
+      return { ...task, params: items } as PipelineStepDraft
+    }))
+  }
+
+  function updateEnvField(index: number, rowIndex: number, patch: Partial<EnvVarDraft>) {
+    setTasks(current => current.map((task, i) => {
+      if (i !== index) return task
+      const env = [...task.env]
+      env[rowIndex] = { ...env[rowIndex], ...patch }
+      return { ...task, env } as PipelineStepDraft
     }))
   }
 
@@ -650,15 +661,27 @@ export default function PipelineEditorPage() {
     ))
   }
 
-  function addPairRow(index: number, kind: 'params' | 'env') {
+  function addParamRow(index: number) {
     setTasks(current => current.map((task, i) =>
-      i !== index ? task : { ...task, [kind]: [...task[kind], emptyPair()] } as PipelineStepDraft
+      i !== index ? task : { ...task, params: [...task.params, emptyPair()] } as PipelineStepDraft
     ))
   }
 
-  function removePairRow(index: number, kind: 'params' | 'env', rowIndex: number) {
+  function addEnvRow(index: number) {
     setTasks(current => current.map((task, i) =>
-      i !== index ? task : { ...task, [kind]: task[kind].filter((_, j) => j !== rowIndex) } as PipelineStepDraft
+      i !== index ? task : { ...task, env: [...task.env, emptyEnvVarDraft()] } as PipelineStepDraft
+    ))
+  }
+
+  function removeParamRow(index: number, rowIndex: number) {
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, params: task.params.filter((_, j) => j !== rowIndex) } as PipelineStepDraft
+    ))
+  }
+
+  function removeEnvRow(index: number, rowIndex: number) {
+    setTasks(current => current.map((task, i) =>
+      i !== index ? task : { ...task, env: task.env.filter((_, j) => j !== rowIndex) } as PipelineStepDraft
     ))
   }
 
@@ -985,19 +1008,18 @@ export default function PipelineEditorPage() {
                 emptyText="No parameters."
                 keyPlaceholder="name"
                 items={editingTask.params}
-                onAdd={() => addPairRow(editingIndex, 'params')}
-                onRemove={i => removePairRow(editingIndex, 'params', i)}
-                onUpdate={(i, patch) => updatePairField(editingIndex, 'params', i, patch)}
+                onAdd={() => addParamRow(editingIndex)}
+                onRemove={i => removeParamRow(editingIndex, i)}
+                onUpdate={(i, patch) => updateParamField(editingIndex, i, patch)}
               />
 
-              <PairSection
+              <EnvVarEditor
                 label="Environment"
                 emptyText="No env overrides."
-                keyPlaceholder="NAME"
                 items={editingTask.env}
-                onAdd={() => addPairRow(editingIndex, 'env')}
-                onRemove={i => removePairRow(editingIndex, 'env', i)}
-                onUpdate={(i, patch) => updatePairField(editingIndex, 'env', i, patch)}
+                onAdd={() => addEnvRow(editingIndex)}
+                onRemove={i => removeEnvRow(editingIndex, i)}
+                onUpdate={(i, patch) => updateEnvField(editingIndex, i, patch)}
               />
 
               <ArtifactSection

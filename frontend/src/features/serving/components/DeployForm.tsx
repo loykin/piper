@@ -7,6 +7,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
+import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
+import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 import { useRuns } from '@/features/runs/hooks'
 import { listArtifacts, type StepArtifacts } from '@/features/runs/api'
 import { useCreateService, useServingWorkers } from '../hooks'
@@ -53,6 +55,18 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
       setYaml(buildYAML(next))
       return next
     })
+  }
+
+  function addEnv() {
+    setField('env', [...form.env, emptyEnvVarDraft()])
+  }
+
+  function updateEnv(rowIndex: number, patch: Partial<EnvVarDraft>) {
+    setField('env', form.env.map((item, i) => i === rowIndex ? { ...item, ...patch } : item))
+  }
+
+  function removeEnv(rowIndex: number) {
+    setField('env', form.env.filter((_, i) => i !== rowIndex))
   }
 
   async function handleDeploy() {
@@ -242,6 +256,13 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                   onChange={e => setField('command', e.target.value)}
                 />
               </DataBodyTemplate.Field>
+
+              <EnvVarEditor
+                items={form.env}
+                onAdd={addEnv}
+                onRemove={removeEnv}
+                onUpdate={updateEnv}
+              />
             </DataBodyTemplate.Group>
           </div>
         ) : (

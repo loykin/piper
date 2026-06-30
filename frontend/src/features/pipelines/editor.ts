@@ -1,4 +1,9 @@
 import { parse as parseYAML } from 'yaml'
+import {
+  appendEnvOptionsYaml,
+  envVarDraftFromYamlEntry,
+  type EnvVarDraft,
+} from '@/shared/env'
 
 export type PipelineTaskType = 'command' | 'python' | 'notebook'
 
@@ -24,7 +29,7 @@ export interface PipelineStepDraft {
   inputs: PipelineArtifactDraft[]
   outputs: PipelineArtifactDraft[]
   params: PipelineKeyValueDraft[]
-  env: PipelineKeyValueDraft[]
+  env: EnvVarDraft[]
   cpu: string
   memory: string
   gpu: string
@@ -51,6 +56,10 @@ function defaultParams(): PipelineKeyValueDraft[] {
   return []
 }
 
+function defaultEnv(): EnvVarDraft[] {
+  return []
+}
+
 function defaultArtifacts(): PipelineArtifactDraft[] {
   return []
 }
@@ -68,7 +77,7 @@ export function defaultPipelineStep(index = 0, type: PipelineTaskType = 'command
     inputs: defaultArtifacts(),
     outputs: defaultArtifacts(),
     params: defaultParams(),
-    env: defaultParams(),
+    env: defaultEnv(),
     cpu: '',
     memory: '',
     gpu: '',
@@ -121,10 +130,7 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
       inputs: artifacts('inputs'),
       outputs: artifacts('outputs'),
       params: Object.entries(paramsObject).map(([key, value]) => ({ key, value: String(value) })),
-      env: envValues.map(value => {
-        const entry = value as Record<string, unknown>
-        return { key: String(entry.name ?? ''), value: String(entry.value ?? '') }
-      }),
+      env: envValues.map(envVarDraftFromYamlEntry),
       cpu: String(resources.cpu ?? ''),
       memory: String(resources.memory ?? ''),
       gpu: String(resources.gpu ?? ''),
@@ -173,7 +179,6 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
     const dependsOn = step.dependsOn.map(dep => dep.trim()).filter(Boolean)
     const command = step.command.map(arg => arg.trim()).filter(Boolean)
     const params = Object.fromEntries(step.params.map(param => [param.key.trim(), param.value]))
-    const env = Object.fromEntries(step.env.map(entry => [entry.key.trim(), entry.value]))
     const resources: Record<string, string> = {}
     if (step.cpu.trim()) resources.cpu = step.cpu.trim()
     if (step.memory.trim()) resources.memory = step.memory.trim()
@@ -204,7 +209,7 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
       }
     }
     lines.push(...formatMapBlock('params', params))
-    lines.push(...formatMapBlock('env', env))
+    appendEnvOptionsYaml(lines, '      ', step.env)
     lines.push(...formatArtifactBlock('inputs', step.inputs))
     lines.push(...formatArtifactBlock('outputs', step.outputs))
     lines.push(...formatMapBlock('resources', resources))

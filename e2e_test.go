@@ -509,57 +509,6 @@ spec:
 	}
 }
 
-func TestE2E_GitSourceCredentialRefUsesSecretStore(t *testing.T) {
-	p, err := New(Config{
-		OutputDir: t.TempDir(),
-		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
-		Auth:      AuthConfig{Trusted: true},
-		Server: ServerConfig{
-			SecretEncryptionKey: "12345678901234567890123456789012",
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := testutil.NewIPv4Server(t, p.Handler(nil))
-	t.Cleanup(func() { _ = p.Close() })
-	createE2EProject(t, srv.URL)
-	startE2EWorker(t, srv.URL)
-
-	postE2ESecret(t, srv.URL, "gitea-ci", map[string]string{
-		"username": "git-user",
-		"token":    "git-token",
-	})
-	repoURL := startE2EAuthenticatedGitHTTPRepo(t, "run.sh", "echo git-secret-e2e\n", "git-user", "git-token")
-
-	runID := postRun(t, srv.URL, fmt.Sprintf(`
-metadata:
-  name: e2e-git-secret-source
-spec:
-  steps:
-    - name: clone-and-run
-      run:
-        source: git
-        repo: %s
-        branch: main
-        path: run.sh
-        credentialRef:
-          name: gitea-ci
-        command: ["sh", "-c", "sh \"$PIPER_SCRIPT_PATH\""]
-`, repoURL))
-	waitRunStatus(t, srv.URL, runID, "success", 20*time.Second)
-
-	logsResp, err := http.Get(srv.URL + e2eBase() + "/runs/" + runID + "/steps/clone-and-run/logs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	logsBody, _ := io.ReadAll(logsResp.Body)
-	logsResp.Body.Close()
-	if !bytes.Contains(logsBody, []byte("git-secret-e2e")) {
-		t.Fatalf("git credentialRef run logs missing output: %s", logsBody)
-	}
-}
-
 func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	serverPort := freeE2EPort(t)
 	p, err := New(Config{
@@ -1045,4 +994,212 @@ spec:
 	if got := strings.TrimSpace(string(data)); got != "mock-0,mock-1" {
 		t.Errorf("CUDA_VISIBLE_DEVICES = %q, want mock-0,mock-1", got)
 	}
+}
+
+// ─── Git Source E2E Tests ─────────────────────────────────────────────────────
+
+// postE2EConnection creates a git connection via the API.
+// endpoint is the scheme+host prefix (e.g. "http://127.0.0.1:PORT/") that the
+// connection store uses to auto-match repo URLs.
+func postE2EConnection(t *testing.T, serverURL, name, endpoint, user, token string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"name":     name,
+		"type":     "git",
+		"provider": "piper-managed",
+		"endpoint": endpoint,
+		"data": map[string]string{
+			"username": user,
+			"token":    token,
+		},
+	})
+	resp, err := http.Post(serverURL+e2eBase()+"/connections", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("create connection: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /connections status = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// repoOrigin extracts the scheme+host prefix from a repo URL, with trailing slash.
+// e.g. "http://127.0.0.1:1234/repo.git" → "http://127.0.0.1:1234/"
+func repoOrigin(repoURL string) string {
+	if i := strings.Index(repoURL, "://"); i >= 0 {
+		rest := repoURL[i+3:]
+		if j := strings.Index(rest, "/"); j >= 0 {
+			return repoURL[:i+3+j] + "/"
+		}
+	}
+	return repoURL
+}
+
+// TestE2E_GitSourceConnectionRef verifies that a pipeline step with source: git
+// and an explicit connectionRef clones the repo and runs the script successfully.
+func TestE2E_GitSourceConnectionRef(t *testing.T) {
+	_, srv := newE2EServer(t)
+	startE2EWorker(t, srv.URL)
+
+	const (
+		gitUser  = "git-user"
+		gitToken = "git-token"
+	)
+	repoURL := startE2EAuthenticatedGitHTTPRepo(t, "run.sh", "echo git-connectionref-ok\n", gitUser, gitToken)
+	postE2EConnection(t, srv.URL, "gitea-conn", repoOrigin(repoURL), gitUser, gitToken)
+
+	runID := postRun(t, srv.URL, fmt.Sprintf(`
+metadata:
+  name: e2e-git-connectionref
+spec:
+  steps:
+    - name: clone-and-run
+      run:
+        source: git
+        repo: %s
+        branch: main
+        path: run.sh
+        connectionRef: gitea-conn
+        command: ["sh", "-c", "sh \"$PIPER_SCRIPT_PATH\""]
+`, repoURL))
+	waitRunStatus(t, srv.URL, runID, "success", 20*time.Second)
+
+	resp, err := http.Get(srv.URL + e2eBase() + "/runs/" + runID + "/steps/clone-and-run/logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Contains(body, []byte("git-connectionref-ok")) {
+		t.Fatalf("logs missing expected output: %s", body)
+	}
+}
+
+// TestE2E_GitSourceAutoMatch verifies that when no connectionRef is set, the
+// Connection Store auto-matches by endpoint URL and injects credentials.
+func TestE2E_GitSourceAutoMatch(t *testing.T) {
+	_, srv := newE2EServer(t)
+	startE2EWorker(t, srv.URL)
+
+	const (
+		gitUser  = "auto-user"
+		gitToken = "auto-token"
+	)
+	repoURL := startE2EAuthenticatedGitHTTPRepo(t, "run.sh", "echo git-automatch-ok\n", gitUser, gitToken)
+	// Register connection with the repo origin — no explicit connectionRef in pipeline.
+	postE2EConnection(t, srv.URL, "auto-conn", repoOrigin(repoURL), gitUser, gitToken)
+
+	runID := postRun(t, srv.URL, fmt.Sprintf(`
+metadata:
+  name: e2e-git-automatch
+spec:
+  steps:
+    - name: clone-and-run
+      run:
+        source: git
+        repo: %s
+        branch: main
+        path: run.sh
+        command: ["sh", "-c", "sh \"$PIPER_SCRIPT_PATH\""]
+`, repoURL))
+	waitRunStatus(t, srv.URL, runID, "success", 20*time.Second)
+
+	resp, err := http.Get(srv.URL + e2eBase() + "/runs/" + runID + "/steps/clone-and-run/logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !bytes.Contains(body, []byte("git-automatch-ok")) {
+		t.Fatalf("logs missing expected output: %s", body)
+	}
+}
+
+// TestE2E_GitSourcePipelineToServing verifies the full path from git source
+// pipeline execution through artifact upload to serving deployment.
+func TestE2E_GitSourcePipelineToServing(t *testing.T) {
+	const serviceName = "e2e-git-serving"
+
+	outputDir := t.TempDir()
+	faker := gofakes3.New(s3mem.New())
+	fakeSrv := testutil.NewIPv4Server(t, faker.Server())
+	s3Client := newE2ES3Client(t, fakeSrv.URL)
+	if _, err := s3Client.CreateBucket(context.Background(), &s3sdk.CreateBucketInput{Bucket: aws.String(e2eBucket)}); err != nil {
+		t.Fatal(err)
+	}
+	storageURL := fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
+
+	piperInst, srv := newE2EServerWithDirAndStorage(t, outputDir, storageURL)
+	t.Cleanup(func() { _ = piperInst.StopService(context.Background(), "", serviceName) })
+
+	startE2EServingWorker(t, srv.URL, "git-serving-worker")
+	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
+		cfg.Store.OutputDir = outputDir
+	})
+
+	const (
+		gitUser  = "model-user"
+		gitToken = "model-token"
+	)
+	// The pipeline script writes a model artifact from git source.
+	repoURL := startE2EAuthenticatedGitHTTPRepo(t,
+		"train.sh",
+		"mkdir -p $PIPER_OUTPUT_DIR && echo model-weights-v1 > $PIPER_OUTPUT_DIR/weights.bin\n",
+		gitUser, gitToken,
+	)
+	postE2EConnection(t, srv.URL, "model-repo", repoOrigin(repoURL), gitUser, gitToken)
+
+	const pipelineName = "e2e-git-train"
+	pipelineYAML := fmt.Sprintf(`
+metadata:
+  name: %s
+spec:
+  steps:
+    - name: train
+      run:
+        source: git
+        repo: %s
+        branch: main
+        path: train.sh
+        connectionRef: model-repo
+        command: ["sh", "-c", "sh \"$PIPER_SCRIPT_PATH\""]
+      outputs:
+        - name: model
+          path: weights.bin
+  on_success:
+    deploy:
+      service: %s
+`, pipelineName, repoURL, serviceName)
+
+	serviceYAML := fmt.Sprintf(`
+apiVersion: piper/v1
+kind: ModelService
+metadata:
+  name: %s
+spec:
+  model:
+    from_artifact:
+      pipeline: %s
+      step: train
+      artifact: model
+      run: "latest"
+  run:
+    command: ["sleep", "60"]
+    port: 18080
+  driver:
+    placement:
+      worker: git-serving-worker
+`, serviceName, pipelineName)
+
+	firstRunID := postRun(t, srv.URL, pipelineYAML)
+	waitRunStatus(t, srv.URL, firstRunID, "success", 30*time.Second)
+
+	postService(t, srv.URL, serviceYAML)
+	waitServiceRunID(t, srv.URL, serviceName, firstRunID, 15*time.Second)
+
+	// Second run triggers on_success.deploy → service run_id updates.
+	secondRunID := postRun(t, srv.URL, pipelineYAML)
+	waitRunStatus(t, srv.URL, secondRunID, "success", 30*time.Second)
+	waitServiceRunID(t, srv.URL, serviceName, secondRunID, 30*time.Second)
 }

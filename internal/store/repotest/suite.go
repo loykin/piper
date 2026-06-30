@@ -63,7 +63,7 @@ func SecretRepoSuite(t *testing.T, repo secret.Repository, projectID string) {
 		meta := &secret.Metadata{
 			ProjectID: projectID,
 			Name:      "github",
-			Type:      secret.TypeGit,
+			Type:      secret.TypeEnv,
 			Provider:  secret.ProviderPiperManaged,
 			Keys:      []string{"token"},
 		}

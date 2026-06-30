@@ -227,24 +227,3 @@ func TestDeleteMissingReturnsNotFound(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body)
 	}
 }
-
-func TestGitEnvOmitsEmptyUsername(t *testing.T) {
-	repo := newMemoryRepo()
-	store, err := NewStore(repo, "12345678901234567890123456789012")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Create(context.Background(), "proj-1", CreateRequest{
-		Name: "github",
-		Data: map[string]string{"token": "tok"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	env, err := store.GitEnv(context.Background(), "proj-1", "github")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(env) != 1 || env[0] != "PIPER_GIT_TOKEN=tok" {
-		t.Fatalf("env = %#v, want token only", env)
-	}
-}

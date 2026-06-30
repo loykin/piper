@@ -95,8 +95,6 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 		StorageURL:   spec.StorageURL,
 		OutputDir:    "/piper-outputs",
 		InputDir:     "/piper-inputs",
-		GitUser:      driver.EnvValue(spec.Env, "PIPER_GIT_USER"),
-		GitToken:     driver.EnvValue(spec.Env, "PIPER_GIT_TOKEN"),
 		ResultFile:   "/dev/termination-log",
 	})
 	if err != nil {

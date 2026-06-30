@@ -25,17 +25,16 @@ func TestBuildAgentExecHasNoMasterCallbackArguments(t *testing.T) {
 	}
 }
 
-func TestBuildAgentExecIncludesGitCredentialFlags(t *testing.T) {
-	args, err := BuildAgentExec(&proto.Task{ID: "run:step"}, AgentExecConfig{
-		ResultFile: "/tmp/result.json",
-		GitUser:    "git-user",
-		GitToken:   "git-token",
-	})
+func TestBuildAgentExecHasNoGitCredentialFlags(t *testing.T) {
+	args, err := BuildAgentExec(&proto.Task{
+		ID:  "run:step",
+		Env: []string{"PIPER_GIT_USER=git-user", "PIPER_GIT_TOKEN=git-token"},
+	}, AgentExecConfig{ResultFile: "/tmp/result.json"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--git-user=git-user") || !strings.Contains(joined, "--git-token=git-token") {
-		t.Fatalf("child args missing git credential flags: %s", joined)
+	if strings.Contains(joined, "--git-user") || strings.Contains(joined, "--git-token") {
+		t.Fatalf("child args must not expose git credentials as CLI flags: %s", joined)
 	}
 }

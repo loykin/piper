@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,11 +78,16 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 		"--storage-token=storage-token",
 		"--storage-url=s3://bucket",
 		"--result-file=/dev/termination-log",
-		"--git-user=test-user",
-		"--git-token=test-token",
 	} {
 		if !slices.Contains(args, want) {
 			t.Fatalf("job args missing %q: %v", want, args)
+		}
+	}
+	for _, notWant := range []string{"--git-user", "--git-token"} {
+		for _, arg := range args {
+			if strings.HasPrefix(arg, notWant) {
+				t.Fatalf("job args must not expose git credentials as CLI flags: %v", args)
+			}
 		}
 	}
 

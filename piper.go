@@ -872,14 +872,11 @@ func (p *Piper) sourceConfig() srcfetch.Config {
 }
 
 // resolveGitEnv resolves git credentials for a step using priority:
-// connectionRef (explicit) > credentialRef (legacy secret) > endpoint auto-match (lowest).
+// connectionRef (explicit) > endpoint auto-match (lowest).
 // Returns nil env (no error) when no credential is configured.
-func (p *Piper) resolveGitEnv(ctx context.Context, projectID, connectionRef string, credentialRef *pipeline.SecretRef, repoURL string) ([]string, error) {
+func (p *Piper) resolveGitEnv(ctx context.Context, projectID, connectionRef, repoURL string) ([]string, error) {
 	if p.connections != nil && strings.TrimSpace(connectionRef) != "" {
 		return p.connections.GitEnv(ctx, projectID, connectionRef, repoURL)
-	}
-	if credentialRef != nil && strings.TrimSpace(credentialRef.Name) != "" {
-		return p.secrets.GitEnv(ctx, projectID, credentialRef.Name)
 	}
 	// Auto-match: find connection whose endpoint covers repoURL
 	if p.connections != nil {
@@ -899,9 +896,9 @@ func (p *Piper) resolvePipelineSecretEnv(ctx context.Context, projectID string, 
 	for _, step := range pl.Spec.Steps {
 		var env []string
 
-		// Git credential resolution: connectionRef > credentialRef > auto-match by endpoint
+		// Git credential resolution: connectionRef > auto-match by endpoint
 		if strings.TrimSpace(step.Run.Source) == "git" && strings.TrimSpace(step.Run.Repo) != "" {
-			gitEnv, err := p.resolveGitEnv(ctx, projectID, step.Run.ConnectionRef, step.Run.CredentialRef, step.Run.Repo)
+			gitEnv, err := p.resolveGitEnv(ctx, projectID, step.Run.ConnectionRef, step.Run.Repo)
 			if err != nil {
 				return nil, fmt.Errorf("step %q git credential: %w", step.Name, err)
 			}

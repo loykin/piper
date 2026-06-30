@@ -2,11 +2,11 @@ import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
-import { Plus, Power, RotateCw } from 'lucide-react'
+import { Plus, Power, RotateCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { secretColumns } from '@/features/secrets/columns'
-import { usePatchSecret, useRotateSecret, useSecrets } from '@/features/secrets/hooks'
+import { useDeleteSecret, usePatchSecret, useRotateSecret, useSecrets } from '@/features/secrets/hooks'
 import type { SecretMetadata } from '@/features/secrets/types'
 import { useProjectId } from '@/lib/projectContext'
 import RotateSecretDialog from './RotateSecretDialog'
@@ -17,9 +17,19 @@ export default function SecretsPage() {
   const { data = [], isLoading } = useSecrets()
   const patchSecret = usePatchSecret()
   const rotateSecret = useRotateSecret()
+  const deleteSecret = useDeleteSecret()
 
   const [rotateTarget, setRotateTarget] = useState<SecretMetadata | null>(null)
   const [actionError, setActionError] = useState('')
+
+  const handleDelete = useCallback(async (secret: SecretMetadata) => {
+    if (!confirm(`Delete secret "${secret.name}"? This cannot be undone.`)) return
+    try {
+      await deleteSecret.mutateAsync(secret.name)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }, [deleteSecret])
 
   const toggleSecret = useCallback(async (secret: SecretMetadata) => {
     setActionError('')
@@ -37,9 +47,9 @@ export default function SecretsPage() {
     {
       id: 'actions',
       header: '',
-      meta: { minWidth: 120, align: 'right' },
+      meta: { minWidth: 160, align: 'right' },
       cell: ({ row }) => (
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-1">
           <IconButton
             icon={<RotateCw />}
             label="Rotate"
@@ -50,12 +60,18 @@ export default function SecretsPage() {
             icon={<Power />}
             label={row.original.disabled ? 'Enable' : 'Disable'}
             onClick={e => { e.stopPropagation(); void toggleSecret(row.original) }}
-            className={row.original.disabled ? 'text-primary hover:bg-primary/10' : 'text-destructive hover:bg-destructive/10'}
+            className={row.original.disabled ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'}
+          />
+          <IconButton
+            icon={<Trash2 />}
+            label="Delete"
+            onClick={e => { e.stopPropagation(); void handleDelete(row.original) }}
+            className="text-destructive hover:bg-destructive/10"
           />
         </div>
       ),
     },
-  ], [toggleSecret])
+  ], [toggleSecret, handleDelete])
 
   return (
     <DataBodyTemplate

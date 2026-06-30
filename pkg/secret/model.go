@@ -5,7 +5,6 @@ import "time"
 type Type string
 
 const (
-	TypeGit Type = "git"
 	TypeEnv Type = "env"
 )
 

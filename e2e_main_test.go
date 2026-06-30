@@ -34,8 +34,6 @@ func runAgentExec() int {
 		inputDir   string
 		storageURL string
 		resultFile string
-		gitUser    string
-		gitToken   string
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
@@ -43,8 +41,6 @@ func runAgentExec() int {
 	fs.StringVar(&inputDir, "input-dir", "", "")
 	fs.StringVar(&storageURL, "storage-url", "", "")
 	fs.StringVar(&resultFile, "result-file", "", "")
-	fs.StringVar(&gitUser, "git-user", "", "")
-	fs.StringVar(&gitToken, "git-token", "", "")
 
 	// Strip "agent" and "exec" prefix from os.Args.
 	args := os.Args[1:]
@@ -68,25 +64,13 @@ func runAgentExec() int {
 		fmt.Fprintf(os.Stderr, "agent exec decode task: %v\n", err)
 		return 1
 	}
-	if gitUser == "" {
-		gitUser = os.Getenv("PIPER_GIT_USER")
-	}
-	if gitUser == "" {
-		gitUser = pdriver.EnvValue(task.Env, "PIPER_GIT_USER")
-	}
-	if gitToken == "" {
-		gitToken = os.Getenv("PIPER_GIT_TOKEN")
-	}
-	if gitToken == "" {
-		gitToken = pdriver.EnvValue(task.Env, "PIPER_GIT_TOKEN")
-	}
 
 	r, err := agentpkg.New(agentpkg.Config{
 		OutputDir:  outputDir,
 		InputDir:   inputDir,
 		StorageURL: storageURL,
-		GitUser:    gitUser,
-		GitToken:   gitToken,
+		GitUser:    pdriver.EnvValue(task.Env, "PIPER_GIT_USER"),
+		GitToken:   pdriver.EnvValue(task.Env, "PIPER_GIT_TOKEN"),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent exec runner init: %v\n", err)

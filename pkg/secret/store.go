@@ -121,23 +121,6 @@ func (s *Store) Resolve(ctx context.Context, projectID, name string) (Value, err
 	return value, nil
 }
 
-func (s *Store) GitEnv(ctx context.Context, projectID, name string) ([]string, error) {
-	value, err := s.Resolve(ctx, projectID, name)
-	if err != nil {
-		return nil, err
-	}
-	user := firstNonEmpty(value.Data["username"], value.Data["user"])
-	token := firstNonEmpty(value.Data["token"], value.Data["password"])
-	if token == "" {
-		return nil, fmt.Errorf("secret %q missing token", name)
-	}
-	env := []string{"PIPER_GIT_TOKEN=" + token}
-	if user != "" {
-		env = append(env, "PIPER_GIT_USER="+user)
-	}
-	return env, nil
-}
-
 // ResolveEnv resolves env vars that reference secrets and returns them as
 // "NAME=value" strings. Plain-value entries (ValueFrom == nil) are passed
 // through as-is. Callers can pass the result directly into ExecSpec.Env.
@@ -170,7 +153,7 @@ func normalizeCreate(projectID string, req CreateRequest) (*Metadata, Value, err
 		return nil, Value{}, fmt.Errorf("secret name is required")
 	}
 	if req.Type == "" {
-		req.Type = TypeGit
+		req.Type = TypeEnv
 	}
 	if req.Provider == "" {
 		req.Provider = ProviderPiperManaged
@@ -247,13 +230,4 @@ func (s *Store) decrypt(encrypted []byte) (Value, error) {
 		value.Data = map[string]string{}
 	}
 	return value, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }

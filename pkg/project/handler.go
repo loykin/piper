@@ -94,7 +94,19 @@ func (h *Handler) list(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, projects)
+	c.JSON(http.StatusOK, visibleProjects(projects))
+}
+
+// visibleProjects drops reserved system projects from a listing.
+func visibleProjects(projects []*Project) []*Project {
+	out := make([]*Project, 0, len(projects))
+	for _, p := range projects {
+		if p == nil || Reserved(p.ID) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (h *Handler) create(c *gin.Context) {
@@ -111,6 +123,10 @@ func (h *Handler) create(c *gin.Context) {
 	req.Name = strings.TrimSpace(req.Name)
 	if !validProjectID.MatchString(req.ID) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id must contain only lowercase letters, numbers, and hyphens"})
+		return
+	}
+	if Reserved(req.ID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project id is reserved"})
 		return
 	}
 	if req.Name == "" {
@@ -152,6 +168,10 @@ func (h *Handler) get(c *gin.Context) {
 
 func (h *Handler) delete(c *gin.Context) {
 	projectID := c.Param("project_id")
+	if Reserved(projectID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "project id is reserved"})
+		return
+	}
 	p, err := h.repo.Get(c.Request.Context(), projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

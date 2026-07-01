@@ -92,3 +92,14 @@ func Require(repo Repository, authorizer security.Authorizer, minRole security.P
 func RequireTrusted(repo Repository) gin.HandlerFunc {
 	return Require(repo, nil, security.ProjectRoleAdmin)
 }
+
+// SystemContext injects the reserved system project into the request context
+// with admin role, so project-scoped handlers can serve system-scoped
+// resources. Callers MUST gate this behind a system-admin authorization check.
+func SystemContext() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := WithContext(c.Request.Context(), Context{ID: SystemID, Role: security.ProjectRoleAdmin})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}

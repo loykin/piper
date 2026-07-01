@@ -140,6 +140,12 @@ func (s *Store) ResolveGit(ctx context.Context, projectID, name, repoURL string)
 	return s.resolve(ctx, projectID, name, string(KindGit), repoURL)
 }
 
+// ResolveS3 returns the decrypted values of an s3 credential (access_key_id,
+// secret_access_key, and optional session_token).
+func (s *Store) ResolveS3(ctx context.Context, projectID, name string) (Value, error) {
+	return s.resolve(ctx, projectID, name, string(KindS3), "")
+}
+
 func (s *Store) resolve(ctx context.Context, projectID, name, expectedKind, repoURL string) (Value, error) {
 	meta, err := s.repo.Get(ctx, projectID, name)
 	if err != nil {

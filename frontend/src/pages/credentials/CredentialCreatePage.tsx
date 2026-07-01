@@ -18,6 +18,12 @@ const GIT_FIELDS: DataEntry[] = [
   { key: 'username', value: '' },
   { key: 'token', value: '' },
 ]
+// s3 credentials are system-scoped (managed on the Storage page), so this
+// project-scoped form only creates generic and git credentials.
+function fieldsForKind(kind: CredentialKind): DataEntry[] {
+  if (kind === 'git') return GIT_FIELDS.map(e => ({ ...e }))
+  return GENERIC_FIELDS.map(e => ({ ...e }))
+}
 
 export default function CredentialCreatePage() {
   const projectId = useProjectId()
@@ -27,13 +33,13 @@ export default function CredentialCreatePage() {
   const [name, setName] = useState('')
   const [kind, setKind] = useState<CredentialKind>('generic')
   const [endpoint, setEndpoint] = useState('')
-  const [entries, setEntries] = useState<DataEntry[]>(GENERIC_FIELDS)
+  const [entries, setEntries] = useState<DataEntry[]>(fieldsForKind('generic'))
   const [error, setError] = useState('')
 
   function handleKindChange(next: CredentialKind) {
     setKind(next)
     setEndpoint('')
-    setEntries(next === 'git' ? GIT_FIELDS : GENERIC_FIELDS)
+    setEntries(fieldsForKind(next))
   }
 
   function updateEntry(idx: number, field: keyof DataEntry, value: string) {

@@ -179,6 +179,8 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	// Project management — logged-in users can list; create/delete is system-admin.
 	project.NewHandler(p.repos.Project, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
 	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+	// System-scoped credentials (e.g. the artifact-storage s3 credential).
+	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/system", p.requireSystemAdmin(), project.SystemContext()))
 	projectStorage := userAPI.Group("/projects/:project_id/storage", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
 	projectStorageMember := projectStorage.Group("", project.RequireRole(security.ProjectRoleMember))
 	projectStorageMember.POST("/object", func(c *gin.Context) {

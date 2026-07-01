@@ -4,6 +4,7 @@ export interface StorageConfig {
   url: string
   disabled: boolean
   token: string
+  credentialRef?: string
 }
 
 export interface StorageSettingsView {

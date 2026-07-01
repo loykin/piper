@@ -17,9 +17,10 @@ type LogConfig struct {
 }
 
 type StorageConfig struct {
-	URL      string `mapstructure:"url" yaml:"url"`
-	Disabled bool   `mapstructure:"disabled" yaml:"disabled"`
-	Token    string `mapstructure:"token" yaml:"token"`
+	URL           string `mapstructure:"url" yaml:"url"`
+	Disabled      bool   `mapstructure:"disabled" yaml:"disabled"`
+	Token         string `mapstructure:"token" yaml:"token"`
+	CredentialRef string `mapstructure:"credentialRef" yaml:"credentialRef"`
 }
 
 type SourceConfig struct {

@@ -24,7 +24,7 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 	cfg := piper.Config{
 		OutputDir: root.Server.DataDir,
 		Git:       piper.GitConfig{User: root.Source.Git.User, Token: root.Source.Git.Token},
-		Storage:   piper.StorageConfig{URL: root.Storage.URL, Disabled: root.Storage.Disabled, Token: root.Storage.Token},
+		Storage:   piper.StorageConfig{URL: root.Storage.URL, Disabled: root.Storage.Disabled, Token: root.Storage.Token, CredentialRef: root.Storage.CredentialRef},
 		Server: piper.ServerConfig{Addr: root.Server.HTTPAddr, WorkerToken: root.Server.WorkerToken, SecretEncryptionKey: root.Server.SecretEncryptionKey,
 			TLS: piper.TLSConfig{Enabled: root.Server.TLS.Enabled, CertFile: root.Server.TLS.CertFile, KeyFile: root.Server.TLS.KeyFile}},
 		Retention: piper.RetentionConfig{RunTTL: root.Server.Retention.RunTTL, ArtifactTTL: root.Server.Retention.ArtifactTTL},

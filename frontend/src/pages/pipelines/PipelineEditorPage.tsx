@@ -97,6 +97,31 @@ function buildPositions(tasks: PipelineStepDraft[]): Record<string, { x: number;
 function emptyPair(): PipelineKeyValueDraft { return { key: '', value: '' } }
 function emptyArtifact(): PipelineArtifactDraft { return { name: '', path: '', from: '' } }
 
+// Mirrors the backend credential endpoint scope check (scheme + host match,
+// then path-boundary prefix). Used only to preview which credential the backend
+// will auto-select for a repo URL — the actual match happens server-side.
+function endpointInScope(endpoint: string, repoURL: string): boolean {
+  try {
+    const ep = new URL(endpoint)
+    const repo = new URL(repoURL)
+    if (ep.protocol !== repo.protocol || ep.host !== repo.host) return false
+    const epPath = ep.pathname.endsWith('/') ? ep.pathname : `${ep.pathname}/`
+    const repoPath = repo.pathname.endsWith('/') ? repo.pathname : `${repo.pathname}/`
+    return repoPath.startsWith(epPath)
+  } catch {
+    return false
+  }
+}
+
+// Picks the most specific (longest endpoint path) git credential whose scope
+// contains repoURL, mirroring the backend auto-match behavior.
+function autoMatchGitCredential<T extends { endpoint?: string }>(credentials: T[], repoURL: string): T | undefined {
+  if (!repoURL.trim()) return undefined
+  return credentials
+    .filter(c => c.endpoint && endpointInScope(c.endpoint, repoURL))
+    .sort((a, b) => (b.endpoint?.length ?? 0) - (a.endpoint?.length ?? 0))[0]
+}
+
 function defaultTask(type: PipelineTaskType, index = 0): PipelineStepDraft {
   const draft = defaultPipelineStep(index, type)
   draft.dependsOn = []
@@ -388,6 +413,12 @@ export default function PipelineEditorPage() {
   const dragDropHandledRef = useRef(false)
   const { data: credentials = [] } = useCredentials()
   const gitCredentials = credentials.filter(credential => credential.kind === 'git' && !credential.disabled)
+  // When no credential is explicitly chosen, preview which one the backend will
+  // auto-match by endpoint scope so the user knows the source is authenticated.
+  const autoMatchedCredential = useMemo(
+    () => (formCredential ? undefined : autoMatchGitCredential(gitCredentials, formRepo)),
+    [formCredential, gitCredentials, formRepo],
+  )
   const pipelineSource = useMemo<PipelineSourceDraft | undefined>(() => {
     if (editorSourceKind !== 'git') return undefined
     return {
@@ -773,9 +804,12 @@ export default function PipelineEditorPage() {
             ) : formSourceKind === 'git' ? (
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Git Credential</label>
-                  <Select value={formCredential} onValueChange={v => handleGitCredentialChange(v ?? '')}>
-                    <SelectTrigger><SelectValue placeholder="Auto-match or unauthenticated" /></SelectTrigger>
+                  <label className="mb-1 flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+                    Git Credential
+                    <span className="normal-case tracking-normal text-muted-foreground/70">(optional)</span>
+                  </label>
+                  <Select value={formCredential || undefined} onValueChange={v => handleGitCredentialChange(v ?? '')}>
+                    <SelectTrigger><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
                     <SelectContent>
                       {gitCredentials.length === 0 ? (
                         <SelectItem value="__none__" disabled>No active git credentials</SelectItem>
@@ -784,6 +818,13 @@ export default function PipelineEditorPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {formCredential
+                      ? 'Using the selected credential.'
+                      : autoMatchedCredential
+                        ? `Auto-matched: ${autoMatchedCredential.name} · ${autoMatchedCredential.endpoint}`
+                        : 'Leave empty to auto-match a registered credential, or clone unauthenticated.'}
+                  </p>
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Repository URL</label>

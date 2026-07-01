@@ -69,3 +69,42 @@ export function useDeleteCredential() {
     onSuccess: () => qc.invalidateQueries({ queryKey: credentialKeys.all(projectId) }),
   })
 }
+
+// ── System-scoped credential hooks (admin) ─────────────────────────────────────
+
+export const systemCredentialKeys = {
+  all: ['credentials', 'system'] as const,
+  list: ['credentials', 'system', 'list'] as const,
+}
+
+export function useSystemCredentials() {
+  return useQuery({
+    queryKey: systemCredentialKeys.list,
+    queryFn: api.listSystemCredentials,
+  })
+}
+
+export function useCreateSystemCredential() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (req: CreateCredentialRequest) => api.createSystemCredential(req),
+    onSuccess: () => qc.invalidateQueries({ queryKey: systemCredentialKeys.all }),
+  })
+}
+
+export function useRotateSystemCredential() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, data }: { name: string; data: RotateCredentialRequest['data'] }) =>
+      api.rotateSystemCredential(name, { data }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: systemCredentialKeys.all }),
+  })
+}
+
+export function useDeleteSystemCredential() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.deleteSystemCredential(name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: systemCredentialKeys.all }),
+  })
+}

@@ -8,7 +8,7 @@ export type {
   TestCredentialResult,
 } from './types'
 
-import { projectApi } from '@/lib/api'
+import { api, projectApi } from '@/lib/api'
 import type {
   Credential,
   CreateCredentialRequest,
@@ -41,4 +41,31 @@ export async function testCredential(projectId: string, name: string, req: TestC
 
 export async function deleteCredential(projectId: string, name: string): Promise<void> {
   return projectApi(projectId).delete(`/credentials/${encodeURIComponent(name)}`)
+}
+
+// ── System-scoped (admin) ─────────────────────────────────────────────────────
+// System credentials back master-level resources such as the artifact-storage
+// s3 credential. They live under the reserved system project.
+
+const SYSTEM_BASE = '/api/system'
+
+export async function listSystemCredentials(): Promise<Credential[]> {
+  const data = await api.get<Credential[]>(`${SYSTEM_BASE}/credentials`)
+  return Array.isArray(data) ? data : []
+}
+
+export async function createSystemCredential(req: CreateCredentialRequest): Promise<Credential> {
+  return api.post<Credential>(`${SYSTEM_BASE}/credentials`, req)
+}
+
+export async function rotateSystemCredential(name: string, req: RotateCredentialRequest): Promise<void> {
+  return api.post(`${SYSTEM_BASE}/credentials/${encodeURIComponent(name)}/rotate`, req)
+}
+
+export async function patchSystemCredential(name: string, req: PatchCredentialRequest): Promise<Credential> {
+  return api.patch<Credential>(`${SYSTEM_BASE}/credentials/${encodeURIComponent(name)}`, req)
+}
+
+export async function deleteSystemCredential(name: string): Promise<void> {
+  return api.delete(`${SYSTEM_BASE}/credentials/${encodeURIComponent(name)}`)
 }

@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { useProjectId } from '@/lib/projectContext'
 import { Download, FolderOpen, RefreshCw, Save, Trash2 } from 'lucide-react'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import {
+  useSystemCredentials,
+  useCreateSystemCredential,
+  useDeleteSystemCredential,
+} from '@/features/credentials/hooks'
 import {
   deleteStorageObject,
   getStorageSettings,
@@ -60,8 +66,40 @@ export default function StoragePage() {
   const [uploading, setUploading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
-  const [form, setForm] = useState({ disabled: false, url: '', token: '' })
+  const [form, setForm] = useState({ disabled: false, url: '', token: '', credentialRef: '' })
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const { data: systemCredentials = [] } = useSystemCredentials()
+  const s3Credentials = systemCredentials.filter(c => c.kind === 's3' && !c.disabled)
+  const createSystemCredential = useCreateSystemCredential()
+  const deleteSystemCredential = useDeleteSystemCredential()
+  const [s3Form, setS3Form] = useState({ name: '', accessKeyId: '', secretAccessKey: '' })
+  const [s3Error, setS3Error] = useState('')
+
+  const canCreateS3 = s3Form.name.trim() && s3Form.accessKeyId.trim() && s3Form.secretAccessKey.trim()
+
+  async function handleCreateS3Credential() {
+    setS3Error('')
+    try {
+      await createSystemCredential.mutateAsync({
+        name: s3Form.name.trim(),
+        kind: 's3',
+        data: {
+          access_key_id: s3Form.accessKeyId.trim(),
+          secret_access_key: s3Form.secretAccessKey.trim(),
+        },
+      })
+      setS3Form({ name: '', accessKeyId: '', secretAccessKey: '' })
+    } catch (err) {
+      setS3Error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleDeleteS3Credential(name: string) {
+    if (!confirm(`Delete system credential "${name}"?`)) return
+    await deleteSystemCredential.mutateAsync(name)
+    if (form.credentialRef === name) setForm(prev => ({ ...prev, credentialRef: '' }))
+  }
 
   const enabled = storage?.effective.status === 'enabled'
   const status   = storage?.effective.status ?? 'disabled'
@@ -72,7 +110,7 @@ export default function StoragePage() {
     const st = await getStorageSettings().catch(() => null)
     setStorage(st)
     if (st) {
-      if (st.config) setForm(st.config)
+      if (st.config) setForm({ ...st.config, credentialRef: st.config.credentialRef ?? '' })
       if (st.effective.status === 'enabled') {
         const objs = await listStorageObjects(projectId, prefix).catch(() => [])
         setObjects(objs)
@@ -99,9 +137,14 @@ export default function StoragePage() {
   async function handleSave() {
     setSaving(true)
     try {
-      const next = await saveStorageSettings({ disabled: form.disabled, url: form.url.trim(), token: form.token })
+      const next = await saveStorageSettings({
+        disabled: form.disabled,
+        url: form.url.trim(),
+        token: form.token,
+        credentialRef: form.credentialRef.trim() || undefined,
+      })
       setStorage(next)
-      setForm(next.config)
+      setForm({ ...next.config, credentialRef: next.config.credentialRef ?? '' })
     } finally {
       setSaving(false)
     }
@@ -246,6 +289,24 @@ export default function StoragePage() {
             />
           </DataBodyTemplate.Row>
 
+          <DataBodyTemplate.Row
+            label="storage.credentialRef"
+            description="System s3 credential supplying access keys for an s3:// URL. The URL carries only bucket/endpoint/region."
+          >
+            <Select
+              value={form.credentialRef || '__none__'}
+              onValueChange={v => setForm(prev => ({ ...prev, credentialRef: v === '__none__' ? '' : (v ?? '') }))}
+            >
+              <SelectTrigger className="w-72"><SelectValue placeholder="None (keys in URL)" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">None (keys in URL)</SelectItem>
+                {s3Credentials.map(c => (
+                  <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </DataBodyTemplate.Row>
+
           <DataBodyTemplate.Field
             label="Config file"
             description="Saved here. Apply requires a server restart."
@@ -260,6 +321,68 @@ export default function StoragePage() {
               <p><span className="text-muted-foreground">Reason: </span>{storage?.effective.reason || '—'}</p>
             </div>
           </DataBodyTemplate.Field>
+        </DataBodyTemplate.Group>
+
+        <DataBodyTemplate.Group layout="stacked" title="System S3 Credentials" description="Access keys for the artifact store, referenced by storage.credentialRef. Values are write-only.">
+          {s3Credentials.length > 0 && (
+            <div className="space-y-1">
+              {s3Credentials.map(c => (
+                <div key={c.name} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                  <span className="font-mono text-sm">{c.name}</span>
+                  <div className="flex items-center gap-2">
+                    {form.credentialRef === c.name && <Badge variant="secondary">in use</Badge>}
+                    <IconButton
+                      icon={<Trash2 />}
+                      label="Delete"
+                      onClick={() => void handleDeleteS3Credential(c.name)}
+                      className="text-muted-foreground hover:text-destructive"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="grid max-w-xl gap-3 pt-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="s3-name">Name</Label>
+              <Input
+                id="s3-name"
+                value={s3Form.name}
+                onChange={e => setS3Form(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="minio-artifacts"
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="s3-access">access_key_id</Label>
+              <Input
+                id="s3-access"
+                value={s3Form.accessKeyId}
+                onChange={e => setS3Form(prev => ({ ...prev, accessKeyId: e.target.value }))}
+                className="font-mono text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="s3-secret">secret_access_key</Label>
+              <Input
+                id="s3-secret"
+                type="password"
+                value={s3Form.secretAccessKey}
+                onChange={e => setS3Form(prev => ({ ...prev, secretAccessKey: e.target.value }))}
+                className="font-mono text-sm"
+              />
+            </div>
+            {s3Error && <p className="text-sm text-destructive">{s3Error}</p>}
+            <div>
+              <Button
+                size="sm"
+                onClick={() => void handleCreateS3Credential()}
+                disabled={!canCreateS3 || createSystemCredential.isPending}
+              >
+                {createSystemCredential.isPending ? 'Creating…' : 'Add S3 Credential'}
+              </Button>
+            </div>
+          </div>
         </DataBodyTemplate.Group>
 
         <DataBodyTemplate.Group layout="stacked" title="Upload Object">

@@ -113,6 +113,10 @@ func New(cfg Config) (*Piper, error) {
 		_ = repos.Close()
 		return nil, fmt.Errorf("ensure default project: %w", err)
 	}
+	if err := ensureSystemProject(context.Background(), repos.Project); err != nil {
+		_ = repos.Close()
+		return nil, fmt.Errorf("ensure system project: %w", err)
+	}
 	secretKey := cfg.Server.SecretEncryptionKey
 	if secretKey == "" {
 		secretKey = "sha256:piper-dev-insecure-key-change-in-production"
@@ -213,6 +217,14 @@ func New(cfg Config) (*Piper, error) {
 		events:          event.NewHub(),
 	}
 	storageURL := resolveStorageURL(cfg)
+	if storageURL != "" && strings.TrimSpace(cfg.Storage.CredentialRef) != "" {
+		injected, err := injectStorageCredential(context.Background(), credentialStore, storageURL, cfg.Storage.CredentialRef)
+		if err != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("resolve storage credential %q: %w", cfg.Storage.CredentialRef, err)
+		}
+		storageURL = injected
+	}
 	if storageURL != "" {
 		if st, err := storage.Open(storageURL, cfg.Storage.Token); err != nil {
 			slog.Warn("artifact store unavailable", "url", storageURL, "err", err)
@@ -265,6 +277,23 @@ func ensureDefaultProject(ctx context.Context, repo project.Repository) error {
 		ID:          project.DefaultID,
 		Name:        "Default",
 		Description: "Default project",
+	})
+}
+
+// ensureSystemProject seeds the reserved system project that owns
+// system-scoped credentials (e.g. the artifact-storage s3 credential).
+func ensureSystemProject(ctx context.Context, repo project.Repository) error {
+	existing, err := repo.Get(ctx, project.SystemID)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	return repo.Create(ctx, &project.Project{
+		ID:          project.SystemID,
+		Name:        "System",
+		Description: "Reserved project for system-scoped credentials",
 	})
 }
 
@@ -1013,6 +1042,39 @@ func (p *Piper) modelDir(serviceName string) string {
 // ResolveStorageURL derives the effective storage URL from the config.
 // Priority: Storage.Disabled -> empty; Storage.URL > S3Config (backward compat) > file://{output_dir}/store.
 func (cfg Config) ResolveStorageURL() string { return resolveStorageURL(cfg) }
+
+// injectStorageCredential resolves a system-scoped s3 credential and injects its
+// access key material into an s3:// storage URL's query string. Non-s3 URLs are
+// returned unchanged (credentialRef only applies to s3 backends). Values already
+// present in the URL are not overwritten.
+func injectStorageCredential(ctx context.Context, store *credential.Store, storageURL, credentialRef string) (string, error) {
+	if store == nil {
+		return "", fmt.Errorf("credential store unavailable")
+	}
+	u, err := url.Parse(storageURL)
+	if err != nil {
+		return "", fmt.Errorf("parse storage url: %w", err)
+	}
+	if u.Scheme != "s3" {
+		slog.Warn("storage.credentialRef ignored: only s3:// URLs use credential injection", "scheme", u.Scheme)
+		return storageURL, nil
+	}
+	val, err := store.ResolveS3(ctx, project.SystemID, credentialRef)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	setIfAbsent := func(key, value string) {
+		if value != "" && q.Get(key) == "" {
+			q.Set(key, value)
+		}
+	}
+	setIfAbsent("accessKey", val.Data["access_key_id"])
+	setIfAbsent("secretKey", val.Data["secret_access_key"])
+	setIfAbsent("sessionToken", val.Data["session_token"])
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
 
 // resolveStorageURL is the internal implementation.
 // Priority: Storage.Disabled -> empty; Storage.URL > S3Config (backward compat) > file://{output_dir}/store (built-in).

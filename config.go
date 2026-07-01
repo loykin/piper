@@ -78,6 +78,12 @@ type StorageConfig struct {
 
 	// Token is an optional Bearer token for HTTP-based stores.
 	Token string `yaml:"token" mapstructure:"token"`
+
+	// CredentialRef names a system-scoped s3 credential that supplies the
+	// access key material for an s3:// URL. The URL itself carries only the
+	// non-secret bucket/endpoint/region; the credential injects
+	// accessKey/secretKey/sessionToken at startup.
+	CredentialRef string `yaml:"credentialRef" mapstructure:"credentialRef"`
 }
 
 type S3Config struct {

@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/piper/piper/pkg/credential"
 	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/secret"
 )
 
 func ProjectRepoSuite(t *testing.T, repo project.Repository) {
@@ -55,37 +55,33 @@ func ProjectRepoSuite(t *testing.T, repo project.Repository) {
 	}
 }
 
-func SecretRepoSuite(t *testing.T, repo secret.Repository, projectID string) {
+func CredentialRepoSuite(t *testing.T, repo credential.Repository, projectID string) {
 	t.Helper()
 	ctx := context.Background()
 
-	t.Run("Create_disabled_name_recreates_and_enables", func(t *testing.T) {
-		meta := &secret.Metadata{
+	t.Run("Create_rotate_and_get_metadata", func(t *testing.T) {
+		meta := &credential.Metadata{
 			ProjectID: projectID,
 			Name:      "github",
-			Type:      secret.TypeEnv,
-			Provider:  secret.ProviderPiperManaged,
+			Kind:      credential.KindGeneric,
 			Keys:      []string{"token"},
 		}
 		if err := repo.Create(ctx, meta, []byte("old")); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		if err := repo.Delete(ctx, projectID, "github"); err != nil {
-			t.Fatalf("Delete: %v", err)
-		}
-		if err := repo.Create(ctx, meta, []byte("new")); err != nil {
-			t.Fatalf("Create after disabled: %v", err)
+		if err := repo.Rotate(ctx, projectID, "github", []byte("new"), []string{"token", "user"}); err != nil {
+			t.Fatalf("Rotate: %v", err)
 		}
 		got, err := repo.Get(ctx, projectID, "github")
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
-		if got == nil || got.Disabled {
-			t.Fatalf("recreated secret = %#v, want enabled", got)
+		if got == nil || got.Kind != credential.KindGeneric || len(got.Keys) != 2 {
+			t.Fatalf("credential metadata = %#v, want generic with 2 keys", got)
 		}
-		value, err := repo.GetActiveValue(ctx, projectID, "github")
+		value, err := repo.GetValue(ctx, projectID, "github")
 		if err != nil {
-			t.Fatalf("GetActiveValue: %v", err)
+			t.Fatalf("GetValue: %v", err)
 		}
 		if string(value) != "new" {
 			t.Fatalf("active value = %q, want new", string(value))

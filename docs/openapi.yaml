@@ -22,18 +22,18 @@ paths:
             text/event-stream:
               schema:
                 type: string
-  /api/projects/{project_id}/secrets:
+  /api/projects/{project_id}/credentials:
     get:
       parameters:
         - $ref: "#/components/parameters/ProjectID"
       responses:
         "200":
-          description: Project secret metadata. Secret values are never returned.
+          description: Project credential metadata. Secret values are never returned.
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/Secret" }
+                items: { $ref: "#/components/schemas/Credential" }
     post:
       parameters:
         - $ref: "#/components/parameters/ProjectID"
@@ -41,71 +41,89 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreateSecretRequest" }
+            schema: { $ref: "#/components/schemas/CreateCredentialRequest" }
       responses:
         "201":
-          description: Created secret metadata.
+          description: Created credential metadata.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Secret" }
+              schema: { $ref: "#/components/schemas/Credential" }
         "409":
-          description: Secret already exists.
-  /api/projects/{project_id}/secrets/{name}:
+          description: Credential already exists.
+  /api/projects/{project_id}/credentials/{name}:
     get:
       parameters:
         - $ref: "#/components/parameters/ProjectID"
-        - $ref: "#/components/parameters/SecretName"
+        - $ref: "#/components/parameters/CredentialName"
       responses:
         "200":
-          description: Project secret metadata.
+          description: Project credential metadata.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Secret" }
+              schema: { $ref: "#/components/schemas/Credential" }
         "404":
-          description: Secret not found.
+          description: Credential not found.
     patch:
       parameters:
         - $ref: "#/components/parameters/ProjectID"
-        - $ref: "#/components/parameters/SecretName"
+        - $ref: "#/components/parameters/CredentialName"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/PatchSecretRequest" }
+            schema: { $ref: "#/components/schemas/PatchCredentialRequest" }
       responses:
         "200":
-          description: Secret enabled state updated.
+          description: Credential metadata updated.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Secret" }
+              schema: { $ref: "#/components/schemas/Credential" }
         "404":
-          description: Secret not found.
+          description: Credential not found.
     delete:
       parameters:
         - $ref: "#/components/parameters/ProjectID"
-        - $ref: "#/components/parameters/SecretName"
+        - $ref: "#/components/parameters/CredentialName"
       responses:
         "204":
-          description: Secret disabled.
+          description: Credential deleted.
         "404":
-          description: Secret not found.
-  /api/projects/{project_id}/secrets/{name}/rotate:
+          description: Credential not found.
+  /api/projects/{project_id}/credentials/{name}/rotate:
     post:
       parameters:
         - $ref: "#/components/parameters/ProjectID"
-        - $ref: "#/components/parameters/SecretName"
+        - $ref: "#/components/parameters/CredentialName"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/RotateSecretRequest" }
+            schema: { $ref: "#/components/schemas/RotateCredentialRequest" }
       responses:
         "204":
-          description: Secret value rotated.
+          description: Credential value rotated.
         "404":
-          description: Secret not found.
+          description: Credential not found.
         "409":
-          description: Secret is disabled.
+          description: Credential is disabled.
+  /api/projects/{project_id}/credentials/{name}/test:
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/CredentialName"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TestCredentialRequest" }
+      responses:
+        "200":
+          description: Credential test succeeded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestCredentialResult" }
+        "502":
+          description: Credential test failed.
   /runs:
     get:
       parameters:
@@ -341,7 +359,7 @@ components:
       in: path
       required: true
       schema: { type: string }
-    SecretName:
+    CredentialName:
       name: name
       in: path
       required: true
@@ -357,41 +375,53 @@ components:
       required: true
       schema: { type: string }
   schemas:
-    Secret:
+    Credential:
       type: object
       properties:
         name: { type: string }
-        type: { type: string, enum: [git, env] }
-        provider: { type: string, enum: [piper-managed] }
+        kind: { type: string, enum: [generic, git, s3] }
+        endpoint: { type: string }
         keys:
           type: array
           items: { type: string }
         disabled: { type: boolean }
+        last_used_at: { type: string, format: date-time }
+        last_tested_at: { type: string, format: date-time }
+        last_test_ok: { type: boolean }
+        last_test_message: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
-        last_used_at: { type: string, format: date-time }
-    CreateSecretRequest:
+    CreateCredentialRequest:
       type: object
-      required: [name, data]
+      required: [name, kind, data]
       properties:
         name: { type: string }
-        type: { type: string, enum: [git, env], default: git }
-        provider: { type: string, enum: [piper-managed], default: piper-managed }
+        kind: { type: string, enum: [generic, git, s3] }
+        endpoint: { type: string }
         data:
           type: object
           additionalProperties: { type: string }
-    RotateSecretRequest:
+    RotateCredentialRequest:
       type: object
       required: [data]
       properties:
         data:
           type: object
           additionalProperties: { type: string }
-    PatchSecretRequest:
+    PatchCredentialRequest:
       type: object
-      required: [enabled]
       properties:
         enabled: { type: boolean }
+        endpoint: { type: string }
+    TestCredentialRequest:
+      type: object
+      properties:
+        repo: { type: string }
+    TestCredentialResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
     Run:
       type: object
       properties:

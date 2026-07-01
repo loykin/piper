@@ -39,7 +39,7 @@ export interface PipelineSourceDraft {
   type: 'git'
   repo: string
   branch: string
-  connectionRef: string
+  credentialRef: string
 }
 
 export interface PipelineDraft {
@@ -151,7 +151,7 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
     type: 'git' as const,
     repo: String(sourceStep.repo ?? ''),
     branch: String(sourceStep.branch ?? ''),
-    connectionRef: String(sourceStep.connectionRef ?? ''),
+    credentialRef: String(sourceStep.credentialRef ?? ''),
   } : undefined
 
   return { name: String(document?.metadata?.name ?? 'my-pipeline'), steps, source }
@@ -211,7 +211,7 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
       lines.push(`        source: git`)
       lines.push(`        repo: ${JSON.stringify(draft.source.repo)}`)
       if (draft.source.branch.trim()) lines.push(`        branch: ${JSON.stringify(draft.source.branch.trim())}`)
-      if (draft.source.connectionRef.trim()) lines.push(`        connectionRef: ${JSON.stringify(draft.source.connectionRef.trim())}`)
+      if (draft.source.credentialRef.trim()) lines.push(`        credentialRef: ${JSON.stringify(draft.source.credentialRef.trim())}`)
     }
     const deps = step.deps.map(d => d.trim()).filter(Boolean)
     if (step.type === 'notebook') {

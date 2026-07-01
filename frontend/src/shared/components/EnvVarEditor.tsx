@@ -5,7 +5,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
-import { useSecrets } from '@/features/secrets/hooks'
+import { useCredentials } from '@/features/credentials/hooks'
 import type { EnvVarDraft } from '@/shared/env'
 
 interface EnvVarEditorProps {
@@ -25,8 +25,8 @@ export function EnvVarEditor({
   onRemove,
   onUpdate,
 }: EnvVarEditorProps) {
-  const { data: secrets = [] } = useSecrets()
-  const activeSecrets = secrets.filter(secret => !secret.disabled)
+  const { data: credentials = [] } = useCredentials()
+  const activeCredentials = credentials.filter(credential => credential.kind === 'generic' && !credential.disabled)
 
   return (
     <div>
@@ -40,8 +40,8 @@ export function EnvVarEditor({
         {items.length === 0 ? (
           <p className="text-xs text-muted-foreground">{emptyText}</p>
         ) : items.map((item, rowIndex) => {
-          const selectedSecret = activeSecrets.find(secret => secret.name === item.secretName)
-          const secretKeys = selectedSecret?.keys ?? []
+          const selectedCredential = activeCredentials.find(credential => credential.name === item.credentialName)
+          const credentialKeys = selectedCredential?.keys ?? []
           return (
             <div key={rowIndex} className="grid gap-2 rounded-md border border-border bg-background p-2">
               <div className="grid grid-cols-[minmax(0,1fr)_8rem_auto] gap-2">
@@ -59,7 +59,7 @@ export function EnvVarEditor({
                   <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="value">Value</SelectItem>
-                    <SelectItem value="secret">Secret</SelectItem>
+                    <SelectItem value="credential">Credential</SelectItem>
                   </SelectContent>
                 </Select>
                 <IconButton
@@ -69,40 +69,40 @@ export function EnvVarEditor({
                   className="text-destructive hover:bg-destructive/10"
                 />
               </div>
-              {item.source === 'secret' ? (
+              {item.source === 'credential' ? (
                 <div className="grid grid-cols-2 gap-2">
                   <Select
-                    value={item.secretName}
-                    onValueChange={value => onUpdate(rowIndex, { secretName: value ?? '', secretKey: '' })}
+                    value={item.credentialName}
+                    onValueChange={value => onUpdate(rowIndex, { credentialName: value ?? '', credentialKey: '' })}
                   >
                     <SelectTrigger size="sm">
-                      <SelectValue placeholder="Select secret" />
+                      <SelectValue placeholder="Select credential" />
                     </SelectTrigger>
                     <SelectContent>
-                      {activeSecrets.length === 0 ? (
-                        <SelectItem value="__none__" disabled>No active secrets</SelectItem>
-                      ) : activeSecrets.map(secret => (
-                        <SelectItem key={secret.name} value={secret.name}>
+                      {activeCredentials.length === 0 ? (
+                        <SelectItem value="__none__" disabled>No active credentials</SelectItem>
+                      ) : activeCredentials.map(credential => (
+                        <SelectItem key={credential.name} value={credential.name}>
                           <span className="inline-flex items-center gap-1.5">
                             <KeyRound size={12} />
-                            {secret.name}
+                            {credential.name}
                           </span>
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <Select
-                    value={item.secretKey}
-                    onValueChange={value => onUpdate(rowIndex, { secretKey: value ?? '' })}
-                    disabled={!item.secretName || secretKeys.length === 0}
+                    value={item.credentialKey}
+                    onValueChange={value => onUpdate(rowIndex, { credentialKey: value ?? '' })}
+                    disabled={!item.credentialName || credentialKeys.length === 0}
                   >
                     <SelectTrigger size="sm">
                       <SelectValue placeholder="Select key" />
                     </SelectTrigger>
                     <SelectContent>
-                      {secretKeys.length === 0 ? (
+                      {credentialKeys.length === 0 ? (
                         <SelectItem value="__none__" disabled>No keys</SelectItem>
-                      ) : secretKeys.map(key => (
+                      ) : credentialKeys.map(key => (
                         <SelectItem key={key} value={key}>{key}</SelectItem>
                       ))}
                     </SelectContent>

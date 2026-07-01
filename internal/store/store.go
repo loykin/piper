@@ -15,12 +15,11 @@ import (
 	"github.com/piper/piper/internal/logstore"
 	"github.com/piper/piper/internal/store/postgres"
 	"github.com/piper/piper/internal/store/sqlite"
-	"github.com/piper/piper/pkg/connection"
+	"github.com/piper/piper/pkg/credential"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline/run"
 	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
-	"github.com/piper/piper/pkg/secret"
 	"github.com/piper/piper/pkg/serving"
 	"github.com/piper/piper/pkg/template"
 	"github.com/piper/piper/pkg/viewer"
@@ -33,8 +32,7 @@ type Repos struct {
 	Run              run.Repository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
-	Secret           secret.Repository
-	Connection       connection.Repository
+	Credential       credential.Repository
 	Viewer           viewer.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
@@ -61,7 +59,7 @@ type ExternalReposConfig struct {
 	Run              run.Repository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
-	Secret           secret.Repository
+	Credential       credential.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
 	NotebookVolume   notebook.VolumeRepository
@@ -190,8 +188,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Run:              sqlite.NewRunRepo(executor, PrimarySource),
 			Step:             sqlite.NewStepRepo(executor, PrimarySource),
 			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
-			Secret:           sqlite.NewSecretRepo(executor, PrimarySource),
-			Connection:       sqlite.NewConnectionRepo(executor, PrimarySource),
+			Credential:       sqlite.NewCredentialRepo(executor, PrimarySource),
 			Serving:          sqlite.NewServingRepo(executor, PrimarySource),
 			Notebook:         sqlite.NewNotebookRepo(executor, PrimarySource),
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
@@ -211,8 +208,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Run:              postgres.NewRunRepo(executor, PrimarySource),
 			Step:             postgres.NewStepRepo(executor, PrimarySource),
 			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
-			Secret:           postgres.NewSecretRepo(executor, PrimarySource),
-			Connection:       postgres.NewConnectionRepo(executor, PrimarySource),
+			Credential:       postgres.NewCredentialRepo(executor, PrimarySource),
 			Serving:          postgres.NewServingRepo(executor, PrimarySource),
 			Notebook:         postgres.NewNotebookRepo(executor, PrimarySource),
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(executor, PrimarySource),

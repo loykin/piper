@@ -18,7 +18,7 @@ import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
-import { useConnections } from '@/features/connections/hooks'
+import { useCredentials } from '@/features/credentials/hooks'
 import { createPipeline } from '@/features/pipelines/api'
 import { getPipeline } from '@/features/pipelines/api'
 import { useProjectId } from '@/lib/projectContext'
@@ -341,14 +341,14 @@ export default function PipelineEditorPage() {
     const s = searchParams.get('source')
     if (!s) return false
     if (s === 'notebook-volume') return !!searchParams.get('volume')
-    if (s === 'git') return !!searchParams.get('connection') && !!searchParams.get('repo')
+    if (s === 'git') return !!searchParams.get('repo')
     return !!searchParams.get('root')
   }, [searchParams])
 
   const editorSourceKind = (searchParams.get('source') as SourceKind) ?? 'notebook-volume'
   const editorVolumeId  = searchParams.get('volume') ?? ''
   const editorRoot      = searchParams.get('root')   ?? ''
-  const editorConnection = searchParams.get('connection') ?? ''
+  const editorCredential = searchParams.get('credential') ?? ''
   const editorRepo      = searchParams.get('repo') ?? ''
   const editorBranch    = searchParams.get('branch') ?? ''
   const editorName      = searchParams.get('name')   ?? initialDraft.name
@@ -359,7 +359,7 @@ export default function PipelineEditorPage() {
   const [formSourceKind, setFormSourceKind] = useState<SourceKind>(editorSourceKind)
   const [formVolumeId,   setFormVolumeId]   = useState(editorVolumeId)
   const [formRoot,       setFormRoot]       = useState(editorRoot)
-  const [formConnection, setFormConnection] = useState(editorConnection)
+  const [formCredential, setFormCredential] = useState(editorCredential)
   const [formRepo,       setFormRepo]       = useState(editorRepo)
   const [formBranch,     setFormBranch]     = useState(editorBranch)
 
@@ -386,17 +386,17 @@ export default function PipelineEditorPage() {
   const [resetKey, setResetKey] = useState(0)
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
   const dragDropHandledRef = useRef(false)
-  const { data: connections = [] } = useConnections()
-  const gitConnections = connections.filter(connection => connection.type === 'git' && !connection.disabled)
+  const { data: credentials = [] } = useCredentials()
+  const gitCredentials = credentials.filter(credential => credential.kind === 'git' && !credential.disabled)
   const pipelineSource = useMemo<PipelineSourceDraft | undefined>(() => {
     if (editorSourceKind !== 'git') return undefined
     return {
       type: 'git',
       repo: editorRepo,
       branch: editorBranch,
-      connectionRef: editorConnection,
+      credentialRef: editorCredential,
     }
-  }, [editorSourceKind, editorRepo, editorBranch, editorConnection])
+  }, [editorSourceKind, editorRepo, editorBranch, editorCredential])
 
   useEffect(() => {
     if (!projectId) return
@@ -709,7 +709,7 @@ export default function PipelineEditorPage() {
   const canProceed = formSourceKind === 'notebook-volume'
     ? formVolumeId !== ''
     : formSourceKind === 'git'
-      ? formConnection.trim() !== '' && formRepo.trim() !== ''
+      ? formRepo.trim() !== ''
       : formRoot.trim() !== ''
 
   function handleStartEditing() {
@@ -717,7 +717,7 @@ export default function PipelineEditorPage() {
     const params: Record<string, string> = { source: formSourceKind, name }
     if (formSourceKind === 'notebook-volume') params.volume = formVolumeId
     else if (formSourceKind === 'git') {
-      params.connection = formConnection
+      if (formCredential.trim()) params.credential = formCredential.trim()
       params.repo = formRepo.trim()
       if (formBranch.trim()) params.branch = formBranch.trim()
     }
@@ -726,10 +726,10 @@ export default function PipelineEditorPage() {
     setSearchParams(params, { replace: true })
   }
 
-  function handleGitConnectionChange(name: string) {
-    setFormConnection(name)
-    const connection = gitConnections.find(conn => conn.name === name)
-    if (connection && !formRepo.trim()) setFormRepo(connection.endpoint)
+  function handleGitCredentialChange(name: string) {
+    setFormCredential(name)
+    const credential = gitCredentials.find(item => item.name === name)
+    if (credential?.endpoint && !formRepo.trim()) setFormRepo(credential.endpoint)
   }
 
   if (!setupDone) {
@@ -773,14 +773,14 @@ export default function PipelineEditorPage() {
             ) : formSourceKind === 'git' ? (
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Git Connection</label>
-                  <Select value={formConnection} onValueChange={v => handleGitConnectionChange(v ?? '')}>
-                    <SelectTrigger><SelectValue placeholder="— select a connection —" /></SelectTrigger>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Git Credential</label>
+                  <Select value={formCredential} onValueChange={v => handleGitCredentialChange(v ?? '')}>
+                    <SelectTrigger><SelectValue placeholder="Auto-match or unauthenticated" /></SelectTrigger>
                     <SelectContent>
-                      {gitConnections.length === 0 ? (
-                        <SelectItem value="__none__" disabled>No active git connections</SelectItem>
-                      ) : gitConnections.map(conn => (
-                        <SelectItem key={conn.name} value={conn.name}>{conn.name} · {conn.endpoint}</SelectItem>
+                      {gitCredentials.length === 0 ? (
+                        <SelectItem value="__none__" disabled>No active git credentials</SelectItem>
+                      ) : gitCredentials.map(credential => (
+                        <SelectItem key={credential.name} value={credential.name}>{credential.name} · {credential.endpoint || 'any repo'}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -872,7 +872,7 @@ export default function PipelineEditorPage() {
                   </>
                 ) : editorSourceKind === 'git' ? (
                   <>
-                    <span className="text-sm font-medium">{editorConnection}</span>
+                    <span className="text-sm font-medium">{editorCredential || 'auto-match'}</span>
                     <span className="ml-2 font-mono text-xs text-muted-foreground">{editorRepo}</span>
                     {editorBranch && <span className="ml-2 font-mono text-xs text-muted-foreground">{editorBranch}</span>}
                   </>

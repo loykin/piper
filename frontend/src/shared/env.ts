@@ -1,45 +1,45 @@
-export type EnvVarSourceMode = 'value' | 'secret'
+export type EnvVarSourceMode = 'value' | 'credential'
 
 export interface EnvVarDraft {
   name: string
   value: string
   source: EnvVarSourceMode
-  secretName: string
-  secretKey: string
+  credentialName: string
+  credentialKey: string
 }
 
 export function emptyEnvVarDraft(): EnvVarDraft {
-  return { name: '', value: '', source: 'value', secretName: '', secretKey: '' }
+  return { name: '', value: '', source: 'value', credentialName: '', credentialKey: '' }
 }
 
 export function envVarDraftFromYamlEntry(value: unknown): EnvVarDraft {
   const entry = (value ?? {}) as Record<string, unknown>
   const valueFrom = (entry.valueFrom ?? {}) as Record<string, unknown>
-  const secretKeyRef = (valueFrom.secretKeyRef ?? {}) as Record<string, unknown>
-  const secretName = String(secretKeyRef.name ?? '')
-  const secretKey = String(secretKeyRef.key ?? '')
-  if (secretName || secretKey) {
+  const credentialRef = (valueFrom.credentialRef ?? {}) as Record<string, unknown>
+  const credentialName = String(credentialRef.name ?? '')
+  const credentialKey = String(credentialRef.key ?? '')
+  if (credentialName || credentialKey) {
     return {
       name: String(entry.name ?? ''),
       value: '',
-      source: 'secret',
-      secretName,
-      secretKey,
+      source: 'credential',
+      credentialName,
+      credentialKey,
     }
   }
   return {
     name: String(entry.name ?? ''),
     value: String(entry.value ?? ''),
     source: 'value',
-    secretName: '',
-    secretKey: '',
+    credentialName: '',
+    credentialKey: '',
   }
 }
 
 export function hasEnvVarValue(item: EnvVarDraft): boolean {
   const name = item.name.trim()
   if (!name) return false
-  if (item.source === 'secret') return !!item.secretName.trim() && !!item.secretKey.trim()
+  if (item.source === 'credential') return !!item.credentialName.trim() && !!item.credentialKey.trim()
   return item.value !== ''
 }
 
@@ -49,12 +49,12 @@ export function appendEnvOptionsYaml(lines: string[], indent: string, env: EnvVa
   lines.push(`${indent}options:`, `${indent}  env:`)
   for (const item of items) {
     lines.push(`${indent}    - name: ${JSON.stringify(item.name.trim())}`)
-    if (item.source === 'secret') {
+    if (item.source === 'credential') {
       lines.push(
         `${indent}      valueFrom:`,
-        `${indent}        secretKeyRef:`,
-        `${indent}          name: ${JSON.stringify(item.secretName.trim())}`,
-        `${indent}          key: ${JSON.stringify(item.secretKey.trim())}`,
+        `${indent}        credentialRef:`,
+        `${indent}          name: ${JSON.stringify(item.credentialName.trim())}`,
+        `${indent}          key: ${JSON.stringify(item.credentialKey.trim())}`,
       )
     } else {
       lines.push(`${indent}      value: ${JSON.stringify(item.value)}`)

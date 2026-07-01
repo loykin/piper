@@ -285,22 +285,21 @@ func postRun(t *testing.T, serverURL, yaml string) string {
 	return result.RunID
 }
 
-func postE2ESecret(t *testing.T, serverURL, name string, data map[string]string) {
+func postE2EGenericCredential(t *testing.T, serverURL, name string, data map[string]string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
-		"name":     name,
-		"type":     "git",
-		"provider": "piper-managed",
-		"data":     data,
+		"name": name,
+		"kind": "generic",
+		"data": data,
 	})
-	resp, err := http.Post(serverURL+e2eBase()+"/secrets", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(serverURL+e2eBase()+"/credentials", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("POST /secrets: %v", err)
+		t.Fatalf("POST /credentials: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		payload, _ := io.ReadAll(resp.Body)
-		t.Fatalf("POST /secrets status = %d: %s", resp.StatusCode, payload)
+		t.Fatalf("POST /credentials status = %d: %s", resp.StatusCode, payload)
 	}
 }
 
@@ -998,29 +997,28 @@ spec:
 
 // ─── Git Source E2E Tests ─────────────────────────────────────────────────────
 
-// postE2EConnection creates a git connection via the API.
+// postE2EGitCredential creates a git credential via the API.
 // endpoint is the scheme+host prefix (e.g. "http://127.0.0.1:PORT/") that the
-// connection store uses to auto-match repo URLs.
-func postE2EConnection(t *testing.T, serverURL, name, endpoint, user, token string) {
+// credential store uses to auto-match repo URLs.
+func postE2EGitCredential(t *testing.T, serverURL, name, endpoint, user, token string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
 		"name":     name,
-		"type":     "git",
-		"provider": "piper-managed",
+		"kind":     "git",
 		"endpoint": endpoint,
 		"data": map[string]string{
 			"username": user,
 			"token":    token,
 		},
 	})
-	resp, err := http.Post(serverURL+e2eBase()+"/connections", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(serverURL+e2eBase()+"/credentials", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("create connection: %v", err)
+		t.Fatalf("create credential: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("POST /connections status = %d: %s", resp.StatusCode, b)
+		t.Fatalf("POST /credentials status = %d: %s", resp.StatusCode, b)
 	}
 }
 
@@ -1036,9 +1034,9 @@ func repoOrigin(repoURL string) string {
 	return repoURL
 }
 
-// TestE2E_GitSourceConnectionRef verifies that a pipeline step with source: git
-// and an explicit connectionRef clones the repo and runs the script successfully.
-func TestE2E_GitSourceConnectionRef(t *testing.T) {
+// TestE2E_GitSourceCredentialRef verifies that a pipeline step with source: git
+// and an explicit credentialRef clones the repo and runs the script successfully.
+func TestE2E_GitSourceCredentialRef(t *testing.T) {
 	_, srv := newE2EServer(t)
 	startE2EWorker(t, srv.URL)
 
@@ -1047,7 +1045,7 @@ func TestE2E_GitSourceConnectionRef(t *testing.T) {
 		gitToken = "git-token"
 	)
 	repoURL := startE2EAuthenticatedGitHTTPRepo(t, "run.sh", "echo git-connectionref-ok\n", gitUser, gitToken)
-	postE2EConnection(t, srv.URL, "gitea-conn", repoOrigin(repoURL), gitUser, gitToken)
+	postE2EGitCredential(t, srv.URL, "gitea-cred", repoOrigin(repoURL), gitUser, gitToken)
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
 metadata:
@@ -1060,7 +1058,7 @@ spec:
         repo: %s
         branch: main
         path: run.sh
-        connectionRef: gitea-conn
+        credentialRef: gitea-cred
         command: ["sh", "-c", "sh \"$PIPER_SCRIPT_PATH\""]
 `, repoURL))
 	waitRunStatus(t, srv.URL, runID, "success", 20*time.Second)
@@ -1076,8 +1074,8 @@ spec:
 	}
 }
 
-// TestE2E_GitSourceAutoMatch verifies that when no connectionRef is set, the
-// Connection Store auto-matches by endpoint URL and injects credentials.
+// TestE2E_GitSourceAutoMatch verifies that when no credentialRef is set, the
+// credential store auto-matches by endpoint URL and injects credentials.
 func TestE2E_GitSourceAutoMatch(t *testing.T) {
 	_, srv := newE2EServer(t)
 	startE2EWorker(t, srv.URL)
@@ -1087,8 +1085,8 @@ func TestE2E_GitSourceAutoMatch(t *testing.T) {
 		gitToken = "auto-token"
 	)
 	repoURL := startE2EAuthenticatedGitHTTPRepo(t, "run.sh", "echo git-automatch-ok\n", gitUser, gitToken)
-	// Register connection with the repo origin — no explicit connectionRef in pipeline.
-	postE2EConnection(t, srv.URL, "auto-conn", repoOrigin(repoURL), gitUser, gitToken)
+	// Register credential with the repo origin — no explicit credentialRef in pipeline.
+	postE2EGitCredential(t, srv.URL, "auto-cred", repoOrigin(repoURL), gitUser, gitToken)
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
 metadata:
@@ -1148,7 +1146,7 @@ func TestE2E_GitSourcePipelineToServing(t *testing.T) {
 		"mkdir -p $PIPER_OUTPUT_DIR && echo model-weights-v1 > $PIPER_OUTPUT_DIR/weights.bin\n",
 		gitUser, gitToken,
 	)
-	postE2EConnection(t, srv.URL, "model-repo", repoOrigin(repoURL), gitUser, gitToken)
+	postE2EGitCredential(t, srv.URL, "model-repo", repoOrigin(repoURL), gitUser, gitToken)
 
 	const pipelineName = "e2e-git-train"
 	pipelineYAML := fmt.Sprintf(`
@@ -1162,7 +1160,7 @@ spec:
         repo: %s
         branch: main
         path: train.sh
-        connectionRef: model-repo
+        credentialRef: model-repo
         command: ["sh", "-c", "sh \"$PIPER_SCRIPT_PATH\""]
       outputs:
         - name: model

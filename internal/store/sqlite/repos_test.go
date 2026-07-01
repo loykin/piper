@@ -46,7 +46,7 @@ func TestStepRepo_SQLite(t *testing.T) {
 	repotest.StepRepoSuite(t, repos.Step, projectID)
 }
 
-func TestSecretRepo_SQLite(t *testing.T) {
+func TestCredentialRepo_SQLite(t *testing.T) {
 	repos, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -56,7 +56,7 @@ func TestSecretRepo_SQLite(t *testing.T) {
 	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
 		t.Fatal(err)
 	}
-	repotest.SecretRepoSuite(t, repos.Secret, projectID)
+	repotest.CredentialRepoSuite(t, repos.Credential, projectID)
 }
 
 // TestScheduleTimeRoundTrip verifies that time.Time values stored via ClaimRun

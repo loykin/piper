@@ -16,7 +16,7 @@ type AgentRPC interface {
 	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
 }
 
-// EnvResolver resolves manifest.EnvVar entries (including secretKeyRef) into
+// EnvResolver resolves manifest.EnvVar entries (including credentialRef) into
 // "KEY=value" strings. Implement with (*secret.Store).ResolveEnv.
 type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvVar) ([]string, error)
 
@@ -36,7 +36,7 @@ func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository
 	return d
 }
 
-// WithEnvResolver sets the resolver used to expand secretKeyRef entries in
+// WithEnvResolver sets the resolver used to expand credentialRef entries in
 // spec.Spec.Options.Env before dispatch.
 func (d *AgentDriver) WithEnvResolver(r EnvResolver) *AgentDriver {
 	d.envResolver = r

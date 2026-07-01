@@ -25,11 +25,11 @@ type EnvVar struct {
 
 // EnvVarSource selects the source for an EnvVar value.
 type EnvVarSource struct {
-	SecretKeyRef *SecretKeyRef `yaml:"secretKeyRef,omitempty" json:"secretKeyRef,omitempty"`
+	CredentialRef *CredentialRef `yaml:"credentialRef,omitempty" json:"credentialRef,omitempty"`
 }
 
-// SecretKeyRef resolves an env var value from a project secret.
-type SecretKeyRef struct {
-	Name string `yaml:"name" json:"name"` // secret name
-	Key  string `yaml:"key"  json:"key"`  // key within the secret's data map
+// CredentialRef resolves an env var value from a project generic credential.
+type CredentialRef struct {
+	Name string `yaml:"name" json:"name"` // credential name
+	Key  string `yaml:"key"  json:"key"`  // key within the credential's data map
 }

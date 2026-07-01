@@ -102,8 +102,8 @@ type Run struct {
 	Repo   string `yaml:"repo" json:"repo,omitempty"`
 	Branch string `yaml:"branch" json:"branch,omitempty"`
 	Path   string `yaml:"path" json:"path,omitempty"`
-	// ConnectionRef names a Connection from the connection store to use for git auth.
-	ConnectionRef  string     `yaml:"connectionRef,omitempty" json:"connectionRef,omitempty"`
+	// CredentialRef names a git credential to use for git auth.
+	CredentialRef  string     `yaml:"credentialRef,omitempty" json:"credentialRef,omitempty"`
 	Notebook       string     `yaml:"notebook,omitempty" json:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
 	Deps           []string   `yaml:"deps,omitempty" json:"deps,omitempty"`         // extra files/dirs to snapshot alongside the entry point
 	Prepare        [][]string `yaml:"prepare,omitempty" json:"prepare,omitempty"`   // commands run before the entry point

@@ -8,6 +8,7 @@ import { runColumns } from '@/features/runs/columns'
 import { RunDetailPanel } from '@/features/runs/components/RunDetailPanel'
 import { useRuns, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
 import { useSchedules } from '@/features/schedules/hooks'
+import { RowActions } from '@/shared/components/RowActions'
 import type { Run } from '@/features/runs/api'
 
 function HistoryPageInner() {
@@ -43,7 +44,7 @@ function HistoryPageInner() {
     header: '',
     meta: { minWidth: 140, align: 'right' },
     cell: ({ row }) => (
-      <div className="flex justify-end items-center gap-0.5">
+      <RowActions>
         <IconButton icon={<RotateCcw />} label="Rerun"
           disabled={row.original.status === 'running' || row.original.status === 'scheduled'}
           onClick={(e) => handleRerun(e, row.original)}
@@ -56,7 +57,7 @@ function HistoryPageInner() {
           disabled={row.original.status === 'running' || (deleting && deletingId === row.original.id)}
           onClick={(e) => handleDelete(e, row.original)}
           className="text-destructive hover:bg-destructive/10" />
-      </div>
+      </RowActions>
     ),
   }
 

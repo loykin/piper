@@ -4,6 +4,7 @@ import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@lo
 import { PanelTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { RowActions } from '@/shared/components/RowActions'
 import type { Step } from '../types'
 
 function formatStepTime(value?: string): string {
@@ -75,13 +76,15 @@ export function StepList({ steps, selectedId, onSelect, onRetry }: StepListProps
       header: '',
       meta: { minWidth: 90, align: 'right' as const },
       cell: ({ row }: { row: { original: Step } }) => (
-        <IconButton icon={<RefreshCw />} label="Retry"
-          disabled={row.original.status !== 'failed'}
-          onClick={(e) => {
-            e.stopPropagation()
-            onRetry(row.original.step_name)
-          }}
-          className="text-yellow-400 hover:bg-yellow-950" />
+        <RowActions>
+          <IconButton icon={<RefreshCw />} label="Retry"
+            disabled={row.original.status !== 'failed'}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRetry(row.original.step_name)
+            }}
+            className="text-yellow-400 hover:bg-yellow-950" />
+        </RowActions>
       ),
     }] : []),
   ]

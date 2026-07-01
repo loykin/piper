@@ -3,6 +3,7 @@ import { ExternalLink, HardDriveDownload, Play, Square, Trash2 } from 'lucide-re
 import { IconButton } from '@/components/ui/icon-button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { RowActions } from '@/shared/components/RowActions'
 import { notebookProxyURL } from './api'
 import type { NotebookServer, NotebookVolume } from './api'
 
@@ -40,7 +41,7 @@ export function getNotebookColumns(
         const isStarting = status === 'provisioning' || status === 'starting'
         const isStopping = status === 'stopping'
         return (
-          <div className="flex justify-end items-center gap-0.5">
+          <RowActions>
             {(isStarting || isStopping) && (
               <span className="text-xs text-muted-foreground animate-pulse px-2">
                 {isStarting ? 'Starting…' : 'Stopping…'}
@@ -73,7 +74,7 @@ export function getNotebookColumns(
             <IconButton icon={<Trash2 />} label="Delete" disabled={isBusy}
               onClick={e => { e.stopPropagation(); onDelete(name) }}
               className="text-muted-foreground hover:text-destructive" />
-          </div>
+          </RowActions>
         )
       },
     },
@@ -143,7 +144,7 @@ export function getNotebookVolumeColumns(
         const vol = row.original
         const isBusy = busy === vol.id
         return (
-          <div className="flex justify-end items-center gap-0.5">
+          <RowActions>
             {vol.status === 'released' && (
               <IconButton icon={<HardDriveDownload />} label="Attach" disabled={isBusy}
                 onClick={e => { e.stopPropagation(); onAttach(vol.id) }} />
@@ -154,7 +155,7 @@ export function getNotebookVolumeColumns(
               disabled={isBusy || vol.status === 'bound'}
               onClick={e => { e.stopPropagation(); onPurge(vol) }}
               className="text-destructive hover:bg-destructive/10 hover:text-destructive" />
-          </div>
+          </RowActions>
         )
       },
     },

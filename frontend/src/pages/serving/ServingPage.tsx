@@ -9,6 +9,7 @@ import { useServices, useStopService, useRestartService } from '@/features/servi
 import { DeployForm } from '@/features/serving/components/DeployForm'
 import { ServingDetailPanel } from '@/features/serving/components/ServingDetailPanel'
 import { serviceColumns } from '@/features/serving/columns'
+import { RowActions } from '@/shared/components/RowActions'
 import type { Service } from '@/features/serving/api'
 
 function ServingPageInner() {
@@ -25,7 +26,7 @@ function ServingPageInner() {
     cell: ({ row }) => {
       const svc = row.original
       return (
-        <div className="flex items-center gap-0.5">
+        <RowActions className="justify-start">
           {svc.status === 'running' && (
             <IconButton icon={<RefreshCw />} label="Restart"
               onClick={e => { e.stopPropagation(); restartService(svc.name) }} />
@@ -39,7 +40,7 @@ function ServingPageInner() {
               }}
               className="text-destructive hover:bg-destructive/10" />
           )}
-        </div>
+        </RowActions>
       )
     },
   }

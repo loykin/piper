@@ -7,6 +7,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { runColumns } from '@/features/runs/columns'
 import { useRuns, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
 import { useProjectId } from '@/lib/projectContext'
+import { RowActions } from '@/shared/components/RowActions'
 import type { Run } from '@/features/runs/api'
 
 export default function RunHistoryPage() {
@@ -37,7 +38,7 @@ export default function RunHistoryPage() {
     header: '',
     meta: { minWidth: 210, align: 'right' },
     cell: ({ row }) => (
-      <div className="flex justify-end items-center gap-0.5">
+      <RowActions>
         <IconButton icon={<RotateCcw />} label="Rerun"
           disabled={row.original.status === 'running' || row.original.status === 'scheduled'}
           onClick={(e) => handleRerun(e, row.original)}
@@ -50,7 +51,7 @@ export default function RunHistoryPage() {
           disabled={row.original.status === 'running' || (deleting && deletingId === row.original.id)}
           onClick={(e) => handleDelete(e, row.original)}
           className="text-destructive hover:bg-destructive/10" />
-      </div>
+      </RowActions>
     ),
   }), [deleting, deletingId, handleDelete, handleRerun])
 

@@ -11,6 +11,7 @@ import { scheduleColumns } from '@/features/schedules/columns'
 import { ScheduleDetailPanel } from '@/features/schedules/components/ScheduleDetailPanel'
 import { useSchedules, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
 import { usePipelines } from '@/features/pipelines/hooks'
+import { RowActions } from '@/shared/components/RowActions'
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import type { Schedule } from '@/features/schedules/api'
 
@@ -51,7 +52,7 @@ function WorkflowsPageInner() {
     cell: ({ row }) => {
       const s = row.original
       return (
-        <div className="flex items-center justify-end gap-0.5">
+        <RowActions>
           {s.schedule_type === 'cron' && (
             <IconButton icon={<Power />} label={s.enabled ? 'Disable' : 'Enable'}
               onClick={(e) => {
@@ -67,7 +68,7 @@ function WorkflowsPageInner() {
               deleteSchedule(s.id)
             }}
             className="text-destructive hover:bg-destructive/10" />
-        </div>
+        </RowActions>
       )
     },
   }), [toggleSchedule, deleteSchedule])

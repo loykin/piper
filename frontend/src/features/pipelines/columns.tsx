@@ -3,6 +3,7 @@ import { type DataGridColumnDef } from '@loykin/gridkit'
 import { CalendarClock, CopyPlus, Play, Trash2 } from 'lucide-react'
 import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
+import { RowActions } from '@/shared/components/RowActions'
 import type { PipelineTemplate } from './types'
 
 function relativeTime(iso: string): string {
@@ -78,7 +79,7 @@ export function usePipelineColumns(callbacks: PipelineColumnCallbacks): DataGrid
       header: '',
       size: 116,
       cell: ({ row }) => (
-        <div className="flex items-center justify-end gap-0.5">
+        <RowActions>
           <IconButton icon={<Play />} label="Run" onClick={() => callbacks.onRun(row.original)} />
           <IconButton
             icon={<CalendarClock />}
@@ -96,7 +97,7 @@ export function usePipelineColumns(callbacks: PipelineColumnCallbacks): DataGrid
             onClick={() => callbacks.onDelete(row.original)}
             className="text-destructive hover:bg-destructive/10"
           />
-        </div>
+        </RowActions>
       ),
     },
   ], [callbacks])

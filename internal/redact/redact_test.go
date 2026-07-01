@@ -58,3 +58,18 @@ func TestString(t *testing.T) {
 		})
 	}
 }
+
+func TestValues(t *testing.T) {
+	got := Values("secret is plain-token-123 and token=abc123", []string{"plain-token-123", "abc123"})
+	want := "secret is [REDACTED] and token=[REDACTED]"
+	if got != want {
+		t.Fatalf("Values() = %q, want %q", got, want)
+	}
+}
+
+func TestValuesIgnoresShortValues(t *testing.T) {
+	got := Values("id 123 should remain", []string{"123"})
+	if got != "id 123 should remain" {
+		t.Fatalf("Values() = %q", got)
+	}
+}

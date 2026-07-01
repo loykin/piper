@@ -133,16 +133,17 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 	}
 
 	storageURL, storageToken := taskStorageForK8sWorker(task, a.cfg.Store.MasterURL, a.cfg.Store.WorkerToken)
+	execEnv := append([]string{}, task.Env...)
 	spec := pdriver.ExecSpec{
 		RuntimeKey:   pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
 		Image:        image,
 		Namespace:    namespace,
 		StorageToken: storageToken,
 		StorageURL:   storageURL,
-		Env:          append([]string{}, task.Env...),
+		Env:          execEnv,
 	}
 	if a.cfg.LogClient != nil {
-		spec.LogSink = logsink.NewGRPCLogSink(task.ProjectID, a.cfg.LogClient)
+		spec.LogSink = logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, a.cfg.LogClient), logsink.ValuesFromEnv(execEnv))
 	}
 
 	handle, err := a.driver.Start(ctx, task, spec)

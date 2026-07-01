@@ -259,14 +259,15 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 
 	runtimeKey := pdriver.RuntimeKey(w.cfg.Agent.ID, task.RunID, task.StepName, task.Attempt)
 	storageURL, storageToken := taskStorageForWorker(task, w.cfg.Agent.MasterURL, w.cfg.Agent.WorkerToken, w.cfg.Store.LocalStoreAccess)
+	execEnv := mergeExecutionEnv(w.gitEnv(), task.Env)
 
 	spec := pdriver.ExecSpec{
 		RuntimeKey:   runtimeKey,
 		OutputDir:    w.cfg.Store.OutputDir,
 		StorageToken: storageToken,
 		StorageURL:   storageURL,
-		Env:          mergeExecutionEnv(w.gitEnv(), task.Env),
-		LogSink:      logsink.NewGRPCLogSink(task.ProjectID, w.client),
+		Env:          execEnv,
+		LogSink:      logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, w.client), logsink.ValuesFromEnv(execEnv)),
 	}
 
 	// Image must be resolved here (in the worker layer) for container runtimes.

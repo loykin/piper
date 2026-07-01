@@ -235,8 +235,8 @@ func (w *Worker) startNotebook(_ context.Context, req notebook.WorkerStartReques
 		logRuntimeStart(runtime, rn, workDir, port)
 		// Create the sink before Start so we can stop it on start error.
 		// The runtime's OnExit wrapper calls sink.Stop() on process exit.
-		nbSink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
 		extraEnv := buildNotebookEnv(spec.Spec.Options.Env, req.Env)
+		nbSink := logsink.NewRedactingSink(logsink.NewGRPCLogSink(req.ProjectID, w.client), logsink.ValuesFromEnv(req.Env))
 		started, err := w.driver.Start(context.Background(), notebookdriver.StartRequest{
 			RuntimeName: rn,
 			ProjectID:   req.ProjectID,

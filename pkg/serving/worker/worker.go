@@ -207,7 +207,7 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		}
 	}
 
-	sink := logsink.NewGRPCLogSink(req.ProjectID, w.client)
+	sink := logsink.NewRedactingSink(logsink.NewGRPCLogSink(req.ProjectID, w.client), logsink.ValuesFromEnv(req.Env))
 	endpoint, err = w.driver.Deploy(context.Background(), servingdriver.DeployRequest{
 		ProjectID:   req.ProjectID,
 		Name:        name,

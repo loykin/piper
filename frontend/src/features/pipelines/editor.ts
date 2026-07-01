@@ -35,9 +35,17 @@ export interface PipelineStepDraft {
   gpu: string
 }
 
+export interface PipelineSourceDraft {
+  type: 'git'
+  repo: string
+  branch: string
+  connectionRef: string
+}
+
 export interface PipelineDraft {
   name: string
   steps: PipelineStepDraft[]
+  source?: PipelineSourceDraft
 }
 
 const DEFAULT_STEP_COMMAND = ['echo', 'hello from piper']
@@ -116,7 +124,6 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
     const driver = (step.driver ?? {}) as Record<string, unknown>
     const k8s = (driver.k8s ?? {}) as Record<string, unknown>
     const resources = (k8s.resources ?? {}) as Record<string, unknown>
-
     return {
       id: nextStepId(),
       name: String(step.name ?? nextStepName(index)),
@@ -137,7 +144,17 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
     }
   })
 
-  return { name: String(document?.metadata?.name ?? 'my-pipeline'), steps }
+  const sourceStep = rawSteps
+    .map(value => ((value as Record<string, unknown>).run ?? {}) as Record<string, unknown>)
+    .find(run => String(run.source ?? '') === 'git')
+  const source = sourceStep ? {
+    type: 'git' as const,
+    repo: String(sourceStep.repo ?? ''),
+    branch: String(sourceStep.branch ?? ''),
+    connectionRef: String(sourceStep.connectionRef ?? ''),
+  } : undefined
+
+  return { name: String(document?.metadata?.name ?? 'my-pipeline'), steps, source }
 }
 
 function formatArtifactBlock(key: 'inputs' | 'outputs', items: PipelineArtifactDraft[]): string[] {
@@ -190,6 +207,12 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
     }
     lines.push('      run:')
     lines.push(`        type: ${step.type}`)
+    if (draft.source?.type === 'git') {
+      lines.push(`        source: git`)
+      lines.push(`        repo: ${JSON.stringify(draft.source.repo)}`)
+      if (draft.source.branch.trim()) lines.push(`        branch: ${JSON.stringify(draft.source.branch.trim())}`)
+      if (draft.source.connectionRef.trim()) lines.push(`        connectionRef: ${JSON.stringify(draft.source.connectionRef.trim())}`)
+    }
     const deps = step.deps.map(d => d.trim()).filter(Boolean)
     if (step.type === 'notebook') {
       if (step.sourcePath.trim()) lines.push(`        notebook: ${JSON.stringify(step.sourcePath.trim())}`)

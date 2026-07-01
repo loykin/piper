@@ -18,12 +18,14 @@ import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
+import { useConnections } from '@/features/connections/hooks'
 import { createPipeline } from '@/features/pipelines/api'
 import { getPipeline } from '@/features/pipelines/api'
 import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
   parsePipelineDraftYaml, validatePipelineDraft,
+  type PipelineSourceDraft,
   type PipelineArtifactDraft, type PipelineKeyValueDraft,
   type PipelineStepDraft, type PipelineTaskType,
 } from '@/features/pipelines/editor'
@@ -338,12 +340,17 @@ export default function PipelineEditorPage() {
   const setupDone = useMemo(() => {
     const s = searchParams.get('source')
     if (!s) return false
-    return s === 'notebook-volume' ? !!searchParams.get('volume') : !!searchParams.get('root')
+    if (s === 'notebook-volume') return !!searchParams.get('volume')
+    if (s === 'git') return !!searchParams.get('connection') && !!searchParams.get('repo')
+    return !!searchParams.get('root')
   }, [searchParams])
 
   const editorSourceKind = (searchParams.get('source') as SourceKind) ?? 'notebook-volume'
   const editorVolumeId  = searchParams.get('volume') ?? ''
   const editorRoot      = searchParams.get('root')   ?? ''
+  const editorConnection = searchParams.get('connection') ?? ''
+  const editorRepo      = searchParams.get('repo') ?? ''
+  const editorBranch    = searchParams.get('branch') ?? ''
   const editorName      = searchParams.get('name')   ?? initialDraft.name
   const editorFromVersion = searchParams.get('from_version') ?? ''
 
@@ -352,6 +359,9 @@ export default function PipelineEditorPage() {
   const [formSourceKind, setFormSourceKind] = useState<SourceKind>(editorSourceKind)
   const [formVolumeId,   setFormVolumeId]   = useState(editorVolumeId)
   const [formRoot,       setFormRoot]       = useState(editorRoot)
+  const [formConnection, setFormConnection] = useState(editorConnection)
+  const [formRepo,       setFormRepo]       = useState(editorRepo)
+  const [formBranch,     setFormBranch]     = useState(editorBranch)
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('design')
   const [pipelineName, setPipelineName] = useState(editorName)
@@ -376,6 +386,17 @@ export default function PipelineEditorPage() {
   const [resetKey, setResetKey] = useState(0)
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
   const dragDropHandledRef = useRef(false)
+  const { data: connections = [] } = useConnections()
+  const gitConnections = connections.filter(connection => connection.type === 'git' && !connection.disabled)
+  const pipelineSource = useMemo<PipelineSourceDraft | undefined>(() => {
+    if (editorSourceKind !== 'git') return undefined
+    return {
+      type: 'git',
+      repo: editorRepo,
+      branch: editorBranch,
+      connectionRef: editorConnection,
+    }
+  }, [editorSourceKind, editorRepo, editorBranch, editorConnection])
 
   useEffect(() => {
     if (!projectId) return
@@ -394,7 +415,7 @@ export default function PipelineEditorPage() {
       setPositions(buildPositions(parsed.steps))
       setSelectedId(parsed.steps[0]?.id ?? '')
       setEditingId(null)
-      setYamlText(buildPipelineDraftYaml({ name: template.name, steps: parsed.steps }))
+      setYamlText(buildPipelineDraftYaml({ name: template.name, steps: parsed.steps, source: parsed.source }))
       setError('')
     }).catch(err => {
       if (!cancelled) setError(err instanceof Error ? err.message : String(err))
@@ -439,11 +460,11 @@ export default function PipelineEditorPage() {
   }, [editorSourceKind, editorVolumeId])
 
   useEffect(() => {
-    setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks }))
+    setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource }))
     setValidation(validatePipelineDraft({ name: pipelineName, steps: tasks }))
     if (!tasks.some(t => t.id === selectedId)) setSelectedId(tasks[0]?.id ?? '')
     if (editingId && !tasks.some(t => t.id === editingId)) setEditingId(null)
-  }, [pipelineName, tasks, selectedId, editingId])
+  }, [pipelineName, tasks, pipelineSource, selectedId, editingId])
 
   useEffect(() => {
     setPositions(prev => {
@@ -587,7 +608,7 @@ export default function PipelineEditorPage() {
     setSubmitting(true)
     setError('')
     try {
-      const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks })
+      const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource })
       await createPipeline(projectId, {
         yaml,
         volume_id: submitVolumeId || undefined,
@@ -685,15 +706,30 @@ export default function PipelineEditorPage() {
     ))
   }
 
-  const canProceed = formSourceKind === 'notebook-volume' ? formVolumeId !== '' : formRoot.trim() !== ''
+  const canProceed = formSourceKind === 'notebook-volume'
+    ? formVolumeId !== ''
+    : formSourceKind === 'git'
+      ? formConnection.trim() !== '' && formRepo.trim() !== ''
+      : formRoot.trim() !== ''
 
   function handleStartEditing() {
     const name = formName.trim() || 'my-pipeline'
     const params: Record<string, string> = { source: formSourceKind, name }
     if (formSourceKind === 'notebook-volume') params.volume = formVolumeId
+    else if (formSourceKind === 'git') {
+      params.connection = formConnection
+      params.repo = formRepo.trim()
+      if (formBranch.trim()) params.branch = formBranch.trim()
+    }
     else params.root = formRoot
     setPipelineName(name)
     setSearchParams(params, { replace: true })
+  }
+
+  function handleGitConnectionChange(name: string) {
+    setFormConnection(name)
+    const connection = gitConnections.find(conn => conn.name === name)
+    if (connection && !formRepo.trim()) setFormRepo(connection.endpoint)
   }
 
   if (!setupDone) {
@@ -733,6 +769,30 @@ export default function PipelineEditorPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            ) : formSourceKind === 'git' ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Git Connection</label>
+                  <Select value={formConnection} onValueChange={v => handleGitConnectionChange(v ?? '')}>
+                    <SelectTrigger><SelectValue placeholder="— select a connection —" /></SelectTrigger>
+                    <SelectContent>
+                      {gitConnections.length === 0 ? (
+                        <SelectItem value="__none__" disabled>No active git connections</SelectItem>
+                      ) : gitConnections.map(conn => (
+                        <SelectItem key={conn.name} value={conn.name}>{conn.name} · {conn.endpoint}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Repository URL</label>
+                  <Input value={formRepo} onChange={e => setFormRepo(e.target.value)} placeholder="https://github.com/org/repo.git" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Branch</label>
+                  <Input value={formBranch} onChange={e => setFormBranch(e.target.value)} placeholder="main" />
+                </div>
               </div>
             ) : (
               <div>
@@ -809,6 +869,12 @@ export default function PipelineEditorPage() {
                   <>
                     <span className="text-sm font-medium">{selectedVolume.label}</span>
                     <span className="ml-2 font-mono text-xs text-muted-foreground">{selectedVolume.work_dir}</span>
+                  </>
+                ) : editorSourceKind === 'git' ? (
+                  <>
+                    <span className="text-sm font-medium">{editorConnection}</span>
+                    <span className="ml-2 font-mono text-xs text-muted-foreground">{editorRepo}</span>
+                    {editorBranch && <span className="ml-2 font-mono text-xs text-muted-foreground">{editorBranch}</span>}
                   </>
                 ) : (
                   <span className="font-mono text-xs">{editorRoot || editorSourceKind}</span>

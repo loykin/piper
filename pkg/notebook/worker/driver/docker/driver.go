@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/go-units"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	network_ "github.com/moby/moby/api/types/network"
@@ -437,86 +436,11 @@ type dockerResourceSpec struct {
 }
 
 func dockerResources(ds *manifest.DriverDockerSpec) (dockerResourceSpec, error) {
-	var out dockerResourceSpec
-
-	var memory string
-	if ds != nil {
-		memory = ds.MemLimit
+	spec, err := dockerinfra.ResourcesFromDriverDocker(ds)
+	if err != nil {
+		return dockerResourceSpec{}, err
 	}
-	if memory != "" {
-		n, err := units.RAMInBytes(memory)
-		if err != nil {
-			return out, fmt.Errorf("invalid docker memory %q: %w", memory, err)
-		}
-		out.resources.Memory = n
-	}
-
-	var shmSize string
-	if ds != nil {
-		shmSize = ds.ShmSize
-	}
-	if shmSize != "" {
-		n, err := units.RAMInBytes(shmSize)
-		if err != nil {
-			return out, fmt.Errorf("invalid docker shm_size %q: %w", shmSize, err)
-		}
-		out.shmSize = n
-	}
-
-	var cpuStr string
-	if ds != nil {
-		cpuStr = ds.CPUs
-	}
-	if cpuStr != "" {
-		cpus, err := strconv.ParseFloat(cpuStr, 64)
-		if err != nil || cpus <= 0 {
-			return out, fmt.Errorf("invalid docker cpus %q", cpuStr)
-		}
-		out.resources.NanoCPUs = int64(cpus * 1_000_000_000)
-	}
-
-	// GPU: extracted from per-notebook Docker Compose deploy.resources spec.
-	if ds != nil && ds.Deploy != nil && ds.Deploy.Resources.Reservations != nil {
-		for _, dev := range ds.Deploy.Resources.Reservations.Devices {
-			isGPU := false
-			for _, capability := range dev.Capabilities {
-				if capability == "gpu" {
-					isGPU = true
-					break
-				}
-			}
-			if !isGPU {
-				continue
-			}
-			devDriver := dev.Driver
-			if devDriver == "" {
-				devDriver = "nvidia"
-			}
-			if len(dev.DeviceIDs) > 0 {
-				out.resources.DeviceRequests = append(out.resources.DeviceRequests, container.DeviceRequest{
-					Driver:       devDriver,
-					DeviceIDs:    dev.DeviceIDs,
-					Capabilities: [][]string{{"gpu"}},
-				})
-			} else {
-				count := -1 // "all"
-				if dev.Count != "" && dev.Count != "all" {
-					n, err := strconv.Atoi(dev.Count)
-					if err != nil || n <= 0 {
-						return out, fmt.Errorf("invalid docker device count %q", dev.Count)
-					}
-					count = n
-				}
-				out.resources.DeviceRequests = append(out.resources.DeviceRequests, container.DeviceRequest{
-					Driver:       devDriver,
-					Count:        count,
-					Capabilities: [][]string{{"gpu"}},
-				})
-			}
-		}
-	}
-
-	return out, nil
+	return dockerResourceSpec{resources: spec.Resources, shmSize: spec.ShmSize}, nil
 }
 
 func dockerMounts(workDir string, vols []Volume) ([]mount.Mount, error) {

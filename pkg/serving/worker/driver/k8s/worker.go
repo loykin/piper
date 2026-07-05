@@ -145,22 +145,9 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	if svc.Spec.Driver.K8s != nil {
 		res = svc.Spec.Driver.K8s.Resources
 	}
-	resReqs := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{},
-		Limits:   corev1.ResourceList{},
-	}
-	if res.CPU != "" {
-		q := resource.MustParse(res.CPU)
-		resReqs.Requests[corev1.ResourceCPU] = q
-		resReqs.Limits[corev1.ResourceCPU] = q
-	}
-	if res.Memory != "" {
-		q := resource.MustParse(res.Memory)
-		resReqs.Requests[corev1.ResourceMemory] = q
-		resReqs.Limits[corev1.ResourceMemory] = q
-	}
-	if res.GPU != "" {
-		resReqs.Limits["nvidia.com/gpu"] = resource.MustParse(res.GPU)
+	resReqs, err := servingResourceRequirements(res)
+	if err != nil {
+		return servingDeployResponse{}, err
 	}
 	var pullPolicy corev1.PullPolicy
 	if svc.Spec.Driver.K8s != nil {
@@ -245,6 +232,37 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 		Endpoint:  fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", name, ns, rt.Port),
 		Namespace: ns,
 	}, nil
+}
+
+func servingResourceRequirements(res manifest.ResourceSpec) (corev1.ResourceRequirements, error) {
+	resReqs := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{},
+		Limits:   corev1.ResourceList{},
+	}
+	if res.CPU != "" {
+		q, err := resource.ParseQuantity(res.CPU)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s cpu %q: %w", res.CPU, err)
+		}
+		resReqs.Requests[corev1.ResourceCPU] = q
+		resReqs.Limits[corev1.ResourceCPU] = q
+	}
+	if res.Memory != "" {
+		q, err := resource.ParseQuantity(res.Memory)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s memory %q: %w", res.Memory, err)
+		}
+		resReqs.Requests[corev1.ResourceMemory] = q
+		resReqs.Limits[corev1.ResourceMemory] = q
+	}
+	if res.GPU != "" {
+		q, err := resource.ParseQuantity(res.GPU)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s gpu %q: %w", res.GPU, err)
+		}
+		resReqs.Limits["nvidia.com/gpu"] = q
+	}
+	return resReqs, nil
 }
 
 func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error {

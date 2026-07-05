@@ -180,7 +180,7 @@ export default function TaskHistoryPage() {
               pagination={{ pageSize: 15 }}
               footer={(table) => <DataGridPaginationBar table={table} className="px-4 py-2" pageSizes={[15, 30, 50]} />}
               classNames={{
-                container: 'border-0 rounded-none bg-transparent',
+                root: 'border-0 rounded-none bg-transparent',
                 header: 'bg-gray-900',
                 headerCell: 'text-xs uppercase tracking-wider text-gray-400',
                 row: 'bg-gray-950 hover:bg-gray-900 transition-colors',

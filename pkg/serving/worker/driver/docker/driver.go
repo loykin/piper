@@ -117,6 +117,23 @@ func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint
 		dockerRuntimeLabel: req.RuntimeName,
 		dockerWorkerLabel:  d.workerID,
 	}
+	resources, err := dockerinfra.ResourcesFromDriverDocker(req.Docker)
+	if err != nil {
+		if req.LogSink != nil {
+			req.LogSink.Stop()
+		}
+		return "", err
+	}
+	if req.GPUs != "" && len(resources.Resources.DeviceRequests) == 0 {
+		gpuRequest, err := dockerinfra.GPUDeviceRequestFromSelector(req.GPUs)
+		if err != nil {
+			if req.LogSink != nil {
+				req.LogSink.Stop()
+			}
+			return "", err
+		}
+		resources.Resources.DeviceRequests = append(resources.Resources.DeviceRequests, gpuRequest)
+	}
 
 	created, createErr := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
 		Name: containerName(req.RuntimeName),
@@ -131,6 +148,8 @@ func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint
 		HostConfig: &container.HostConfig{
 			NetworkMode:  container.NetworkMode(d.cfg.Network),
 			PortBindings: network_.PortMap{exposedPort: []network_.PortBinding{{HostPort: fmt.Sprintf("%d", req.Port)}}},
+			Resources:    resources.Resources,
+			ShmSize:      resources.ShmSize,
 		},
 	})
 	if createErr != nil {

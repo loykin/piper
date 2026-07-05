@@ -95,13 +95,14 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 		StorageURL:   spec.StorageURL,
 		OutputDir:    "/piper-outputs",
 		InputDir:     "/piper-inputs",
+		TaskFile:     "/piper-task/task.json",
 		ResultFile:   "/dev/termination-log",
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("k8s driver: build agent args: %w", err)
 	}
 	launcher := d.launcher(namespace)
-	runtimeKey, err := launcher.CreateJob(ctx, task, spec.RuntimeKey, image, agentArgs, spec.Env)
+	runtimeKey, err := launcher.CreateJob(ctx, task, spec.RuntimeKey, image, agentArgs, nil)
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("k8s dispatch: %w", err)
 	}

@@ -71,18 +71,21 @@ func TestIntegration_SimpleJob(t *testing.T) {
 	runID := fmt.Sprintf("simple-%d", time.Now().UnixNano())
 
 	// registry:2: already pulled in K8s, Alpine-based → sh is available
-	job := l.buildJob(
+	job, err := l.buildJob(
 		&proto.Task{RunID: runID, StepName: "hello"},
 		"registry:2",
 		nil,
 	)
+	if err != nil {
+		t.Fatalf("build job: %v", err)
+	}
 	// Remove initContainer — run directly without agent injection
 	job.Spec.Template.Spec.InitContainers = nil
 	job.Spec.Template.Spec.Containers[0].Command = []string{"sh", "-c", "echo hello-from-piper && sleep 1"}
 	job.Spec.Template.Spec.Containers[0].Args = nil
 	job.Spec.Template.Spec.Containers[0].ImagePullPolicy = "IfNotPresent"
 
-	_, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{})
+	_, err = l.clientset.BatchV1().Jobs(l.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}

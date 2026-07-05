@@ -63,6 +63,35 @@ spec:
 	}
 }
 
+func TestServingDeployInvalidResourcesReturnsError(t *testing.T) {
+	a := New(Config{
+		Client:     fake.NewSimpleClientset(),
+		Namespaces: []string{"serving"},
+	})
+
+	_, err := a.deployServing(context.Background(), servingDeployRequest{
+		ProjectID: "project-a",
+		S3URI:     "s3://models/demo",
+		YAML: `
+metadata:
+  name: demo
+spec:
+  run:
+    command: ["python", "serve.py"]
+    port: 8000
+  driver:
+    k8s:
+      image: model:latest
+      namespace: serving
+      resources:
+        cpu: "2 cores"
+`,
+	})
+	if err == nil {
+		t.Fatal("deployServing returned nil error for invalid resources")
+	}
+}
+
 func TestServingDeployUpdatesExistingDeployment(t *testing.T) {
 	replicas := int32(1)
 	client := fake.NewSimpleClientset(&appsv1.Deployment{

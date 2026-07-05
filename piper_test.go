@@ -65,12 +65,28 @@ func newTestPiper(t *testing.T, cfg Config) *Piper {
 	if !cfg.Auth.Trusted && cfg.Auth.Authenticator == nil && cfg.Auth.Factory == nil {
 		cfg.Auth.Trusted = true
 	}
+	if cfg.Server.SecretEncryptionKey == "" {
+		cfg.Server.AllowInsecureDevKey = true
+	}
 	p, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = p.Close() })
 	return p
+}
+
+func TestNewRequiresCredentialEncryptionKeyUnlessDevOptIn(t *testing.T) {
+	_, err := New(Config{
+		OutputDir: t.TempDir(),
+		Auth:      AuthConfig{Trusted: true},
+	})
+	if err == nil {
+		t.Fatal("expected missing secret_encryption_key to fail without dev opt-in")
+	}
+	if !strings.Contains(err.Error(), "server.secret_encryption_key is required") {
+		t.Fatalf("error = %v", err)
+	}
 }
 
 func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
@@ -721,6 +737,7 @@ func TestAuthFactoryRunsDuringNew(t *testing.T) {
 	called := false
 	p, err := New(Config{
 		OutputDir: t.TempDir(),
+		Server:    ServerConfig{AllowInsecureDevKey: true},
 		Auth: AuthConfig{
 			Factory: func(deps AuthDependencies) (AuthConfig, error) {
 				called = true

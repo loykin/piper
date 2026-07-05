@@ -67,6 +67,8 @@ const (
 	// agentSubcmd and agentExecSubcmd are the piper CLI subcommands for step execution.
 	agentSubcmd     = "agent"
 	agentExecSubcmd = "exec"
+	taskSecretKey   = "task.json"
+	taskMountPath   = "/piper-task"
 )
 
 // Launcher owns Kubernetes API operations for prepared Jobs.
@@ -159,14 +161,28 @@ func (l *Launcher) CreateJob(ctx context.Context, task *proto.Task, runtimeKey, 
 	if image == "" {
 		return "", fmt.Errorf("container image is required")
 	}
-	job := l.buildJob(task, image, agentArgs, env)
+	job, err := l.buildJob(task, image, agentArgs, env)
+	if err != nil {
+		return "", err
+	}
 	if runtimeKey != "" {
 		job.Name = sanitizeName(runtimeKey)
 	}
-
-	_, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{})
+	taskSecret, err := l.createTaskSecret(ctx, job.Name, task)
 	if err != nil {
+		return "", err
+	}
+	addTaskSecretVolume(&job.Spec.Template, taskSecret.Name)
+
+	created, err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecret.Name, metav1.DeleteOptions{})
 		return "", fmt.Errorf("create job %s: %w", job.Name, err)
+	}
+	if err := l.attachTaskSecretOwner(ctx, taskSecret.Name, created); err != nil {
+		_ = l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, created.Name, metav1.DeleteOptions{})
+		_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecret.Name, metav1.DeleteOptions{})
+		return "", fmt.Errorf("attach task secret owner reference for job %s: %w", created.Name, err)
 	}
 	l.watchJob(job.Name, task)
 	return job.Name, nil
@@ -181,6 +197,7 @@ func (l *Launcher) DeleteJob(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecretName(name), metav1.DeleteOptions{})
 	l.unwatchJob(name)
 	return nil
 }
@@ -440,8 +457,71 @@ func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
 		if err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{}); err != nil {
 			return err
 		}
+		_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecretName(job.Name), metav1.DeleteOptions{})
 	}
 	return nil
+}
+
+func (l *Launcher) createTaskSecret(ctx context.Context, jobName string, task *proto.Task) (*corev1.Secret, error) {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return nil, fmt.Errorf("marshal task secret: %w", err)
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      taskSecretName(jobName),
+			Namespace: l.cfg.Namespace,
+			Labels:    l.jobLabels(task),
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{taskSecretKey: data},
+	}
+	created, err := l.clientset.CoreV1().Secrets(l.cfg.Namespace).Create(ctx, secret, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("create task secret %s: %w", secret.Name, err)
+	}
+	return created, nil
+}
+
+func (l *Launcher) attachTaskSecretOwner(ctx context.Context, secretName string, job *batchv1.Job) error {
+	secret, err := l.clientset.CoreV1().Secrets(l.cfg.Namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	secret.OwnerReferences = append(secret.OwnerReferences, metav1.OwnerReference{
+		APIVersion: batchv1.SchemeGroupVersion.String(),
+		Kind:       "Job",
+		Name:       job.Name,
+		UID:        job.UID,
+	})
+	_, err = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	return err
+}
+
+func addTaskSecretVolume(tpl *corev1.PodTemplateSpec, secretName string) {
+	tpl.Spec.Volumes = append(tpl.Spec.Volumes, corev1.Volume{
+		Name: "piper-task",
+		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName:  secretName,
+			DefaultMode: ptrInt32(0400),
+		}},
+	})
+	if len(tpl.Spec.Containers) == 0 {
+		return
+	}
+	tpl.Spec.Containers[0].VolumeMounts = append(tpl.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+		Name:      "piper-task",
+		MountPath: taskMountPath,
+		ReadOnly:  true,
+	})
+}
+
+func ptrInt32(v int32) *int32 {
+	return &v
+}
+
+func taskSecretName(jobName string) string {
+	return sanitizeName(jobName + "-task")
 }
 
 func (l *Launcher) jobLabels(task *proto.Task) map[string]string {
@@ -456,13 +536,17 @@ func (l *Launcher) jobLabels(task *proto.Task) map[string]string {
 	return labels
 }
 
-func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, extraEnv ...[]string) *batchv1.Job {
+func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, extraEnv ...[]string) (*batchv1.Job, error) {
 	backoffLimit := int32(0) // piper queue manages retries
 	var ttl *int32
 	if l.cfg.TTLAfterFinished != nil && *l.cfg.TTLAfterFinished > 0 {
 		ttl = l.cfg.TTLAfterFinished
 	}
 	step := decodeTaskStep(task)
+	podTemplate, err := l.buildStepPodTemplate(step, image, agentArgs, extraEnv...)
+	if err != nil {
+		return nil, err
+	}
 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -479,9 +563,9 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, 
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: ttl,
 			BackoffLimit:            &backoffLimit,
-			Template:                l.buildStepPodTemplate(step, image, agentArgs, extraEnv...),
+			Template:                podTemplate,
 		},
-	}
+	}, nil
 }
 
 func decodeTaskStep(task *proto.Task) pipeline.Step {
@@ -528,39 +612,52 @@ func k8sResources(d manifest.DriverSpec) manifest.ResourceSpec {
 	return manifest.ResourceSpec{}
 }
 
-func buildResourceRequirements(resources manifest.ResourceSpec) corev1.ResourceRequirements {
+func buildResourceRequirements(resources manifest.ResourceSpec) (corev1.ResourceRequirements, error) {
 	reqs := corev1.ResourceList{}
 	limits := corev1.ResourceList{}
 	if resources.CPU != "" {
-		qty := resource.MustParse(resources.CPU)
+		qty, err := resource.ParseQuantity(resources.CPU)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s cpu %q: %w", resources.CPU, err)
+		}
 		reqs[corev1.ResourceCPU] = qty
 		limits[corev1.ResourceCPU] = qty
 	}
 	if resources.Memory != "" {
-		qty := resource.MustParse(resources.Memory)
+		qty, err := resource.ParseQuantity(resources.Memory)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s memory %q: %w", resources.Memory, err)
+		}
 		reqs[corev1.ResourceMemory] = qty
 		limits[corev1.ResourceMemory] = qty
 	}
 	if resources.GPU != "" {
-		qty := resource.MustParse(resources.GPU)
+		qty, err := resource.ParseQuantity(resources.GPU)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s gpu %q: %w", resources.GPU, err)
+		}
 		name := corev1.ResourceName("nvidia.com/gpu")
 		reqs[name] = qty
 		limits[name] = qty
 	}
-	return corev1.ResourceRequirements{Requests: reqs, Limits: limits}
+	return corev1.ResourceRequirements{Requests: reqs, Limits: limits}, nil
 }
 
 // buildStepPodTemplate constructs the pod template for a pipeline step Job.
 // It starts from step.Driver.K8s.PodTemplate (if set) so all user-defined pod
 // fields (nodeSelector, tolerations, labels, schedulerName, etc.) are preserved,
 // then overlays piper-required init container, step container, and volumes.
-func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentArgs []string, extraEnv ...[]string) corev1.PodTemplateSpec {
+func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentArgs []string, extraEnv ...[]string) (corev1.PodTemplateSpec, error) {
 	// Stage 1: start from the user-provided pod template (may be zero-value).
 	var tpl corev1.PodTemplateSpec
 	if step.Driver.K8s != nil {
 		tpl = *step.Driver.K8s.PodTemplate.DeepCopy()
 	}
 	tpl.Spec.RestartPolicy = corev1.RestartPolicyNever
+	resources, err := buildResourceRequirements(k8sResources(step.Driver))
+	if err != nil {
+		return corev1.PodTemplateSpec{}, err
+	}
 
 	// Stage 2: piper-required init container (copy agent binary).
 	tpl.Spec.InitContainers = append([]corev1.Container{
@@ -582,7 +679,7 @@ func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentA
 			Command:         []string{agentBinaryDst},
 			Args:            agentArgs,
 			Env:             buildEnvVars(step.Options.Env, extraEnv...),
-			Resources:       buildResourceRequirements(k8sResources(step.Driver)),
+			Resources:       resources,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "piper-tools", MountPath: "/piper-tools"},
 				{Name: "piper-outputs", MountPath: "/piper-outputs"},
@@ -598,7 +695,7 @@ func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentA
 		corev1.Volume{Name: "piper-inputs", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	)
 
-	return tpl
+	return tpl, nil
 }
 
 // jobName generates the K8s Job name.

@@ -26,6 +26,7 @@ func newAgentCmd() *cobra.Command {
 type agentExecFlags struct {
 	storageToken string
 	taskB64      string
+	taskFile     string
 	outputDir    string
 	inputDir     string
 	storageURL   string
@@ -46,6 +47,7 @@ func newAgentExecCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&f.storageToken, "storage-token", "", "artifact store token")
 	cmd.Flags().StringVar(&f.taskB64, "task", "", "base64-encoded proto.Task JSON")
+	cmd.Flags().StringVar(&f.taskFile, "task-file", "", "path to proto.Task JSON")
 	cmd.Flags().StringVar(&f.outputDir, "output-dir", "/piper-outputs", "local output directory")
 	cmd.Flags().StringVar(&f.inputDir, "input-dir", "/piper-inputs", "local input directory")
 	cmd.Flags().StringVar(&f.storageURL, "storage-url", "", "artifact store URL (s3://, file://, http://)")
@@ -55,7 +57,18 @@ func newAgentExecCmd() *cobra.Command {
 }
 
 func runAgentExec(ctx context.Context, f agentExecFlags) error {
-	task, err := agent.DecodeTask(f.taskB64)
+	var (
+		task *proto.Task
+		err  error
+	)
+	switch {
+	case f.taskFile != "":
+		task, err = agent.DecodeTaskFile(f.taskFile)
+	case f.taskB64 != "":
+		task, err = agent.DecodeTask(f.taskB64)
+	default:
+		err = fmt.Errorf("one of --task-file or --task is required")
+	}
 	if err != nil {
 		return err
 	}

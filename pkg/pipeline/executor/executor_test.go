@@ -184,6 +184,25 @@ func TestCommandExecutor_stepEnv(t *testing.T) {
 	}
 }
 
+func TestCommandExecutor_resolvedEnv(t *testing.T) {
+	var buf bytes.Buffer
+	step := &pipeline.Step{
+		Name: "resolved-env",
+		Run:  pipeline.Run{Command: []string{"sh", "-c", "printf '%s' \"$APP_TOKEN\""}},
+	}
+	c := cfg(t)
+	c.ResolvedEnv = []string{"APP_TOKEN=from-credential"}
+	c.Stdout = &buf
+
+	ex := &CommandExecutor{}
+	if err := ex.Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "from-credential" {
+		t.Errorf("stdout = %q, want from-credential", got)
+	}
+}
+
 func TestCommandExecutor_emptyCommand(t *testing.T) {
 	step := &pipeline.Step{Name: "empty", Run: pipeline.Run{Command: nil}}
 	ex := &CommandExecutor{}

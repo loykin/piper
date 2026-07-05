@@ -17,6 +17,7 @@ import (
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logsink"
 	"github.com/piper/piper/internal/process"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/serving"
 	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
 	servingdocker "github.com/piper/piper/pkg/serving/worker/driver/docker"
@@ -184,8 +185,10 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	}
 
 	var image string
+	var dockerSpec *manifest.DriverDockerSpec
 	if svc.Spec.Driver.Docker != nil {
 		image = svc.Spec.Driver.Docker.Image
+		dockerSpec = svc.Spec.Driver.Docker
 	}
 
 	endpoint := fmt.Sprintf("http://localhost:%d", rt.Port)
@@ -213,6 +216,7 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		Name:        name,
 		RuntimeName: rn,
 		Image:       image,
+		Docker:      dockerSpec,
 		Command:     rt.Command,
 		Env:         deployEnv,
 		Port:        rt.Port,

@@ -5,6 +5,7 @@ version: 4
 
 server:
   http_addr: :8080
+  allow_insecure_dev_key: true
   data_dir: ./piper-outputs
   retention:
     artifact_ttl: 168h  # delete S3 artifacts older than 7 days

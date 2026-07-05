@@ -227,7 +227,7 @@ Each pipeline step runs as a K8s Job. An `initContainer` copies the `piper` bina
 
 ```
 initContainer (piper image)  →  cp /piper /piper-tools/piper
-step container (user image)  →  /piper-tools/piper agent exec --task=<encoded-task> ...
+step container (user image)  →  /piper-tools/piper agent exec --task-file=/piper-task/task.json ...
 ```
 
 > **vs Argo Workflows**: Argo manages workflows as K8s CRDs. Piper uses K8s only as a compute backend — DAG, retry, and state live in the Piper server. Piper runs identically in local and bare-metal modes with no K8s dependency.
@@ -606,6 +606,10 @@ version: 4
 
 server:
   http_addr: ":8080"
+  # Required for credential encryption. Use a 32-byte key, base64 32-byte key,
+  # or sha256:<strong-passphrase>. For local-only development, set
+  # allow_insecure_dev_key: true instead.
+  secret_encryption_key: ""
   tls:
     enabled: false
     cert_file: ""

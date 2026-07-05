@@ -2,7 +2,7 @@ package piper
 
 // This file wires agent exec interception into any binary that imports
 // "github.com/piper/piper". The baremetal driver calls os.Executable()
-// to find the current binary, then runs it with "agent exec --task=..."
+// to find the current binary, then runs it with "agent exec --task-file=..."
 // as a subprocess. Without this init(), binaries that embed piper as a
 // library would re-enter main() instead of executing the step.
 //
@@ -29,6 +29,7 @@ func init() {
 func runEmbeddedAgentExec() int {
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	taskB64 := fs.String("task", "", "")
+	taskFile := fs.String("task-file", "", "")
 	storageToken := fs.String("storage-token", "", "")
 	outputDir := fs.String("output-dir", "./piper-outputs", "")
 	inputDir := fs.String("input-dir", "", "")
@@ -47,6 +48,9 @@ func runEmbeddedAgentExec() int {
 	}
 
 	task, err := agentpkg.DecodeTask(*taskB64)
+	if *taskFile != "" {
+		task, err = agentpkg.DecodeTaskFile(*taskFile)
+	}
 	if err != nil {
 		slog.Error("agent exec: decode task", "err", err)
 		return 1

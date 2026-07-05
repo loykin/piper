@@ -3,6 +3,7 @@ package credential
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 	"time"
@@ -64,18 +65,24 @@ func injectGitCredentials(repoURL, username, token string) string {
 	if username == "" {
 		username = "x-token"
 	}
-	idx := strings.Index(repoURL, "://")
-	if idx < 0 {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
 		return repoURL
 	}
-	scheme := repoURL[:idx+3]
-	rest := repoURL[idx+3:]
-	return scheme + username + ":" + token + "@" + rest
+	u.User = url.UserPassword(username, token)
+	return u.String()
 }
 
 func scrubCredentials(msg, token string) string {
 	if token == "" {
 		return msg
 	}
-	return strings.ReplaceAll(msg, token, "***")
+	msg = strings.ReplaceAll(msg, token, "***")
+	return strings.ReplaceAll(msg, escapedPassword(token), "***")
+}
+
+func escapedPassword(token string) string {
+	const marker = "user:"
+	escaped := url.UserPassword("user", token).String()
+	return strings.TrimPrefix(escaped, marker)
 }

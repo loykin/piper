@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/serving"
 	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
 )
@@ -50,6 +51,14 @@ spec:
   driver:
     docker:
       image: model:test
+      cpus: "2"
+      mem_limit: 1g
+      deploy:
+        resources:
+          reservations:
+            devices:
+              - capabilities: ["gpu"]
+                count: "1"
 `
 	if _, err := w.deploy(context.Background(), deployRequest{ProjectID: "project-a", YAML: payload, LocalPath: "/models/demo"}); err != nil {
 		t.Fatal(err)
@@ -59,6 +68,20 @@ spec:
 	}
 	if drv.req.Image != "model:test" || drv.req.Env["PIPER_MODEL_DIR"] != "/models/demo" {
 		t.Fatalf("driver request = %#v", drv.req)
+	}
+	want := &manifest.DriverDockerSpec{
+		Image:    "model:test",
+		CPUs:     "2",
+		MemLimit: "1g",
+		Deploy: &manifest.DockerDeploySpec{Resources: manifest.DockerDeployResources{
+			Reservations: &manifest.DockerReservations{Devices: []manifest.DockerDevice{{
+				Count:        "1",
+				Capabilities: []string{"gpu"},
+			}}},
+		}},
+	}
+	if drv.req.Docker == nil || drv.req.Docker.Image != want.Image || drv.req.Docker.CPUs != want.CPUs || drv.req.Docker.MemLimit != want.MemLimit {
+		t.Fatalf("docker spec = %#v, want %#v", drv.req.Docker, want)
 	}
 }
 

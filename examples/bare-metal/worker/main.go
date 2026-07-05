@@ -4,7 +4,7 @@
 //  1. Worker mode (default): connects to master gRPC, receives and dispatches tasks.
 //  2. Agent exec mode: invoked as a subprocess by the baremetal driver for each step.
 //
-// The baremetal driver calls os.Executable() + "agent exec --task=...", so both modes
+// The baremetal driver calls os.Executable() + "agent exec --task-file=...", so both modes
 // must live in the same binary — exactly like the full piper CLI.
 //
 //	go run ./examples/bare-metal/worker
@@ -68,11 +68,12 @@ func main() {
 }
 
 // runAgentExec parses agent exec flags and runs the step.
-// Called when this binary is invoked as "<worker> agent exec --task=...".
+// Called when this binary is invoked as "<worker> agent exec --task-file=...".
 func runAgentExec(args []string) {
 	fs := flag.NewFlagSet("agent exec", flag.ExitOnError)
 	storageToken := fs.String("storage-token", "", "artifact storage authentication token")
 	taskB64 := fs.String("task", "", "base64-encoded proto.Task JSON")
+	taskFile := fs.String("task-file", "", "path to proto.Task JSON")
 	outputDir := fs.String("output-dir", "/piper-outputs", "local output directory")
 	inputDir := fs.String("input-dir", "/piper-inputs", "local input directory")
 	storageURL := fs.String("storage-url", "", "artifact store URL")
@@ -87,6 +88,9 @@ func runAgentExec(args []string) {
 		os.Exit(1)
 	}
 	task, err := agent.DecodeTask(*taskB64)
+	if *taskFile != "" {
+		task, err = agent.DecodeTaskFile(*taskFile)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: decode task: %v\n", err)
 		os.Exit(1)

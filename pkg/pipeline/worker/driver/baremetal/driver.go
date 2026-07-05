@@ -36,6 +36,7 @@ type runtimeMetadata struct {
 	StepName   string `json:"step_name"`
 	Attempt    int    `json:"attempt"`
 	ResultPath string `json:"result_path"`
+	TaskPath   string `json:"task_path"`
 	PIDFile    string `json:"pid_file"`
 }
 
@@ -44,6 +45,7 @@ type activeJob struct {
 	handle      driver.Handle
 	doneCh      chan driver.Exit
 	resultPath  string
+	taskPath    string
 	remoteStore bool
 }
 
@@ -112,15 +114,21 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 		return driver.Handle{}, fmt.Errorf("create result dir: %w", err)
 	}
 	resultPath := filepath.Join(resultDir, spec.RuntimeKey+".result.json")
+	taskPath := filepath.Join(resultDir, spec.RuntimeKey+".task.json")
+	if err := agent.WriteTaskFile(taskPath, task); err != nil {
+		return driver.Handle{}, fmt.Errorf("write task file: %w", err)
+	}
 
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    spec.OutputDir,
 		InputDir:     spec.OutputDir,
+		TaskFile:     taskPath,
 		ResultFile:   resultPath,
 	})
 	if err != nil {
+		_ = os.Remove(taskPath)
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)
 	}
 
@@ -134,9 +142,11 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 		StepName:   task.StepName,
 		Attempt:    task.Attempt,
 		ResultPath: resultPath,
+		TaskPath:   taskPath,
 	}
 
 	if werr := d.writeMetadata(spec.RuntimeKey, handle, resultPath, pidFile); werr != nil {
+		_ = os.Remove(taskPath)
 		return driver.Handle{}, fmt.Errorf("write metadata: %w", werr)
 	}
 
@@ -145,6 +155,7 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 		handle:      handle,
 		doneCh:      doneCh,
 		resultPath:  resultPath,
+		taskPath:    taskPath,
 		remoteStore: d.remoteStore,
 	}
 
@@ -160,7 +171,6 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 	if regErr := d.manager.Register(core.Spec{
 		Name:        spec.RuntimeKey, // exact name = runtimeKey, exitSink matches this
 		Args:        args,
-		Env:         spec.Env,
 		AutoRestart: false,
 		PIDFile:     pidFile,
 		Log:         logConfig,
@@ -172,6 +182,7 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 		delete(d.active, spec.RuntimeKey)
 		d.mu.Unlock()
 		_ = d.removeMetadata(spec.RuntimeKey)
+		_ = os.Remove(taskPath)
 		return driver.Handle{}, fmt.Errorf("register process: %w", err)
 	}
 
@@ -203,6 +214,7 @@ func (d *Driver) Stop(_ context.Context, handle driver.Handle, grace time.Durati
 	}
 	err := d.manager.Stop(handle.RuntimeKey, grace)
 	_ = d.removeMetadata(handle.RuntimeKey)
+	_ = os.Remove(handle.TaskPath)
 	d.mu.Lock()
 	delete(d.active, handle.RuntimeKey)
 	d.mu.Unlock()
@@ -241,12 +253,14 @@ func (d *Driver) Recover(_ context.Context) ([]driver.Handle, error) {
 		}); err != nil {
 			// Process not alive — clean up and skip.
 			_ = d.removeMetadata(runtimeKey)
+			_ = os.Remove(meta.TaskPath)
 			slog.Info("recover: process gone, cleaning up", "key", runtimeKey, "err", err)
 			continue
 		}
 		status, err := d.manager.Status(runtimeKey)
 		if err != nil || !status.Running {
 			_ = d.removeMetadata(runtimeKey)
+			_ = os.Remove(meta.TaskPath)
 			slog.Info("recover: process is not running, cleaning up", "key", runtimeKey)
 			continue
 		}
@@ -259,6 +273,7 @@ func (d *Driver) Recover(_ context.Context) ([]driver.Handle, error) {
 			StepName:   meta.StepName,
 			Attempt:    meta.Attempt,
 			ResultPath: meta.ResultPath,
+			TaskPath:   meta.TaskPath,
 		}
 
 		doneCh := make(chan driver.Exit, 1)
@@ -267,6 +282,7 @@ func (d *Driver) Recover(_ context.Context) ([]driver.Handle, error) {
 			handle:      handle,
 			doneCh:      doneCh,
 			resultPath:  meta.ResultPath,
+			taskPath:    meta.TaskPath,
 			remoteStore: d.remoteStore,
 		}
 		d.mu.Unlock()
@@ -289,6 +305,7 @@ func (d *Driver) onJobExit(runtimeKey, status string) {
 	}
 
 	_ = d.removeMetadata(runtimeKey)
+	_ = os.Remove(aj.taskPath)
 
 	exit := driver.Exit{ResultPath: aj.resultPath}
 
@@ -320,6 +337,7 @@ func (d *Driver) writeMetadata(runtimeKey string, h driver.Handle, resultPath, p
 		StepName:   h.StepName,
 		Attempt:    h.Attempt,
 		ResultPath: resultPath,
+		TaskPath:   h.TaskPath,
 		PIDFile:    pidFile,
 	}
 	data, err := json.Marshal(meta)

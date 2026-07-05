@@ -8,6 +8,7 @@ import (
 	dockerclient "github.com/moby/moby/client"
 
 	dockerinfra "github.com/piper/piper/internal/docker"
+	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/serving"
 	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
 	"github.com/piper/piper/pkg/serving/worker/driver/drivertest"
@@ -82,5 +83,95 @@ func TestRecoverReportsTerminalContainer(t *testing.T) {
 	}
 	if terminal.RuntimeName != "project-a__demo" || status != serving.StatusStopped {
 		t.Fatalf("terminal = %#v, status = %q", terminal, status)
+	}
+}
+
+func TestDeployAppliesDockerResourcesAndGPUs(t *testing.T) {
+	cli := &deployClient{}
+	d, err := NewWithClient(Config{WorkerID: "worker-1"}, cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Deploy(context.Background(), servingdriver.DeployRequest{
+		ProjectID:   "project-a",
+		Name:        "demo",
+		RuntimeName: "project-a__demo",
+		Image:       "model:test",
+		Command:     []string{"serve"},
+		Port:        18080,
+		Docker: &manifest.DriverDockerSpec{
+			CPUs:     "1.5",
+			MemLimit: "512m",
+			Deploy: &manifest.DockerDeploySpec{Resources: manifest.DockerDeployResources{
+				Reservations: &manifest.DockerReservations{Devices: []manifest.DockerDevice{{
+					DeviceIDs:    []string{"0", "1"},
+					Capabilities: []string{"gpu"},
+				}}},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	host := cli.create.HostConfig
+	if host.Resources.NanoCPUs != 1_500_000_000 {
+		t.Fatalf("NanoCPUs = %d", host.Resources.NanoCPUs)
+	}
+	if host.Resources.Memory != 512*1024*1024 {
+		t.Fatalf("Memory = %d", host.Resources.Memory)
+	}
+	if len(host.Resources.DeviceRequests) != 1 {
+		t.Fatalf("DeviceRequests = %#v", host.Resources.DeviceRequests)
+	}
+	if got := host.Resources.DeviceRequests[0].DeviceIDs; len(got) != 2 || got[0] != "0" || got[1] != "1" {
+		t.Fatalf("DeviceIDs = %#v", got)
+	}
+}
+
+func TestDeployAppliesProcessGPUSelectorWhenDockerHasNoDeviceRequests(t *testing.T) {
+	cli := &deployClient{}
+	d, err := NewWithClient(Config{WorkerID: "worker-1"}, cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.Deploy(context.Background(), servingdriver.DeployRequest{
+		ProjectID:   "project-a",
+		Name:        "demo",
+		RuntimeName: "project-a__demo",
+		Image:       "model:test",
+		Command:     []string{"serve"},
+		Port:        18080,
+		GPUs:        "all",
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if len(cli.create.HostConfig.Resources.DeviceRequests) != 1 || cli.create.HostConfig.Resources.DeviceRequests[0].Count != -1 {
+		t.Fatalf("DeviceRequests = %#v", cli.create.HostConfig.Resources.DeviceRequests)
+	}
+}
+
+type deployClient struct {
+	dockerinfra.API
+	create dockerclient.ContainerCreateOptions
+}
+
+func (c *deployClient) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	return dockerclient.ContainerListResult{}, nil
+}
+
+func (c *deployClient) ContainerCreate(_ context.Context, opts dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
+	c.create = opts
+	return dockerclient.ContainerCreateResult{ID: "container-123456789"}, nil
+}
+
+func (c *deployClient) ContainerStart(context.Context, string, dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error) {
+	return dockerclient.ContainerStartResult{}, nil
+}
+
+func (c *deployClient) ContainerWait(context.Context, string, dockerclient.ContainerWaitOptions) dockerclient.ContainerWaitResult {
+	return dockerclient.ContainerWaitResult{
+		Result: make(chan container.WaitResponse),
+		Error:  make(chan error),
 	}
 }

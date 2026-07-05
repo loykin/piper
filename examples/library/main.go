@@ -59,6 +59,7 @@ func main() {
 		Auth:      piper.AuthConfig{Trusted: true},
 		DBPath:    ":memory:",
 		OutputDir: os.TempDir() + "/piper-example-library",
+		Server:    piper.ServerConfig{AllowInsecureDevKey: true},
 	})
 	if err != nil {
 		log.Fatal(err)

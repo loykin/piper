@@ -44,6 +44,7 @@ func newE2EServer(t *testing.T) (*Piper, *testutil.Server) {
 		OutputDir: t.TempDir(),
 		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
+		Server:    ServerConfig{AllowInsecureDevKey: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -508,6 +509,44 @@ spec:
 	}
 }
 
+// TestE2E_GenericCredentialEnvRef verifies options.env credentialRef resolution
+// for pipeline steps.
+func TestE2E_GenericCredentialEnvRef(t *testing.T) {
+	_, srv := newE2EServer(t)
+	startE2EWorker(t, srv.URL)
+	postE2EGenericCredential(t, srv.URL, "app-env", map[string]string{
+		"token": "generic-env-secret",
+	})
+
+	runID := postRun(t, srv.URL, `
+metadata:
+  name: e2e-generic-env-ref
+spec:
+  steps:
+    - name: check-env
+      options:
+        env:
+          - name: APP_TOKEN
+            valueFrom:
+              credentialRef:
+                name: app-env
+                key: token
+      run:
+        command: ["sh", "-c", "test \"$APP_TOKEN\" = generic-env-secret && echo generic-env-ok"]
+`)
+	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
+
+	logsResp, err := http.Get(srv.URL + e2eBase() + "/runs/" + runID + "/steps/check-env/logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logsBody, _ := io.ReadAll(logsResp.Body)
+	logsResp.Body.Close()
+	if !bytes.Contains(logsBody, []byte("generic-env-ok")) {
+		t.Fatalf("logs missing env confirmation: %s", logsBody)
+	}
+}
+
 func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	serverPort := freeE2EPort(t)
 	p, err := New(Config{
@@ -515,7 +554,8 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 		Server: ServerConfig{
-			Addr: fmt.Sprintf("127.0.0.1:%d", serverPort),
+			Addr:                fmt.Sprintf("127.0.0.1:%d", serverPort),
+			AllowInsecureDevKey: true,
 		},
 	})
 	if err != nil {
@@ -754,6 +794,7 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Serv
 		OutputDir: outputDir,
 		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
+		Server:    ServerConfig{AllowInsecureDevKey: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -772,6 +813,7 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 		Storage:   StorageConfig{URL: storageURL},
+		Server:    ServerConfig{AllowInsecureDevKey: true},
 	})
 	if err != nil {
 		t.Fatal(err)

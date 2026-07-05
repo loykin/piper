@@ -32,6 +32,7 @@ type ExecConfig struct {
 	Stdout         io.Writer         // if nil, defaults to os.Stdout
 	Stderr         io.Writer         // if nil, defaults to os.Stderr
 	Vars           proto.BuiltinVars // system-injected builtin variables
+	ResolvedEnv    []string          // master-resolved env entries, may contain secrets
 }
 
 // fetchDir returns the directory into which this step's source will be fetched.
@@ -85,7 +86,9 @@ func (c ExecConfig) Env() []string {
 
 func (c ExecConfig) Environ(stepVars []manifest.EnvVar) []string {
 	env := os.Environ()
-	for _, entry := range append(stepEnv(stepVars), c.Env()...) {
+	entries := append(stepEnv(stepVars), c.ResolvedEnv...)
+	entries = append(entries, c.Env()...)
+	for _, entry := range entries {
 		env = setEnv(env, entry)
 	}
 	if len(c.EnvPathPrepend) > 0 {

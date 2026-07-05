@@ -19,28 +19,34 @@ type AgentExecConfig struct {
 	StorageURL   string
 	OutputDir    string
 	InputDir     string
+	// TaskFile is the environment-side path to a proto.Task JSON file.
+	// Prefer this over --task so secret-bearing task env is not exposed in argv.
+	TaskFile string
 	// ResultFile is the path inside the execution environment where the agent
 	// writes the AgentResult JSON.
 	ResultFile string
 }
 
 // BuildAgentExec returns the argv slice for `piper agent exec`, not including
-// the binary itself. The task is base64-encoded and passed as --task.
-// Returns an error if ResultFile is empty or the task cannot be encoded.
+// the binary itself. When TaskFile is set, the task is read from that path;
+// otherwise it falls back to the legacy --task payload.
 func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 	if cfg.ResultFile == "" {
 		return nil, fmt.Errorf("taskruntime.BuildAgentExec: ResultFile is required")
 	}
 
-	taskB64, err := EncodeTask(task)
-	if err != nil {
-		return nil, fmt.Errorf("encode task: %w", err)
-	}
-
 	args := []string{
 		"agent", "exec",
-		"--task=" + taskB64,
 		"--result-file=" + cfg.ResultFile,
+	}
+	if cfg.TaskFile != "" {
+		args = append(args, "--task-file="+cfg.TaskFile)
+	} else {
+		taskB64, err := EncodeTask(task)
+		if err != nil {
+			return nil, fmt.Errorf("encode task: %w", err)
+		}
+		args = append(args, "--task="+taskB64)
 	}
 	if cfg.StorageToken != "" {
 		args = append(args, "--storage-token="+cfg.StorageToken)
@@ -55,6 +61,37 @@ func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 		args = append(args, "--input-dir="+cfg.InputDir)
 	}
 	return args, nil
+}
+
+// WriteTaskFile writes a proto.Task JSON payload for piper agent exec.
+func WriteTaskFile(path string, task *proto.Task) error {
+	if path == "" {
+		return fmt.Errorf("task file path is required")
+	}
+	data, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("marshal task: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create task file dir: %w", err)
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+// DecodeTaskFile reads a proto.Task JSON payload written by WriteTaskFile.
+func DecodeTaskFile(path string) (*proto.Task, error) {
+	if path == "" {
+		return nil, fmt.Errorf("task file path is required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read task file: %w", err)
+	}
+	var task proto.Task
+	if err := json.Unmarshal(data, &task); err != nil {
+		return nil, fmt.Errorf("decode task file: %w", err)
+	}
+	return &task, nil
 }
 
 // AgentResult is the JSON written to --result-file by piper agent exec.

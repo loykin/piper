@@ -140,7 +140,6 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		Namespace:    namespace,
 		StorageToken: storageToken,
 		StorageURL:   storageURL,
-		Env:          execEnv,
 	}
 	if a.cfg.LogClient != nil {
 		spec.LogSink = logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, a.cfg.LogClient), logsink.ValuesFromEnv(execEnv))

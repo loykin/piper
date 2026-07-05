@@ -51,7 +51,7 @@ test:
 	go test ./...
 
 test-notebook-conformance:
-	go test ./pkg/notebook ./pkg/workers/baremetal/notebook ./pkg/workers/k8s/notebook ./pkg/dispatch/notebook ./internal/grpcagent
+	go test ./pkg/notebook ./pkg/notebook/worker/driver/process ./pkg/notebook/worker/driver/docker ./pkg/notebook/worker/driver/k8s ./pkg/notebook/dispatch ./internal/grpcagent
 
 # E2E tests (fully hermetic, no external infra required)
 test-e2e:
@@ -63,11 +63,11 @@ test-frontend-e2e:
 test-process-notebook-e2e:
 	PIPER_NOTEBOOK_PROCESS_E2E=1 \
 	PIPER_NOTEBOOK_PROCESS_E2E_ENV=$(NOTEBOOK_PROCESS_ENV) \
-	go test ./pkg/workers/baremetal/notebook -run '^TestProcessRuntimeE2E_' -v -count=1 -timeout=6m
+	go test ./pkg/notebook/worker/driver/process -run '^TestProcessRuntimeE2E_' -v -count=1 -timeout=6m
 
 test-docker-notebook-e2e:
 	PIPER_NOTEBOOK_DOCKER_E2E_IMAGE=$(NOTEBOOK_IMAGE) \
-	go test ./pkg/workers/baremetal/notebook -run '^TestDockerRuntimeE2E_' -v -count=1 -timeout=6m
+	go test ./pkg/notebook/worker/driver/docker -run '^TestDockerRuntimeE2E_' -v -count=1 -timeout=6m
 
 # K8s smoke E2E (requires kubectl + a cluster with $(IMAGE) available)
 test-k8s-e2e:

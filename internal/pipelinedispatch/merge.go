@@ -1,8 +1,6 @@
 package pipelinedispatch
 
 import (
-	"encoding/json"
-
 	corev1 "k8s.io/api/core/v1"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -13,24 +11,21 @@ import (
 // pod_templates in the pipeline JSON (defaults + per-step). The step's own
 // pod_template takes precedence on any field conflict.
 func applyPodPolicyToPipeline(pipelineJSON []byte, policy corev1.PodTemplateSpec) ([]byte, error) {
-	var pl pipeline.Pipeline
-	if err := json.Unmarshal(pipelineJSON, &pl); err != nil {
-		return pipelineJSON, err
-	}
+	return iagent.ApplyPodPolicyJSON[pipeline.Pipeline](pipelineJSON, policy, applyPolicyToPipeline)
+}
 
+func applyPolicyToPipeline(pl *pipeline.Pipeline, policy corev1.PodTemplateSpec) bool {
+	changed := false
 	if pl.Spec.Defaults != nil && pl.Spec.Defaults.Driver.K8s != nil {
-		pl.Spec.Defaults.Driver.K8s.PodTemplate = iagent.MergePodTemplate(
-			policy, pl.Spec.Defaults.Driver.K8s.PodTemplate,
-		)
+		pl.Spec.Defaults.Driver.K8s.PodTemplate = iagent.MergePodTemplate(policy, pl.Spec.Defaults.Driver.K8s.PodTemplate)
+		changed = true
 	}
-
 	for i := range pl.Spec.Steps {
-		if pl.Spec.Steps[i].Driver.K8s != nil {
-			pl.Spec.Steps[i].Driver.K8s.PodTemplate = iagent.MergePodTemplate(
-				policy, pl.Spec.Steps[i].Driver.K8s.PodTemplate,
-			)
+		if pl.Spec.Steps[i].Driver.K8s == nil {
+			continue
 		}
+		pl.Spec.Steps[i].Driver.K8s.PodTemplate = iagent.MergePodTemplate(policy, pl.Spec.Steps[i].Driver.K8s.PodTemplate)
+		changed = true
 	}
-
-	return json.Marshal(&pl)
+	return changed
 }

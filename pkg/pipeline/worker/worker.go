@@ -260,27 +260,28 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	runtimeKey := pdriver.RuntimeKey(w.cfg.Agent.ID, task.RunID, task.StepName, task.Attempt)
 	storageURL, storageToken := taskStorageForWorker(task, w.cfg.Agent.MasterURL, w.cfg.Agent.WorkerToken, w.cfg.Store.LocalStoreAccess)
 	execEnv := mergeExecutionEnv(w.gitEnv(), task.Env)
+	taskCopy := *task
+	taskCopy.Env = execEnv
 
 	spec := pdriver.ExecSpec{
 		RuntimeKey:   runtimeKey,
 		OutputDir:    w.cfg.Store.OutputDir,
 		StorageToken: storageToken,
 		StorageURL:   storageURL,
-		Env:          execEnv,
 		LogSink:      logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, w.client), logsink.ValuesFromEnv(execEnv)),
 	}
 
 	// Image must be resolved here (in the worker layer) for container runtimes.
 	// Baremetal subprocesses run the host binary directly — no image needed.
 	if w.cfg.Runtime == RuntimeDocker {
-		image, err := pdriver.ResolveImage(task, string(RuntimeDocker))
+		image, err := pdriver.ResolveImage(&taskCopy, string(RuntimeDocker))
 		if err != nil {
 			return err
 		}
 		spec.Image = image
 	}
 
-	handle, err := w.driver.Start(ctx, task, spec)
+	handle, err := w.driver.Start(ctx, &taskCopy, spec)
 	if err != nil {
 		spec.LogSink.Stop()
 		return fmt.Errorf("start job: %w", err)

@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/piper/piper/internal/proto"
@@ -11,7 +12,9 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func makeTask(runID, stepName string, step pipeline.Step, pl pipeline.Pipeline) *proto.Task {
@@ -24,6 +27,15 @@ func makeTask(runID, stepName string, step pipeline.Step, pl pipeline.Pipeline) 
 		Step:     stepJSON,
 		Pipeline: plJSON,
 	}
+}
+
+func mustBuildJob(t *testing.T, l *Launcher, task *proto.Task, image string, agentArgs []string, extraEnv ...[]string) *batchv1.Job {
+	t.Helper()
+	job, err := l.buildJob(task, image, agentArgs, extraEnv...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return job
 }
 
 // ─── sanitizeName ─────────────────────────────────────────────────────────────
@@ -91,7 +103,7 @@ func TestBuildJob_structure(t *testing.T) {
 		TTLAfterFinished: &ttl,
 	}}
 	task := &proto.Task{RunID: "run-1", StepName: "train"}
-	job := l.buildJob(task, "pytorch:latest", []string{agentSubcmd, agentExecSubcmd, "--result-file=/dev/termination-log"})
+	job := mustBuildJob(t, l, task, "pytorch:latest", []string{agentSubcmd, agentExecSubcmd, "--result-file=/dev/termination-log"})
 
 	if job.Namespace != "ml" {
 		t.Errorf("namespace = %q, want ml", job.Namespace)
@@ -132,7 +144,7 @@ func TestBuildJob_agentPullPolicyDoesNotControlStepImage(t *testing.T) {
 		AgentImagePullPolicy: string(corev1.PullNever),
 	}}
 	task := &proto.Task{RunID: "r", StepName: "s"}
-	job := l.buildJob(task, "alpine:3.20", []string{agentSubcmd, agentExecSubcmd, "--task=TASK"})
+	job := mustBuildJob(t, l, task, "alpine:3.20", []string{agentSubcmd, agentExecSubcmd, "--task-file=/piper-task/task.json"})
 
 	init := job.Spec.Template.Spec.InitContainers[0]
 	if init.ImagePullPolicy != corev1.PullNever {
@@ -147,7 +159,7 @@ func TestBuildJob_agentPullPolicyDoesNotControlStepImage(t *testing.T) {
 func TestBuildJob_volumeMounts(t *testing.T) {
 	l := &Launcher{cfg: Config{AgentImage: "piper/agent:latest"}}
 	task := &proto.Task{RunID: "r", StepName: "s"}
-	job := l.buildJob(task, "python:3.11", nil)
+	job := mustBuildJob(t, l, task, "python:3.11", nil)
 
 	volumes := job.Spec.Template.Spec.Volumes
 	volumeNames := map[string]bool{}
@@ -198,7 +210,7 @@ func TestBuildJob_stepRuntimeOptions(t *testing.T) {
 	}
 	task := makeTask("run-1", "train", step, pipeline.Pipeline{})
 
-	job := l.buildJob(task, "python:3.11", nil)
+	job := mustBuildJob(t, l, task, "python:3.11", nil)
 	podSpec := job.Spec.Template.Spec
 	container := podSpec.Containers[0]
 
@@ -229,16 +241,33 @@ func TestBuildJob_stepRuntimeOptions(t *testing.T) {
 	}
 }
 
+func TestBuildJob_invalidResourcesReturnsError(t *testing.T) {
+	l := &Launcher{cfg: Config{AgentImage: "piper/agent:latest"}}
+	step := pipeline.Step{
+		Name: "train",
+		Driver: manifest.DriverSpec{
+			K8s: &manifest.DriverK8sSpec{
+				Resources: manifest.ResourceSpec{CPU: "2 cores"},
+			},
+		},
+	}
+	task := makeTask("run-1", "train", step, pipeline.Pipeline{})
+
+	if _, err := l.buildJob(task, "python:3.11", nil); err == nil {
+		t.Fatal("buildJob returned nil error for invalid k8s resources")
+	}
+}
+
 func TestCancelRunDeletesJobsByRunLabel(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}
 
 	runTask := &proto.Task{RunID: "run-1", StepName: "train"}
 	otherTask := &proto.Task{RunID: "run-2", StepName: "train"}
-	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), l.buildJob(runTask, "python:3.11", nil), metav1.CreateOptions{}); err != nil {
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), mustBuildJob(t, l, runTask, "python:3.11", nil), metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), l.buildJob(otherTask, "python:3.11", nil), metav1.CreateOptions{}); err != nil {
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), mustBuildJob(t, l, otherTask, "python:3.11", nil), metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -258,7 +287,7 @@ func TestReconcileJobsReportsFailedJob(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}
 	task := &proto.Task{ID: "run-1:train", RunID: "run-1", StepName: "train", Attempt: 1}
-	job := l.buildJob(task, "python:3.11", nil)
+	job := mustBuildJob(t, l, task, "python:3.11", nil)
 	job.Status.Conditions = []batchv1.JobCondition{{
 		Type:    batchv1.JobFailed,
 		Status:  corev1.ConditionTrue,
@@ -356,7 +385,7 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 	preparedArgs := []string{
 		"agent",
 		"exec",
-		"--task=encoded",
+		"--task-file=/piper-task/task.json",
 		"--result-file=/dev/termination-log",
 	}
 	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", preparedArgs, nil); err != nil {
@@ -388,8 +417,11 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 	if stepContainer.Image != "python:3.11" {
 		t.Fatalf("step image = %q, want python:3.11", stepContainer.Image)
 	}
-	if !hasArgPrefix(stepContainer.Args, "--task=") {
-		t.Fatalf("agent args missing --task: %v", stepContainer.Args)
+	if !hasArg(stepContainer.Args, "--task-file=/piper-task/task.json") {
+		t.Fatalf("agent args missing --task-file: %v", stepContainer.Args)
+	}
+	if hasArgPrefix(stepContainer.Args, "--task=") {
+		t.Fatalf("agent args must not expose task payload: %v", stepContainer.Args)
 	}
 	if hasArgPrefix(stepContainer.Args, "--master=") {
 		t.Fatalf("job pod must not receive a master URL: %v", stepContainer.Args)
@@ -400,6 +432,36 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 
 	if job.Spec.Template.Spec.RestartPolicy != "Never" {
 		t.Fatalf("restart policy = %q, want Never", job.Spec.Template.Spec.RestartPolicy)
+	}
+}
+
+func TestCreateJobOwnerReferenceFailureRollsBackSecretAndJob(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("update", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("update secret failed")
+	})
+	l := &Launcher{
+		cfg:       Config{AgentImage: "loykin/piper:agent", Namespace: "default"},
+		clientset: client,
+	}
+	task := makeTask("run-1", "train", pipeline.Step{Name: "train"}, pipeline.Pipeline{})
+
+	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", []string{"agent", "exec", "--task-file=/piper-task/task.json"}, nil); err == nil {
+		t.Fatal("CreateJob returned nil error")
+	}
+	jobs, err := client.BatchV1().Jobs("default").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("jobs remained after owner ref failure: %#v", jobs.Items)
+	}
+	secrets, err := client.CoreV1().Secrets("default").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secrets.Items) != 0 {
+		t.Fatalf("secrets remained after owner ref failure: %#v", secrets.Items)
 	}
 }
 

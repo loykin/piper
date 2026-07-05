@@ -12,7 +12,7 @@ import (
 )
 
 // TestMain intercepts subprocess invocations from the baremetal driver.
-// When the driver spawns "<test-binary> agent exec --task=...", os.Args[1] is "agent".
+// When the driver spawns "<test-binary> agent exec --task-file=...", os.Args[1] is "agent".
 // In normal test runs, os.Args[1] is always a -test.* flag, so there is no conflict.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == "agent" && os.Args[2] == "exec" {
@@ -24,6 +24,7 @@ func TestMain(m *testing.M) {
 func runAgentExecInExamples() int {
 	var (
 		taskB64      string
+		taskFile     string
 		storageToken string
 		outputDir    string
 		inputDir     string
@@ -32,6 +33,7 @@ func runAgentExecInExamples() int {
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
+	fs.StringVar(&taskFile, "task-file", "", "")
 	fs.StringVar(&storageToken, "storage-token", "", "")
 	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
 	fs.StringVar(&inputDir, "input-dir", "", "")
@@ -51,6 +53,9 @@ func runAgentExecInExamples() int {
 		return 1
 	}
 	task, err := agentpkg.DecodeTask(taskB64)
+	if taskFile != "" {
+		task, err = agentpkg.DecodeTaskFile(taskFile)
+	}
 	if err != nil {
 		return 1
 	}

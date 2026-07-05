@@ -30,14 +30,14 @@ func TestRunAgentExec(t *testing.T) {
 		StepName:  "hello",
 		Step:      stepBytes,
 	}
-	taskArg, err := agent.EncodeTask(task)
-	if err != nil {
+	taskFile := filepath.Join(out, "task.json")
+	if err := agent.WriteTaskFile(taskFile, task); err != nil {
 		t.Fatal(err)
 	}
 	resultFile := filepath.Join(out, "result.json")
 
 	runAgentExec([]string{
-		"--task=" + taskArg,
+		"--task-file=" + taskFile,
 		"--output-dir=" + out,
 		"--input-dir=" + out,
 		"--result-file=" + resultFile,

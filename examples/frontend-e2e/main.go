@@ -93,6 +93,7 @@ func main() {
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
 		Auth:      piper.AuthConfig{Trusted: true},
 		Storage:   piper.StorageConfig{URL: s3URL},
+		Server:    piper.ServerConfig{AllowInsecureDevKey: true},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -254,6 +255,7 @@ func waitHTTP(ctx context.Context, url string) error {
 func runAgentExec(args []string) int {
 	var (
 		taskB64      string
+		taskFile     string
 		storageToken string
 		outputDir    string
 		inputDir     string
@@ -262,6 +264,7 @@ func runAgentExec(args []string) int {
 	)
 	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
 	fs.StringVar(&taskB64, "task", "", "")
+	fs.StringVar(&taskFile, "task-file", "", "")
 	fs.StringVar(&storageToken, "storage-token", "", "")
 	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
 	fs.StringVar(&inputDir, "input-dir", "", "")
@@ -277,6 +280,9 @@ func runAgentExec(args []string) int {
 		return 1
 	}
 	task, err := agent.DecodeTask(taskB64)
+	if taskFile != "" {
+		task, err = agent.DecodeTaskFile(taskFile)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec decode task: %v\n", err)
 		return 1

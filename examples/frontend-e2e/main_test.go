@@ -20,20 +20,21 @@ func TestRunAgentExecWritesResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	taskB64, err := agent.EncodeTask(&proto.Task{
+	task := &proto.Task{
 		ProjectID: "e2e",
 		ID:        "run-test:hello",
 		RunID:     "run-test",
 		StepName:  "hello",
 		Step:      stepJSON,
-	})
-	if err != nil {
+	}
+	taskFile := filepath.Join(t.TempDir(), "task.json")
+	if err := agent.WriteTaskFile(taskFile, task); err != nil {
 		t.Fatal(err)
 	}
 
 	resultFile := filepath.Join(t.TempDir(), "result.json")
 	code := runAgentExec([]string{
-		"--task=" + taskB64,
+		"--task-file=" + taskFile,
 		"--result-file=" + resultFile,
 		"--output-dir=" + t.TempDir(),
 	})

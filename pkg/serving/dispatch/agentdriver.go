@@ -17,7 +17,7 @@ type AgentRPC interface {
 }
 
 // EnvResolver resolves manifest.EnvVar entries (including credentialRef) into
-// "KEY=value" strings. Implement with (*secret.Store).ResolveEnv.
+// "KEY=value" strings. Implement with (*credential.Store).ResolveEnv.
 type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvVar) ([]string, error)
 
 type AgentDriver struct {
@@ -25,7 +25,7 @@ type AgentDriver struct {
 	rpc         AgentRPC
 	repo        serving.Repository
 	podPolicies iagent.WorkerPodPolicyRepository
-	envResolver EnvResolver // optional; nil = no secret resolution
+	envResolver EnvResolver // optional; nil = no credential resolution
 }
 
 func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository, policies ...iagent.WorkerPodPolicyRepository) *AgentDriver {

@@ -5,11 +5,7 @@ import (
 	"context"
 
 	"github.com/piper/piper/internal/logsink"
-)
-
-const (
-	ModeProcess = "process"
-	ModeDocker  = "docker"
+	"github.com/piper/piper/pkg/manifest"
 )
 
 type Driver interface {
@@ -39,6 +35,7 @@ type DeployRequest struct {
 	Name        string
 	RuntimeName string
 	Image       string
+	Docker      *manifest.DriverDockerSpec
 	Command     []string
 	Env         map[string]string
 	Port        int

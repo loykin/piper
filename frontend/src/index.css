@@ -6,7 +6,6 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
-@source "../node_modules/@loykin/designkit/dist/index.js";
 @source "../node_modules/@loykin/gridkit/dist/index.js";
 
 @custom-variant dark (&:is(.dark *));
@@ -166,14 +165,14 @@
   --sidebar-ring: oklch(0.585 0.195 264);
 }
 
-@import "@loykin/gridkit/styles";
-
 /* DesignKit bundles its own Tailwind CSS outside any @layer, so its .hidden
    (unlayered) wins over the app's layered md:block / md:flex utilities.
-   Re-declare the responsive display overrides as unlayered rules after all
-   imports so they win by document order at the same cascade level. */
+   Re-declare the responsive display overrides before GridKit so GridKit remains
+   the final stylesheet import as required by its @layer ordering. */
 @media (min-width: 640px) { .sm\:flex { display: flex; } }
 @media (min-width: 768px) {
   .md\:block { display: block; }
   .md\:flex  { display: flex;  }
 }
+
+@import "@loykin/gridkit/styles";

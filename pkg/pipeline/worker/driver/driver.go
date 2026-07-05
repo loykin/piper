@@ -21,6 +21,9 @@ type Handle struct {
 	// ResultPath is the HOST-side path to the AgentResult JSON.
 	// Empty for K8s (result is in the pod termination log, read via K8s API).
 	ResultPath string
+	// TaskPath is the HOST-side path to the task JSON file, when a driver
+	// stages one for piper agent exec. It may contain resolved secrets.
+	TaskPath string
 }
 
 // Exit is the terminal state returned by Wait.
@@ -67,10 +70,6 @@ type ExecSpec struct {
 	// Baremetal uses it directly; Docker bind-mounts it into the container.
 	// K8s ignores it (uses emptyDir volumes managed by Kubernetes).
 	OutputDir string
-
-	// Env carries additional environment variables injected into the execution
-	// environment (e.g. PIPER_GIT_USER, PIPER_GIT_TOKEN).
-	Env []string
 
 	// LogSink is owned by the parent worker and forwards runtime output through
 	// the existing master tunnel. Child processes never connect to master.

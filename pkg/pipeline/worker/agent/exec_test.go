@@ -38,3 +38,20 @@ func TestBuildAgentExecHasNoGitCredentialFlags(t *testing.T) {
 		t.Fatalf("child args must not expose git credentials as CLI flags: %s", joined)
 	}
 }
+
+func TestBuildAgentExecUsesTaskFileWithoutTaskArg(t *testing.T) {
+	args, err := BuildAgentExec(&proto.Task{
+		ID:  "run:step",
+		Env: []string{"APP_TOKEN=secret-value"},
+	}, AgentExecConfig{TaskFile: "/run/piper/task.json", ResultFile: "/tmp/result.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "secret-value") || strings.Contains(joined, "--task=") {
+		t.Fatalf("child args exposed task payload: %s", joined)
+	}
+	if !strings.Contains(joined, "--task-file=/run/piper/task.json") {
+		t.Fatalf("child args missing task file: %s", joined)
+	}
+}

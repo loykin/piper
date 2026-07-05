@@ -50,7 +50,9 @@ type servingBundle struct {
 // Piper is the library entry point.
 // Embed it in projects such as data-voyager.
 //
-//	p := piper.New(piper.DefaultConfig())
+//	cfg := piper.DefaultConfig()
+//	cfg.Server.SecretEncryptionKey = "sha256:replace-with-a-strong-passphrase"
+//	p, err := piper.New(cfg)
 //	result, err := p.RunFile(ctx, "train.yaml")
 type Piper struct {
 	cfg             Config
@@ -119,8 +121,12 @@ func New(cfg Config) (*Piper, error) {
 	}
 	secretKey := cfg.Server.SecretEncryptionKey
 	if secretKey == "" {
+		if !cfg.Server.AllowInsecureDevKey {
+			_ = repos.Close()
+			return nil, fmt.Errorf("server.secret_encryption_key is required; set server.allow_insecure_dev_key=true only for local development")
+		}
 		secretKey = "sha256:piper-dev-insecure-key-change-in-production"
-		slog.Warn("server.secret_encryption_key is not set — using an insecure dev key; set it before production use")
+		slog.Warn("server.secret_encryption_key is not set — using an insecure dev key because server.allow_insecure_dev_key=true")
 	}
 	credentialStore, err := credential.NewStore(repos.Credential, secretKey)
 	if err != nil {

@@ -4,6 +4,7 @@ package dockerdriver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,6 +19,7 @@ import (
 
 	dockerinfra "github.com/piper/piper/internal/docker"
 	"github.com/piper/piper/internal/proto"
+	"github.com/piper/piper/pkg/pipeline"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
 	"github.com/piper/piper/pkg/pipeline/worker/driver" //nolint:depguard
 )
@@ -32,6 +34,7 @@ const (
 	labelStepName   = "piper.step-name"
 	labelAttempt    = "piper.attempt"
 	labelResultPath = "piper.result-path"
+	labelTaskPath   = "piper.task-path"
 )
 
 // Config configures the DockerDriver.
@@ -103,15 +106,22 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 	}
 	hostResultPath := filepath.Join(resultDir, spec.RuntimeKey+".result.json")
 	containerResultFile := driver.ContainerResultDir + "/" + spec.RuntimeKey + ".result.json"
+	hostTaskPath := filepath.Join(resultDir, spec.RuntimeKey+".task.json")
+	containerTaskFile := driver.ContainerResultDir + "/" + spec.RuntimeKey + ".task.json"
+	if err := agent.WriteTaskFile(hostTaskPath, task); err != nil {
+		return driver.Handle{}, fmt.Errorf("write task file: %w", err)
+	}
 
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    driver.ContainerOutputDir,
 		InputDir:     driver.ContainerInputDir,
+		TaskFile:     containerTaskFile,
 		ResultFile:   containerResultFile,
 	})
 	if err != nil {
+		_ = os.Remove(hostTaskPath)
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)
 	}
 
@@ -123,13 +133,15 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 		StepName:   task.StepName,
 		Attempt:    task.Attempt,
 		ResultPath: hostResultPath,
+		TaskPath:   hostTaskPath,
 	}
 
 	// Container command: piper agent exec with container-side paths.
 	cmd := append([]string{driver.ContainerPiperBin}, agentArgs...)
 
-	// Env: pass host env vars for Git credentials.
-	env := append([]string{}, spec.Env...)
+	// Do not pass resolved task env here: Docker exposes container env through
+	// inspect. piper agent exec reads task env from the mounted task file.
+	env := []string(nil)
 
 	mounts := []mount.Mount{
 		// piper binary (read-only)
@@ -163,11 +175,24 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 		labelStepName:   task.StepName,
 		labelAttempt:    strconv.Itoa(task.Attempt),
 		labelResultPath: hostResultPath,
+		labelTaskPath:   hostTaskPath,
 	}
 
 	networkMode := container.NetworkMode("bridge")
 	if d.cfg.Network != "" {
 		networkMode = container.NetworkMode(d.cfg.Network)
+	}
+	var step pipeline.Step
+	if len(task.Step) > 0 {
+		if err := json.Unmarshal(task.Step, &step); err != nil {
+			_ = os.Remove(hostTaskPath)
+			return driver.Handle{}, fmt.Errorf("parse step: %w", err)
+		}
+	}
+	resources, err := dockerinfra.ResourcesFromDriverDocker(step.Driver.Docker)
+	if err != nil {
+		_ = os.Remove(hostTaskPath)
+		return driver.Handle{}, err
 	}
 
 	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
@@ -181,15 +206,19 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 			Mounts:      mounts,
 			NetworkMode: networkMode,
 			AutoRemove:  false, // manual remove after we read the result
+			Resources:   resources.Resources,
+			ShmSize:     resources.ShmSize,
 		},
 		Name: spec.RuntimeKey,
 	})
 	if err != nil {
+		_ = os.Remove(hostTaskPath)
 		return driver.Handle{}, fmt.Errorf("container create: %w", err)
 	}
 
 	if _, err := d.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		_, _ = d.client.ContainerRemove(ctx, resp.ID, dockerclient.ContainerRemoveOptions{Force: true})
+		_ = os.Remove(hostTaskPath)
 		return driver.Handle{}, fmt.Errorf("container start: %w", err)
 	}
 	if spec.LogSink != nil {
@@ -221,6 +250,7 @@ func (d *Driver) Wait(ctx context.Context, handle driver.Handle) (driver.Exit, e
 	case <-ctx.Done():
 		return driver.Exit{}, ctx.Err()
 	case err := <-waitResult.Error:
+		d.cleanupContainer(containerID, handle)
 		return driver.Exit{InfraFailure: fmt.Errorf("container wait: %w", err)}, nil
 	case body := <-waitResult.Result:
 		exit := driver.Exit{ResultPath: handle.ResultPath}
@@ -231,12 +261,19 @@ func (d *Driver) Wait(ctx context.Context, handle driver.Handle) (driver.Exit, e
 				exit.InfraFailure = fmt.Errorf("container exited %d without result file", body.StatusCode)
 			}
 		}
-		d.mu.Lock()
-		delete(d.active, handle.RuntimeKey)
-		d.mu.Unlock()
-		_, _ = d.client.ContainerRemove(context.Background(), containerID, dockerclient.ContainerRemoveOptions{Force: true})
+		d.cleanupContainer(containerID, handle)
 		return exit, nil
 	}
+}
+
+func (d *Driver) cleanupContainer(containerID string, handle driver.Handle) {
+	d.mu.Lock()
+	delete(d.active, handle.RuntimeKey)
+	d.mu.Unlock()
+	if containerID != "" {
+		_, _ = d.client.ContainerRemove(context.Background(), containerID, dockerclient.ContainerRemoveOptions{Force: true})
+	}
+	_ = os.Remove(handle.TaskPath)
 }
 
 // Stop stops and removes the container.
@@ -252,6 +289,7 @@ func (d *Driver) Stop(ctx context.Context, handle driver.Handle, grace time.Dura
 	secs := int(grace.Seconds())
 	_, _ = d.client.ContainerStop(ctx, containerID, dockerclient.ContainerStopOptions{Timeout: &secs})
 	_, _ = d.client.ContainerRemove(ctx, containerID, dockerclient.ContainerRemoveOptions{Force: true})
+	_ = os.Remove(handle.TaskPath)
 	return nil
 }
 
@@ -283,6 +321,7 @@ func (d *Driver) Recover(ctx context.Context) ([]driver.Handle, error) {
 			StepName:   c.Labels[labelStepName],
 			Attempt:    attempt,
 			ResultPath: c.Labels[labelResultPath],
+			TaskPath:   c.Labels[labelTaskPath],
 		}
 		d.mu.Lock()
 		d.active[runtimeKey] = c.ID

@@ -30,6 +30,7 @@ func main() {
 		Auth:      piper.AuthConfig{Trusted: true},
 		DBPath:    "./piper-embedded.db",
 		OutputDir: os.TempDir() + "/piper-embedded",
+		Server:    piper.ServerConfig{AllowInsecureDevKey: true},
 	})
 	if err != nil {
 		log.Fatal(err)

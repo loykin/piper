@@ -150,7 +150,7 @@ export default function RunsPage() {
               pagination={{ pageSize: 10 }}
               footer={(table) => <DataGridPaginationBar table={table} className="px-4 py-2" pageSizes={[10, 20, 50]} />}
               classNames={{
-                container: 'border-0 rounded-none bg-transparent',
+                root: 'border-0 rounded-none bg-transparent',
                 header: 'bg-gray-900',
                 headerCell: 'text-xs uppercase tracking-wider text-gray-400',
                 row: 'bg-gray-950 hover:bg-gray-900 transition-colors',

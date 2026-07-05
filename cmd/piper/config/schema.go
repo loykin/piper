@@ -37,6 +37,7 @@ type ServerConfig struct {
 	WorkerToken         string          `mapstructure:"worker_token" yaml:"worker_token"`
 	AuthSigningKey      string          `mapstructure:"auth_signing_key" yaml:"auth_signing_key"`
 	SecretEncryptionKey string          `mapstructure:"secret_encryption_key" yaml:"secret_encryption_key"`
+	AllowInsecureDevKey bool            `mapstructure:"allow_insecure_dev_key" yaml:"allow_insecure_dev_key"`
 	TLS                 TLSConfig       `mapstructure:"tls" yaml:"tls"`
 	DB                  DBConfig        `mapstructure:"db" yaml:"db"`
 	DataDir             string          `mapstructure:"data_dir" yaml:"data_dir"`

@@ -27,11 +27,11 @@ importers:
         specifier: ^5.2.9
         version: 5.2.9
       '@loykin/designkit':
-        specifier: 0.0.1-dev.5
-        version: 0.0.1-dev.5(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))
+        specifier: 0.0.1-dev.6
+        version: 0.0.1-dev.6(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))
       '@loykin/gridkit':
-        specifier: ^0.1.22
-        version: 0.1.22(@tanstack/react-table@8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@tanstack/react-virtual@3.14.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
+        specifier: ^0.2.0
+        version: 0.2.0(@tanstack/react-table@8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@tanstack/react-virtual@3.14.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
       '@loykin/side-panel':
         specifier: 0.0.1-dev.2
         version: 0.0.1-dev.2(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
@@ -506,15 +506,15 @@ packages:
   '@lezer/yaml@1.0.4':
     resolution: {integrity: sha512-2lrrHqxalACEbxIbsjhqGpSW8kWpUKuY6RHgnSAFZa6qK62wvnPxA8hGOwOoDbwHcOFs5M4o27mjGu+P7TvBmw==}
 
-  '@loykin/designkit@0.0.1-dev.5':
-    resolution: {integrity: sha512-RzLaqTI2RyQs6xHILH5qvyIuL5Zg7yHv1SBRNjFfc5i6yj5h+A03HZvPtExULKq3KIsPv6pxf7ccLhdd35W0Jw==}
+  '@loykin/designkit@0.0.1-dev.6':
+    resolution: {integrity: sha512-ijWIaOOYjlu1hR/7Uq6bTUz+2znkwwqigs8e4jDY+W3RzzGJM+KRkAiJ4v8LAPfHjbL59jPyVtQ+Tt0P1mm9EQ==}
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
       tailwindcss: ^4.0.0
 
-  '@loykin/gridkit@0.1.22':
-    resolution: {integrity: sha512-eLo3DIpn04JEwGWOC1fXITaRX1sbVO1AgELPgD9yILVPWdFjZey/1PZKM/aNxQO9n7WCVML3Y4h+a2vvq8Vjsg==}
+  '@loykin/gridkit@0.2.0':
+    resolution: {integrity: sha512-xGTKU4eyVpt6h0FQIfMKx5xAPjo00+RrC4aRN41USnfi/wGwhipLNUFGTOinxsyyqHPlRP+B1Xt5SC3ZhH7B3A==}
     peerDependencies:
       '@tanstack/react-table': ^8.21.3
       '@tanstack/react-virtual': ^3.13.24
@@ -3134,11 +3134,9 @@ snapshots:
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
 
-  '@loykin/designkit@0.0.1-dev.5(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))':
+  '@loykin/designkit@0.0.1-dev.6(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))':
     dependencies:
       '@base-ui/react': 1.5.0(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-table': 8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-virtual': 3.14.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       class-variance-authority: 0.7.1
       clsx: 2.1.1
       lucide-react: 1.17.0(react@19.2.7)
@@ -3154,7 +3152,7 @@ snapshots:
       - immer
       - use-sync-external-store
 
-  '@loykin/gridkit@0.1.22(@tanstack/react-table@8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@tanstack/react-virtual@3.14.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))':
+  '@loykin/gridkit@0.2.0(@tanstack/react-table@8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@tanstack/react-virtual@3.14.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))':
     dependencies:
       '@dnd-kit/core': 6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@dnd-kit/sortable': 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)

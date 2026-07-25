@@ -168,6 +168,31 @@ func TestServingAgentDriverDeploy(t *testing.T) {
 	}
 }
 
+// TestServingAgentDriverDeploy_PropagatesStorageConfig verifies WithStorage's
+// url/token reach the remote agent in the RPC payload. This driver always
+// requests artifact.TargetS3 (see ArtifactTarget), so the worker never gets a
+// LocalPath from the master — it must download the S3 artifact itself, which
+// requires the master's storage.url/token to make it into the deploy call.
+func TestServingAgentDriverDeploy_PropagatesStorageConfig(t *testing.T) {
+	driver, rpc := newServingAgentDriver(newStubServingRepo())
+	driver.WithStorage("s3://bucket?accessKey=ak&secretKey=sk", "tok")
+	spec := serving.ModelService{}
+	spec.Metadata.Name = "demo"
+	spec.Spec.Model.FromURI = "s3://models/demo"
+	spec.Spec.Driver.Placement.Worker = "agent-1"
+
+	if _, err := driver.Deploy(context.Background(), spec, artifact.Resolved{S3URI: "s3://models/demo"}, "metadata:\n  name: demo\n"); err != nil {
+		t.Fatalf("Deploy returned error: %v", err)
+	}
+	payload, ok := rpc.calls[0].Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T", rpc.calls[0].Payload)
+	}
+	if payload["storage_url"] != "s3://bucket?accessKey=ak&secretKey=sk" || payload["storage_token"] != "tok" {
+		t.Fatalf("storage config not propagated: %#v", payload)
+	}
+}
+
 func TestServingAgentDriverDeployNoAgent(t *testing.T) {
 	reg := iagent.NewRegistry() // empty registry → no serving agent available
 	rpc := &recordingServingAgentRPC{}

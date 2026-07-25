@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +24,7 @@ import (
 	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
 	servingdocker "github.com/piper/piper/pkg/serving/worker/driver/docker"
 	servingprocess "github.com/piper/piper/pkg/serving/worker/driver/process"
+	"github.com/piper/piper/pkg/storage"
 )
 
 // Config holds configuration for a serving worker agent.
@@ -131,11 +134,13 @@ type servingStopRequest struct {
 }
 
 type deployRequest struct {
-	ProjectID string   `json:"project_id"`
-	YAML      string   `json:"yaml"`
-	LocalPath string   `json:"local_path"`
-	S3URI     string   `json:"s3_uri"`
-	Env       []string `json:"env,omitempty"` // pre-resolved secret env vars from master
+	ProjectID    string   `json:"project_id"`
+	YAML         string   `json:"yaml"`
+	LocalPath    string   `json:"local_path"`
+	S3URI        string   `json:"s3_uri"`
+	StorageURL   string   `json:"storage_url,omitempty"`
+	StorageToken string   `json:"storage_token,omitempty"`
+	Env          []string `json:"env,omitempty"` // pre-resolved secret env vars from master
 }
 
 // serviceKey returns the composite map key "projectID:name".
@@ -153,7 +158,7 @@ type deployResponse struct {
 	Endpoint string `json:"endpoint"`
 }
 
-func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, error) {
+func (w *Worker) deploy(ctx context.Context, req deployRequest) (*deployResponse, error) {
 	if req.ProjectID == "" {
 		return nil, fmt.Errorf("project_id is required")
 	}
@@ -175,6 +180,13 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 	rn := serviceName(req.ProjectID, name) // runtime-safe composite name
 
 	modelDir := req.LocalPath
+	if modelDir == "" && req.S3URI != "" {
+		dir, err := downloadModelArtifact(ctx, req.S3URI, req.StorageURL, req.StorageToken, rn)
+		if err != nil {
+			return nil, fmt.Errorf("download model artifact: %w", err)
+		}
+		modelDir = dir
+	}
 	if modelDir == "" {
 		modelDir = req.S3URI
 	}
@@ -265,6 +277,39 @@ func (w *Worker) deploy(_ context.Context, req deployRequest) (*deployResponse, 
 		w.pushStatus(req.ProjectID, name, serving.StatusStarting, endpoint)
 	}
 	return &deployResponse{Endpoint: endpoint}, nil
+}
+
+// downloadModelArtifact fetches the model artifact identified by s3URI (an
+// "s3://bucket/key/prefix" address using the same bucket as storageURL) into
+// a worker-local directory, replacing any previous download for this service.
+// The remote gRPC dispatch path never resolves a LocalPath on the master, so
+// this is the only place the artifact bytes reach the worker's filesystem.
+func downloadModelArtifact(ctx context.Context, s3URI, storageURL, storageToken, runtimeName string) (string, error) {
+	if storageURL == "" {
+		return "", fmt.Errorf("worker has no storage configured to fetch %q", s3URI)
+	}
+	without := strings.TrimPrefix(s3URI, "s3://")
+	slash := strings.IndexByte(without, '/')
+	if slash < 0 {
+		return "", fmt.Errorf("invalid s3 uri %q: missing key", s3URI)
+	}
+	key := without[slash+1:]
+
+	store, err := storage.Open(storageURL, storageToken)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(os.TempDir(), "piper-serving-models", runtimeName)
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if err := storage.DownloadDir(ctx, store, key, dir); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 func (w *Worker) reserveService(name, endpoint string) (uint64, error) {

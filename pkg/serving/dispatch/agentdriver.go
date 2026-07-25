@@ -21,11 +21,13 @@ type AgentRPC interface {
 type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvVar) ([]string, error)
 
 type AgentDriver struct {
-	router      *iagent.Router
-	rpc         AgentRPC
-	repo        serving.Repository
-	podPolicies iagent.WorkerPodPolicyRepository
-	envResolver EnvResolver // optional; nil = no credential resolution
+	router       *iagent.Router
+	rpc          AgentRPC
+	repo         serving.Repository
+	podPolicies  iagent.WorkerPodPolicyRepository
+	envResolver  EnvResolver // optional; nil = no credential resolution
+	storageURL   string
+	storageToken string
 }
 
 func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository, policies ...iagent.WorkerPodPolicyRepository) *AgentDriver {
@@ -40,6 +42,15 @@ func NewAgentDriver(router *iagent.Router, rpc AgentRPC, repo serving.Repository
 // spec.Spec.Options.Env before dispatch.
 func (d *AgentDriver) WithEnvResolver(r EnvResolver) *AgentDriver {
 	d.envResolver = r
+	return d
+}
+
+// WithStorage sets the master's artifact storage URL/token so remote serving
+// workers can download S3 model artifacts themselves — the master never
+// resolves a LocalPath for this driver (see ArtifactTarget).
+func (d *AgentDriver) WithStorage(url, token string) *AgentDriver {
+	d.storageURL = url
+	d.storageToken = token
 	return d
 }
 
@@ -74,11 +85,13 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 		Endpoint string `json:"endpoint"`
 	}
 	if err := d.rpc.SendRPC(ctx, agentInfo.ID, iagent.MethodServingDeploy, map[string]any{
-		"project_id": spec.Metadata.ProjectID,
-		"yaml":       yamlStr,
-		"local_path": art.LocalPath,
-		"s3_uri":     art.S3URI,
-		"env":        resolvedEnv,
+		"project_id":    spec.Metadata.ProjectID,
+		"yaml":          yamlStr,
+		"local_path":    art.LocalPath,
+		"s3_uri":        art.S3URI,
+		"storage_url":   d.storageURL,
+		"storage_token": d.storageToken,
+		"env":           resolvedEnv,
 	}, &result); err != nil {
 		return nil, fmt.Errorf("serving agent deploy: %w", err)
 	}

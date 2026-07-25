@@ -4,15 +4,19 @@
 # What this does:
 #   1. Starts SeaweedFS (S3 storage) via docker-compose
 #   2. Builds the piper binary
-#   3. Registers the iris-predictor ModelService
+#   3. Starts the piper server, a pipeline worker, and a serving worker
+#      (baremetal/docker workers each run exactly one capability, so pipeline
+#      training and model serving need two separate worker processes)
 #   4. Creates an hourly cron schedule for iris-retraining
 #   5. Triggers a one-off run so you see results immediately
+#   6. Registers the iris-predictor ModelService, once a successful run
+#      exists for it to deploy ("run: latest" has nothing to resolve before that)
 #
 # Prerequisites:
 #   - Docker + Docker Compose
 #   - Go 1.21+
-#   - Python 3.9+  with scikit-learn, flask installed
-#       pip install scikit-learn flask
+#   - Python 3.9+  with scikit-learn installed
+#       pip install scikit-learn
 #
 # Usage:
 #   cd <repo-root>
@@ -23,7 +27,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-SERVER="${PIPER_SERVER:-http://localhost:8080}"
+# Note: intentionally not named PIPER_SERVER — viper's automatic env binding
+# (SetEnvPrefix("PIPER") + AutomaticEnv) matches that name against the config's
+# top-level "server:" section and silently blanks it out, which then makes the
+# piper server started below fail with "server.secret_encryption_key is required".
+SERVER="${PIPER_API_URL:-http://localhost:8080}"
+PROJECT_ID="${PIPER_PROJECT_ID:-default}"
+API="$SERVER/api/projects/$PROJECT_ID"
 CRON="${PIPER_CRON:-0 * * * *}"          # default: every hour on the hour
 DEMO_CRON="${DEMO_CRON:-}"               # set to "*/5 * * * *" to run every 5 min for demo
 
@@ -44,35 +54,30 @@ echo "    piper server PID=$PIPER_PID"
 
 # Wait for the server to be ready
 for i in $(seq 1 20); do
-    if curl -sf "$SERVER/runs" > /dev/null 2>&1; then
+    if curl -sf "$SERVER/health" > /dev/null 2>&1; then
         break
     fi
     echo "    waiting for server… ($i/20)"
     sleep 1
 done
-curl -sf "$SERVER/runs" > /dev/null || { echo "ERROR: piper server did not start"; exit 1; }
+curl -sf "$SERVER/health" > /dev/null || { echo "ERROR: piper server did not start"; exit 1; }
 echo "    server ready"
 
-# ── 4. Start piper worker (background) ───────────────────────────────────────
-echo "==> Starting piper worker…"
-bin/piper --config examples/mlops/piper.yaml worker --master-url "$SERVER" &
+# ── 4. Start piper workers (background) ──────────────────────────────────────
+# A baremetal/docker worker process advertises exactly one capability, so the
+# pipeline (training) and serving (model hosting) roles run as separate
+# processes even though they share this node and this config file.
+echo "==> Starting pipeline worker…"
+bin/piper --config examples/mlops/piper.yaml worker --master-url "$SERVER" --infrastructure baremetal &
 WORKER_PID=$!
-echo "    worker PID=$WORKER_PID"
+echo "    pipeline worker PID=$WORKER_PID"
 
-# ── 5. Register ModelService ──────────────────────────────────────────────────
-echo "==> Registering iris-predictor service…"
-SERVICE_YAML=$(python3 -c "
-import sys, json
-with open('examples/serving/service.yaml') as f:
-    print(json.dumps(f.read()))
-")
-curl -sf "$SERVER/services" \
-    -H 'Content-Type: application/json' \
-    -d "{\"yaml\": $SERVICE_YAML}" \
-| python3 -m json.tool
-echo ""
+echo "==> Starting serving worker…"
+bin/piper --config examples/mlops/piper.yaml serving-worker --master-url "$SERVER" --infrastructure baremetal &
+SERVING_WORKER_PID=$!
+echo "    serving worker PID=$SERVING_WORKER_PID"
 
-# ── 6. Create cron schedule ───────────────────────────────────────────────────
+# ── 5. Create cron schedule ───────────────────────────────────────────────────
 ACTIVE_CRON="${DEMO_CRON:-$CRON}"
 echo "==> Creating cron schedule: '$ACTIVE_CRON'"
 PIPELINE_YAML=$(python3 -c "
@@ -80,7 +85,7 @@ import sys, json
 with open('examples/mlops/pipeline.yaml') as f:
     print(json.dumps(f.read()))
 ")
-SCHEDULE=$(curl -sf "$SERVER/schedules" \
+SCHEDULE=$(curl -sf "$API/schedules" \
     -H 'Content-Type: application/json' \
     -d "{
       \"name\": \"iris-retraining-hourly\",
@@ -92,19 +97,19 @@ echo "$SCHEDULE" | python3 -m json.tool
 SCHEDULE_ID=$(echo "$SCHEDULE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
 echo ""
 
-# ── 7. Trigger one immediate run ──────────────────────────────────────────────
+# ── 6. Trigger one immediate run ──────────────────────────────────────────────
 echo "==> Triggering immediate run (so you don't have to wait for the cron)…"
-RUN=$(curl -sf "$SERVER/runs" \
+RUN=$(curl -sf "$API/runs" \
     -H 'Content-Type: application/json' \
     -d "{\"yaml\": $PIPELINE_YAML}")
 echo "$RUN" | python3 -m json.tool
 RUN_ID=$(echo "$RUN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('run_id',''))")
 echo ""
 
-# ── 8. Wait for the run to complete ──────────────────────────────────────────
+# ── 7. Wait for the run to complete ──────────────────────────────────────────
 echo "==> Waiting for run $RUN_ID to complete…"
 for i in $(seq 1 60); do
-    STATUS=$(curl -sf "$SERVER/runs/$RUN_ID" | python3 -c "
+    STATUS=$(curl -sf "$API/runs/$RUN_ID" | python3 -c "
 import sys,json; d=json.load(sys.stdin); print(d['run']['status'])
 " 2>/dev/null || echo "unknown")
     echo "    [$i/60] status=$STATUS"
@@ -114,23 +119,39 @@ import sys,json; d=json.load(sys.stdin); print(d['run']['status'])
             break
             ;;
         failed|canceled)
-            echo "    Run $STATUS — check logs at $SERVER/runs/$RUN_ID"
-            kill "$PIPER_PID" "$WORKER_PID" 2>/dev/null || true
+            echo "    Run $STATUS — check logs at $API/runs/$RUN_ID"
+            kill "$PIPER_PID" "$WORKER_PID" "$SERVING_WORKER_PID" 2>/dev/null || true
             exit 1
             ;;
     esac
     sleep 3
 done
 
-# ── 9. Show metrics ────────────────────────────────────────────────────────────
+# ── 8. Show metrics ────────────────────────────────────────────────────────────
 echo ""
 echo "==> Run metrics:"
-curl -sf "$SERVER/runs/$RUN_ID/metrics" | python3 -m json.tool
+curl -sf "$API/runs/$RUN_ID/metrics" | python3 -m json.tool
+
+# ── 9. Register ModelService ──────────────────────────────────────────────────
+# spec.model.from_artifact.run: "latest" resolves against existing successful
+# runs, so the service can only be registered after step 7 produced one.
+echo ""
+echo "==> Registering iris-predictor service…"
+SERVICE_YAML=$(python3 -c "
+import sys, json
+with open('examples/serving/service.yaml') as f:
+    print(json.dumps(f.read()))
+")
+curl -sf "$API/serving" \
+    -H 'Content-Type: application/json' \
+    -d "{\"yaml\": $SERVICE_YAML}" \
+| python3 -m json.tool
+echo ""
 
 # ── 10. Show service status ────────────────────────────────────────────────────
 echo ""
 echo "==> iris-predictor service status:"
-curl -sf "$SERVER/services/iris-predictor" | python3 -m json.tool
+curl -sf "$API/serving/iris-predictor" | python3 -m json.tool
 
 # ── 11. Smoke-test the prediction endpoint ────────────────────────────────────
 echo ""
@@ -145,7 +166,7 @@ echo ""
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║  Full MLOps loop running!                           ║"
 echo "║                                                     ║"
-echo "║  UI:         http://localhost:8080                  ║"
+echo "║  UI:         http://localhost:8080/ui/               ║"
 echo "║  Predict:    http://localhost:9080/predict          ║"
 echo "║  Schedule:   $ACTIVE_CRON                           ║"
 echo "║                                                     ║"
@@ -153,5 +174,5 @@ echo "║  Ctrl+C to stop piper; docker compose down to      ║"
 echo "║  stop SeaweedFS.                                    ║"
 echo "╚══════════════════════════════════════════════════════╝"
 
-# Keep running so piper server + worker stay alive
+# Keep running so piper server + workers stay alive
 wait "$PIPER_PID"

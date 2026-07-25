@@ -1,5 +1,5 @@
 # Piper server configuration
-# Pass with: piper --config examples/full-mlops/piper.yaml serve
+# Pass with: piper --config examples/mlops/piper.yaml serve
 
 version: 4
 

@@ -241,6 +241,7 @@ func New(cfg Config) (*Piper, error) {
 		}
 	}
 	q.SetStorageConfig(p.storageURL, cfg.Storage.Token)
+	servingDriver.WithStorage(p.storageURL, cfg.Storage.Token)
 	p.resolver = &piperArtifactResolver{
 		runRepo:    repos.Run,
 		outputDir:  cfg.OutputDir,

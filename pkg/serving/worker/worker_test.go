@@ -2,11 +2,15 @@ package servingworker
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/piper/piper/pkg/manifest"
 	"github.com/piper/piper/pkg/serving"
 	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
+	"github.com/piper/piper/pkg/storage"
 )
 
 type captureDriver struct {
@@ -215,5 +219,85 @@ func TestServingWorker_RejectsDuplicateActiveService(t *testing.T) {
 	}
 	if _, err := w.reserveService("demo", "http://localhost:8081"); err == nil {
 		t.Fatal("expected duplicate active service to be rejected")
+	}
+}
+
+// TestDownloadModelArtifact_FetchesFromStorage verifies that a remote-dispatched
+// serving deploy (LocalPath unset, only an S3 URI) actually pulls the artifact
+// bytes onto the worker's filesystem instead of forwarding a raw s3:// URI as
+// PIPER_MODEL_DIR — the bug that made S3-backed serving fail silently at runtime.
+func TestDownloadModelArtifact_FetchesFromStorage(t *testing.T) {
+	backingRoot := t.TempDir()
+	store, err := storage.NewLocal(backingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), "run-1/train/model/model.pkl",
+		strings.NewReader("fake-model-bytes"), -1); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, err := downloadModelArtifact(context.Background(),
+		"s3://any-bucket/run-1/train/model", "file://"+backingRoot, "", "project-a__demo")
+	if err != nil {
+		t.Fatalf("downloadModelArtifact: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "model.pkl"))
+	if err != nil {
+		t.Fatalf("read downloaded model: %v", err)
+	}
+	if string(got) != "fake-model-bytes" {
+		t.Fatalf("model.pkl content = %q, want %q", got, "fake-model-bytes")
+	}
+}
+
+func TestDownloadModelArtifact_RequiresStorageURL(t *testing.T) {
+	if _, err := downloadModelArtifact(context.Background(), "s3://bucket/run-1/train/model", "", "", "rt"); err == nil {
+		t.Fatal("expected error when no storage is configured")
+	}
+}
+
+// TestServingWorkerDeploy_DownloadsS3ArtifactWhenLocalPathMissing exercises the
+// deploy() RPC handler end-to-end: given only an S3 URI (as the master always
+// sends for this remote-agent driver, see AgentDriver.ArtifactTarget), the
+// worker must resolve PIPER_MODEL_DIR to a local directory it actually downloaded.
+func TestServingWorkerDeploy_DownloadsS3ArtifactWhenLocalPathMissing(t *testing.T) {
+	backingRoot := t.TempDir()
+	store, err := storage.NewLocal(backingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), "run-1/train/model/model.pkl",
+		strings.NewReader("fake-model-bytes"), -1); err != nil {
+		t.Fatal(err)
+	}
+
+	drv := &captureDriver{endpoint: "http://127.0.0.1:19080"}
+	w := New(Config{ID: "test-id", Infrastructure: InfrastructureBaremetal})
+	w.driver = drv
+	payload := `apiVersion: piper/v1
+kind: ModelService
+metadata:
+  name: demo
+spec:
+  run:
+    command: ["serve"]
+    port: 19080
+`
+	_, err = w.deploy(context.Background(), deployRequest{
+		ProjectID:  "project-a",
+		YAML:       payload,
+		S3URI:      "s3://any-bucket/run-1/train/model",
+		StorageURL: "file://" + backingRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelDir := drv.req.Env["PIPER_MODEL_DIR"]
+	if modelDir == "" || strings.HasPrefix(modelDir, "s3://") {
+		t.Fatalf("PIPER_MODEL_DIR = %q, want a local downloaded path", modelDir)
+	}
+	if _, err := os.Stat(filepath.Join(modelDir, "model.pkl")); err != nil {
+		t.Fatalf("downloaded model.pkl missing at %q: %v", modelDir, err)
 	}
 }

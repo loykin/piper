@@ -636,10 +636,15 @@ func (q *Queue) requeueBusyLocked(runID, stepName string) {
 	entry.startedAt = nil
 	entry.leaseAt = nil
 	slog.Info("task requeued after busy dispatch", "task_id", entry.task.ID)
-	time.AfterFunc(2*time.Second, func() {
+	q.stopRetryTimerLocked(entry)
+	entry.retryTimer = time.AfterFunc(2*time.Second, func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		if entry.status != taskReady {
+		entry.retryTimer = nil
+		// serverCtx is cancelled on shutdown; without this check a timer that
+		// outlives Close() (e.g. mid-flight when the process/test tears down)
+		// would dispatch against an already-closed store.
+		if q.serverCtx.Err() != nil || entry.status != taskReady {
 			return
 		}
 		q.dispatchIfNeeded(context.Background(), entry)

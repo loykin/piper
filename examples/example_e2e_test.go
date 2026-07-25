@@ -354,7 +354,7 @@ func TestExampleArtifacts(t *testing.T) {
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
 		DBPath:    filepath.Join(tmpDir, "example-notebook.db"),
 		Auth:      piper.AuthConfig{Trusted: true},
-		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
+		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port), AllowInsecureDevKey: true},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
 	})
 	if err != nil {
@@ -436,7 +436,7 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 		OutputDir: filepath.Join(tmpDir, "server-outputs"),
 		Repos:     repos,
 		Auth:      piper.AuthConfig{Trusted: true},
-		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
+		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port), AllowInsecureDevKey: true},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
 	})
 	if err != nil {
@@ -612,7 +612,7 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	p, err := piper.New(piper.Config{
 		DBPath: filepath.Join(tmpDir, "example-notebook.db"),
 		Auth:   piper.AuthConfig{Trusted: true},
-		Server: piper.ServerConfig{Addr: fmt.Sprintf(":%d", port)},
+		Server: piper.ServerConfig{Addr: fmt.Sprintf(":%d", port), AllowInsecureDevKey: true},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -38,7 +38,8 @@ func main() {
 		DBPath:    "./piper.db",
 		OutputDir: "./piper-outputs",
 		Server: piper.ServerConfig{
-			Addr: *addr,
+			Addr:                *addr,
+			AllowInsecureDevKey: true,
 		},
 	})
 	if err != nil {

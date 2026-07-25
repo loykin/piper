@@ -654,6 +654,37 @@ func TestDispatchRetryableErrorRequeuesWithoutConsumingAttempt(t *testing.T) {
 	}
 }
 
+// TestBusyRequeueTimerNoopsAfterServerCtxCancel guards against a shutdown race:
+// requeueBusyLocked schedules a 2s time.AfterFunc to re-dispatch. If the Queue's
+// serverCtx is cancelled (server/test teardown) before that timer fires, the
+// callback used to redispatch anyway and hit a torn-down store — surfacing as
+// "dbstore: \"primary\" not found" noise well after the owning test had returned.
+func TestBusyRequeueTimerNoopsAfterServerCtxCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	pl := singleStepPipeline("busy-shutdown")
+	dag, _ := pipeline.BuildDAG(pl)
+
+	var dispatches atomic.Int32
+	// busyCount is large so the queue never gets past the first, busy dispatch
+	// within this test — only the cancel-before-timer-fires path is exercised.
+	alwaysBusy := &busyBackend{busyCount: 1000, onDispatch: func() { dispatches.Add(1) }}
+	q := NewQueue(ctx, &memoryRunRepo{}, &memoryStepRepo{})
+	q.SetBackend(alwaysBusy)
+	q.Add(ctx, "project-a", pl, dag, "run-busy-shutdown", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	if !waitUntil(2*time.Second, func() bool { return dispatches.Load() >= 1 }) {
+		t.Fatalf("expected the first (busy) dispatch, got %d", dispatches.Load())
+	}
+	// Cancel serverCtx the way Piper.Close() does, well before the queued
+	// 2s busy-requeue timer fires.
+	cancel()
+
+	time.Sleep(2500 * time.Millisecond)
+	if got := dispatches.Load(); got != 1 {
+		t.Fatalf("dispatches after serverCtx cancel = %d, want 1 (timer must no-op post-shutdown)", got)
+	}
+}
+
 // busyBackend returns a retryable DispatchError for the first busyCount dispatches.
 type busyBackend struct {
 	mu          sync.Mutex

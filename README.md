@@ -607,7 +607,7 @@ version: 4
 server:
   http_addr: ":8080"
   # Required for credential encryption. Use a 32-byte key, base64 32-byte key,
-  # or sha256:<strong-passphrase>. For local-only development, set
+  # or pbkdf2:<strong-passphrase>. For local-only development, set
   # allow_insecure_dev_key: true instead.
   secret_encryption_key: ""
   tls:

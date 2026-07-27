@@ -306,7 +306,7 @@ func newTestStore(t *testing.T) (*Store, *memoryRepo) {
 		values:   map[string][]byte{},
 		markUsed: map[string]int{},
 	}
-	store, err := NewStore(repo, "sha256:test-key")
+	store, err := NewStore(repo, "pbkdf2:test-key")
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}

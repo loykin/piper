@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -15,6 +16,18 @@ import (
 	"strings"
 
 	"github.com/piper/piper/pkg/manifest"
+)
+
+const (
+	// credentialKDFSalt is fixed and public by design: this derives one
+	// installation-wide encryption key from an operator-supplied passphrase,
+	// not per-user password hashes, so there's no per-secret salt to protect —
+	// only the passphrase's own strength matters. A fixed, application-specific
+	// salt still stops precomputed-table reuse across unrelated applications.
+	credentialKDFSalt = "piper-credential-store-v1"
+	// credentialKDFIterations follows OWASP's 2023 minimum recommendation for
+	// PBKDF2-HMAC-SHA256. This only runs once at process startup.
+	credentialKDFIterations = 600_000
 )
 
 type Store struct {
@@ -43,9 +56,13 @@ func NewStore(repo Repository, key string) (*Store, error) {
 
 func decodeKey(key string) ([]byte, error) {
 	key = strings.TrimSpace(key)
-	if strings.HasPrefix(key, "sha256:") {
-		sum := sha256.Sum256([]byte(strings.TrimPrefix(key, "sha256:")))
-		return sum[:], nil
+	if strings.HasPrefix(key, "pbkdf2:") {
+		passphrase := strings.TrimPrefix(key, "pbkdf2:")
+		dk, err := pbkdf2.Key(sha256.New, passphrase, []byte(credentialKDFSalt), credentialKDFIterations, 32)
+		if err != nil {
+			return nil, fmt.Errorf("derive credential encryption key: %w", err)
+		}
+		return dk, nil
 	}
 	if b, err := base64.StdEncoding.DecodeString(key); err == nil && len(b) == 32 {
 		return b, nil
@@ -53,7 +70,7 @@ func decodeKey(key string) ([]byte, error) {
 	if len(key) == 32 {
 		return []byte(key), nil
 	}
-	return nil, fmt.Errorf("credential encryption key must be 32 bytes, base64-encoded 32 bytes, or sha256:<passphrase>")
+	return nil, fmt.Errorf("credential encryption key must be 32 bytes, base64-encoded 32 bytes, or pbkdf2:<passphrase>")
 }
 
 func (s *Store) List(ctx context.Context, projectID string) ([]*Metadata, error) {

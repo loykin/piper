@@ -40,6 +40,9 @@ func containsDotDot(p string) bool {
 
 // listArtifactsLocal scans outputDir/runID/ grouped by step → artifact → files.
 func listArtifactsLocal(outputDir, runID string) ([]stepArtifacts, error) {
+	if containsDotDot(runID) {
+		return nil, fmt.Errorf("invalid run id")
+	}
 	runDir := filepath.Join(outputDir, runID)
 	stepDirs, err := os.ReadDir(runDir)
 	if err != nil {

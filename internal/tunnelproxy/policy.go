@@ -83,7 +83,11 @@ func RewriteLocationPrefix(resp *http.Response, proxyPrefix string, stripKeys ..
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	if strings.HasPrefix(path, proxyPrefix) {
+	// Match on a path-segment boundary: a bare HasPrefix would also treat
+	// "/proxy-evil/..." as being under proxyPrefix "/proxy" and leave an
+	// out-of-scope redirect untouched.
+	prefix := strings.TrimRight(proxyPrefix, "/")
+	if path == prefix || strings.HasPrefix(path, prefix+"/") {
 		resp.Header.Set("Location", pathWithQuery(path, stripQueryKeys(u.RawQuery, stripKeys...)))
 		return nil
 	}

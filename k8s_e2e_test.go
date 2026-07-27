@@ -31,6 +31,19 @@ import (
 //	go test -tags=k8s_e2e -run TestK8sE2E_SingleStepJobReportsSuccess -v .
 //
 // Set PIPER_K8S_E2E_IMAGE to use a different image tag.
+//
+// The tests in this file target a "kind" cluster specifically: Docker
+// Desktop's built-in Kubernetes does not share the local `docker build` image
+// store, so a locally built image is never visible to it and every test here
+// fails with pods stuck unable to pull the image (deployment never becomes
+// ready, port-forward then reports "connection refused"). Use `kind` (or push
+// the image through a registry the target cluster can actually pull from).
+//
+// Running the whole file together (no -run filter) takes >10 minutes across
+// all five TestK8sE2E_* tests, which exceeds `go test`'s default 10-minute
+// timeout and aborts with "panic: test timed out" partway through — pass
+// `-timeout 30m` (or run tests individually via -run) when running the full
+// k8s_e2e suite.
 func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 	requireKubectlCluster(t)
 

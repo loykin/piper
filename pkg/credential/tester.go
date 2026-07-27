@@ -49,7 +49,9 @@ func testGit(ctx context.Context, repo string, value Value) TestResult {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", authedURL)
+	// "--" stops git from interpreting authedURL as a flag if it happens to
+	// start with "-" (argument injection, since it's built from a user-supplied repo URL).
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", "--", authedURL)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))

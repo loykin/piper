@@ -136,8 +136,13 @@ func (h *Handler) proxyViewer(c *gin.Context) {
 		http.Redirect(c.Writer, c.Request, c.Request.URL.Path+"index.html", http.StatusFound)
 		return
 	}
-	absPath, err := filepath.Abs(filepath.Join(v.WorkDir, subPath))
-	if err != nil || !(strings.HasPrefix(absPath, v.WorkDir+string(os.PathSeparator)) || absPath == v.WorkDir) {
+	absWorkDir, err := filepath.Abs(v.WorkDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid viewer workdir"})
+		return
+	}
+	absPath, err := filepath.Abs(filepath.Join(absWorkDir, subPath))
+	if err != nil || !(strings.HasPrefix(absPath, absWorkDir+string(os.PathSeparator)) || absPath == absWorkDir) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
 		return
 	}

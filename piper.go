@@ -233,7 +233,7 @@ func New(cfg Config) (*Piper, error) {
 	}
 	if storageURL != "" {
 		if st, err := storage.Open(storageURL, cfg.Storage.Token); err != nil {
-			slog.Warn("artifact store unavailable", "url", storageURL, "err", err)
+			slog.Warn("artifact store unavailable", "url", redactStorageURL(storageURL), "err", err)
 			p.storageErr = err
 		} else {
 			p.store = st
@@ -1081,6 +1081,28 @@ func injectStorageCredential(ctx context.Context, store *credential.Store, stora
 	setIfAbsent("sessionToken", val.Data["session_token"])
 	u.RawQuery = q.Encode()
 	return u.String(), nil
+}
+
+// redactStorageURL masks the S3 credential query params (and any userinfo
+// password) a storage URL may carry, so it's safe to include in log output.
+func redactStorageURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "<redacted: unparseable storage url>"
+	}
+	if u.User != nil {
+		if _, hasPassword := u.User.Password(); hasPassword {
+			u.User = url.UserPassword(u.User.Username(), "***")
+		}
+	}
+	q := u.Query()
+	for _, key := range []string{"accessKey", "secretKey", "sessionToken"} {
+		if q.Get(key) != "" {
+			q.Set(key, "***")
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // resolveStorageURL is the internal implementation.

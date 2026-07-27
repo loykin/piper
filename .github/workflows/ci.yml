@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: ["**"]
 
+# Least-privilege default; the publish job overrides this with the
+# packages: write it actually needs.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -293,6 +298,7 @@ jobs:
       - build
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     permissions:
+      contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4

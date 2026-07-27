@@ -22,3 +22,4 @@ pkg/workers/baremetal/notebook/notebooks/
 .idea/
 .vscode/
 *.swp
+.claude

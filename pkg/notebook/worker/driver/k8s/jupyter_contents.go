@@ -157,7 +157,8 @@ func jupyterServiceHost(projectID, notebookName, namespace string) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local:8888", safeName, namespace)
 }
 
-// jupyterBaseURL returns the Jupyter base URL for the given notebook name.
-func jupyterBaseURL(notebookName string) string {
-	return "/notebooks/" + notebookName + "/proxy/"
+// jupyterBaseURL returns the Jupyter base URL for the given notebook, matching
+// the prefix proxyNotebook forwards to (/projects/:project_id/notebooks/:name/proxy).
+func jupyterBaseURL(projectID, notebookName string) string {
+	return "/projects/" + projectID + "/notebooks/" + notebookName + "/proxy/"
 }

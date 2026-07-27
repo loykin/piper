@@ -40,7 +40,7 @@ spec:
           - -c
           - |
             echo "=== Evaluation Summary ==="
-            cat "$PIPER_INPUT_DIR/train/metrics/metrics.json"
+            cat "$PIPER_INPUT_DIR/metrics/metrics.json"
       inputs:
         - name: metrics
           from: train/metrics

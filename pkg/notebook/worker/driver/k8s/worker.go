@@ -21,6 +21,7 @@ import (
 	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/grpcagent"
 	"github.com/piper/piper/internal/logsink"
+	"github.com/piper/piper/pkg/manifest"
 	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/notebook"
 	"k8s.io/client-go/kubernetes"
@@ -151,7 +152,7 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	}
 	name := notebookWorkloadName(req.ProjectID, spec.Metadata.Name)
 	labels := a.k8sLabels("notebook", spec.Metadata.Name)
-	baseURL := fmt.Sprintf("/notebooks/%s/proxy/", spec.Metadata.Name)
+	baseURL := fmt.Sprintf("/projects/%s/notebooks/%s/proxy/", req.ProjectID, spec.Metadata.Name)
 	token := uuid.NewString()
 	workDir := req.WorkDir
 	if workDir == "" {
@@ -192,6 +193,15 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 	}
 	c := &podTemplate.Spec.Containers[nbIdx]
 	c.Image = image
+	var res manifest.ResourceSpec
+	if spec.Spec.Driver.K8s != nil {
+		res = spec.Spec.Driver.K8s.Resources
+	}
+	resReqs, err := notebookResourceRequirements(res)
+	if err != nil {
+		return nil, err
+	}
+	c.Resources = resReqs
 	prepSteps, err := spec.Spec.Prepare.StepsForBackend(notebook.PrepareBackendK8s)
 	if err != nil {
 		return nil, err
@@ -295,6 +305,37 @@ func (a *Worker) startNotebook(ctx context.Context, req notebook.WorkerStartRequ
 		WorkDir:  workDir,
 		Endpoint: fmt.Sprintf("tunnel://%s?target=%s", a.cfg.WorkerID, svcTarget),
 	}, nil
+}
+
+func notebookResourceRequirements(res manifest.ResourceSpec) (corev1.ResourceRequirements, error) {
+	resReqs := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{},
+		Limits:   corev1.ResourceList{},
+	}
+	if res.CPU != "" {
+		q, err := resource.ParseQuantity(res.CPU)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s cpu %q: %w", res.CPU, err)
+		}
+		resReqs.Requests[corev1.ResourceCPU] = q
+		resReqs.Limits[corev1.ResourceCPU] = q
+	}
+	if res.Memory != "" {
+		q, err := resource.ParseQuantity(res.Memory)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s memory %q: %w", res.Memory, err)
+		}
+		resReqs.Requests[corev1.ResourceMemory] = q
+		resReqs.Limits[corev1.ResourceMemory] = q
+	}
+	if res.GPU != "" {
+		q, err := resource.ParseQuantity(res.GPU)
+		if err != nil {
+			return corev1.ResourceRequirements{}, fmt.Errorf("invalid k8s gpu %q: %w", res.GPU, err)
+		}
+		resReqs.Limits["nvidia.com/gpu"] = q
+	}
+	return resReqs, nil
 }
 
 func (a *Worker) stopNotebook(ctx context.Context, req notebook.WorkerStopRequest) error {

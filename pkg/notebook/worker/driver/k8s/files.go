@@ -156,7 +156,7 @@ func (a *Worker) listFilesViaJupyter(ctx context.Context, ns string, req noteboo
 
 	client := newJupyterContentsClient()
 	svcHost := jupyterServiceHost(req.ProjectID, req.Notebook, ns)
-	baseURL := jupyterBaseURL(req.Notebook)
+	baseURL := jupyterBaseURL(req.ProjectID, req.Notebook)
 
 	maxFiles := req.MaxFiles
 	if maxFiles <= 0 {

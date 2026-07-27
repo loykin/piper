@@ -2,6 +2,7 @@ package notebook
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -265,6 +266,7 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 		}
 		var resp FSListFilesResponse
 		if err := h.deps.RPCSender.SendRPC(c.Request.Context(), vol.WorkerID, iagent.MethodFSListFiles, req, &resp); err != nil {
+			slog.Error("notebook: list volume files RPC failed", "worker", vol.WorkerID, "volume_id", vol.ID, "err", err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error":     "worker unavailable",
 				"code":      "worker_offline",

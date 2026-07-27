@@ -332,7 +332,7 @@ rules:
     resources: ["jobs"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
   - apiGroups: [""]
-    resources: ["persistentvolumeclaims", "services"]
+    resources: ["persistentvolumeclaims", "services", "secrets"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
   - apiGroups: [""]
     resources: ["pods"]
@@ -366,6 +366,7 @@ data:
     server:
       http_addr: :8080
       data_dir: /tmp/piper-outputs
+      allow_insecure_dev_key: true
 ---
 apiVersion: apps/v1
 kind: Deployment

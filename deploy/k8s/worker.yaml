@@ -20,8 +20,9 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - worker
-            - --master=http://piper-server.piper.svc.cluster.local:8080
+            - --master-url=http://piper-server.piper.svc.cluster.local:8080
             - --concurrency=2
+            - --infrastructure=baremetal
           env:
             - name: PIPER_SOURCE_S3_ENDPOINT
               valueFrom:

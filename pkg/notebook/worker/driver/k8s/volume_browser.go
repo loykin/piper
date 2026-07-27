@@ -26,6 +26,9 @@ const (
 	viewerReadyTimeout           = 30 * time.Second
 	viewerAnnotationLastAccessed = "piper.io/last-accessed-at"
 	viewerLabelKind              = "notebook-volume-browser"
+	// viewerRunAsUID is an arbitrary non-zero UID satisfying runAsNonRoot; see
+	// createPodAndService for why this is required.
+	viewerRunAsUID int64 = 65532
 )
 
 type browserEndpoint struct {
@@ -217,6 +220,11 @@ func (m *volumeBrowserManager) createPodAndService(ctx context.Context, volumeID
 	allowPrivilegeEscalation := false
 	runAsNonRoot := true
 	readOnlyRootFS := true
+	// The piper image (built FROM alpine, no USER directive) runs as root by
+	// default and defines no dedicated non-root account. The copied binary is
+	// world-executable (0755), so any non-zero UID can run it; pick one
+	// explicitly since runAsNonRoot rejects the image's default root UID.
+	runAsUser := viewerRunAsUID
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: m.ns, Labels: labels, Annotations: annotations},
@@ -225,13 +233,14 @@ func (m *volumeBrowserManager) createPodAndService(ctx context.Context, volumeID
 			Containers: []corev1.Container{{
 				Name:    "browser",
 				Image:   m.image,
-				Command: []string{"piper"},
+				Command: []string{"/piper"},
 				Args:    []string{"internal", "volume-browser", "--root", "/data", "--addr", ":8080"},
 				Ports:   []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 				Env:     []corev1.EnvVar{{Name: "PIPER_BROWSER_TOKEN", Value: token}},
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 					RunAsNonRoot:             &runAsNonRoot,
+					RunAsUser:                &runAsUser,
 					ReadOnlyRootFilesystem:   &readOnlyRootFS,
 					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 				},

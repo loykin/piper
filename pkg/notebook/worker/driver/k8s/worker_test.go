@@ -99,7 +99,7 @@ spec:
 	if sts.Spec.Template.Spec.Containers[0].Image != "jupyter:test" {
 		t.Fatalf("image = %q", sts.Spec.Template.Spec.Containers[0].Image)
 	}
-	wantArgs := notebook.JupyterStartArgs("/notebooks/My Notebook/proxy/", resp.Token, notebook.ContainerWorkDir, 8888)
+	wantArgs := notebook.JupyterStartArgs("/projects/test-project/notebooks/My Notebook/proxy/", resp.Token, notebook.ContainerWorkDir, 8888)
 	gotArgs := sts.Spec.Template.Spec.Containers[0].Args
 	for i, want := range wantArgs {
 		if gotArgs[i] != want {

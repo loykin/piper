@@ -89,6 +89,8 @@ export function NotebookK8sForm({
     [workers, selectedWorkerID],
   )
 
+  const hasWorkers = workers.length > 0
+
   const runtime = useMemo<'k8s' | 'docker' | 'baremetal'>(() => {
 		if (selectedWorker) return selectedWorker.infrastructure
 		if (workers.some(w => w.infrastructure === 'baremetal')) return 'baremetal'
@@ -164,6 +166,7 @@ export function NotebookK8sForm({
   }
 
   function handleSubmit() {
+    if (!hasWorkers) return
     const isK8s = runtime === 'k8s'
     const name = isK8s ? k8sForm.name : workerForm.name
     if (tab === 'form' && !name.trim()) return
@@ -186,13 +189,20 @@ export function NotebookK8sForm({
         <div className="flex items-center gap-2">
           {error && <span className="text-sm text-destructive">{error}</span>}
           <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={submitting}>
+          <Button size="sm" onClick={handleSubmit} disabled={submitting || !hasWorkers}>
             {submitting ? 'Launching…' : volumeId ? 'Attach & Launch' : 'Launch'}
           </Button>
         </div>
       }
     >
       <DataBodyTemplate.Tab id="form" label="Form">
+        {!hasWorkers && (
+          <DataBodyTemplate.Group layout="stacked">
+            <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              No worker in this project advertises the notebook capability. Launching would fail immediately — register a worker with notebook support first.
+            </p>
+          </DataBodyTemplate.Group>
+        )}
         <DataBodyTemplate.Group layout="stacked">
           <DataBodyTemplate.Field label="Worker" description="Select a specific worker. Leave blank to auto-assign.">
             <Select value={selectedWorkerID} onValueChange={onWorkerChange}>

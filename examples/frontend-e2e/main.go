@@ -120,9 +120,10 @@ func main() {
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
-			MasterURL:   masterURL,
-			ID:          "frontend-e2e-worker",
-			Concurrency: 4,
+			MasterURL:    masterURL,
+			ID:           "frontend-e2e-worker",
+			Concurrency:  4,
+			Capabilities: []string{"pipeline", "notebook"},
 		},
 		Store: worker.StoreConfig{
 			OutputDir:   filepath.Join(tmpDir, "worker-outputs"),

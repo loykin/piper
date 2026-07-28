@@ -5,6 +5,7 @@ export interface K8sFormState {
   name: string
   env: EnvVarDraft[]
   image: string
+  namespace: string
   cpu: string
   memory: string
   gpu: string
@@ -16,11 +17,12 @@ export interface K8sFormState {
 export const DEFAULT_K8S: K8sFormState = {
   name: '',
   env: [],
-  image: '',
+  image: 'jupyter/minimal-notebook:latest',
+  namespace: '',
   cpu: '',
   memory: '',
   gpu: '',
-  storageSize: '',
+  storageSize: '10Gi',
   prepareBackend: 'k8s',
   prepare: '',
 }
@@ -28,6 +30,7 @@ export const DEFAULT_K8S: K8sFormState = {
 export interface WorkerFormState {
   name: string
   envVars: EnvVarDraft[]
+  dockerImage: string
   env: string
   gpus: string
   prepareBackend: 'process' | 'docker'
@@ -37,6 +40,7 @@ export interface WorkerFormState {
 export const DEFAULT_WORKER: WorkerFormState = {
   name: '',
   envVars: [],
+  dockerImage: 'jupyter/minimal-notebook:latest',
   env: '',
   gpus: '',
   prepareBackend: 'process',
@@ -59,15 +63,16 @@ export function buildK8sYAML(f: K8sFormState, workerID?: string): string {
   appendPrepareSteps(lines, f.prepare, f.prepareBackend)
 
   // driver block
-  lines.push(`  driver:`)
-  if (f.image) lines.push(`    image: "${f.image}"`)
-  if (workerID) lines.push(`    placement:`, `      worker: ${JSON.stringify(workerID)}`)
+  lines.push(`  driver:`, `    placement:`, `      runtime: k8s`)
+  if (workerID) lines.push(`      worker: ${JSON.stringify(workerID)}`)
+  lines.push(`    k8s:`)
+  if (f.image) lines.push(`      image: ${JSON.stringify(f.image)}`)
+  if (f.namespace) lines.push(`      namespace: ${JSON.stringify(f.namespace)}`)
 
   // K8s-specific: resources via pod_template
   const hasCpu = !!f.cpu, hasMem = !!f.memory, hasGpu = !!f.gpu
   if (hasCpu || hasMem || hasGpu) {
     lines.push(
-      `    k8s:`,
       `      pod_template:`,
       `        spec:`,
       `          containers:`,
@@ -93,7 +98,7 @@ export function buildWorkerYAML(f: WorkerFormState, workerID?: string): string {
 export function buildWorkerYAMLWithBackend(
   f: WorkerFormState,
   workerID: string | undefined,
-  backend: 'process' | 'docker' | 'k8s',
+  backend: 'process' | 'docker',
 ): string {
   const lines: string[] = [
     `apiVersion: piper/v1`,
@@ -107,11 +112,29 @@ export function buildWorkerYAMLWithBackend(
   appendEnvOptionsYaml(lines, '  ', f.envVars)
 
   // driver block
-  lines.push(`  driver:`)
-  if (workerID) lines.push(`    placement:`, `      worker: ${JSON.stringify(workerID)}`)
+  const runtime = backend === 'docker' ? 'docker' : 'baremetal'
+  lines.push(`  driver:`, `    placement:`, `      runtime: ${runtime}`)
+  if (workerID) lines.push(`      worker: ${JSON.stringify(workerID)}`)
 
-  // process-specific GPU/env settings
-  if (f.env || f.gpus) {
+  if (backend === 'docker') {
+    lines.push(`    docker:`, `      image: ${JSON.stringify(f.dockerImage)}`)
+    if (f.gpus) {
+      lines.push(
+        `      deploy:`,
+        `        resources:`,
+        `          reservations:`,
+        `            devices:`,
+        `              - driver: nvidia`,
+      )
+      if (f.gpus === 'all') {
+        lines.push(`                count: all`)
+      } else {
+        const deviceIDs = f.gpus.split(',').map(id => id.trim()).filter(Boolean)
+        lines.push(`                device_ids: [${deviceIDs.map(id => JSON.stringify(id)).join(', ')}]`)
+      }
+      lines.push(`                capabilities: [gpu]`)
+    }
+  } else if (f.env || f.gpus) {
     lines.push(`    process:`)
     if (f.env)  lines.push(`      env: ${JSON.stringify(f.env)}`)
     if (f.gpus) lines.push(`      gpus: ${JSON.stringify(f.gpus)}`)

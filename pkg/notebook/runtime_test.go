@@ -50,6 +50,52 @@ func TestNotebookValidateRequiresManifestOwnedK8sValues(t *testing.T) {
 	}
 }
 
+func TestNotebookValidateRuntimeBranches(t *testing.T) {
+	tests := []struct {
+		name    string
+		driver  manifest.DriverSpec
+		wantErr bool
+	}{
+		{
+			name:   "empty runtime uses auto assignment",
+			driver: manifest.DriverSpec{},
+		},
+		{
+			name:   "baremetal",
+			driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Runtime: "baremetal"}},
+		},
+		{
+			name: "docker",
+			driver: manifest.DriverSpec{
+				Placement: manifest.PlacementSpec{Runtime: "docker"},
+				Docker:    &manifest.DriverDockerSpec{Image: "jupyter:test"},
+			},
+		},
+		{
+			name: "docker image required",
+			driver: manifest.DriverSpec{
+				Placement: manifest.PlacementSpec{Runtime: "docker"},
+				Docker:    &manifest.DriverDockerSpec{},
+			},
+			wantErr: true,
+		},
+		{
+			name:    "unknown runtime",
+			driver:  manifest.DriverSpec{Placement: manifest.PlacementSpec{Runtime: "vm"}},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (Notebook{Spec: NotebookSpec{Driver: tt.driver}}).Validate()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestNotebookPrepareSpec_StepsForBackend(t *testing.T) {
 	spec := NotebookPrepareSpec{
 		Steps: []NotebookPrepareStep{

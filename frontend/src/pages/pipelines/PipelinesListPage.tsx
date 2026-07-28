@@ -34,7 +34,7 @@ function PipelinesListPageInner() {
   const [searchParams] = useSearchParams()
   const filterName = searchParams.get('name') ?? ''
 
-  const { data: templates = [], isLoading, error: loadError } = usePipelines(filterName || undefined)
+  const { data: templates = [], error: loadError } = usePipelines(filterName || undefined)
   const { mutateAsync: deletePipeline } = useDeletePipeline()
   const { mutateAsync: runPipeline } = useRunPipeline()
 
@@ -122,7 +122,6 @@ function PipelinesListPageInner() {
           <DataGrid
             data={templates}
             columns={columns}
-            isLoading={isLoading}
             enableGrouping
             grouping={['name']}
             visibilityState={{ name: false }}

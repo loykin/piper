@@ -340,7 +340,7 @@ func (m *Manager) Delete(ctx context.Context, projectID, name string) error {
 
 	if nb.Status == StatusRunning {
 		if err := m.driver.Stop(ctx, nb); err != nil {
-			slog.Warn("notebook driver stop failed during delete", "name", name, "err", err)
+			return fmt.Errorf("notebook: stop before delete: %w", err)
 		}
 	}
 

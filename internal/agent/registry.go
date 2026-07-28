@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sort"
 	"sync"
 	"time"
 )
@@ -77,6 +78,12 @@ func (r *Registry) List() []Info {
 	for _, a := range r.agents {
 		out = append(out, *cloneInfo(*a))
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RegisteredAt.Equal(out[j].RegisteredAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].RegisteredAt.Before(out[j].RegisteredAt)
+	})
 	return out
 }
 
@@ -95,6 +102,9 @@ func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 	out := make([]Info, 0, len(r.agents))
 	for _, a := range r.agents {
 		if !hasCapability(a, capability) {
+			continue
+		}
+		if !hasCapabilities(a, p.RequiredCapabilities) {
 			continue
 		}
 		if p.ClusterName != "" && a.ClusterName != p.ClusterName {
@@ -116,6 +126,15 @@ func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 
 func hasCapability(a *Info, capability string) bool {
 	return slices.Contains(a.Capabilities, capability)
+}
+
+func hasCapabilities(a *Info, capabilities []string) bool {
+	for _, capability := range capabilities {
+		if !hasCapability(a, capability) {
+			return false
+		}
+	}
+	return true
 }
 
 func labelsMatch(have, want map[string]string) bool {

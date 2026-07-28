@@ -143,6 +143,9 @@ func ValidateK8s(c RootConfig) error {
 }
 
 func ValidateServer(c RootConfig) error {
+	if c.Server.AuthSigningKey == "" && !c.Server.AllowInsecureTrustedMode {
+		return fmt.Errorf("config: server.auth_signing_key is required; set server.allow_insecure_trusted_mode=true only for trusted local development")
+	}
 	if c.Server.TLS.Enabled && (c.Server.TLS.CertFile == "" || c.Server.TLS.KeyFile == "") {
 		return fmt.Errorf("config: server.tls requires cert_file and key_file")
 	}

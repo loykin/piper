@@ -95,6 +95,7 @@ func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
 	writeBinaryE2EFile(t, configPath, fmt.Sprintf(`
 version: 4
 server:
+  allow_insecure_trusted_mode: true
   allow_insecure_dev_key: true
 storage:
   url: "s3://%s?endpoint=http://%s&s3ForcePathStyle=true&accessKey=test&secretKey=test"

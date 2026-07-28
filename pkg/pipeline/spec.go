@@ -46,6 +46,7 @@ func (p *Pipeline) Validate() error {
 	resolved := p.ApplyDefaults()
 	for _, s := range resolved.Spec.Steps {
 		switch s.Driver.Placement.Runtime {
+		case "", "baremetal":
 		case "docker":
 			if s.Driver.Docker == nil || s.Driver.Docker.Image == "" {
 				return fmt.Errorf("step %q: driver.docker.image is required", s.Name)
@@ -57,6 +58,8 @@ func (p *Pipeline) Validate() error {
 			if s.Driver.K8s.Namespace == "" {
 				return fmt.Errorf("step %q: driver.k8s.namespace is required", s.Name)
 			}
+		default:
+			return fmt.Errorf("step %q: unsupported driver.placement.runtime %q", s.Name, s.Driver.Placement.Runtime)
 		}
 	}
 	return nil

@@ -41,7 +41,9 @@ func (r *memoryRepo) Delete(_ context.Context, id string) error {
 
 func TestProjectCRUD(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &memoryRepo{projects: map[string]*Project{}}
+	repo := &memoryRepo{projects: map[string]*Project{
+		DefaultID: {ID: DefaultID, Name: "Default"},
+	}}
 	router := gin.New()
 	NewHandler(repo, nil).RegisterRoutes(router.Group("/api"))
 
@@ -62,6 +64,29 @@ func TestProjectCRUD(t *testing.T) {
 	router.ServeHTTP(deleteRec, httptest.NewRequest(http.MethodDelete, "/api/projects/team-a", nil))
 	if deleteRec.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+}
+
+func TestDeleteProjectProtectsDefaultAndLastProject(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &memoryRepo{projects: map[string]*Project{
+		DefaultID: {ID: DefaultID, Name: "Default"},
+		"team-a":  {ID: "team-a", Name: "Team A"},
+	}}
+	router := gin.New()
+	NewHandler(repo, nil).RegisterRoutes(router.Group("/api"))
+
+	defaultRec := httptest.NewRecorder()
+	router.ServeHTTP(defaultRec, httptest.NewRequest(http.MethodDelete, "/api/projects/default", nil))
+	if defaultRec.Code != http.StatusBadRequest {
+		t.Fatalf("default delete status = %d, want 400", defaultRec.Code)
+	}
+
+	delete(repo.projects, DefaultID)
+	lastRec := httptest.NewRecorder()
+	router.ServeHTTP(lastRec, httptest.NewRequest(http.MethodDelete, "/api/projects/team-a", nil))
+	if lastRec.Code != http.StatusConflict {
+		t.Fatalf("last delete status = %d, want 409", lastRec.Code)
 	}
 }
 

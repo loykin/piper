@@ -1,0 +1,51 @@
+# Kubernetes-native worker. Deploy with server.yaml and rbac.yaml when Piper
+# should execute pipeline steps as Jobs and manage notebook/serving workloads.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: piper-k8s-worker
+  namespace: piper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: piper-k8s-worker
+  template:
+    metadata:
+      labels:
+        app: piper-k8s-worker
+    spec:
+      serviceAccountName: piper
+      containers:
+        - name: worker
+          image: piper/piper:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - k8s-worker
+            - --master-url=http://piper-server.piper.svc.cluster.local:8080
+            - --cluster=piper
+            - --namespaces=piper
+            - --in-cluster
+            - --state-dir=/var/lib/piper
+            - --capabilities=pipeline,notebook,serving
+            - --pipeline-runner-image=piper/piper:latest
+            - --notebook-volume-browser-image=piper/piper:latest
+          volumeMounts:
+            - name: worker-state
+              mountPath: /var/lib/piper
+      volumes:
+        - name: worker-state
+          persistentVolumeClaim:
+            claimName: piper-k8s-worker-state
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piper-k8s-worker-state
+  namespace: piper
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

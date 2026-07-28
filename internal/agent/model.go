@@ -36,10 +36,11 @@ type Info struct {
 
 // Placement is the user-facing "where should this workload run" selector.
 type Placement struct {
-	WorkerID    string            `json:"worker_id,omitempty"`
-	ClusterName string            `json:"cluster_name,omitempty"`
-	Namespace   string            `json:"namespace,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	WorkerID             string            `json:"worker_id,omitempty"`
+	ClusterName          string            `json:"cluster_name,omitempty"`
+	Namespace            string            `json:"namespace,omitempty"`
+	Labels               map[string]string `json:"labels,omitempty"`
+	RequiredCapabilities []string          `json:"required_capabilities,omitempty"`
 	// RequireContainer excludes baremetal workers for pipelines that declare an image.
 	RequireContainer bool `json:"require_container,omitempty"`
 }

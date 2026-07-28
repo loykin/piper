@@ -10,6 +10,7 @@ import (
 
 func (n Notebook) Validate() error {
 	switch n.Spec.Driver.Placement.Runtime {
+	case "baremetal":
 	case "docker":
 		if n.Spec.Driver.Docker == nil || n.Spec.Driver.Docker.Image == "" {
 			return fmt.Errorf("driver.docker.image is required")
@@ -24,6 +25,12 @@ func (n Notebook) Validate() error {
 		if n.Spec.Volume == nil || n.Spec.Volume.Size == "" {
 			return fmt.Errorf("volume.size is required for k8s")
 		}
+	case "":
+		// Empty runtime is the API-level auto-assignment mode. Interactive
+		// clients should send the runtime they display when they need the
+		// selected worker infrastructure to be deterministic.
+	default:
+		return fmt.Errorf("unsupported driver.placement.runtime %q", n.Spec.Driver.Placement.Runtime)
 	}
 	return nil
 }

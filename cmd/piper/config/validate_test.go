@@ -108,6 +108,18 @@ func TestValidateK8sRejectsHostCapabilitySettings(t *testing.T) {
 	}
 }
 
+func TestValidateServerRequiresExplicitAuthMode(t *testing.T) {
+	if err := ValidateServer(RootConfig{}); err == nil || !strings.Contains(err.Error(), "auth_signing_key") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := ValidateServer(RootConfig{Server: ServerConfig{AllowInsecureTrustedMode: true}}); err != nil {
+		t.Fatalf("explicit trusted mode rejected: %v", err)
+	}
+	if err := ValidateServer(RootConfig{Server: ServerConfig{AuthSigningKey: "test-signing-key"}}); err != nil {
+		t.Fatalf("signing key rejected: %v", err)
+	}
+}
+
 func TestRoleConfigsLoadFromFile(t *testing.T) {
 	tests := map[string]struct {
 		body     string

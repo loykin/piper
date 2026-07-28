@@ -215,6 +215,32 @@ jobs:
           PIPER_PIPELINE_TEMPLATE_E2E_ENV: /tmp/piper-pipeline-template-e2e
         run: pnpm test:e2e
 
+  ui-dist:
+    name: UI Dist Is Current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild embedded UI
+        run: make ui
+
+      - name: Verify committed UI is current
+        run: git diff --exit-code -- pkg/ui/dist
+
   k8s-e2e:
     name: K8s E2E
     runs-on: ubuntu-latest
@@ -256,6 +282,20 @@ jobs:
           docker pull jupyter/minimal-notebook:latest
           kind load docker-image jupyter/minimal-notebook:latest
 
+      - name: Smoke test committed Kubernetes manifests
+        run: |
+          kubectl apply -f deploy/k8s/namespace.yaml
+          kubectl -n piper create secret generic piper-server-secrets \
+            --from-literal=auth_signing_key=test-auth-signing-key \
+            --from-literal=secret_encryption_key=pbkdf2:test-secret-encryption-key
+          kubectl apply -f deploy/k8s/rbac.yaml
+          kubectl apply -f deploy/k8s/server.yaml
+          kubectl apply -f deploy/k8s/k8s-worker.yaml
+          kubectl -n piper set image deployment/piper-server piper=piper/piper:e2e
+          kubectl -n piper set image deployment/piper-k8s-worker worker=piper/piper:e2e
+          kubectl -n piper rollout status deployment/piper-server --timeout=120s
+          kubectl -n piper rollout status deployment/piper-k8s-worker --timeout=120s
+
       - name: Run K8s E2E tests
         # PIPER_K8S_E2E_IMAGE can be overridden to test the published GHCR image:
         #   PIPER_K8S_E2E_IMAGE=ghcr.io/<owner>/piper:latest
@@ -294,6 +334,7 @@ jobs:
       - process-serving-e2e
       - examples-e2e
       - frontend-e2e
+      - ui-dist
       - k8s-e2e
       - build
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
@@ -307,8 +348,23 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
       - name: Download dependencies
         run: go mod download
+
+      - name: Build embedded UI
+        run: |
+          pnpm --dir frontend install --frozen-lockfile
+          make ui
 
       - name: Build linux binary
         run: |

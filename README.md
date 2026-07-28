@@ -60,8 +60,8 @@ go install github.com/piper/piper/cmd/piper@latest
 # Run a pipeline as a self-contained local process
 piper run examples/basics/simple.yaml
 
-# Or start the API with embedded workers for development
-piper server --local
+# Or start the API with embedded workers for trusted local development
+piper server --local --allow-insecure-trusted-mode --allow-insecure-dev-key
 
 # Submit to the running server
 curl -X POST http://localhost:8080/api/projects/default/runs \
@@ -606,6 +606,10 @@ version: 4
 
 server:
   http_addr: ":8080"
+  # Required for authenticated server mode. For trusted local-only development,
+  # omit the key and explicitly set allow_insecure_trusted_mode: true instead.
+  auth_signing_key: ""
+  allow_insecure_trusted_mode: false
   # Required for credential encryption. Use a 32-byte key, base64 32-byte key,
   # or pbkdf2:<strong-passphrase>. For local-only development, set
   # allow_insecure_dev_key: true instead.

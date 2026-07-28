@@ -1,3 +1,6 @@
+# Bare-metal worker example. Use this only when the container or host provides
+# the commands and runtimes required by submitted pipeline steps. A Kubernetes
+# deployment that executes steps as Jobs should use k8s-worker.yaml instead.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

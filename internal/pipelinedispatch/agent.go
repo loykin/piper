@@ -183,6 +183,9 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 		Namespace:        ns,
 		RequireContainer: pipelineRequiresContainer(&pl),
 	}
+	if pipelineRequiresNotebook(&pl) {
+		placement.RequiredCapabilities = []string{iagent.CapabilityNotebook}
+	}
 	if label := defaults.Driver.Placement.Label; label != "" {
 		placement.Labels = map[string]string{"label": label}
 	}
@@ -196,6 +199,15 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 		}
 	}
 	return placement, nil
+}
+
+func pipelineRequiresNotebook(pl *pipeline.Pipeline) bool {
+	for _, step := range pl.Spec.Steps {
+		if step.Run.Type == "notebook" {
+			return true
+		}
+	}
+	return false
 }
 
 func pipelineRequiresContainer(pl *pipeline.Pipeline) bool {

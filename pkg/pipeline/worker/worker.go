@@ -35,13 +35,14 @@ const (
 // AgentConfig configures the gRPC connection to the master agent server
 // and this worker's identity within the agent registry.
 type AgentConfig struct {
-	MasterURL   string // single HTTP(S) endpoint for the outbound master tunnel
-	WorkerToken string // bearer token for gRPC authorization metadata
-	ID          string // stable worker identity
-	Label       string
-	Labels      map[string]string
-	Hostname    string
-	Concurrency int
+	MasterURL    string // single HTTP(S) endpoint for the outbound master tunnel
+	WorkerToken  string // bearer token for gRPC authorization metadata
+	ID           string // stable worker identity
+	Label        string
+	Labels       map[string]string
+	Hostname     string
+	Concurrency  int
+	Capabilities []string // execution capabilities; pipeline is always included
 }
 
 // StoreConfig holds the master connection and artifact store settings
@@ -126,13 +127,28 @@ func New(cfg Config) (*Worker, error) {
 	if runtime == string(RuntimeDocker) {
 		infrastructure = iagent.InfrastructureDocker
 	}
+	capabilities := append([]string(nil), cfg.Agent.Capabilities...)
+	if len(capabilities) == 0 {
+		capabilities = []string{iagent.CapabilityPipeline}
+	} else {
+		hasPipeline := false
+		for _, capability := range capabilities {
+			if capability == iagent.CapabilityPipeline {
+				hasPipeline = true
+				break
+			}
+		}
+		if !hasPipeline {
+			capabilities = append([]string{iagent.CapabilityPipeline}, capabilities...)
+		}
+	}
 	client := grpcagent.NewClient(grpcagent.ClientConfig{
 		MasterURL:      cfg.Agent.MasterURL,
 		AgentID:        cfg.Agent.ID,
 		WorkerToken:    cfg.Agent.WorkerToken,
 		Infrastructure: infrastructure,
 		Hostname:       hostname,
-		Capabilities:   []string{iagent.CapabilityPipeline},
+		Capabilities:   capabilities,
 		Labels:         labels,
 		Capacity:       cfg.Agent.Concurrency,
 	})

@@ -16,7 +16,7 @@ function NotebooksPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
   const { open } = useSidePanel()
-  const { data: notebooks = [], isLoading } = useNotebooks()
+  const { data: notebooks = [] } = useNotebooks()
   const { data: allVolumes = [] } = useNotebookVolumes()
   const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
 
@@ -53,7 +53,6 @@ function NotebooksPageInner() {
         <DataGrid
           data={notebooks}
           columns={columns}
-          isLoading={isLoading}
           emptyContent={
             <div className="py-12 text-center">
               <p className="text-sm text-muted-foreground">No notebook servers running.</p>

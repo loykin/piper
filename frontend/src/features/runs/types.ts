@@ -86,5 +86,15 @@ export interface SweepResponse {
   run_ids: string[]
 }
 
-// step_name → { key → value }
-export type RunMetrics = Record<string, Record<string, number>>
+export interface RunMetric {
+  id: number
+  project_id: string
+  run_id: string
+  step_name: string
+  key: string
+  value: number
+  ts: string
+}
+
+export type RunMetrics = RunMetric[]
+export type RunMetricValues = Record<string, Record<string, number>>

@@ -37,7 +37,7 @@ build-linux-arm64:
 
 # Build the React UI and update pkg/ui/dist (commit after building)
 ui:
-	bash -c 'source $$HOME/.nvm/nvm.sh && nvm use --silent && cd frontend && pnpm run build'
+	cd frontend && pnpm run build
 	rm -rf pkg/ui/dist
 	cp -r frontend/dist pkg/ui/dist
 	@echo "UI built. Commit pkg/ui/dist/ to include in go install."

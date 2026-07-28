@@ -165,7 +165,6 @@ export function buildYAML(f: FormState): string {
 
   // driver block
   const driverLines: string[] = [`  driver:`]
-  if (f.image) driverLines.push(`    image: ${JSON.stringify(f.image)}`)
 
   // placement
   if (isK8s) {
@@ -174,23 +173,22 @@ export function buildYAML(f: FormState): string {
     driverLines.push(`    placement:`, `      worker: ${JSON.stringify(f.worker)}`)
   }
 
-  // resources (top-level in driver, applies to all runtimes)
-  const hasResources = f.k8sCPU || f.k8sMemory || f.k8sGPU
-  if (hasResources) {
-    driverLines.push(`    resources:`)
-    if (f.k8sCPU)    driverLines.push(`      cpu: ${JSON.stringify(f.k8sCPU)}`)
-    if (f.k8sMemory) driverLines.push(`      memory: ${JSON.stringify(f.k8sMemory)}`)
-    if (f.k8sGPU)    driverLines.push(`      gpu: ${JSON.stringify(f.k8sGPU)}`)
-  }
-
   // k8s-specific settings
+  const hasResources = f.k8sCPU || f.k8sMemory || f.k8sGPU
   if (isK8s) {
     driverLines.push(
       `    k8s:`,
+      `      image: ${JSON.stringify(f.image)}`,
       `      namespace: ${JSON.stringify(f.k8sNamespace || 'default')}`,
       `      replicas: ${f.k8sReplicas || '1'}`,
       `      image_pull_policy: ${JSON.stringify(f.k8sImagePullPolicy || 'Always')}`,
     )
+    if (hasResources) {
+      driverLines.push(`      resources:`)
+      if (f.k8sCPU)    driverLines.push(`        cpu: ${JSON.stringify(f.k8sCPU)}`)
+      if (f.k8sMemory) driverLines.push(`        memory: ${JSON.stringify(f.k8sMemory)}`)
+      if (f.k8sGPU)    driverLines.push(`        gpu: ${JSON.stringify(f.k8sGPU)}`)
+    }
   }
 
   return `apiVersion: piper/v1

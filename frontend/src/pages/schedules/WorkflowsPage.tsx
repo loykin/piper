@@ -19,7 +19,7 @@ function WorkflowsPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
   const { open } = useSidePanel()
-  const { data: schedules = [], isLoading, isError } = useSchedules()
+  const { data: schedules = [], isError } = useSchedules()
   const { data: pipelines = [] } = usePipelines()
   const { mutate: deleteSchedule } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
@@ -98,7 +98,6 @@ function WorkflowsPageInner() {
         <DataGrid
           data={schedules}
           columns={columns}
-          isLoading={isLoading}
           emptyMessage="No schedules yet. Create one to start."
           tableWidthMode="fill-last"
           rowHeight={44}

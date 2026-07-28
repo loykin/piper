@@ -9,21 +9,13 @@ function relativeTime(ts: string): string {
   return `${Math.floor(ms / 3_600_000)}h ago`
 }
 
-function isNodeOnline(last_seen: string): boolean {
-  return Date.now() - new Date(last_seen).getTime() < 30_000
-}
-
-// ── Pipeline Workers ──────────────────────────────────────────────────────────
-
-export const pipelineColumns: DataGridColumnDef<Worker>[] = [
+export const workerColumns: DataGridColumnDef<Worker>[] = [
   {
     id: 'status',
     header: 'Status',
     meta: { minWidth: 90 },
-    cell: ({ row }) => (
-      <Badge variant={isNodeOnline(row.original.last_seen) ? 'default' : 'secondary'}>
-        {isNodeOnline(row.original.last_seen) ? 'Online' : 'Offline'}
-      </Badge>
+    cell: () => (
+      <Badge variant="default">Online</Badge>
     ),
   },
   {
@@ -33,11 +25,15 @@ export const pipelineColumns: DataGridColumnDef<Worker>[] = [
     cell: ({ row }) => <span className="font-medium">{row.original.infrastructure}</span>,
   },
   {
-    accessorKey: 'hostname',
-    header: 'Hostname',
+    id: 'identity',
+    header: 'Worker',
     size: 180,
     meta: { minWidth: 180 },
-    cell: ({ row }) => <span className="text-muted-foreground">{row.original.hostname}</span>,
+    cell: ({ row }) => (
+      <span className="font-mono text-xs text-muted-foreground">
+        {row.original.hostname || row.original.cluster_name || row.original.id}
+      </span>
+    ),
   },
   {
     id: 'load',
@@ -67,46 +63,12 @@ export const pipelineColumns: DataGridColumnDef<Worker>[] = [
     ),
   },
   {
-    id: 'last_seen',
-    header: 'Last Seen',
+    id: 'registered_at',
+    header: 'Connected',
     size: 110,
     meta: { minWidth: 110 },
     cell: ({ row }) => (
-      <span className="text-xs text-muted-foreground">{relativeTime(row.original.last_seen)}</span>
-    ),
-  },
-]
-
-// ── Notebook / Serving Worker node columns (shared shape) ─────────────────────
-
-export type NodeInfo = Worker
-
-export const nodeColumns: DataGridColumnDef<NodeInfo>[] = [
-  {
-    id: 'status',
-    header: 'Status',
-    size: 90,
-    meta: { minWidth: 90 },
-    cell: ({ row }) => (
-      <Badge variant={isNodeOnline(row.original.last_seen) ? 'default' : 'secondary'}>
-        {isNodeOnline(row.original.last_seen) ? 'Online' : 'Offline'}
-      </Badge>
-    ),
-  },
-  {
-    accessorKey: 'hostname',
-    header: 'Hostname',
-    size: 180,
-    meta: { minWidth: 180 },
-    cell: ({ row }) => <span className="font-medium">{row.original.hostname}</span>,
-  },
-  {
-    id: 'last_seen',
-    header: 'Last Seen',
-    size: 110,
-    meta: { minWidth: 110 },
-    cell: ({ row }) => (
-      <span className="text-xs text-muted-foreground">{relativeTime(row.original.last_seen)}</span>
+      <span className="text-xs text-muted-foreground">{relativeTime(row.original.registered_at)}</span>
     ),
   },
 ]

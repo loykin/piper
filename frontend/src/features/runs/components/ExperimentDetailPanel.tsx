@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useRuns, runKeys } from '@/features/runs/hooks'
 import { getRunMetrics } from '@/features/runs/api'
-import type { Run, RunMetrics } from '@/features/runs/types'
+import { groupRunMetrics } from '@/features/runs/metrics'
+import type { Run, RunMetricValues } from '@/features/runs/types'
 import { useProjectId } from '@/lib/projectContext'
 import { RunDetailPanel } from './RunDetailPanel'
 
@@ -37,9 +38,9 @@ export function ExperimentDetailPanel({ experiment }: { experiment: string }) {
     })),
   })
 
-  const metricsById = useMemo<Record<string, RunMetrics>>(() => {
-    const m: Record<string, RunMetrics> = {}
-    runs.forEach((r, i) => { m[r.id] = metricQueries[i]?.data ?? {} })
+  const metricsById = useMemo<Record<string, RunMetricValues>>(() => {
+    const m: Record<string, RunMetricValues> = {}
+    runs.forEach((r, i) => { m[r.id] = groupRunMetrics(metricQueries[i]?.data ?? []) })
     return m
   }, [runs, metricQueries])
 
@@ -107,7 +108,7 @@ export function ExperimentDetailPanel({ experiment }: { experiment: string }) {
         meta: { minWidth: 110 },
         cell: ({ row }) => {
           const v = metricsById[row.original.id]?.[step]?.[key]
-          return <span className="text-xs font-mono">{v !== undefined ? v.toFixed(4) : '—'}</span>
+          return <span className="text-xs font-mono">{typeof v === 'number' ? v.toFixed(4) : '—'}</span>
         },
       })
     }

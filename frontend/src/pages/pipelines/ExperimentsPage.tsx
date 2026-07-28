@@ -17,7 +17,7 @@ interface ExperimentRow {
 
 function ExperimentsPageInner() {
   const { open } = useSidePanel()
-  const { data: runs = [], isLoading } = useRuns()
+  const { data: runs = [] } = useRuns()
 
   const experiments = useMemo<ExperimentRow[]>(() => {
     const map = new Map<string, Run[]>()
@@ -69,7 +69,6 @@ function ExperimentsPageInner() {
         <DataGrid
           data={experiments}
           columns={columns}
-          isLoading={isLoading}
           emptyMessage="No experiments yet. Submit a sweep via POST /runs/sweep."
           tableWidthMode="fill-last"
           rowHeight={44}

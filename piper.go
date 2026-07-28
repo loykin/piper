@@ -1016,8 +1016,7 @@ func (r *piperArtifactResolver) artifactURI(artKey string) (string, error) {
 	case "s3":
 		return "s3://" + u.Host + "/" + artKey, nil
 	case "http", "https":
-		base := strings.TrimRight(r.storageURL, "/")
-		return base + "/" + artKey, nil
+		return "", fmt.Errorf("remote serving requires s3 storage; HTTP artifact storage is not supported")
 	default:
 		return "", fmt.Errorf("storage backend %q cannot provide artifact URIs for remote serving", u.Scheme)
 	}

@@ -29,7 +29,7 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command: 'PIPER_BACKEND_URL=http://127.0.0.1:18080 pnpm dev --host 127.0.0.1 --port 4173',
+      command: 'PIPER_BACKEND_URL=http://127.0.0.1:18080 pnpm build && PIPER_BACKEND_URL=http://127.0.0.1:18080 pnpm preview --host 127.0.0.1 --port 4173',
       cwd: frontendDir,
       url: 'http://127.0.0.1:4173/ui/pipelines',
       timeout: 120_000,

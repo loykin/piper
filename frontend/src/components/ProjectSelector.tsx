@@ -1,6 +1,16 @@
 import { useState } from 'react'
 import { useNavigate } from '@/lib/router'
-import { Check, ChevronsUpDown, FolderKanban, Plus } from 'lucide-react'
+import { Check, ChevronsUpDown, FolderKanban, Plus, Trash2 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -25,17 +35,20 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { useCreateProject } from '@/features/projects/hooks'
+import { useCreateProject, useDeleteProject } from '@/features/projects/hooks'
 import { useProjectContext } from '@/lib/projectContext'
 
 export function ProjectSelector() {
   const { projectId, projects, loading } = useProjectContext()
   const createProject = useCreateProject()
+  const deleteProject = useDeleteProject()
   const navigate = useNavigate()
 
   const [open, setOpen] = useState(false)
   const [newId, setNewId] = useState('')
   const [newName, setNewName] = useState('')
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   const currentProject = projects.find(p => p.id === projectId)
 
@@ -50,6 +63,19 @@ export function ProjectSelector() {
     setOpen(false)
     setNewId('')
     setNewName('')
+  }
+
+  const handleDelete = async () => {
+    if (!currentProject || currentProject.id === 'default' || projects.length <= 1) return
+    setDeleteError('')
+    try {
+      await deleteProject.mutateAsync(currentProject.id)
+      const nextProject = projects.find(project => project.id !== currentProject.id)
+      setDeleteOpen(false)
+      if (nextProject) handleSelect(nextProject.id)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   return (
@@ -108,6 +134,17 @@ export function ProjectSelector() {
                 </div>
                 <span className="font-medium text-muted-foreground">Create project</span>
               </DropdownMenuItem>
+              {currentProject && currentProject.id !== 'default' && projects.length > 1 && (
+                <DropdownMenuItem
+                  onClick={() => setDeleteOpen(true)}
+                  className="gap-2 p-2 text-destructive"
+                >
+                  <div className="flex size-6 items-center justify-center rounded-sm border border-destructive/30">
+                    <Trash2 className="size-3.5" />
+                  </div>
+                  <span className="font-medium">Delete current project</span>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </SidebarMenuItem>
@@ -150,6 +187,28 @@ export function ProjectSelector() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {currentProject?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the project and its project-scoped data. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => void handleDelete()}
+              disabled={deleteProject.isPending}
+            >
+              {deleteProject.isPending ? 'Deleting…' : 'Delete project'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

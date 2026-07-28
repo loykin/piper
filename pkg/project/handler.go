@@ -172,6 +172,10 @@ func (h *Handler) delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "project id is reserved"})
 		return
 	}
+	if projectID == DefaultID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "the default project cannot be deleted"})
+		return
+	}
 	p, err := h.repo.Get(c.Request.Context(), projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -179,6 +183,15 @@ func (h *Handler) delete(c *gin.Context) {
 	}
 	if p == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+		return
+	}
+	projects, err := h.repo.List(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(visibleProjects(projects)) <= 1 {
+		c.JSON(http.StatusConflict, gin.H{"error": "the last project cannot be deleted"})
 		return
 	}
 	if err := h.repo.Delete(c.Request.Context(), projectID); err != nil {

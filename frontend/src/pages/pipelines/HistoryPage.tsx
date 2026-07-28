@@ -13,7 +13,7 @@ import type { Run } from '@/features/runs/api'
 
 function HistoryPageInner() {
   const { open } = useSidePanel()
-  const { data: runs = [], isLoading } = useRuns({ include_steps: true })
+  const { data: runs = [] } = useRuns({ include_steps: true })
   const { data: schedules = [] } = useSchedules()
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
@@ -86,7 +86,6 @@ function HistoryPageInner() {
         <DataGrid
           data={runs}
           columns={columns}
-          isLoading={isLoading}
           emptyMessage="No runs yet."
           tableWidthMode="fill-last"
           rowHeight={44}

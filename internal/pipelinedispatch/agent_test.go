@@ -285,6 +285,22 @@ func TestTaskPlacementRejectsMultipleRunnerLabels(t *testing.T) {
 	}
 }
 
+func TestTaskPlacementNotebookStepRequiresNotebookCapability(t *testing.T) {
+	pl := pipeline.Pipeline{Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{{
+		Name: "train",
+		Run:  pipeline.Run{Type: "notebook"},
+	}}}}
+	pipelineJSON, _ := json.Marshal(pl)
+
+	placement, err := taskPlacement(&proto.Task{RunID: "run-1", Pipeline: pipelineJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(placement.RequiredCapabilities) != 1 || placement.RequiredCapabilities[0] != iagent.CapabilityNotebook {
+		t.Fatalf("required capabilities = %v, want notebook", placement.RequiredCapabilities)
+	}
+}
+
 func TestAgentBackendDispatch_AppliesPodPolicyToDefaults(t *testing.T) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{

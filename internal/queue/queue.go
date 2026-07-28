@@ -602,14 +602,23 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 			}
 			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
 			now := time.Now()
-			_ = q.Complete(dispatchCtx, proto.TaskResult{
+			workerID := task.WorkerID
+			if owner, ok := b.(pipelinedispatch.TaskOwner); ok {
+				if selectedWorkerID := owner.OwnerForTask(task.ID); selectedWorkerID != "" {
+					workerID = selectedWorkerID
+				}
+			}
+			if completeErr := q.Complete(dispatchCtx, proto.TaskResult{
 				TaskID:    task.ID,
+				WorkerID:  workerID,
 				Status:    proto.TaskStatusFailed,
 				Error:     err.Error(),
 				StartedAt: now,
 				EndedAt:   now,
 				Attempt:   task.Attempt,
-			})
+			}); completeErr != nil {
+				slog.Error("record dispatch failure", "task_id", task.ID, "err", completeErr)
+			}
 		}
 	}()
 }

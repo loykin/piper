@@ -99,17 +99,25 @@ export function NotebookK8sForm({
     return 'baremetal'
   }, [selectedWorker, workers])
 
-  const workerPrepareBackend = useMemo<'process' | 'docker' | 'k8s'>(() => {
-		if (selectedWorker?.infrastructure === 'k8s') return 'k8s'
-		if (selectedWorker?.infrastructure === 'docker') return 'docker'
-		if (selectedWorker?.infrastructure === 'baremetal') return 'process'
-    return workerForm.prepareBackend
-  }, [selectedWorker, workerForm.prepareBackend])
+  const defaultK8sNamespace = useMemo(
+    () => (selectedWorker?.infrastructure === 'k8s'
+      ? selectedWorker
+      : workers.find(w => w.infrastructure === 'k8s'))?.namespaces?.[0] ?? '',
+    [selectedWorker, workers],
+  )
+
+  function resolveK8sForm(form: K8sFormState): K8sFormState {
+    return form.namespace ? form : { ...form, namespace: defaultK8sNamespace }
+  }
+
+  const workerPrepareBackend = useMemo<'process' | 'docker'>(() => {
+    return runtime === 'docker' ? 'docker' : 'process'
+  }, [runtime])
 
   function setK8sField<K extends keyof K8sFormState>(key: K, value: K8sFormState[K]) {
     setK8sForm(prev => {
       const next = { ...prev, [key]: value }
-      setK8sYaml(buildK8sYAML(next, selectedWorker?.hostname))
+      setK8sYaml(buildK8sYAML(resolveK8sForm(next), selectedWorker?.id))
       return next
     })
   }
@@ -117,13 +125,8 @@ export function NotebookK8sForm({
   function setWorkerField<K extends keyof WorkerFormState>(key: K, value: WorkerFormState[K]) {
     setWorkerForm(prev => {
       const next = { ...prev, [key]: value }
-      const backend =
-		selectedWorker?.infrastructure === 'docker'
-		  ? 'docker'
-		  : selectedWorker?.infrastructure === 'baremetal'
-		    ? 'process'
-          : next.prepareBackend
-      setWorkerYaml(buildWorkerYAMLWithBackend(next, selectedWorker?.hostname, backend))
+      const backend = runtime === 'docker' ? 'docker' : 'process'
+      setWorkerYaml(buildWorkerYAMLWithBackend(next, selectedWorker?.id, backend))
       return next
     })
   }
@@ -155,25 +158,41 @@ export function NotebookK8sForm({
   function onWorkerChange(id: string | null) {
     setSelectedWorkerID(id ?? '')
     const w = workers.find(x => x.id === id) ?? null
-    setK8sYaml(buildK8sYAML(k8sForm, w?.hostname))
+    const nextK8sForm = w?.infrastructure === 'k8s' && !k8sForm.namespace
+      ? { ...k8sForm, namespace: w.namespaces?.[0] ?? '' }
+      : k8sForm
+    setK8sForm(nextK8sForm)
+    setK8sYaml(buildK8sYAML(nextK8sForm, w?.id))
 		if (w?.infrastructure === 'baremetal' || w?.infrastructure === 'docker') {
 		  const backend = w.infrastructure === 'docker' ? 'docker' : 'process'
       setWorkerForm(prev => ({ ...prev, prepareBackend: backend }))
-      setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, w?.hostname, backend))
+      setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, w?.id, backend))
     } else {
-      setWorkerYaml(buildWorkerYAML(workerForm, w?.hostname))
+      setWorkerYaml(buildWorkerYAML(workerForm, w?.id))
     }
+  }
+
+  function handleTabChange(nextTab: string) {
+    if (tab === 'form' && nextTab === 'yaml') {
+      setK8sYaml(buildK8sYAML(resolveK8sForm(k8sForm), selectedWorker?.id))
+      setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, selectedWorker?.id, workerPrepareBackend))
+    }
+    setTab(nextTab)
   }
 
   function handleSubmit() {
     if (!hasWorkers) return
     const isK8s = runtime === 'k8s'
     const name = isK8s ? k8sForm.name : workerForm.name
-    if (tab === 'form' && !name.trim()) return
+    const resolvedK8s = resolveK8sForm(k8sForm)
+    const formReady = isK8s
+      ? Boolean(name.trim() && resolvedK8s.image.trim() && resolvedK8s.namespace.trim() && resolvedK8s.storageSize.trim())
+      : Boolean(name.trim() && (runtime !== 'docker' || workerForm.dockerImage.trim()))
+    if (tab === 'form' && !formReady) return
     const payload = tab === 'form'
       ? (isK8s
-        ? buildK8sYAML(k8sForm, selectedWorker?.hostname)
-        : buildWorkerYAMLWithBackend(workerForm, selectedWorker?.hostname, workerPrepareBackend))
+        ? buildK8sYAML(resolvedK8s, selectedWorker?.id)
+        : buildWorkerYAMLWithBackend(workerForm, selectedWorker?.id, workerPrepareBackend))
       : (isK8s ? k8sYaml : workerYaml)
     if (!payload.trim()) return
     onSubmit(payload.trim(), volumeId || undefined)
@@ -184,12 +203,20 @@ export function NotebookK8sForm({
       title="Launch Notebook Server"
       description={<RuntimeBadge runtime={runtime} />}
       activeTab={tab}
-      onTabChange={setTab}
+      onTabChange={handleTabChange}
       actions={
         <div className="flex items-center gap-2">
           {error && <span className="text-sm text-destructive">{error}</span>}
           <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
-          <Button size="sm" onClick={handleSubmit} disabled={submitting || !hasWorkers}>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={submitting || !hasWorkers || (tab === 'form' && (
+              runtime === 'k8s'
+                ? !k8sForm.name.trim() || !k8sForm.image.trim() || !resolveK8sForm(k8sForm).namespace.trim() || !k8sForm.storageSize.trim()
+                : !workerForm.name.trim() || (runtime === 'docker' && !workerForm.dockerImage.trim())
+            ))}
+          >
             {submitting ? 'Launching…' : volumeId ? 'Attach & Launch' : 'Launch'}
           </Button>
         </div>
@@ -204,7 +231,7 @@ export function NotebookK8sForm({
           </DataBodyTemplate.Group>
         )}
         <DataBodyTemplate.Group layout="stacked">
-          <DataBodyTemplate.Field label="Worker" description="Select a specific worker. Leave blank to auto-assign.">
+          <DataBodyTemplate.Field label="Worker" description="Select a specific worker. Auto-assign stays within the runtime shown above.">
             <Select value={selectedWorkerID} onValueChange={onWorkerChange}>
               <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
               <SelectContent>
@@ -231,10 +258,13 @@ export function NotebookK8sForm({
                 <Input value={k8sForm.name} onChange={e => setK8sField('name', e.target.value)} placeholder="my-notebook" autoFocus />
               </DataBodyTemplate.Field>
               <VolumeField volumeId={volumeId} releasedVolumes={releasedVolumes} onChange={setVolumeId} />
-              <DataBodyTemplate.Field label="Image" description="Container image. Leave blank to use the cluster default.">
+              <DataBodyTemplate.Field label="Image" description="Required container image for the notebook server.">
                 <Input value={k8sForm.image} onChange={e => setK8sField('image', e.target.value)} placeholder="jupyter/scipy-notebook:latest" />
               </DataBodyTemplate.Field>
-              <DataBodyTemplate.Field label="Storage Size" description="PVC size. Leave blank for the cluster default (10Gi).">
+              <DataBodyTemplate.Field label="Namespace" description="Kubernetes namespace where the notebook and its volume will be created.">
+                <Input value={k8sForm.namespace || defaultK8sNamespace} onChange={e => setK8sField('namespace', e.target.value)} placeholder="notebooks" />
+              </DataBodyTemplate.Field>
+              <DataBodyTemplate.Field label="Storage Size" description="Required PVC size. Defaults to 10Gi.">
                 <Input value={k8sForm.storageSize} onChange={e => setK8sField('storageSize', e.target.value)} placeholder="10Gi" />
               </DataBodyTemplate.Field>
               <DataBodyTemplate.Field label="Prepare Commands" description="One command per line. Runs before notebook start.">
@@ -274,24 +304,17 @@ export function NotebookK8sForm({
               <Input value={workerForm.name} onChange={e => setWorkerField('name', e.target.value)} placeholder="my-notebook" autoFocus />
             </DataBodyTemplate.Field>
             <VolumeField volumeId={volumeId} releasedVolumes={releasedVolumes} onChange={setVolumeId} />
-            <DataBodyTemplate.Field label="Python Environment" description="venv path (e.g. /project/venv) or conda env (e.g. conda:ml-env). Leave blank to use the worker default.">
-              <Input value={workerForm.env} onChange={e => setWorkerField('env', e.target.value)} placeholder="/home/user/project/venv" />
-            </DataBodyTemplate.Field>
+            {runtime === 'docker' ? (
+              <DataBodyTemplate.Field label="Image" description="Container image used to run the notebook server.">
+                <Input value={workerForm.dockerImage} onChange={e => setWorkerField('dockerImage', e.target.value)} placeholder="jupyter/minimal-notebook:latest" />
+              </DataBodyTemplate.Field>
+            ) : (
+              <DataBodyTemplate.Field label="Python Environment" description="venv path (e.g. /project/venv) or conda env (e.g. conda:ml-env). Leave blank to use the worker default.">
+                <Input value={workerForm.env} onChange={e => setWorkerField('env', e.target.value)} placeholder="/home/user/project/venv" />
+              </DataBodyTemplate.Field>
+            )}
             <DataBodyTemplate.Field label="GPUs" description="Device IDs: 0 · 0,1 · all · leave blank for no GPU">
               <Input value={workerForm.gpus} onChange={e => setWorkerField('gpus', e.target.value)} placeholder="0" />
-            </DataBodyTemplate.Field>
-            <DataBodyTemplate.Field label="Prepare Backend" description="Follows the selected bare-metal worker mode; manual selection is used only when auto-assigning.">
-              <Select
-                value={workerPrepareBackend}
-				disabled={selectedWorker?.infrastructure === 'baremetal' || selectedWorker?.infrastructure === 'docker'}
-                onValueChange={v => setWorkerField('prepareBackend', (v ?? 'process') as WorkerFormState['prepareBackend'])}
-              >
-                <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="process">process</SelectItem>
-                  <SelectItem value="docker">docker</SelectItem>
-                </SelectContent>
-              </Select>
             </DataBodyTemplate.Field>
             <DataBodyTemplate.Field label="Prepare Commands" description="One command per line. Runs before notebook start.">
               <ShellMirror

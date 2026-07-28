@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestRegistryPreservesDockerInfrastructureKind(t *testing.T) {
 	reg := NewRegistry()
@@ -125,6 +128,47 @@ func TestRouterReserveImagePipelineRequiresContainerRuntime(t *testing.T) {
 		RequireContainer: true,
 	}); err == nil {
 		t.Fatal("expected explicit baremetal worker to reject image pipeline")
+	}
+}
+
+func TestRouterReserveRequiresAdditionalCapability(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "pipeline-only", Capabilities: []string{CapabilityPipeline}, Capacity: 2})
+	reg.Register(Info{ID: "notebook-ready", Capabilities: []string{CapabilityPipeline, CapabilityNotebook}, Capacity: 2})
+	router := NewRouter(reg)
+
+	got, err := router.Reserve(WorkloadPipeline, Placement{RequiredCapabilities: []string{CapabilityNotebook}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "notebook-ready" {
+		t.Fatalf("selected worker = %q, want notebook-ready", got.ID)
+	}
+	explicit, err := router.Reserve(WorkloadPipeline, Placement{
+		WorkerID:             "pipeline-only",
+		RequiredCapabilities: []string{CapabilityNotebook},
+	})
+	if err != nil {
+		t.Fatalf("explicit worker override: %v", err)
+	}
+	if explicit.ID != "pipeline-only" {
+		t.Fatalf("explicit worker = %q, want pipeline-only", explicit.ID)
+	}
+}
+
+func TestRegistryListHasStableRegistrationOrder(t *testing.T) {
+	reg := NewRegistry()
+	base := time.Now()
+	reg.Register(Info{ID: "later", RegisteredAt: base.Add(time.Second)})
+	reg.Register(Info{ID: "first-b", RegisteredAt: base})
+	reg.Register(Info{ID: "first-a", RegisteredAt: base})
+
+	got := reg.List()
+	want := []string{"first-a", "first-b", "later"}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("List()[%d] = %q, want %q", i, got[i].ID, id)
+		}
 	}
 }
 

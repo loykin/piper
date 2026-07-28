@@ -734,6 +734,24 @@ func TestManager_Delete_RunningServerCallsStop(t *testing.T) {
 	}
 }
 
+func TestManager_Delete_DoesNotRemoveRecordWhenStopFails(t *testing.T) {
+	repo := newFakeRepo()
+	vols := newFakeVols()
+	drv := newFakeDriver()
+	drv.stopErr = ErrAgentUnavailable
+	m := New(repo, vols, drv)
+	ctx := context.Background()
+
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-orphan", Status: StatusRunning})
+
+	if err := m.Delete(ctx, "project-a", "nb-orphan"); err == nil {
+		t.Fatal("Delete() expected stop error")
+	}
+	if repo.get("nb-orphan") == nil {
+		t.Fatal("server record was deleted even though runtime cleanup failed")
+	}
+}
+
 func TestManager_Delete_NotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
 	if err := m.Delete(context.Background(), "project-a", "ghost"); err == nil {

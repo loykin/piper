@@ -127,6 +127,21 @@ func (b *cancelRecordingBackend) canceledRun() string {
 	return b.canceled
 }
 
+type failingOwnedBackend struct {
+	workerID string
+	err      error
+}
+
+func (b *failingOwnedBackend) Dispatch(context.Context, *proto.Task) error {
+	return b.err
+}
+
+func (b *failingOwnedBackend) OwnerForTask(string) string {
+	return b.workerID
+}
+
+func (b *failingOwnedBackend) ReleaseTask(string) {}
+
 func TestNextStrictLabelMatching(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
@@ -374,6 +389,39 @@ func TestBackendRetryRedispatchesWithNextAttempt(t *testing.T) {
 	}
 	if dispatched[1].Attempt != 2 {
 		t.Fatalf("retry dispatch attempt = %d, want 2", dispatched[1].Attempt)
+	}
+}
+
+func TestPermanentDispatchFailureCompletesOwnedTask(t *testing.T) {
+	ctx := context.Background()
+	pl := singleStepPipeline("dispatch-failure")
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runRepo := &memoryRunRepo{}
+	stepRepo := &memoryStepRepo{}
+	q := NewQueue(context.Background(), runRepo, stepRepo)
+	q.SetBackend(&failingOwnedBackend{
+		workerID: "docker-worker",
+		err:      fmt.Errorf("container create: image not found"),
+	})
+	q.Add(ctx, "project-a", pl, dag, "run-dispatch-failure", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	if !waitUntil(2*time.Second, func() bool {
+		return runRepo.status["run-dispatch-failure"] == run.StatusFailed
+	}) {
+		t.Fatalf("run status = %q, want failed", runRepo.status["run-dispatch-failure"])
+	}
+	step := stepRepo.steps["run-dispatch-failure:step"]
+	if step == nil {
+		t.Fatal("failed step was not persisted")
+	}
+	if step.Status != proto.TaskStatusFailed {
+		t.Fatalf("step status = %q, want failed", step.Status)
+	}
+	if step.Error != "container create: image not found" {
+		t.Fatalf("step error = %q", step.Error)
 	}
 }
 

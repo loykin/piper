@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useRuns, runKeys } from '@/features/runs/hooks'
 import { getRunMetrics } from '@/features/runs/api'
-import type { Run, RunMetrics } from '@/features/runs/types'
+import { groupRunMetrics } from '@/features/runs/metrics'
+import type { Run, RunMetricValues } from '@/features/runs/types'
 import { useProjectId } from '@/lib/projectContext'
 
 interface SortState { step: string; key: string; order: 'asc' | 'desc' }
@@ -25,7 +26,7 @@ export default function ExperimentDetailPage() {
   const experiment = decodeURIComponent(name ?? '')
   const [sort, setSort] = useState<SortState | null>(null)
 
-  const { data: runs = [], isLoading } = useRuns(
+  const { data: runs = [] } = useRuns(
     sort
       ? { experiment, metric_step: sort.step, metric_key: sort.key, metric_order: sort.order }
       : { experiment }
@@ -39,10 +40,10 @@ export default function ExperimentDetailPage() {
     })),
   })
 
-  const metricsById = useMemo<Record<string, RunMetrics>>(() => {
-    const m: Record<string, RunMetrics> = {}
+  const metricsById = useMemo<Record<string, RunMetricValues>>(() => {
+    const m: Record<string, RunMetricValues> = {}
     runs.forEach((r, i) => {
-      m[r.id] = metricQueries[i]?.data ?? {}
+      m[r.id] = groupRunMetrics(metricQueries[i]?.data ?? [])
     })
     return m
   }, [runs, metricQueries])
@@ -108,7 +109,7 @@ export default function ExperimentDetailPage() {
         meta: { minWidth: 110 },
         cell: ({ row }) => {
           const v = metricsById[row.original.id]?.[step]?.[key]
-          return <span className="text-xs font-mono">{v !== undefined ? v.toFixed(4) : '—'}</span>
+          return <span className="text-xs font-mono">{typeof v === 'number' ? v.toFixed(4) : '—'}</span>
         },
       })
     }
@@ -124,7 +125,6 @@ export default function ExperimentDetailPage() {
         <DataGrid
           data={runs}
           columns={columns}
-          isLoading={isLoading}
           emptyMessage="No runs in this experiment."
           tableWidthMode="fill-last"
           rowHeight={44}

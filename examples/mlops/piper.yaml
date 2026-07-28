@@ -5,6 +5,8 @@ version: 4
 
 server:
   http_addr: :8080
+  # This example is local-only. Production servers should set auth_signing_key.
+  allow_insecure_trusted_mode: true
   allow_insecure_dev_key: true
   data_dir: ./piper-outputs
   retention:

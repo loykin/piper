@@ -14,7 +14,7 @@ import type { Service } from '@/features/serving/api'
 
 function ServingPageInner() {
   const { open } = useSidePanel()
-  const { data: services = [], isLoading } = useServices()
+  const { data: services = [] } = useServices()
   const { mutate: stopService } = useStopService()
   const { mutate: restartService } = useRestartService()
   const [showDeploy, setShowDeploy] = useState(false)
@@ -65,7 +65,6 @@ function ServingPageInner() {
         <DataGrid
           data={services}
           columns={columns}
-          isLoading={isLoading}
           emptyContent={
             <div className="py-12 text-center">
               <p className="text-sm text-muted-foreground">No services deployed yet.</p>

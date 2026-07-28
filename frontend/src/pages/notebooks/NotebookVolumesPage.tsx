@@ -8,7 +8,7 @@ import type { NotebookVolume } from '@/features/notebooks/api'
 
 export default function NotebookVolumesPage() {
   const navigate = useNavigate()
-  const { data: volumes = [], isLoading } = useNotebookVolumes()
+  const { data: volumes = [] } = useNotebookVolumes()
   const { mutate: purgeVolume, isPending: purging, variables: purgingId } = usePurgeVolume()
 
   const busy = purging ? (purgingId ?? null) : null
@@ -34,7 +34,6 @@ export default function NotebookVolumesPage() {
         <DataGrid
           data={volumes}
           columns={columns}
-          isLoading={isLoading}
           emptyContent={
             <div className="py-12 text-center">
               <p className="text-sm text-muted-foreground">No volumes yet.</p>

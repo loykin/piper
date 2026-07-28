@@ -34,13 +34,33 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
   const pipelines = Array.from(new Set(allRuns.map(r => r.pipeline_name))).sort()
   const pipelineRuns = allRuns.filter(r => r.pipeline_name === form.pipeline)
+  const selectedRunID = form.pipeline
+    ? (form.run === 'latest' ? pipelineRuns[0]?.id : form.run)
+    : undefined
+  const compatibleWorkers = servingWorkers.filter(worker =>
+    form.runtimeMode === 'k8s'
+      ? worker.infrastructure === 'k8s'
+      : worker.infrastructure === 'baremetal',
+  )
+  const hasCompatibleWorkers = compatibleWorkers.length > 0
 
   useEffect(() => {
-    if (!form.pipeline) { setArtifacts([]); return }
-    const runId = form.run === 'latest' ? pipelineRuns[0]?.id : form.run
-    if (!runId) { setArtifacts([]); return }
-    listArtifacts(projectId, runId).then(setArtifacts).catch(() => setArtifacts([]))
-  }, [form.pipeline, form.run, pipelineRuns[0]?.id])
+    let canceled = false
+    if (!selectedRunID) {
+      queueMicrotask(() => {
+        if (!canceled) setArtifacts([])
+      })
+      return () => { canceled = true }
+    }
+    void listArtifacts(projectId, selectedRunID)
+      .then(result => {
+        if (!canceled) setArtifacts(result)
+      })
+      .catch(() => {
+        if (!canceled) setArtifacts([])
+      })
+    return () => { canceled = true }
+  }, [projectId, selectedRunID])
 
   const steps = artifacts.map(sa => sa.step)
   const artifactNames = artifacts.find(sa => sa.step === form.step)?.artifacts.map(a => a.name) ?? []
@@ -71,6 +91,10 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
   async function handleDeploy() {
     setError('')
+    if (!hasCompatibleWorkers) {
+      setError(`No ${form.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected.`)
+      return
+    }
     const payload = tab === 'form' ? buildYAML(form) : yaml
     if (!payload.trim()) { setError('YAML is required.'); return }
     try {
@@ -108,6 +132,11 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
         {tab === 'form' ? (
           <div className="space-y-4">
+            {!hasCompatibleWorkers && (
+              <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                No compatible serving worker is connected for the selected runtime.
+              </p>
+            )}
             <DataBodyTemplate.Field label="Service Name">
               <Input value={form.name} onChange={e => setField('name', e.target.value)} placeholder="my-model" />
             </DataBodyTemplate.Field>
@@ -159,9 +188,11 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
             <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime">
               <div className="flex flex-wrap gap-1.5">
                 {Object.entries(RUNTIME_TEMPLATES).map(([key, tpl]) => (
-                  <button
+                  <Button
                     key={key}
                     type="button"
+                    size="sm"
+                    variant={form.templateKey === key ? 'default' : 'outline'}
                     title={tpl.description}
                     onClick={() => setForm(prev => ({
                       ...prev,
@@ -172,14 +203,10 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                       port: tpl.port,
                       healthPath: tpl.healthPath,
                     }))}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-                      form.templateKey === key
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground'
-                    }`}
+                    className="rounded-full"
                   >
                     {tpl.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
 
@@ -207,9 +234,9 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                     <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="">auto assign</SelectItem>
-                      {servingWorkers.map(w => (
-                        <SelectItem key={w.id} value={w.hostname}>
-                          {w.hostname}
+                      {compatibleWorkers.map(w => (
+                        <SelectItem key={w.id} value={w.id}>
+                          {w.hostname || w.id}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -278,7 +305,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={() => void handleDeploy()} disabled={deploying}>
+          <Button size="sm" onClick={() => void handleDeploy()} disabled={deploying || !hasCompatibleWorkers}>
             {deploying ? 'Deploying…' : 'Deploy'}
           </Button>
         </div>

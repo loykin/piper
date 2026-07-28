@@ -39,6 +39,9 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 
 	signingKey := root.Server.AuthSigningKey
 	if signingKey == "" {
+		if !root.Server.AllowInsecureTrustedMode {
+			return nil, fmt.Errorf("server.auth_signing_key is required; set server.allow_insecure_trusted_mode=true only for trusted local development")
+		}
 		cfg.Auth = piper.AuthConfig{Trusted: true}
 	} else {
 		cfg.Auth = piper.AuthConfig{Factory: func(deps piper.AuthDependencies) (piper.AuthConfig, error) {

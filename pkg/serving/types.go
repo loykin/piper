@@ -14,6 +14,7 @@ type ModelService struct {
 
 func (s ModelService) Validate() error {
 	switch s.Spec.Driver.Placement.Runtime {
+	case "", "baremetal":
 	case "docker":
 		if s.Spec.Driver.Docker == nil || s.Spec.Driver.Docker.Image == "" {
 			return fmt.Errorf("driver.docker.image is required")
@@ -25,6 +26,8 @@ func (s ModelService) Validate() error {
 		if s.Spec.Driver.K8s.Namespace == "" {
 			return fmt.Errorf("driver.k8s.namespace is required")
 		}
+	default:
+		return fmt.Errorf("unsupported driver.placement.runtime %q", s.Spec.Driver.Placement.Runtime)
 	}
 	return nil
 }

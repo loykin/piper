@@ -110,13 +110,24 @@ func TestImmediate_Fires(t *testing.T) {
 func TestRemove_StopsCron(t *testing.T) {
 	t.Parallel()
 	var count atomic.Int32
-	s := newTestScheduler(t, func(_ context.Context, _, _ string) { count.Add(1) })
+	fired := make(chan struct{}, 1)
+	s := newTestScheduler(t, func(_ context.Context, _, _ string) {
+		count.Add(1)
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	})
 
 	err := s.Add(&schedule.Schedule{ID: "r1", ScheduleType: "cron", CronExpr: "@every 30ms"})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	time.Sleep(80 * time.Millisecond)
+	select {
+	case <-fired:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cron did not fire before Remove")
+	}
 	s.Remove("r1")
 	snapshot := count.Load()
 	time.Sleep(100 * time.Millisecond)
@@ -199,13 +210,24 @@ func TestReload_CronToOnce(t *testing.T) {
 func TestStop_HaltsAll(t *testing.T) {
 	t.Parallel()
 	var count atomic.Int32
-	s := scheduler.New(func(_ context.Context, _, _ string) { count.Add(1) })
+	fired := make(chan struct{}, 1)
+	s := scheduler.New(func(_ context.Context, _, _ string) {
+		count.Add(1)
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	})
 	s.Start()
 
 	if err := s.Add(&schedule.Schedule{ID: "st1", ScheduleType: "cron", CronExpr: "@every 30ms"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	time.Sleep(80 * time.Millisecond)
+	select {
+	case <-fired:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cron did not fire before Stop")
+	}
 	s.Stop()
 	snapshot := count.Load()
 	time.Sleep(100 * time.Millisecond)

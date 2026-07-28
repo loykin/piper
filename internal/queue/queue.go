@@ -596,7 +596,7 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 			var de *pipelinedispatch.DispatchError
 			if errors.As(err, &de) && de.Retryable {
 				q.mu.Lock()
-				q.requeueBusyLocked(task.RunID, task.StepName)
+				q.requeueBusyLocked(task.RunID, task.StepName, err)
 				q.mu.Unlock()
 				return
 			}
@@ -625,8 +625,9 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 
 // requeueBusyLocked undoes startTaskLocked and puts the task back to ready
 // without consuming a retry attempt. Called when dispatch returns a retryable error
-// (e.g. worker busy). Re-dispatches after a short fixed delay.
-func (q *Queue) requeueBusyLocked(runID, stepName string) {
+// (for example, worker busy or no matching worker currently connected).
+// Re-dispatches after a short fixed delay.
+func (q *Queue) requeueBusyLocked(runID, stepName string, reason error) {
 	r := q.runs[runID]
 	if r == nil {
 		return
@@ -644,7 +645,7 @@ func (q *Queue) requeueBusyLocked(runID, stepName string) {
 	entry.assignedWorkerID = ""
 	entry.startedAt = nil
 	entry.leaseAt = nil
-	slog.Info("task requeued after busy dispatch", "task_id", entry.task.ID)
+	slog.Info("task requeued after retryable dispatch failure", "task_id", entry.task.ID, "err", reason)
 	q.stopRetryTimerLocked(entry)
 	entry.retryTimer = time.AfterFunc(2*time.Second, func() {
 		q.mu.Lock()

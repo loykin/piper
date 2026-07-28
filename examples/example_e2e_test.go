@@ -24,6 +24,7 @@ import (
 	"time"
 
 	piper "github.com/piper/piper"
+	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/store"
 	"github.com/piper/piper/pkg/notebook"
 	notebookworker "github.com/piper/piper/pkg/notebook/worker"
@@ -468,8 +469,9 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 
 	w, err := worker.New(worker.Config{
 		Agent: worker.AgentConfig{
-			MasterURL:   serverURL,
-			Concurrency: 2,
+			MasterURL:    serverURL,
+			Concurrency:  2,
+			Capabilities: []string{iagent.CapabilityPipeline, iagent.CapabilityNotebook},
 		},
 		Store: worker.StoreConfig{
 			OutputDir: filepath.Join(tmpDir, "worker-outputs"),

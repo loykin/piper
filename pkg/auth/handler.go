@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -148,6 +149,9 @@ func refreshTokenFromRequest(c *gin.Context) string {
 type UserHandler struct {
 	directory security.UserDirectory
 	manager   security.UserManager
+	// bootstrapMu serializes bootstrap() so two concurrent first-run requests
+	// can't both observe zero users and both create an admin account.
+	bootstrapMu sync.Mutex
 }
 
 func NewUserHandler(directory security.UserDirectory, manager security.UserManager) *UserHandler {
@@ -162,6 +166,68 @@ func (h *UserHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		rg.POST("/users", h.createUser)
 		rg.DELETE("/users/:id", h.deleteUser)
 	}
+}
+
+// RegisterBootstrapRoutes mounts the unauthenticated first-run setup routes.
+// The caller must supply a public route group (no access token required) —
+// bootstrap() enforces its own one-time-only guard by checking that zero
+// users exist, so it stays safe to expose without session auth. This exists
+// so a fresh deployment doesn't require shell/kubectl-exec access to the
+// server process just to create the very first admin account.
+func (h *UserHandler) RegisterBootstrapRoutes(rg *gin.RouterGroup) {
+	rg.GET("/auth/bootstrap-status", h.bootstrapStatus)
+	if h.manager != nil {
+		rg.POST("/auth/bootstrap", h.bootstrap)
+	}
+}
+
+func (h *UserHandler) bootstrapStatus(c *gin.Context) {
+	if h.manager == nil {
+		c.JSON(http.StatusOK, gin.H{"required": false})
+		return
+	}
+	users, err := h.directory.ListUsers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"required": len(users) == 0})
+}
+
+// bootstrap creates the first system-admin account. It only succeeds once —
+// once any user exists, it always returns 409, matching the CLI's
+// `piper user create` in every other way except not requiring a terminal.
+func (h *UserHandler) bootstrap(c *gin.Context) {
+	h.bootstrapMu.Lock()
+	defer h.bootstrapMu.Unlock()
+
+	users, err := h.directory.ListUsers(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(users) > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "setup already completed; sign in or ask an existing admin to create your account"})
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	u, err := h.manager.CreateUser(c.Request.Context(), security.CreateUserInput{
+		Email:       req.Email,
+		Password:    req.Password,
+		SystemAdmin: true,
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, securityUserView(u))
 }
 
 func (h *UserHandler) listUsers(c *gin.Context) {

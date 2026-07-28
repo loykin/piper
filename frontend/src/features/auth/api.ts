@@ -20,6 +20,21 @@ export async function capabilities(): Promise<AuthCapabilities> {
   return handleResponse<AuthCapabilities>(res)
 }
 
+export async function bootstrapStatus(): Promise<{ required: boolean }> {
+  const res = await fetch('/api/auth/bootstrap-status', { credentials: 'include' })
+  return handleResponse<{ required: boolean }>(res)
+}
+
+export async function bootstrap(req: LoginRequest): Promise<AuthUser> {
+  const res = await fetch('/api/auth/bootstrap', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+    credentials: 'include',
+  })
+  return handleResponse<AuthUser>(res)
+}
+
 export async function login(req: LoginRequest): Promise<AuthUser> {
   const res = await fetch('/api/auth/login', {
     method: 'POST',

@@ -107,6 +107,9 @@ func (r *Registry) Candidates(kind WorkloadKind, p Placement) []Info {
 		if !hasCapabilities(a, p.RequiredCapabilities) {
 			continue
 		}
+		if p.Infrastructure != "" && a.Infrastructure != p.Infrastructure {
+			continue
+		}
 		if p.ClusterName != "" && a.ClusterName != p.ClusterName {
 			continue
 		}

@@ -58,6 +58,8 @@ function DropdownMenuLabel({
 }: MenuPrimitive.GroupLabel.Props & {
   inset?: boolean
 }) {
+  // MenuPrimitive.GroupLabel requires the caller to render it inside
+  // <DropdownMenuGroup> (Base UI throws error #31 otherwise).
   return (
     <MenuPrimitive.GroupLabel
       data-slot="dropdown-menu-label"

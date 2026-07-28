@@ -45,12 +45,15 @@ func (r *Router) Select(kind WorkloadKind, placement Placement) (*Info, error) {
 		if !hasCapability(a, string(kind)) {
 			return nil, fmt.Errorf("agent %q does not support %s", placement.WorkerID, kind)
 		}
+		if placement.Infrastructure != "" && a.Infrastructure != placement.Infrastructure {
+			return nil, fmt.Errorf("agent %q infrastructure %q does not match requested runtime %q", a.ID, a.Infrastructure, placement.Infrastructure)
+		}
 		if placement.RequireContainer && a.Infrastructure != InfrastructureDocker && a.Infrastructure != InfrastructureK8s {
 			return nil, fmt.Errorf("agent %q infrastructure %q cannot execute image-based pipeline", a.ID, a.Infrastructure)
 		}
 		return a, nil
 	}
-	if placement.ClusterName == "" && placement.Namespace == "" && len(placement.Labels) == 0 {
+	if placement.ClusterName == "" && placement.Namespace == "" && len(placement.Labels) == 0 && placement.Infrastructure == "" {
 		if def, ok := r.defaults[kind]; ok {
 			placement = def
 		}
@@ -78,7 +81,7 @@ func (r *Router) Reserve(kind WorkloadKind, placement Placement) (*Info, error) 
 	if r == nil || r.registry == nil {
 		return nil, fmt.Errorf("agent router is not configured")
 	}
-	if placement.ClusterName == "" && placement.Namespace == "" && len(placement.Labels) == 0 && placement.WorkerID == "" {
+	if placement.ClusterName == "" && placement.Namespace == "" && len(placement.Labels) == 0 && placement.WorkerID == "" && placement.Infrastructure == "" {
 		if def, ok := r.defaults[kind]; ok {
 			placement = def
 		}
@@ -98,6 +101,9 @@ func (r *Router) Reserve(kind WorkloadKind, placement Placement) (*Info, error) 
 		}
 		if !hasCapability(agentInfo, string(kind)) {
 			return nil, fmt.Errorf("agent %q does not support %s", placement.WorkerID, kind)
+		}
+		if placement.Infrastructure != "" && agentInfo.Infrastructure != placement.Infrastructure {
+			return nil, fmt.Errorf("agent %q infrastructure %q does not match requested runtime %q", agentInfo.ID, agentInfo.Infrastructure, placement.Infrastructure)
 		}
 		if placement.RequireContainer && agentInfo.Infrastructure != InfrastructureDocker && agentInfo.Infrastructure != InfrastructureK8s {
 			return nil, fmt.Errorf("agent %q infrastructure %q cannot execute image-based pipeline", agentInfo.ID, agentInfo.Infrastructure)

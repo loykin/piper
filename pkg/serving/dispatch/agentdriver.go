@@ -57,7 +57,7 @@ func (d *AgentDriver) WithStorage(url, token string) *AgentDriver {
 func (d *AgentDriver) ArtifactTarget() artifact.Target { return artifact.TargetS3 }
 
 func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
-	agentInfo, err := d.selectAgent(spec.Spec.Driver.Placement.Worker)
+	agentInfo, err := d.selectAgent(spec.Spec.Driver.Placement.Worker, spec.Spec.Driver.Placement.Runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 }
 
 func (d *AgentDriver) Stop(ctx context.Context, svc *serving.Service) error {
-	agentInfo, err := d.selectAgent(serviceWorkerID(svc))
+	agentInfo, err := d.selectAgent(serviceWorkerID(svc), "")
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, services []*serving.Servic
 		if svc == nil {
 			continue
 		}
-		agentInfo, err := d.selectAgent(svc.WorkerID)
+		agentInfo, err := d.selectAgent(svc.WorkerID, "")
 		if err != nil {
 			continue
 		}
@@ -155,11 +155,15 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, services []*serving.Servic
 	return nil
 }
 
-func (d *AgentDriver) selectAgent(workerID string) (*iagent.Info, error) {
+// selectAgent picks a serving-capable worker. When runtime is non-empty
+// (an explicit driver.placement.runtime in the workload spec), the selection
+// is restricted to workers of that infrastructure — see the equivalent
+// notebook dispatch selectAgent for why this matters when worker types mix.
+func (d *AgentDriver) selectAgent(workerID, runtime string) (*iagent.Info, error) {
 	if d == nil || d.router == nil || d.rpc == nil {
 		return nil, fmt.Errorf("serving agent driver is not configured")
 	}
-	return d.router.Select(iagent.WorkloadServing, iagent.Placement{WorkerID: workerID})
+	return d.router.Select(iagent.WorkloadServing, iagent.Placement{WorkerID: workerID, Infrastructure: runtime})
 }
 
 func serviceWorkerID(svc *serving.Service) string {

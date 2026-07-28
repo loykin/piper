@@ -47,7 +47,7 @@ func (d *AgentDriver) WithEnvResolver(r EnvResolver) *AgentDriver {
 }
 
 func (d *AgentDriver) ProvisionVolume(ctx context.Context, vol *notebook.NotebookVolume, spec notebook.Notebook) error {
-	agentInfo, err := d.selectAgent(vol.WorkerID)
+	agentInfo, err := d.selectAgent(vol.WorkerID, spec.Spec.Driver.Placement.Runtime)
 	if err != nil {
 		return err
 	}
@@ -70,12 +70,13 @@ func (d *AgentDriver) Start(ctx context.Context, spec notebook.Notebook, vol *no
 	if vol != nil && vol.WorkerID != "" {
 		workerID = vol.WorkerID
 	}
-	agentInfo, err := d.selectAgent(workerID)
+	runtime := spec.Spec.Driver.Placement.Runtime
+	agentInfo, err := d.selectAgent(workerID, runtime)
 	if err != nil {
 		if workerID == "" || spec.WorkerID() != "" {
 			return nil, err
 		}
-		agentInfo, err = d.selectAgent("")
+		agentInfo, err = d.selectAgent("", runtime)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +138,7 @@ func (d *AgentDriver) Start(ctx context.Context, spec notebook.Notebook, vol *no
 }
 
 func (d *AgentDriver) Stop(ctx context.Context, nb *notebook.NotebookServer) error {
-	agentInfo, err := d.selectAgent(nb.WorkerID)
+	agentInfo, err := d.selectAgent(nb.WorkerID, "")
 	if err != nil {
 		return notebook.ErrAgentUnavailable
 	}
@@ -151,7 +152,7 @@ func (d *AgentDriver) Stop(ctx context.Context, nb *notebook.NotebookServer) err
 }
 
 func (d *AgentDriver) DeprovisionVolume(ctx context.Context, vol *notebook.NotebookVolume) error {
-	agentInfo, err := d.selectAgent(vol.WorkerID)
+	agentInfo, err := d.selectAgent(vol.WorkerID, "")
 	if err != nil {
 		return nil
 	}
@@ -172,7 +173,7 @@ func (d *AgentDriver) SyncStatus(ctx context.Context, servers []*notebook.Notebo
 		if nb == nil {
 			continue
 		}
-		agentInfo, err := d.selectAgent(nb.WorkerID)
+		agentInfo, err := d.selectAgent(nb.WorkerID, "")
 		if err != nil {
 			// Worker is offline — notebook state is unknown, not "stopped".
 			// Status remains as last-known until the worker reconnects and reports.
@@ -217,10 +218,17 @@ func notebookEndpointPort(endpoint string) int {
 	return n
 }
 
-func (d *AgentDriver) selectAgent(workerID string) (*iagent.Info, error) {
+// selectAgent picks a notebook-capable worker. When runtime is non-empty
+// (an explicit driver.placement.runtime in the workload spec), the selection
+// is restricted to workers of that infrastructure — otherwise a mix of
+// worker types could satisfy "notebook" capability but disagree with the
+// driver config (e.g. spec.driver.docker) the caller actually built,
+// producing infrastructure-specific errors (like a missing k8s namespace)
+// for a notebook that was never meant to run on k8s.
+func (d *AgentDriver) selectAgent(workerID, runtime string) (*iagent.Info, error) {
 	if d == nil || d.router == nil || d.rpc == nil {
 		return nil, fmt.Errorf("notebook agent driver is not configured")
 	}
-	placement := iagent.Placement{WorkerID: workerID}
+	placement := iagent.Placement{WorkerID: workerID, Infrastructure: runtime}
 	return d.router.Select(iagent.WorkloadNotebook, placement)
 }

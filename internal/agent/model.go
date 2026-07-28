@@ -41,6 +41,11 @@ type Placement struct {
 	Namespace            string            `json:"namespace,omitempty"`
 	Labels               map[string]string `json:"labels,omitempty"`
 	RequiredCapabilities []string          `json:"required_capabilities,omitempty"`
+	// Infrastructure, when set, restricts candidates to workers whose
+	// Info.Infrastructure matches exactly (e.g. "k8s", "docker", "baremetal").
+	// It reflects an explicit driver.placement.runtime in the workload spec —
+	// leave empty to let capability/label matching pick any eligible worker.
+	Infrastructure string `json:"infrastructure,omitempty"`
 	// RequireContainer excludes baremetal workers for pipelines that declare an image.
 	RequireContainer bool `json:"require_container,omitempty"`
 }

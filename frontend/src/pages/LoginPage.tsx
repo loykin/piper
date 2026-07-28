@@ -3,7 +3,7 @@ import { useNavigate } from '@/lib/router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { login } from '@/features/auth/api'
+import { login, bootstrap, bootstrapStatus } from '@/features/auth/api'
 import { useAuth } from '@/features/auth/context'
 
 export default function LoginPage() {
@@ -13,6 +13,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // undefined while we haven't checked yet — avoids flashing the sign-in
+  // form before we know whether this is a fresh install with zero users.
+  const [needsBootstrap, setNeedsBootstrap] = useState<boolean | undefined>(undefined)
 
   useEffect(() => {
     if (!authLoading && capabilities && !capabilities.authentication) {
@@ -20,7 +23,14 @@ export default function LoginPage() {
     }
   }, [authLoading, capabilities, navigate])
 
-  if (authLoading) return null
+  useEffect(() => {
+    if (authLoading || !capabilities?.authentication || capabilities.login_mode !== 'password') return
+    bootstrapStatus()
+      .then(s => setNeedsBootstrap(s.required))
+      .catch(() => setNeedsBootstrap(false))
+  }, [authLoading, capabilities])
+
+  if (authLoading || needsBootstrap === undefined) return null
 
   if (capabilities?.login_mode === 'redirect') {
     return (
@@ -45,11 +55,16 @@ export default function LoginPage() {
     setError('')
     setLoading(true)
     try {
+      if (needsBootstrap) {
+        await bootstrap({ email, password })
+        // Bootstrap only creates the account; sign in with the same
+        // credentials to establish a session, same as any other login.
+      }
       const user = await login({ email, password })
       setUser(user)
       navigate('/', { replace: true })
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : (needsBootstrap ? 'Setup failed' : 'Login failed'))
     } finally {
       setLoading(false)
     }
@@ -64,7 +79,15 @@ export default function LoginPage() {
               P
             </div>
           </div>
-          <h1 className="text-xl font-semibold">Sign in to piper</h1>
+          <h1 className="text-xl font-semibold">
+            {needsBootstrap ? 'Create the admin account' : 'Sign in to piper'}
+          </h1>
+          {needsBootstrap && (
+            <p className="text-sm text-muted-foreground">
+              No users exist yet. Set up the first account — it will have
+              system admin access.
+            </p>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -85,7 +108,7 @@ export default function LoginPage() {
             <Input
               id="password"
               type="password"
-              autoComplete="current-password"
+              autoComplete={needsBootstrap ? 'new-password' : 'current-password'}
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
@@ -95,7 +118,9 @@ export default function LoginPage() {
             <p className="text-sm text-destructive">{error}</p>
           )}
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign in'}
+            {loading
+              ? (needsBootstrap ? 'Creating account…' : 'Signing in…')
+              : (needsBootstrap ? 'Create admin account' : 'Sign in')}
           </Button>
         </form>
       </div>

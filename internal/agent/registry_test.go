@@ -45,6 +45,55 @@ func TestRouterSelectExplicitWorkerByHostname(t *testing.T) {
 	}
 }
 
+// TestRouterSelectRespectsExplicitRuntimeAmongMixedInfrastructure reproduces
+// a workload declaring driver.placement.runtime="docker" while both a k8s
+// and a docker worker advertise the same capability (e.g. "notebook").
+// Without an infrastructure filter, auto-assign picks whichever worker wins
+// the load tiebreak — which can silently be the k8s one — and the declared
+// runtime is never honored.
+func TestRouterSelectRespectsExplicitRuntimeAmongMixedInfrastructure(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "k8s-worker", Infrastructure: InfrastructureK8s, Capabilities: []string{CapabilityNotebook}})
+	reg.Register(Info{ID: "docker-worker", Infrastructure: InfrastructureDocker, Capabilities: []string{CapabilityNotebook}})
+	router := NewRouter(reg)
+
+	got, err := router.Select(WorkloadNotebook, Placement{Infrastructure: InfrastructureDocker})
+	if err != nil {
+		t.Fatalf("Select returned error: %v", err)
+	}
+	if got.ID != "docker-worker" {
+		t.Fatalf("selected worker = %q, want docker-worker", got.ID)
+	}
+
+	got, err = router.Select(WorkloadNotebook, Placement{Infrastructure: InfrastructureK8s})
+	if err != nil {
+		t.Fatalf("Select returned error: %v", err)
+	}
+	if got.ID != "k8s-worker" {
+		t.Fatalf("selected worker = %q, want k8s-worker", got.ID)
+	}
+
+	if _, err := router.Select(WorkloadNotebook, Placement{Infrastructure: InfrastructureBaremetal}); err == nil {
+		t.Fatal("expected no baremetal candidate to be available")
+	}
+}
+
+// TestRouterSelectRejectsExplicitWorkerWithMismatchedRuntime ensures that
+// even an explicit worker_id is rejected if it contradicts a declared
+// driver.placement.runtime, mirroring RequireContainer's behavior.
+func TestRouterSelectRejectsExplicitWorkerWithMismatchedRuntime(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "k8s-worker", Infrastructure: InfrastructureK8s, Capabilities: []string{CapabilityNotebook}})
+	router := NewRouter(reg)
+
+	if _, err := router.Select(WorkloadNotebook, Placement{
+		WorkerID:       "k8s-worker",
+		Infrastructure: InfrastructureDocker,
+	}); err == nil {
+		t.Fatal("expected explicit k8s worker to reject a docker-runtime placement")
+	}
+}
+
 func TestRouterSelectsOneFromMultipleCandidates(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(Info{ID: "a1", Capabilities: []string{CapabilityPipeline}, Capacity: 4})

@@ -34,8 +34,9 @@ func (p *Piper) registerAuthRoutes(r *gin.Engine, userAPI *gin.RouterGroup) {
 		routes.RegisterAuthenticatedRoutes(userAPI)
 	}
 	if directory := p.cfg.Auth.UserDirectory; directory != nil {
-		authpkg.NewUserHandler(directory, p.cfg.Auth.UserManager).
-			RegisterRoutes(userAPI.Group("", p.requireSystemAdmin()))
+		userHandler := authpkg.NewUserHandler(directory, p.cfg.Auth.UserManager)
+		userHandler.RegisterRoutes(userAPI.Group("", p.requireSystemAdmin()))
+		userHandler.RegisterBootstrapRoutes(r.Group("/api"))
 	}
 	if members := p.cfg.Auth.ProjectMemberManager; members != nil {
 		project.NewMemberHandler(members).RegisterRoutes(userAPI.Group(

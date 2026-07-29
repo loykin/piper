@@ -26,28 +26,6 @@ spec:
             - --master-url=http://piper-server.piper.svc.cluster.local:8080
             - --concurrency=2
             - --infrastructure=baremetal
-          env:
-            - name: PIPER_SOURCE_S3_ENDPOINT
-              valueFrom:
-                secretKeyRef:
-                  name: piper-s3
-                  key: endpoint
-                  optional: true
-            - name: PIPER_SOURCE_S3_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: piper-s3
-                  key: access_key
-                  optional: true
-            - name: PIPER_SOURCE_S3_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: piper-s3
-                  key: secret_key
-                  optional: true
-            - name: PIPER_SOURCE_S3_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: piper-s3
-                  key: bucket
-                  optional: true
+          # No storage env here: artifact storage is configured once on the
+          # master (see server.yaml) and forwarded to this worker per-task
+          # over the existing tunnel.

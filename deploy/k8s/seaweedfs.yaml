@@ -1,0 +1,110 @@
+# Bundled S3-compatible object store for pipeline/serving artifacts, using
+# SeaweedFS's S3 gateway (https://github.com/seaweedfs/seaweedfs). Deploy this
+# only if you don't already have an S3-compatible bucket (AWS S3, MinIO, GCS
+# via the S3 API, etc.) to point storage-secret.example.yaml at instead — in
+# that case skip this file entirely.
+#
+# This runs SeaweedFS's "-s3" gateway with no IAM config, so it accepts any
+# access/secret key pair (matching the anyadmin/anypassword credentials in
+# storage-secret.example.yaml). That's fine inside a cluster-internal
+# ClusterIP service with no external exposure; for a stronger boundary, mount
+# a "-s3.config" identity file and update the secret's key pair to match.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: piper-seaweedfs
+  namespace: piper
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: piper-seaweedfs
+  template:
+    metadata:
+      labels:
+        app: piper-seaweedfs
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - -dir=/data
+            - -s3
+            - -s3.port=8333
+          ports:
+            - name: s3
+              containerPort: 8333
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: piper-seaweedfs-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piper-seaweedfs-data
+  namespace: piper
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: piper-seaweedfs
+  namespace: piper
+spec:
+  selector:
+    app: piper-seaweedfs
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: s3
+---
+# One-shot Job that creates the bucket referenced by storage-secret.example.yaml.
+# Safe to re-run (create-bucket is idempotent against an already-existing bucket
+# for SeaweedFS's S3 gateway); re-apply after piper-seaweedfs restarts with an
+# empty volume.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: piper-seaweedfs-bucket-setup
+  namespace: piper
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: awscli
+          image: public.ecr.aws/aws-cli/aws-cli:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until aws s3api create-bucket --bucket piper-artifacts \
+                --endpoint-url http://piper-seaweedfs.piper.svc.cluster.local:8333 2>/dev/null; do
+                sleep 2
+              done
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: piper-storage
+                  key: access_key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: piper-storage
+                  key: secret_key
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1

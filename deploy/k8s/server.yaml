@@ -37,29 +37,17 @@ spec:
                 secretKeyRef:
                   name: piper-server-secrets
                   key: secret_encryption_key
-            - name: PIPER_SOURCE_S3_ENDPOINT
+            # Artifact storage is configured once here, on the master — workers
+            # never need their own copy; storage.url and storage.token are
+            # forwarded to workers per-task over the existing tunnel (see
+            # AGENTS.md's "Worker Network Invariant"; storage.url is the one
+            # documented exception, allowing workers to connect directly to
+            # the object store for the actual data transfer).
+            - name: PIPER_STORAGE_URL
               valueFrom:
                 secretKeyRef:
-                  name: piper-s3
-                  key: endpoint
-                  optional: true
-            - name: PIPER_SOURCE_S3_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: piper-s3
-                  key: access_key
-                  optional: true
-            - name: PIPER_SOURCE_S3_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: piper-s3
-                  key: secret_key
-                  optional: true
-            - name: PIPER_SOURCE_S3_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: piper-s3
-                  key: bucket
+                  name: piper-storage
+                  key: url
                   optional: true
 ---
 apiVersion: v1

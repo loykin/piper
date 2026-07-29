@@ -168,6 +168,14 @@ Workers on different hosts and Kubernetes workloads require a shared remote
 `storage.url` because they cannot rely on the master's local filesystem. The
 self-contained local mode can use local or remote storage.
 
+For Kubernetes, `deploy/k8s/storage-secret.example.yaml` and
+`deploy/k8s/server.yaml` wire `storage.url` onto the master via
+`PIPER_STORAGE_URL` — `storage.url` is read once there and forwarded to
+workers per-task over the existing tunnel, so workers never need their own
+copy of it. If you don't already have an S3-compatible bucket, apply
+`deploy/k8s/seaweedfs.yaml` to deploy a bundled SeaweedFS S3 gateway that the
+example secret points at by default.
+
 ## Execution Modes
 
 | | Local | Bare-metal Worker | K8s Worker |
@@ -288,12 +296,9 @@ spec:
         - --state-dir=/var/lib/piper
         - --notebook-volume-browser-image=piper/piper:latest
         - --pipeline-runner-image=piper/piper:latest
-        env:
-        - name: PIPER_STORAGE_URL
-          valueFrom:
-            secretKeyRef:
-              name: piper-s3
-              key: url
+        # No storage env here: set storage.url once on the master (see the
+        # "Artifact Layout" section above) — it's forwarded to this worker
+        # per-task over the existing tunnel, not read from the worker's own env.
         volumeMounts:
         - name: worker-state
           mountPath: /var/lib/piper

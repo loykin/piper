@@ -9,6 +9,7 @@ frontend/node_modules/
 
 # Runtime-generated files
 piper-outputs/
+/piper-data/
 /notebooks/
 pkg/workers/baremetal/notebook/notebooks/
 *.db

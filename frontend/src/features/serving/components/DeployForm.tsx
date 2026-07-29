@@ -40,7 +40,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const compatibleWorkers = servingWorkers.filter(worker =>
     form.runtimeMode === 'k8s'
       ? worker.infrastructure === 'k8s'
-      : worker.infrastructure === 'baremetal',
+      : worker.infrastructure !== 'k8s',
   )
   const hasCompatibleWorkers = compatibleWorkers.length > 0
 
@@ -91,7 +91,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
   async function handleDeploy() {
     setError('')
-    if (!hasCompatibleWorkers) {
+    if (tab === 'form' && !hasCompatibleWorkers) {
       setError(`No ${form.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected.`)
       return
     }
@@ -142,7 +142,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
             </DataBodyTemplate.Field>
 
             <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Model Source">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <DataBodyTemplate.Field label="Pipeline">
                   <Select value={form.pipeline} onValueChange={v => setField('pipeline', v ?? '')}>
                     <SelectTrigger size="sm"><SelectValue placeholder="— select pipeline —" /></SelectTrigger>
@@ -165,7 +165,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                   </Select>
                 </DataBodyTemplate.Field>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <DataBodyTemplate.Field label="Step">
                   <Select value={form.step} onValueChange={v => setField('step', v ?? '')} disabled={steps.length === 0}>
                     <SelectTrigger size="sm"><SelectValue placeholder="— select step —" /></SelectTrigger>
@@ -210,7 +210,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <DataBodyTemplate.Field label="Mode">
                   <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')}>
                     <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
@@ -230,10 +230,13 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
               {form.runtimeMode === 'local' && (
                 <DataBodyTemplate.Field label="Worker" description="Deploy to a specific worker node. Leave blank to auto-assign.">
-                  <Select value={form.worker} onValueChange={v => setField('worker', v ?? '')}>
+                  <Select
+                    value={form.worker || '__auto__'}
+                    onValueChange={v => setField('worker', v === '__auto__' ? '' : (v ?? ''))}
+                  >
                     <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">auto assign</SelectItem>
+                      <SelectItem value="__auto__">auto assign</SelectItem>
                       {compatibleWorkers.map(w => (
                         <SelectItem key={w.id} value={w.id}>
                           {w.hostname || w.id}
@@ -249,7 +252,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                   <DataBodyTemplate.Field label="Container Image">
                     <Input value={form.image} onChange={e => setField('image', e.target.value)} placeholder="registry/image:tag" />
                   </DataBodyTemplate.Field>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <DataBodyTemplate.Field label="Namespace">
                       <Input value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
                     </DataBodyTemplate.Field>
@@ -267,7 +270,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                       </Select>
                     </DataBodyTemplate.Field>
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <DataBodyTemplate.Field label="CPU"><Input value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" /></DataBodyTemplate.Field>
                     <DataBodyTemplate.Field label="Memory"><Input value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" /></DataBodyTemplate.Field>
                     <DataBodyTemplate.Field label="GPU"><Input value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" /></DataBodyTemplate.Field>
@@ -305,7 +308,11 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={() => void handleDeploy()} disabled={deploying || !hasCompatibleWorkers}>
+          <Button
+            size="sm"
+            onClick={() => void handleDeploy()}
+            disabled={deploying || (tab === 'form' && !hasCompatibleWorkers)}
+          >
             {deploying ? 'Deploying…' : 'Deploy'}
           </Button>
         </div>

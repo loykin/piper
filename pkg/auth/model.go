@@ -23,3 +23,13 @@ type Session struct {
 	CreatedAt        time.Time  `db:"created_at"`
 	LastUsedAt       time.Time  `db:"last_used_at"`
 }
+
+// LoginAttempt is an immutable authentication audit record.
+type LoginAttempt struct {
+	ID            string    `db:"id"`
+	UserID        string    `db:"user_id"`
+	Email         string    `db:"email"`
+	Success       bool      `db:"success"`
+	FailureReason string    `db:"failure_reason"`
+	AttemptedAt   time.Time `db:"attempted_at"`
+}

@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { lazy, Suspense, useEffect } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useState } from 'react'
 import { createRootRoute, createRoute, createRouter, Navigate, Outlet, RouterProvider } from '@tanstack/react-router'
 import { useLocation, useNavigate } from '@/lib/router'
 import {
@@ -22,12 +22,11 @@ import {
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, Boxes, ChevronRight, KeyRound } from 'lucide-react'
+import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, Boxes, ChevronRight, KeyRound, UserRoundCog, UsersRound } from 'lucide-react'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
 import { AuthProvider, useAuth } from '@/features/auth/context'
-import { useState } from 'react'
 
 const LoginPage           = lazy(() => import('@/pages/LoginPage'))
 const NotebooksPage       = lazy(() => import('@/pages/notebooks/NotebooksPage'))
@@ -47,6 +46,8 @@ const CredentialsPage        = lazy(() => import('@/pages/credentials/Credential
 const CredentialCreatePage   = lazy(() => import('@/pages/credentials/CredentialCreatePage'))
 const WorkersPage           = lazy(() => import('@/pages/system/WorkersPage'))
 const StoragePage           = lazy(() => import('@/pages/system/StoragePage'))
+const UsersPage             = lazy(() => import('@/pages/system/UsersPage'))
+const MembersPage           = lazy(() => import('@/pages/projects/MembersPage'))
 const PodPoliciesPage       = lazy(() => import('@/pages/kubernetes/PodPoliciesPage'))
 const PodPoliciesCreatePage = lazy(() => import('@/pages/kubernetes/PodPoliciesCreatePage'))
 
@@ -102,6 +103,8 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
         { id: 'workers',  label: 'Workers',  icon: Cpu,      to: `/workers`, system: true },
         { id: 'storage',  label: 'Storage',  icon: Database, to: `${base}/storage` },
         { id: 'credentials', label: 'Credentials', icon: KeyRound, to: `${base}/credentials` },
+        { id: 'members', label: 'Members', icon: UsersRound, to: `${base}/members` },
+        { id: 'users', label: 'Users', icon: UserRoundCog, to: `/users`, system: true },
         {
           id: 'kubernetes',
           label: 'Kubernetes',
@@ -116,6 +119,26 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
   ]
 }
 
+interface ThemeContextValue {
+  isDark: boolean
+  toggleDark: (checked: boolean) => void
+}
+
+const ThemeContext = createContext<ThemeContextValue | null>(null)
+
+function useAppTheme() {
+  const value = useContext(ThemeContext)
+  if (!value) throw new Error('useAppTheme must be used within RootLayout')
+  return value
+}
+
+function initialDarkMode() {
+  const saved = localStorage.getItem('piper-theme')
+  if (saved === 'dark') return true
+  if (saved === 'light') return false
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
 function AppSidebar() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -123,14 +146,7 @@ function AppSidebar() {
   const { user, capabilities, logout } = useAuth()
   const groups = navItems(projectId)
 
-  const [isDark, setIsDark] = useState(() =>
-    document.documentElement.classList.contains('dark')
-  )
-
-  function toggleDark(checked: boolean) {
-    setIsDark(checked)
-    document.documentElement.classList.toggle('dark', checked)
-  }
+  const { isDark, toggleDark } = useAppTheme()
 
   return (
     <>
@@ -147,6 +163,7 @@ function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => {
+                  if (item.id === 'users' && !user?.system_admin) return null
                   if (item.children) {
                     const anyChildActive = item.children.some(c =>
                       location.pathname === c.to ||
@@ -282,15 +299,13 @@ function AppSidebar() {
 }
 
 function RoutedContent() {
-  const location = useLocation()
   const { user, capabilities, loading } = useAuth()
 
   if (loading) return null
   if (
     capabilities?.authentication &&
     capabilities.login_routes &&
-    !user &&
-    location.pathname !== '/login'
+    !user
   ) {
     return <Navigate to="/login" replace />
   }
@@ -298,29 +313,44 @@ function RoutedContent() {
   return <Outlet />
 }
 
+function RootLayout() {
+  const [isDark, setIsDark] = useState(initialDarkMode)
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDark)
+    localStorage.setItem('piper-theme', isDark ? 'dark' : 'light')
+  }, [isDark])
+
+  return (
+    <ThemeContext.Provider value={{ isDark, toggleDark: setIsDark }}>
+      <AuthProvider>
+        <ProjectProvider>
+          <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>}>
+            <Outlet />
+          </Suspense>
+        </ProjectProvider>
+      </AuthProvider>
+    </ThemeContext.Provider>
+  )
+}
+
 function AppLayout() {
   return (
-    <AuthProvider>
-      <ProjectProvider>
-        <div className="h-screen dark">
-          <TooltipProvider>
-            <SidebarProvider className="h-screen">
-              <Sidebar>
-                <AppSidebar />
-                <SidebarRail />
-              </Sidebar>
-              <SidebarInset>
-                <div className="flex flex-col flex-1 min-h-0">
-                  <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>}>
-                    <RoutedContent />
-                  </Suspense>
-                </div>
-              </SidebarInset>
-            </SidebarProvider>
-          </TooltipProvider>
-        </div>
-      </ProjectProvider>
-    </AuthProvider>
+    <div className="h-screen">
+      <TooltipProvider>
+        <SidebarProvider className="h-screen">
+          <Sidebar>
+            <AppSidebar />
+            <SidebarRail />
+          </Sidebar>
+          <SidebarInset>
+            <div className="flex flex-col flex-1 min-h-0">
+              <RoutedContent />
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </TooltipProvider>
+    </div>
   )
 }
 
@@ -349,17 +379,23 @@ function RedirectTo({ to }: { to: string }) {
 }
 
 const rootRoute = createRootRoute({
+  component: RootLayout,
+})
+
+const appLayoutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: 'app',
   component: AppLayout,
 })
 
 const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: '/',
   component: RootRedirect,
 })
 
 const projectRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => appLayoutRoute,
   path: 'projects/$project_id',
 })
 
@@ -380,28 +416,32 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/create', component: NotebookCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-volumes', component: NotebookVolumesPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'storage', component: StoragePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'members', component: MembersPage }),
   createRoute({ getParentRoute: () => projectRoute, path: '$', component: ProjectScopedFallback }),
 ]
 
 const legacyProjectRoutes = [
-  createRoute({ getParentRoute: () => rootRoute, path: 'schedules', component: () => <LegacyProjectRedirect to="schedules" /> }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'pipelines', component: () => <LegacyProjectRedirect to="pipelines" /> }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'history', component: () => <LegacyProjectRedirect to="history" /> }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'serving', component: () => <LegacyProjectRedirect to="serving" /> }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'notebooks', component: () => <LegacyProjectRedirect to="notebooks" /> }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'notebook-volumes', component: () => <LegacyProjectRedirect to="notebook-volumes" /> }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'storage', component: () => <LegacyProjectRedirect to="storage" /> }),
+  createRoute({ getParentRoute: () => appLayoutRoute, path: 'schedules', component: () => <LegacyProjectRedirect to="schedules" /> }),
+  createRoute({ getParentRoute: () => appLayoutRoute, path: 'pipelines', component: () => <LegacyProjectRedirect to="pipelines" /> }),
+  createRoute({ getParentRoute: () => appLayoutRoute, path: 'history', component: () => <LegacyProjectRedirect to="history" /> }),
+  createRoute({ getParentRoute: () => appLayoutRoute, path: 'serving', component: () => <LegacyProjectRedirect to="serving" /> }),
+  createRoute({ getParentRoute: () => appLayoutRoute, path: 'notebooks', component: () => <LegacyProjectRedirect to="notebooks" /> }),
+  createRoute({ getParentRoute: () => appLayoutRoute, path: 'notebook-volumes', component: () => <LegacyProjectRedirect to="notebook-volumes" /> }),
+  createRoute({ getParentRoute: () => appLayoutRoute, path: 'storage', component: () => <LegacyProjectRedirect to="storage" /> }),
 ]
 
 const routeTree = rootRoute.addChildren([
-  indexRoute,
-  projectRoute.addChildren(projectRoutes),
-  createRoute({ getParentRoute: () => rootRoute, path: 'workers', component: WorkersPage }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'kubernetes/pod-policies', component: PodPoliciesPage }),
-  createRoute({ getParentRoute: () => rootRoute, path: 'kubernetes/pod-policies/new', component: PodPoliciesCreatePage }),
   createRoute({ getParentRoute: () => rootRoute, path: 'login', component: LoginPage }),
-  ...legacyProjectRoutes,
-  createRoute({ getParentRoute: () => rootRoute, path: '$', component: () => <RedirectTo to="/" /> }),
+  appLayoutRoute.addChildren([
+    indexRoute,
+    projectRoute.addChildren(projectRoutes),
+    createRoute({ getParentRoute: () => appLayoutRoute, path: 'workers', component: WorkersPage }),
+    createRoute({ getParentRoute: () => appLayoutRoute, path: 'users', component: UsersPage }),
+    createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies', component: PodPoliciesPage }),
+    createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies/new', component: PodPoliciesCreatePage }),
+    ...legacyProjectRoutes,
+    createRoute({ getParentRoute: () => appLayoutRoute, path: '$', component: () => <RedirectTo to="/" /> }),
+  ]),
 ])
 
 export const router = createRouter({

@@ -23,4 +23,5 @@ type SessionRepository interface {
 	RevokeAll(ctx context.Context, userID string) error
 	TouchLastUsed(ctx context.Context, id string) error
 	DeleteExpired(ctx context.Context) error
+	RecordLoginAttempt(ctx context.Context, attempt *LoginAttempt) error
 }

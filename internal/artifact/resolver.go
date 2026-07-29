@@ -8,10 +8,7 @@
 // address without guessing:
 //
 //	local → Resolved.LocalPath (absolute filesystem path)
-//	s3    → Resolved.S3URI    (s3://bucket/key prefix)
-//
-// K8s serving requires S3 storage. Requesting TargetS3 without S3 configured
-// returns a clear configuration error rather than a runtime failure.
+//	remote → Resolved.ArtifactKey plus an optional directly consumable URI
 package artifact
 
 import "context"
@@ -25,14 +22,20 @@ const (
 	// TargetS3 resolves the artifact to an S3 URI.
 	// Requires S3 to be configured; returns an error otherwise.
 	TargetS3 Target = "s3"
+	// TargetRemote resolves an artifact for a remote worker. ArtifactKey is
+	// always populated; RemoteURI is populated when the backend provides a
+	// directly consumable URI such as s3://.
+	TargetRemote Target = "remote"
 )
 
 // Resolved holds the concrete addresses for a resolved artifact.
 // Only the field matching the requested Target is guaranteed to be non-empty.
 type Resolved struct {
-	RunID     string
-	LocalPath string
-	S3URI     string
+	RunID       string
+	LocalPath   string
+	S3URI       string
+	ArtifactKey string
+	RemoteURI   string
 }
 
 // Resolver translates an artifact reference to a concrete address.

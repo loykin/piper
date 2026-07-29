@@ -34,6 +34,7 @@ import (
 	"github.com/piper/piper/pkg/pipeline/run"
 	worker "github.com/piper/piper/pkg/pipeline/worker"
 	"github.com/piper/piper/pkg/project"
+	"github.com/piper/piper/pkg/security"
 	"github.com/piper/piper/pkg/serving"
 	servingdispatch "github.com/piper/piper/pkg/serving/dispatch"
 	"github.com/piper/piper/pkg/storage"
@@ -425,7 +426,7 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
 		}
 		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
-		envByStep, err := p.resolvePipelineCredentialEnv(ctx, r.ProjectID, pl)
+		envByStep, err := p.resolvePipelineCredentialEnv(ctx, r.ProjectID, r.ID, pl)
 		if err != nil {
 			slog.Warn("recover: resolve credential env failed", "run_id", r.ID, "err", err)
 			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
@@ -817,6 +818,9 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 		PipelineYAML: opts.YAML,
 		ParamsJSON:   encodeParams(opts.Params),
 	}
+	if identity, ok := security.IdentityFromContext(ctx); ok {
+		r.CreatedBy = identity.ID
+	}
 	if err := p.repos.Run.Create(ctx, r); err != nil {
 		return "", fmt.Errorf("create run: %w", err)
 	}
@@ -832,7 +836,7 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 		}
 	}
 
-	envByStep, err := p.resolvePipelineCredentialEnv(ctx, opts.ProjectID, pl)
+	envByStep, err := p.resolvePipelineCredentialEnv(ctx, opts.ProjectID, runID, pl)
 	if err != nil {
 		now := time.Now().UTC()
 		_ = p.repos.Run.UpdateStatus(ctx, opts.ProjectID, runID, run.StatusFailed, &now)
@@ -902,9 +906,20 @@ func (p *Piper) sourceConfig() srcfetch.Config {
 // resolveGitEnv resolves git credentials for a step using priority:
 // credentialRef (explicit) > endpoint auto-match (lowest).
 // Returns nil env (no error) when no credential is configured.
-func (p *Piper) resolveGitEnv(ctx context.Context, projectID, credentialRef, repoURL string) ([]string, error) {
+func (p *Piper) resolveGitEnv(ctx context.Context, projectID, runID, stepName, credentialRef, repoURL string) ([]string, error) {
 	if p.credentials != nil && strings.TrimSpace(credentialRef) != "" {
-		return p.credentials.GitEnv(ctx, projectID, credentialRef, repoURL)
+		env, err := p.credentials.GitEnv(ctx, projectID, credentialRef, repoURL)
+		if err == nil {
+			slog.Info("git credential resolved",
+				"project_id", projectID,
+				"run_id", runID,
+				"step", stepName,
+				"repo", repoURL,
+				"credential", credentialRef,
+				"source", "explicit",
+			)
+		}
+		return env, err
 	}
 	// Auto-match: find credential whose endpoint covers repoURL.
 	if p.credentials != nil {
@@ -913,20 +928,31 @@ func (p *Piper) resolveGitEnv(ctx context.Context, projectID, credentialRef, rep
 			return nil, err
 		}
 		if best != nil {
-			return p.credentials.GitEnv(ctx, projectID, best.Name, repoURL)
+			env, envErr := p.credentials.GitEnv(ctx, projectID, best.Name, repoURL)
+			if envErr == nil {
+				slog.Info("git credential resolved",
+					"project_id", projectID,
+					"run_id", runID,
+					"step", stepName,
+					"repo", repoURL,
+					"credential", best.Name,
+					"source", "endpoint-auto-match",
+				)
+			}
+			return env, envErr
 		}
 	}
 	return nil, nil
 }
 
-func (p *Piper) resolvePipelineCredentialEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline) (map[string][]string, error) {
+func (p *Piper) resolvePipelineCredentialEnv(ctx context.Context, projectID, runID string, pl *pipeline.Pipeline) (map[string][]string, error) {
 	envByStep := map[string][]string{}
 	for _, step := range pl.Spec.Steps {
 		var env []string
 
 		// Git credential resolution: credentialRef > auto-match by endpoint.
 		if strings.TrimSpace(step.Run.Source) == "git" && strings.TrimSpace(step.Run.Repo) != "" {
-			gitEnv, err := p.resolveGitEnv(ctx, projectID, step.Run.CredentialRef, step.Run.Repo)
+			gitEnv, err := p.resolveGitEnv(ctx, projectID, runID, step.Name, step.Run.CredentialRef, step.Run.Repo)
 			if err != nil {
 				return nil, fmt.Errorf("step %q git credential: %w", step.Name, err)
 			}
@@ -994,6 +1020,20 @@ func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, art
 			return artifact.Resolved{}, err
 		}
 		return artifact.Resolved{RunID: runID, S3URI: uri}, nil
+	case artifact.TargetRemote:
+		resolved := artifact.Resolved{RunID: runID, ArtifactKey: artKey}
+		if strings.HasPrefix(r.storageURL, "s3://") {
+			uri, err := r.artifactURI(artKey)
+			if err != nil {
+				return artifact.Resolved{}, err
+			}
+			resolved.S3URI = uri
+			resolved.RemoteURI = uri
+		}
+		if r.storageURL == "" {
+			return artifact.Resolved{}, fmt.Errorf("remote artifact delivery requires storage")
+		}
+		return resolved, nil
 	default:
 		// LocalPath points to the step output directory.
 		return artifact.Resolved{

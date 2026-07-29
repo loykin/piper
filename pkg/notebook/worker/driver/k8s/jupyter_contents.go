@@ -1,9 +1,12 @@
 package notebookworker
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -20,6 +23,62 @@ const (
 
 type jupyterContentsClient struct {
 	httpClient *http.Client
+}
+
+func (c *jupyterContentsClient) ReadFile(ctx context.Context, svcHost, baseURL, token, virtualPath string) (io.ReadCloser, int64, error) {
+	apiPath := path.Join(strings.TrimRight(baseURL, "/"), "api/contents", virtualPath)
+	reqURL := (&url.URL{
+		Scheme:   "http",
+		Host:     svcHost,
+		Path:     apiPath,
+		RawQuery: "content=1",
+	}).String()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "token "+token)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, 0, fmt.Errorf("jupyter file HTTP %d", resp.StatusCode)
+	}
+	var item struct {
+		Type    string          `json:"type"`
+		Format  string          `json:"format"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return nil, 0, err
+	}
+	if item.Type != "file" && item.Type != "notebook" {
+		return nil, 0, fmt.Errorf("path %q is not a file", virtualPath)
+	}
+	var data []byte
+	if item.Format == "base64" {
+		var encoded string
+		if err := json.Unmarshal(item.Content, &encoded); err != nil {
+			return nil, 0, err
+		}
+		data, err = base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else if item.Type == "notebook" {
+		data = append([]byte(nil), item.Content...)
+	} else {
+		var content string
+		if err := json.Unmarshal(item.Content, &content); err != nil {
+			return nil, 0, err
+		}
+		data = []byte(content)
+	}
+	return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 }
 
 func newJupyterContentsClient() *jupyterContentsClient {

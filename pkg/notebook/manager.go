@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/piper/piper/internal/event"
+	"github.com/piper/piper/pkg/security"
 )
 
 // Manager handles the lifecycle of NotebookServer instances.
@@ -68,6 +69,9 @@ func (m *Manager) Create(ctx context.Context, projectID string, spec Notebook, y
 		Status:    StatusProvisioning,
 		VolumeID:  vol.ID,
 		YAML:      yamlStr,
+	}
+	if identity, ok := security.IdentityFromContext(ctx); ok {
+		nb.CreatedBy = identity.ID
 	}
 	if err := m.repo.Create(ctx, nb); err != nil {
 		_ = m.vols.Delete(ctx, vol.ID)
@@ -179,6 +183,9 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 		Status:    StatusStarting,
 		VolumeID:  vol.ID,
 		YAML:      yamlStr,
+	}
+	if identity, ok := security.IdentityFromContext(ctx); ok {
+		nb.CreatedBy = identity.ID
 	}
 	if err := m.repo.Create(ctx, nb); err != nil {
 		_ = m.vols.SetStatus(ctx, vol.ID, VolumeStatusReleased)

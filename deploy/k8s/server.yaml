@@ -27,6 +27,8 @@ spec:
           env:
             - name: PIPER_SERVER_ADDR
               value: :8080
+            - name: PIPER_SERVER_DATA_DIR
+              value: /var/lib/piper
             - name: PIPER_SERVER_AUTH_SIGNING_KEY
               valueFrom:
                 secretKeyRef:
@@ -49,6 +51,25 @@ spec:
                   name: piper-storage
                   key: url
                   optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/piper
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: piper-server-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piper-server-data
+  namespace: piper
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
 ---
 apiVersion: v1
 kind: Service

@@ -28,6 +28,7 @@ type Run struct {
 	ScheduledAt     *time.Time `json:"scheduled_at,omitempty"    db:"scheduled_at"`
 	PipelineYAML    string     `json:"pipeline_yaml,omitempty"   db:"pipeline_yaml"`
 	ParamsJSON      string     `json:"params_json,omitempty"     db:"params_json"`
+	CreatedBy       string     `json:"created_by,omitempty"      db:"created_by"`
 }
 
 // VersionFromYAML extracts metadata.version from the stored pipeline YAML.

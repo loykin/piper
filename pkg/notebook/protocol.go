@@ -30,6 +30,25 @@ type FSListFilesResponse struct {
 	Message           string        `json:"message,omitempty"`
 }
 
+// FSUploadSnapshotRequest asks the volume-owning worker to upload selected
+// paths directly to artifact storage. Source bytes never pass through the
+// master control plane.
+type FSUploadSnapshotRequest struct {
+	ProjectID    string   `json:"project_id"`
+	VolumeID     string   `json:"volume_id"`
+	WorkDir      string   `json:"work_dir,omitempty"`
+	Notebook     string   `json:"notebook,omitempty"`
+	Token        string   `json:"token,omitempty"`
+	SnapshotID   string   `json:"snapshot_id"`
+	Paths        []string `json:"paths"`
+	StorageURL   string   `json:"storage_url"`
+	StorageToken string   `json:"storage_token,omitempty"`
+}
+
+type FSUploadSnapshotResponse struct {
+	Files int `json:"files"`
+}
+
 type WorkerProvisionVolumeRequest struct {
 	VolumeID     string `json:"volume_id"`
 	Namespace    string `json:"namespace,omitempty"`

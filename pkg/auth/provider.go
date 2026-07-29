@@ -154,17 +154,38 @@ type LoginResult struct {
 
 // Login authenticates with email+password and issues a new session.
 func (p *Provider) Login(ctx context.Context, email, password string) (*LoginResult, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	attempt := &LoginAttempt{
+		ID:          uuid.NewString(),
+		Email:       email,
+		AttemptedAt: time.Now().UTC(),
+	}
+	record := func(success bool, reason string) {
+		attempt.Success = success
+		attempt.FailureReason = reason
+		_ = p.sessions.RecordLoginAttempt(ctx, attempt)
+	}
 	u, err := p.users.GetByEmail(ctx, email)
 	if err != nil || u == nil {
+		record(false, "invalid_credentials")
 		return nil, errors.New("invalid credentials")
 	}
+	attempt.UserID = u.ID
 	if u.Disabled {
+		record(false, "account_disabled")
 		return nil, errors.New("account disabled")
 	}
 	if !verifyPassword(password, u.PasswordHash) {
+		record(false, "invalid_credentials")
 		return nil, errors.New("invalid credentials")
 	}
-	return p.createSession(ctx, u)
+	result, err := p.createSession(ctx, u)
+	if err != nil {
+		record(false, "session_creation_failed")
+		return nil, err
+	}
+	record(true, "")
+	return result, nil
 }
 
 // Refresh rotates a refresh token and issues a new access+refresh pair.

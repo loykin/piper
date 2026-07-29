@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,10 +30,14 @@ import (
 type Dispatcher = *grpcagent.Dispatcher
 
 type Config struct {
-	ClusterName  string
-	Namespaces   []string
-	Client       kubernetes.Interface
-	ReportStatus func(serving.WorkerStatusUpdate) error
+	ClusterName          string
+	Namespaces           []string
+	Client               kubernetes.Interface
+	ReportStatus         func(serving.WorkerStatusUpdate) error
+	MasterURL            string
+	WorkerToken          string
+	ArtifactFetcherImage string
+	ArtifactPullPolicy   corev1.PullPolicy
 	// LogClient enables pod log streaming for serving deployments.
 	LogClient logsink.PushClient
 }
@@ -64,9 +69,13 @@ func Register(dispatcher Dispatcher, cfg Config) *Worker {
 }
 
 type servingDeployRequest struct {
-	ProjectID string `json:"project_id"`
-	YAML      string `json:"yaml"`
-	S3URI     string `json:"s3_uri"`
+	ProjectID    string `json:"project_id"`
+	YAML         string `json:"yaml"`
+	S3URI        string `json:"s3_uri"`
+	ArtifactKey  string `json:"artifact_key"`
+	ArtifactURI  string `json:"artifact_uri"`
+	StorageURL   string `json:"storage_url"`
+	StorageToken string `json:"storage_token"`
 }
 
 type servingDeployResponse struct {
@@ -92,8 +101,13 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 	if req.ProjectID == "" {
 		return servingDeployResponse{}, fmt.Errorf("project_id is required")
 	}
-	if req.S3URI == "" {
-		return servingDeployResponse{}, fmt.Errorf("s3_uri is required")
+	modelDir := req.S3URI
+	if modelDir == "" {
+		modelDir = req.ArtifactURI
+	}
+	downloadArtifact := req.ArtifactKey != ""
+	if modelDir == "" && !downloadArtifact {
+		return servingDeployResponse{}, fmt.Errorf("artifact location is required")
 	}
 	var svc serving.ModelService
 	if err := yaml.Unmarshal([]byte(req.YAML), &svc); err != nil {
@@ -107,7 +121,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 		return servingDeployResponse{}, fmt.Errorf("spec.driver.k8s.image is required")
 	}
 	command := process.ExpandArgs(rt.Command, map[string]string{
-		"PIPER_MODEL_DIR":    req.S3URI,
+		"PIPER_MODEL_DIR":    modelDir,
 		"PIPER_SERVICE_NAME": svc.Metadata.Name,
 	})
 	if len(command) == 0 {
@@ -136,6 +150,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 		replicas = 1
 	}
 	name := servingResourceName(req.ProjectID, svc.Metadata.Name)
+	artifactSecretName := name + "-artifact"
 	workloadID := servingKey(req.ProjectID, svc.Metadata.Name)
 	labels := a.k8sLabels("serving", workloadID)
 	annotations := k8smanifest.WorkloadAnnotations(svc.Metadata.Name)
@@ -154,6 +169,70 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 		pullPolicy = corev1.PullPolicy(svc.Spec.Driver.K8s.ImagePullPolicy)
 	}
 
+	podSpec := corev1.PodSpec{
+		Containers: []corev1.Container{{
+			Name:            "serving",
+			Image:           svc.Spec.Driver.K8s.Image,
+			ImagePullPolicy: pullPolicy,
+			Command:         []string{command[0]},
+			Args:            command[1:],
+			Resources:       resReqs,
+			Env: []corev1.EnvVar{
+				{Name: "PIPER_MODEL_DIR", Value: modelDir},
+				{Name: "PIPER_SERVICE_NAME", Value: svc.Metadata.Name},
+			},
+			Ports: []corev1.ContainerPort{{ContainerPort: int32(rt.Port)}},
+		}},
+	}
+	if downloadArtifact {
+		if a.cfg.ArtifactFetcherImage == "" {
+			return servingDeployResponse{}, fmt.Errorf("artifact fetcher image is required for stored artifacts")
+		}
+		storageURL := req.StorageURL
+		storageToken := req.StorageToken
+		if strings.HasPrefix(storageURL, "file://") {
+			storageURL = strings.TrimRight(a.cfg.MasterURL, "/") + "/store"
+			storageToken = a.cfg.WorkerToken
+		}
+		if storageURL == "" {
+			return servingDeployResponse{}, fmt.Errorf("storage_url is required for stored artifacts")
+		}
+		if err := a.upsertArtifactSecret(ctx, ns, artifactSecretName, labels, storageURL, storageToken, req.ArtifactKey); err != nil {
+			return servingDeployResponse{}, err
+		}
+		modelDir = "/piper-model"
+		command = process.ExpandArgs(rt.Command, map[string]string{
+			"PIPER_MODEL_DIR":    modelDir,
+			"PIPER_SERVICE_NAME": svc.Metadata.Name,
+		})
+		podSpec.Containers[0].Command = []string{command[0]}
+		podSpec.Containers[0].Args = command[1:]
+		podSpec.Containers[0].Env[0].Value = modelDir
+		podSpec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
+			Name: "model", MountPath: modelDir, ReadOnly: true,
+		}}
+		podSpec.InitContainers = []corev1.Container{{
+			Name:            "artifact-download",
+			Image:           a.cfg.ArtifactFetcherImage,
+			ImagePullPolicy: a.cfg.ArtifactPullPolicy,
+			Command:         []string{"/piper"},
+			Args:            []string{"internal", "artifact-download"},
+			Env: []corev1.EnvVar{
+				{Name: "PIPER_STORAGE_URL", ValueFrom: secretEnv(artifactSecretName, "storage-url")},
+				{Name: "PIPER_STORAGE_TOKEN", ValueFrom: secretEnv(artifactSecretName, "storage-token")},
+				{Name: "PIPER_ARTIFACT_KEY", ValueFrom: secretEnv(artifactSecretName, "artifact-key")},
+				{Name: "PIPER_ARTIFACT_DEST", Value: modelDir},
+			},
+			VolumeMounts: []corev1.VolumeMount{{Name: "model", MountPath: modelDir}},
+		}}
+		podSpec.Volumes = []corev1.Volume{{
+			Name: "model",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}}
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -166,21 +245,7 @@ func (a *Worker) deployServing(ctx context.Context, req servingDeployRequest) (s
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:            "serving",
-						Image:           svc.Spec.Driver.K8s.Image,
-						ImagePullPolicy: pullPolicy,
-						Command:         []string{command[0]},
-						Args:            command[1:],
-						Resources:       resReqs,
-						Env: []corev1.EnvVar{
-							{Name: "PIPER_MODEL_DIR", Value: req.S3URI},
-							{Name: "PIPER_SERVICE_NAME", Value: svc.Metadata.Name},
-						},
-						Ports: []corev1.ContainerPort{{ContainerPort: int32(rt.Port)}},
-					}},
-				},
+				Spec:       podSpec,
 			},
 		},
 	}
@@ -283,6 +348,9 @@ func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error 
 	if err := a.cfg.Client.CoreV1().Services(ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
 		return err
 	}
+	if err := a.cfg.Client.CoreV1().Secrets(ns).Delete(ctx, name+"-artifact", metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
+		return err
+	}
 	if a.cfg.ReportStatus != nil {
 		a.statusChanged(servingKey(req.ProjectID, req.Name), serving.StatusStopped)
 		_ = a.cfg.ReportStatus(serving.WorkerStatusUpdate{
@@ -290,6 +358,40 @@ func (a *Worker) stopServing(ctx context.Context, req servingStopRequest) error 
 			Name:      req.Name,
 			Status:    serving.StatusStopped,
 		})
+	}
+	return nil
+}
+
+func secretEnv(name, key string) *corev1.EnvVarSource {
+	return &corev1.EnvVarSource{
+		SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: name},
+			Key:                  key,
+		},
+	}
+}
+
+func (a *Worker) upsertArtifactSecret(ctx context.Context, namespace, name string, labels map[string]string, storageURL, storageToken, artifactKey string) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		StringData: map[string]string{
+			"storage-url":   storageURL,
+			"storage-token": storageToken,
+			"artifact-key":  artifactKey,
+		},
+	}
+	secrets := a.cfg.Client.CoreV1().Secrets(namespace)
+	if existing, err := secrets.Get(ctx, name, metav1.GetOptions{}); err == nil {
+		secret.ResourceVersion = existing.ResourceVersion
+		if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update artifact secret: %w", err)
+		}
+		return nil
+	} else if !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("get artifact secret: %w", err)
+	}
+	if _, err := secrets.Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create artifact secret: %w", err)
 	}
 	return nil
 }

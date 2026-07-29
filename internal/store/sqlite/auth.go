@@ -207,3 +207,12 @@ func (r *sessionRepo) DeleteExpired(ctx context.Context) error {
 		return err
 	})
 }
+
+func (r *sessionRepo) RecordLoginAttempt(ctx context.Context, attempt *auth.LoginAttempt) error {
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO login_history (id, user_id, email, success, failure_reason, attempted_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			attempt.ID, attempt.UserID, attempt.Email, attempt.Success, attempt.FailureReason, attempt.AttemptedAt)
+		return err
+	})
+}

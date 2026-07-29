@@ -27,7 +27,7 @@ import {
   parsePipelineDraftYaml, validatePipelineDraft,
   type PipelineSourceDraft,
   type PipelineArtifactDraft, type PipelineKeyValueDraft,
-  type PipelineStepDraft, type PipelineTaskType,
+  type PipelineDefaultsDraft, type PipelineStepDraft, type PipelineTaskType,
 } from '@/features/pipelines/editor'
 
 type SourceKind = 'notebook-volume' | 'git' | 'local' | 'object-store'
@@ -394,6 +394,7 @@ export default function PipelineEditorPage() {
   const [volumeFiles, setVolumeFiles] = useState<string[]>([])
   const [volumeFilesStatus, setVolumeFilesStatus] = useState<'ready' | 'transitioning' | 'unavailable' | null>(null)
   const [tasks, setTasks] = useState<PipelineStepDraft[]>(initialDraft.steps)
+  const [defaults, setDefaults] = useState<PipelineDefaultsDraft>(initialDraft.defaults)
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => buildPositions(initialDraft.steps))
   const [selectedId, setSelectedId] = useState<string>(initialDraft.steps[0]?.id ?? '')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -402,7 +403,7 @@ export default function PipelineEditorPage() {
   const [artifactBrowseKey, setArtifactBrowseKey] = useState<string | null>(null)
   const artifactBrowseRef = useRef<HTMLDivElement>(null)
   const [browseQuery, setBrowseQuery] = useState('')
-  const [yamlText, setYamlText] = useState(() => buildPipelineDraftYaml({ name: initialDraft.name, steps: initialDraft.steps }))
+  const [yamlText, setYamlText] = useState(() => buildPipelineDraftYaml(initialDraft))
   const [validation, setValidation] = useState<string[]>([])
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -443,10 +444,11 @@ export default function PipelineEditorPage() {
       setPipelineName(template.name)
       setFormName(template.name)
       setTasks(parsed.steps)
+      setDefaults(parsed.defaults)
       setPositions(buildPositions(parsed.steps))
       setSelectedId(parsed.steps[0]?.id ?? '')
       setEditingId(null)
-      setYamlText(buildPipelineDraftYaml({ name: template.name, steps: parsed.steps, source: parsed.source }))
+      setYamlText(buildPipelineDraftYaml({ name: template.name, steps: parsed.steps, source: parsed.source, defaults: parsed.defaults }))
       setError('')
     }).catch(err => {
       if (!cancelled) setError(err instanceof Error ? err.message : String(err))
@@ -491,11 +493,11 @@ export default function PipelineEditorPage() {
   }, [editorSourceKind, editorVolumeId])
 
   useEffect(() => {
-    setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource }))
-    setValidation(validatePipelineDraft({ name: pipelineName, steps: tasks }))
+    setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults }))
+    setValidation(validatePipelineDraft({ name: pipelineName, steps: tasks, defaults }))
     if (!tasks.some(t => t.id === selectedId)) setSelectedId(tasks[0]?.id ?? '')
     if (editingId && !tasks.some(t => t.id === editingId)) setEditingId(null)
-  }, [pipelineName, tasks, pipelineSource, selectedId, editingId])
+  }, [pipelineName, tasks, pipelineSource, defaults, selectedId, editingId])
 
   useEffect(() => {
     setPositions(prev => {
@@ -528,6 +530,16 @@ export default function PipelineEditorPage() {
       }
       return next
     })
+  }
+
+  function updateDefaults(patch: Partial<PipelineDefaultsDraft>) {
+    setDefaults(current => ({ ...current, ...patch }))
+  }
+
+  function updateTaskDriver(index: number, patch: Partial<PipelineStepDraft['driver']>) {
+    setTasks(current => current.map((task, i) => (
+      i === index ? { ...task, driver: { ...task.driver, ...patch } } : task
+    )))
   }
 
   function updateDep(index: number, depIndex: number, val: string) {
@@ -618,6 +630,7 @@ export default function PipelineEditorPage() {
       const parsed = parsePipelineDraftYaml(yamlText)
       setPipelineName(parsed.name)
       setTasks(parsed.steps)
+      setDefaults(parsed.defaults)
       setPositions(buildPositions(parsed.steps))
       setSelectedId(parsed.steps[0]?.id ?? '')
       setEditingId(null)
@@ -629,7 +642,7 @@ export default function PipelineEditorPage() {
   }
 
   async function handleSubmit() {
-    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks })
+    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks, defaults })
     if (messages.length > 0) { setError(messages[0]); return }
     setSubmitModalOpen(true)
     setSubmitVolumeId(editorSourceKind === 'notebook-volume' ? editorVolumeId : '')
@@ -639,7 +652,7 @@ export default function PipelineEditorPage() {
     setSubmitting(true)
     setError('')
     try {
-      const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource })
+      const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults })
       await createPipeline(projectId, {
         yaml,
         volume_id: submitVolumeId || undefined,
@@ -654,7 +667,7 @@ export default function PipelineEditorPage() {
   }
 
   function validateNow() {
-    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks })
+    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks, defaults })
     setValidation(messages)
     setError(messages[0] || '')
   }
@@ -878,6 +891,43 @@ export default function PipelineEditorPage() {
               <Input value={pipelineName} onChange={e => setPipelineName(e.target.value)} />
             </div>
             <div className="space-y-4 overflow-y-auto p-4">
+              <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime Defaults">
+                <DataBodyTemplate.Field label="Runtime">
+                  <Select
+                    value={defaults.placementRuntime || '__auto__'}
+                    onValueChange={value => updateDefaults({ placementRuntime: value === '__auto__' ? '' : (value ?? '') })}
+                  >
+                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Auto</SelectItem>
+                      <SelectItem value="baremetal">Bare metal</SelectItem>
+                      <SelectItem value="docker">Docker</SelectItem>
+                      <SelectItem value="k8s">Kubernetes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
+                <DataBodyTemplate.Field label="Worker" description="Optional exact worker ID.">
+                  <Input value={defaults.placementWorker} onChange={e => updateDefaults({ placementWorker: e.target.value })} />
+                </DataBodyTemplate.Field>
+                <DataBodyTemplate.Field label="Worker Label">
+                  <Input value={defaults.placementLabel} onChange={e => updateDefaults({ placementLabel: e.target.value })} />
+                </DataBodyTemplate.Field>
+                {defaults.placementRuntime === 'k8s' && (
+                  <>
+                    <DataBodyTemplate.Field label="Container Image">
+                      <Input value={defaults.k8sImage} onChange={e => updateDefaults({ k8sImage: e.target.value })} />
+                    </DataBodyTemplate.Field>
+                    <DataBodyTemplate.Field label="Namespace">
+                      <Input value={defaults.k8sNamespace} onChange={e => updateDefaults({ k8sNamespace: e.target.value })} />
+                    </DataBodyTemplate.Field>
+                  </>
+                )}
+                {defaults.placementRuntime === 'docker' && (
+                  <DataBodyTemplate.Field label="Container Image">
+                    <Input value={defaults.dockerImage} onChange={e => updateDefaults({ dockerImage: e.target.value })} />
+                  </DataBodyTemplate.Field>
+                )}
+              </DataBodyTemplate.Group>
               <div>
                 <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
                 <div className="space-y-2">
@@ -1162,6 +1212,63 @@ export default function PipelineEditorPage() {
                 onBrowseQueryChange={setBrowseQuery}
                 onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'outputs', i, { path: f }); setArtifactBrowseKey(null) }}
               />
+
+              <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime Override">
+                <DataBodyTemplate.Field label="Runtime" description="Leave as Inherit to use pipeline defaults.">
+                  <Select
+                    value={editingTask.driver.placementRuntime || '__inherit__'}
+                    onValueChange={value => updateTaskDriver(editingIndex, {
+                      placementRuntime: value === '__inherit__' ? '' : (value ?? ''),
+                    })}
+                  >
+                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__inherit__">Inherit</SelectItem>
+                      <SelectItem value="baremetal">Bare metal</SelectItem>
+                      <SelectItem value="docker">Docker</SelectItem>
+                      <SelectItem value="k8s">Kubernetes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </DataBodyTemplate.Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <DataBodyTemplate.Field label="Worker">
+                    <Input
+                      value={editingTask.driver.placementWorker}
+                      onChange={e => updateTaskDriver(editingIndex, { placementWorker: e.target.value })}
+                    />
+                  </DataBodyTemplate.Field>
+                  <DataBodyTemplate.Field label="Worker Label">
+                    <Input
+                      value={editingTask.driver.placementLabel}
+                      onChange={e => updateTaskDriver(editingIndex, { placementLabel: e.target.value })}
+                    />
+                  </DataBodyTemplate.Field>
+                </div>
+                {editingTask.driver.placementRuntime === 'k8s' && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <DataBodyTemplate.Field label="Container Image">
+                      <Input
+                        value={editingTask.driver.k8sImage}
+                        onChange={e => updateTaskDriver(editingIndex, { k8sImage: e.target.value })}
+                      />
+                    </DataBodyTemplate.Field>
+                    <DataBodyTemplate.Field label="Namespace">
+                      <Input
+                        value={editingTask.driver.k8sNamespace}
+                        onChange={e => updateTaskDriver(editingIndex, { k8sNamespace: e.target.value })}
+                      />
+                    </DataBodyTemplate.Field>
+                  </div>
+                )}
+                {editingTask.driver.placementRuntime === 'docker' && (
+                  <DataBodyTemplate.Field label="Container Image">
+                    <Input
+                      value={editingTask.driver.dockerImage}
+                      onChange={e => updateTaskDriver(editingIndex, { dockerImage: e.target.value })}
+                    />
+                  </DataBodyTemplate.Field>
+                )}
+              </DataBodyTemplate.Group>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>

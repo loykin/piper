@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -35,6 +37,21 @@ import (
 )
 
 const maxRequestBodyBytes int64 = 1 << 20
+
+var (
+	httpRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "piper_http_requests_total", Help: "HTTP requests handled by Piper."},
+		[]string{"method", "route", "status"},
+	)
+	httpDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Name: "piper_http_request_duration_seconds", Help: "HTTP request latency by route."},
+		[]string{"method", "route"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(httpRequests, httpDuration)
+}
 
 // ServeOption customizes the behavior of Serve
 type ServeOption struct {
@@ -157,6 +174,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(limitRequestBody(maxRequestBodyBytes))
+	r.Use(prometheusHTTPMetrics())
 
 	// Caller-provided routes run before Piper routes. Authentication is applied
 	// only to user-facing groups below; worker routes have a separate credential.
@@ -326,11 +344,15 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 
 	// Pipeline template domain
 	template.NewHandler(template.HandlerDeps{
-		Templates: p.repos.PipelineTemplate,
-		Volumes:   p.repos.NotebookVolume,
-		Schedules: p.repos.Schedule,
-		Store:     p.store,
-		Sched:     p.scheduler,
+		Templates:    p.repos.PipelineTemplate,
+		Volumes:      p.repos.NotebookVolume,
+		Notebooks:    p.repos.Notebook,
+		Schedules:    p.repos.Schedule,
+		Store:        p.store,
+		RPCSender:    p.grpcAgentServer,
+		StorageURL:   p.storageURL,
+		StorageToken: p.cfg.Storage.Token,
+		Sched:        p.scheduler,
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},
@@ -357,7 +379,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	r.GET("/metrics", p.authenticateUser(), p.requireSystemAdmin(), p.metricsHandler)
+	r.GET("/metrics", p.metricsAuth(), p.metricsHandler)
 	r.GET("/events", p.authenticateUser(), p.eventsHandler) // filtered by project_id param; see eventsHandler
 
 	// SPA — served under /ui/; root redirects for convenience
@@ -366,6 +388,19 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	r.GET("/ui/*filepath", gin.WrapH(http.StripPrefix("/ui", ui.Handler())))
 
 	return r
+}
+
+func prometheusHTTPMetrics() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		c.Next()
+		route := c.FullPath()
+		if route == "" {
+			route = "unmatched"
+		}
+		httpRequests.WithLabelValues(c.Request.Method, route, fmt.Sprintf("%d", c.Writer.Status())).Inc()
+		httpDuration.WithLabelValues(c.Request.Method, route).Observe(time.Since(started).Seconds())
+	}
 }
 
 func limitRequestBody(maxBytes int64) gin.HandlerFunc {
@@ -604,6 +639,37 @@ func (p *Piper) workerTokenMiddleware() gin.HandlerFunc {
 	}
 }
 
+// metricsAuth accepts the scrape bearer token used by workers, or an
+// authenticated system-admin session. This keeps metrics on the existing
+// server endpoint while making ordinary Prometheus bearer-token scraping work.
+func (p *Piper) metricsAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if token := p.cfg.Server.WorkerToken; token != "" {
+			if auth := c.GetHeader("Authorization"); auth == "Bearer "+token {
+				c.Next()
+				return
+			}
+		}
+		if p.cfg.Auth.Authenticator == nil || p.cfg.Auth.Authorizer == nil {
+			c.Next()
+			return
+		}
+		identity, err := p.cfg.Auth.Authenticator.Authenticate(c.Request.Context(), c.Request)
+		if err != nil || identity == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "metrics authentication required"})
+			c.Abort()
+			return
+		}
+		if err := p.cfg.Auth.Authorizer.AuthorizeSystem(c.Request.Context(), identity); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "system admin required"})
+			c.Abort()
+			return
+		}
+		c.Request = c.Request.WithContext(security.WithIdentity(c.Request.Context(), identity))
+		c.Next()
+	}
+}
+
 func (p *Piper) eventsHandler(c *gin.Context) {
 	// ?project_id=xxx filters to events scoped to that project plus infra events.
 	// Without project_id only system admins receive all events.
@@ -692,6 +758,9 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml string, params map[str
 			PipelineYAML: yaml,
 			ParamsJSON:   encodeParams(params),
 		}
+		if identity, ok := security.IdentityFromContext(ctx); ok {
+			newRun.CreatedBy = identity.ID
+		}
 		if err := p.repos.Run.Create(ctx, newRun); err != nil {
 			return "", err
 		}
@@ -738,35 +807,62 @@ func (p *Piper) cancelRun(ctx context.Context, runID string) error {
 	return p.queue.Cancel(ctx, projectContext.ID, runID)
 }
 
-func (p *Piper) metricsHandler(c *gin.Context) {
-	runs, err := p.listRunsAcrossProjects(c.Request.Context(), run.RunFilter{})
+type piperCollector struct {
+	p *Piper
+}
+
+func (c *piperCollector) Describe(ch chan<- *prometheus.Desc) {
+	prometheus.DescribeByCollect(c, ch)
+}
+
+func (c *piperCollector) Collect(ch chan<- prometheus.Metric) {
+	runs, err := c.p.listRunsAcrossProjects(context.Background(), run.RunFilter{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		slog.Error("collect piper metrics", "err", err)
 		return
 	}
 	counts := map[string]int{}
 	var totalDurationSeconds float64
 	var completed int
-	for _, r := range runs {
-		counts[r.Status]++
-		if r.EndedAt != nil {
-			totalDurationSeconds += r.EndedAt.Sub(r.StartedAt).Seconds()
+	for _, item := range runs {
+		counts[item.Status]++
+		if item.EndedAt != nil {
+			totalDurationSeconds += item.EndedAt.Sub(item.StartedAt).Seconds()
 			completed++
 		}
 	}
-	stats := p.queue.Stats()
-	c.Header("Content-Type", "text/plain; version=0.0.4")
+	runDesc := prometheus.NewDesc("piper_runs_total", "Stored Piper runs by status.", []string{"status"}, nil)
 	for runStatus, count := range counts {
-		_, _ = fmt.Fprintf(c.Writer, "piper_runs_total{status=%q} %d\n", runStatus, count)
+		ch <- prometheus.MustNewConstMetric(runDesc, prometheus.GaugeValue, float64(count), runStatus)
 	}
-	_, _ = fmt.Fprintf(c.Writer, "piper_run_duration_seconds_sum %.3f\n", totalDurationSeconds)
-	_, _ = fmt.Fprintf(c.Writer, "piper_run_duration_seconds_count %d\n", completed)
-	_, _ = fmt.Fprintf(c.Writer, "piper_queue_runs %d\n", stats.Runs)
-	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"pending\"} %d\n", stats.Pending)
-	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"ready\"} %d\n", stats.Ready)
-	_, _ = fmt.Fprintf(c.Writer, "piper_queue_tasks{status=\"running\"} %d\n", stats.Running)
-	workerCount := len(p.agentRegistry.List())
-	_, _ = fmt.Fprintf(c.Writer, "piper_workers %d\n", workerCount)
+	durationDesc := prometheus.NewDesc("piper_run_duration_seconds", "Completed Piper run duration.", nil, nil)
+	ch <- prometheus.MustNewConstSummary(
+		durationDesc,
+		uint64(completed),
+		totalDurationSeconds,
+		map[float64]float64{},
+	)
+	stats := c.p.queue.Stats()
+	ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("piper_queue_runs", "Runs held by the in-memory queue.", nil, nil), prometheus.GaugeValue, float64(stats.Runs))
+	taskDesc := prometheus.NewDesc("piper_queue_tasks", "Queued tasks by status.", []string{"status"}, nil)
+	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Pending), "pending")
+	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Ready), "ready")
+	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Running), "running")
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc("piper_workers", "Connected Piper workers.", nil, nil),
+		prometheus.GaugeValue,
+		float64(len(c.p.agentRegistry.List())),
+	)
+}
+
+func (p *Piper) metricsHandler(c *gin.Context) {
+	registry := prometheus.NewPedanticRegistry()
+	if err := registry.Register(&piperCollector{p: p}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	gatherers := prometheus.Gatherers{prometheus.DefaultGatherer, registry}
+	promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}).ServeHTTP(c.Writer, c.Request)
 }
 
 func (p *Piper) rerunRun(ctx context.Context, runID string, failedOnly bool) (string, error) {

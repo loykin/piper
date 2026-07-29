@@ -30,8 +30,8 @@ spec:
       source: git
       repo: https://github.com/loykin/piper
       branch: master
-      path: examples/scripts/train.py
-      command: ["python", "examples/scripts/train.py"]
+      path: examples/mlops/train.py
+      command: ["python", "examples/mlops/train.py"]
     params:
       epochs: 5
       lr: 0.001
@@ -42,9 +42,9 @@ spec:
       source: git
       repo: https://github.com/loykin/piper
       branch: master
-      path: examples/scripts/train.py
+      path: examples/mlops/train.py
       dir: model-v2          # cloned into {SourceDir}/model-v2/
-      command: ["python", "examples/scripts/train.py"]
+      command: ["python", "examples/mlops/train.py"]
     params:
       epochs: 10
       lr: 0.0001

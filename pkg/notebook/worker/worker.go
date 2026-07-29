@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
 	notebookdocker "github.com/piper/piper/pkg/notebook/worker/driver/docker"
 	notebookprocess "github.com/piper/piper/pkg/notebook/worker/driver/process"
+	"github.com/piper/piper/pkg/storage"
 )
 
 // Config holds configuration for a notebook worker agent.
@@ -115,6 +117,7 @@ func New(cfg Config) *Worker {
 	})
 	_ = grpcagent.RegisterJSON(d, iagent.MethodNotebookSyncStatus, w.syncStatus)
 	_ = grpcagent.RegisterJSON(d, iagent.MethodFSListFiles, w.listFiles)
+	_ = grpcagent.RegisterJSON(d, iagent.MethodFSUploadSnapshot, w.uploadSnapshot)
 
 	return w
 }
@@ -381,6 +384,72 @@ func (w *Worker) listFiles(_ context.Context, req notebook.FSListFilesRequest) (
 		}
 	}
 	return notebook.ReadyResponse(files, truncated), nil
+}
+
+func (w *Worker) uploadSnapshot(ctx context.Context, req notebook.FSUploadSnapshotRequest) (*notebook.FSUploadSnapshotResponse, error) {
+	if req.SnapshotID == "" {
+		return nil, fmt.Errorf("snapshot_id is required")
+	}
+	if req.WorkDir == "" {
+		return nil, fmt.Errorf("work_dir is required")
+	}
+	storageURL := strings.TrimSpace(req.StorageURL)
+	storageToken := req.StorageToken
+	if strings.HasPrefix(storageURL, "file://") {
+		storageURL = strings.TrimRight(strings.TrimSpace(w.cfg.MasterURL), "/") + "/store"
+		if storageToken == "" {
+			storageToken = w.cfg.WorkerToken
+		}
+	}
+	store, err := storage.Open(storageURL, storageToken)
+	if err != nil {
+		return nil, fmt.Errorf("open snapshot storage: %w", err)
+	}
+	prefix := "snapshots/" + req.SnapshotID
+	uploaded := 0
+	for _, rawPath := range req.Paths {
+		rel, pathErr := safeSnapshotPath(rawPath)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		local := filepath.Join(req.WorkDir, filepath.FromSlash(rel))
+		info, statErr := os.Stat(local)
+		if statErr != nil {
+			return nil, fmt.Errorf("stat %s: %w", rel, statErr)
+		}
+		if info.IsDir() {
+			before, _ := store.List(ctx, prefix+"/"+rel+"/")
+			if err := storage.UploadDir(ctx, store, local, prefix+"/"+rel); err != nil {
+				return nil, fmt.Errorf("upload dir %s: %w", rel, err)
+			}
+			after, _ := store.List(ctx, prefix+"/"+rel+"/")
+			uploaded += len(after) - len(before)
+			continue
+		}
+		file, openErr := os.Open(local)
+		if openErr != nil {
+			return nil, fmt.Errorf("open %s: %w", rel, openErr)
+		}
+		putErr := store.Put(ctx, prefix+"/"+rel, file, info.Size())
+		_ = file.Close()
+		if putErr != nil {
+			return nil, fmt.Errorf("upload %s: %w", rel, putErr)
+		}
+		uploaded++
+	}
+	return &notebook.FSUploadSnapshotResponse{Files: uploaded}, nil
+}
+
+func safeSnapshotPath(raw string) (string, error) {
+	raw = filepath.ToSlash(strings.TrimSpace(raw))
+	if raw == "" || strings.HasPrefix(raw, "/") {
+		return "", fmt.Errorf("invalid snapshot path %q", raw)
+	}
+	clean := path.Clean("/" + raw)
+	if clean == "/" || strings.Contains(raw, "..") {
+		return "", fmt.Errorf("invalid snapshot path %q", raw)
+	}
+	return strings.TrimPrefix(clean, "/"), nil
 }
 
 func (w *Worker) syncStatus(_ context.Context, req notebook.WorkerSyncStatusRequest) (notebook.WorkerSyncStatusResponse, error) {

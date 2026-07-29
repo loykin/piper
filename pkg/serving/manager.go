@@ -7,6 +7,7 @@ import (
 
 	"github.com/piper/piper/internal/artifact"
 	"github.com/piper/piper/internal/event"
+	"github.com/piper/piper/pkg/security"
 )
 
 // Manager handles the lifecycle of ModelService deployments.
@@ -64,6 +65,9 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 	rec.RunID = art.RunID
 	rec.ProjectID = projectID
 	rec.YAML = yamlStr
+	if identity, ok := security.IdentityFromContext(ctx); ok {
+		rec.CreatedBy = identity.ID
+	}
 
 	if err := m.repo.Upsert(ctx, rec); err != nil {
 		return err

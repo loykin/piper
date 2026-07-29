@@ -2,10 +2,12 @@ package commands
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -20,6 +22,7 @@ func newInternalCmd() *cobra.Command {
 		Hidden: true,
 	}
 	cmd.AddCommand(newInternalVolumeBrowserCmd())
+	cmd.AddCommand(newInternalArtifactDownloadCmd())
 	return cmd
 }
 
@@ -46,6 +49,7 @@ func newInternalVolumeBrowserCmd() *cobra.Command {
 				w.WriteHeader(http.StatusOK)
 			})
 			mux.HandleFunc("/files", newFilesHandler(root, token))
+			mux.HandleFunc("/file", newFileHandler(root, token))
 
 			slog.Info("volume-browser listening", "addr", addr, "root", root)
 			return http.ListenAndServe(addr, mux)
@@ -57,6 +61,42 @@ func newInternalVolumeBrowserCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tokenFile, "token-file", "", "path to bearer token file for authentication")
 
 	return cmd
+}
+
+func newFileHandler(root, token string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if token != "" {
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+		rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
+		if rawPath == "" || strings.HasPrefix(rawPath, "/") || strings.Contains(rawPath, "..") {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+		clean := filepath.FromSlash(path.Clean("/" + rawPath))
+		filePath := filepath.Join(root, strings.TrimPrefix(clean, string(filepath.Separator)))
+		file, err := os.Open(filePath)
+		if err != nil {
+			http.Error(w, "file not found", http.StatusNotFound)
+			return
+		}
+		defer func() { _ = file.Close() }()
+		info, err := file.Stat()
+		if err != nil || info.IsDir() {
+			http.Error(w, "not a file", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+		_, _ = io.Copy(w, file)
+	}
 }
 
 func newFilesHandler(root, token string) http.HandlerFunc {

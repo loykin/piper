@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	iagent "github.com/piper/piper/internal/agent"
@@ -138,14 +139,20 @@ func New(cfg Config) *Worker {
 				ReportStatus: func(update notebook.WorkerStatusUpdate) error {
 					return client.SendPush(iagent.MethodNotebookStatusUpdate, update)
 				},
-				LogClient: client,
+				LogClient:   client,
+				MasterURL:   cfg.Agent.MasterURL,
+				WorkerToken: cfg.Agent.WorkerToken,
 			})
 		}
 		if domainEnabled(cfg.K8s, iagent.CapabilityServing) {
 			servingObserver = k8sserving.Register(client.Dispatcher(), k8sserving.Config{
-				ClusterName: cfg.Agent.ClusterName,
-				Namespaces:  cfg.K8s.Namespaces,
-				Client:      cfg.K8s.Client,
+				ClusterName:          cfg.Agent.ClusterName,
+				Namespaces:           cfg.K8s.Namespaces,
+				Client:               cfg.K8s.Client,
+				MasterURL:            cfg.Agent.MasterURL,
+				WorkerToken:          cfg.Agent.WorkerToken,
+				ArtifactFetcherImage: cfg.K8s.PipelineRunnerImage,
+				ArtifactPullPolicy:   corev1.PullPolicy(cfg.K8s.PipelineRunnerImagePullPolicy),
 				ReportStatus: func(update serving.WorkerStatusUpdate) error {
 					return client.SendPush(iagent.MethodServingStatusUpdate, update)
 				},

@@ -138,6 +138,8 @@ type deployRequest struct {
 	YAML         string   `json:"yaml"`
 	LocalPath    string   `json:"local_path"`
 	S3URI        string   `json:"s3_uri"`
+	ArtifactKey  string   `json:"artifact_key,omitempty"`
+	ArtifactURI  string   `json:"artifact_uri,omitempty"`
 	StorageURL   string   `json:"storage_url,omitempty"`
 	StorageToken string   `json:"storage_token,omitempty"`
 	Env          []string `json:"env,omitempty"` // pre-resolved secret env vars from master
@@ -180,15 +182,30 @@ func (w *Worker) deploy(ctx context.Context, req deployRequest) (*deployResponse
 	rn := serviceName(req.ProjectID, name) // runtime-safe composite name
 
 	modelDir := req.LocalPath
-	if modelDir == "" && req.S3URI != "" {
-		dir, err := downloadModelArtifact(ctx, req.S3URI, req.StorageURL, req.StorageToken, rn)
+	artifactKey := req.ArtifactKey
+	if artifactKey == "" && req.S3URI != "" {
+		artifactKey = artifactKeyFromS3URI(req.S3URI)
+	}
+	if modelDir == "" && artifactKey != "" {
+		storageURL := req.StorageURL
+		storageToken := req.StorageToken
+		if strings.HasPrefix(storageURL, "file://") && strings.TrimSpace(w.cfg.MasterURL) != "" {
+			storageURL = strings.TrimRight(strings.TrimSpace(w.cfg.MasterURL), "/") + "/store"
+			if storageToken == "" {
+				storageToken = w.cfg.WorkerToken
+			}
+		}
+		dir, err := downloadModelArtifact(ctx, artifactKey, storageURL, storageToken, rn)
 		if err != nil {
 			return nil, fmt.Errorf("download model artifact: %w", err)
 		}
 		modelDir = dir
 	}
 	if modelDir == "" {
-		modelDir = req.S3URI
+		modelDir = req.ArtifactURI
+		if modelDir == "" {
+			modelDir = req.S3URI
+		}
 	}
 
 	var gpus string
@@ -284,16 +301,24 @@ func (w *Worker) deploy(ctx context.Context, req deployRequest) (*deployResponse
 // a worker-local directory, replacing any previous download for this service.
 // The remote gRPC dispatch path never resolves a LocalPath on the master, so
 // this is the only place the artifact bytes reach the worker's filesystem.
-func downloadModelArtifact(ctx context.Context, s3URI, storageURL, storageToken, runtimeName string) (string, error) {
-	if storageURL == "" {
-		return "", fmt.Errorf("worker has no storage configured to fetch %q", s3URI)
-	}
+func artifactKeyFromS3URI(s3URI string) string {
 	without := strings.TrimPrefix(s3URI, "s3://")
-	slash := strings.IndexByte(without, '/')
-	if slash < 0 {
-		return "", fmt.Errorf("invalid s3 uri %q: missing key", s3URI)
+	if slash := strings.IndexByte(without, '/'); slash >= 0 {
+		return without[slash+1:]
 	}
-	key := without[slash+1:]
+	return ""
+}
+
+func downloadModelArtifact(ctx context.Context, artifactKey, storageURL, storageToken, runtimeName string) (string, error) {
+	if storageURL == "" {
+		return "", fmt.Errorf("worker has no storage configured to fetch %q", artifactKey)
+	}
+	if artifactKey == "" {
+		return "", fmt.Errorf("artifact key is required")
+	}
+	if strings.HasPrefix(artifactKey, "s3://") {
+		artifactKey = artifactKeyFromS3URI(artifactKey)
+	}
 
 	store, err := storage.Open(storageURL, storageToken)
 	if err != nil {
@@ -306,7 +331,7 @@ func downloadModelArtifact(ctx context.Context, s3URI, storageURL, storageToken,
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if err := storage.DownloadDir(ctx, store, key, dir); err != nil {
+	if err := storage.DownloadDir(ctx, store, artifactKey, dir); err != nil {
 		return "", err
 	}
 	return dir, nil

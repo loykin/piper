@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +26,7 @@ import (
 	"github.com/piper/piper/pkg/manifest"
 	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
 	"github.com/piper/piper/pkg/notebook"
+	"github.com/piper/piper/pkg/storage"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -38,7 +41,9 @@ type Config struct {
 	ReportStatus        func(notebook.WorkerStatusUpdate) error
 	// LogClient enables pod log streaming. When set, running notebook pods
 	// forward stdout/stderr to the master log store.
-	LogClient logsink.PushClient
+	LogClient   logsink.PushClient
+	MasterURL   string
+	WorkerToken string
 }
 
 type Worker struct {
@@ -76,10 +81,126 @@ func (a *Worker) register(dispatcher Dispatcher) {
 	})
 	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodNotebookSyncStatus, a.syncNotebookStatus)
 	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodFSListFiles, a.listFiles)
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodFSUploadSnapshot, a.uploadSnapshot)
 }
 
 func (a *Worker) listFiles(ctx context.Context, req notebook.FSListFilesRequest) (*notebook.FSListFilesResponse, error) {
 	return a.listFilesK8s(ctx, req)
+}
+
+func (a *Worker) uploadSnapshot(ctx context.Context, req notebook.FSUploadSnapshotRequest) (*notebook.FSUploadSnapshotResponse, error) {
+	if req.VolumeID == "" || req.SnapshotID == "" {
+		return nil, fmt.Errorf("volume_id and snapshot_id are required")
+	}
+	storageURL := strings.TrimSpace(req.StorageURL)
+	storageToken := req.StorageToken
+	if strings.HasPrefix(storageURL, "file://") {
+		storageURL = strings.TrimRight(strings.TrimSpace(a.cfg.MasterURL), "/") + "/store"
+		if storageToken == "" {
+			storageToken = a.cfg.WorkerToken
+		}
+	}
+	store, err := storage.Open(storageURL, storageToken)
+	if err != nil {
+		return nil, fmt.Errorf("open snapshot storage: %w", err)
+	}
+
+	ns, err := a.findVolumeNamespace(ctx, req.VolumeID)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := a.resolveVolumeSnapshot(ctx, ns, req.VolumeID)
+	if err != nil {
+		return nil, err
+	}
+
+	type fileAccess struct {
+		list func(context.Context, string) ([]string, error)
+		read func(context.Context, string) (io.ReadCloser, int64, error)
+	}
+	var access fileAccess
+	if snap.notebookReadyPod != nil {
+		if req.Notebook == "" || req.Token == "" {
+			return nil, fmt.Errorf("running notebook token is unavailable")
+		}
+		client := newJupyterContentsClient()
+		host := jupyterServiceHost(req.ProjectID, req.Notebook, ns)
+		baseURL := jupyterBaseURL(req.ProjectID, req.Notebook)
+		access.list = func(ctx context.Context, dir string) ([]string, error) {
+			files, _, err := client.ListFiles(ctx, host, baseURL, req.Token, dir, nil, 1000)
+			return files, err
+		}
+		access.read = func(ctx context.Context, filePath string) (io.ReadCloser, int64, error) {
+			return client.ReadFile(ctx, host, baseURL, req.Token, filePath)
+		}
+	} else {
+		if !snap.pvcBound {
+			return nil, fmt.Errorf("notebook volume is not ready for snapshot")
+		}
+		manager := newVolumeBrowserManager(a.cfg.Client, ns, a.cfg.WorkerID, a.cfg.InfrastructureImage)
+		var endpoint *browserEndpoint
+		if snap.viewerReadyPod != nil {
+			endpoint = manager.endpointFromPod(snap.viewerReadyPod)
+		} else {
+			endpoint, err = manager.Ensure(ctx, req.VolumeID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		access.list = func(ctx context.Context, dir string) ([]string, error) {
+			resp, err := manager.ListFiles(ctx, endpoint, notebook.FSListFilesRequest{Path: dir, MaxFiles: 1000})
+			if err != nil {
+				return nil, err
+			}
+			return resp.Files, nil
+		}
+		access.read = func(ctx context.Context, filePath string) (io.ReadCloser, int64, error) {
+			return manager.ReadFile(ctx, endpoint, filePath)
+		}
+	}
+
+	uploaded := 0
+	seen := map[string]struct{}{}
+	uploadFile := func(filePath string) error {
+		clean := strings.TrimPrefix(path.Clean("/"+filePath), "/")
+		if clean == "" || strings.Contains(filePath, "..") {
+			return fmt.Errorf("invalid snapshot path %q", filePath)
+		}
+		if _, ok := seen[clean]; ok {
+			return nil
+		}
+		reader, size, err := access.read(ctx, clean)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = reader.Close() }()
+		if err := store.Put(ctx, "snapshots/"+req.SnapshotID+"/"+clean, reader, size); err != nil {
+			return err
+		}
+		seen[clean] = struct{}{}
+		uploaded++
+		return nil
+	}
+
+	for _, requested := range req.Paths {
+		clean := strings.TrimPrefix(path.Clean("/"+requested), "/")
+		if clean == "" || strings.Contains(requested, "..") {
+			return nil, fmt.Errorf("invalid snapshot path %q", requested)
+		}
+		if err := uploadFile(clean); err == nil {
+			continue
+		}
+		files, listErr := access.list(ctx, clean)
+		if listErr != nil {
+			return nil, fmt.Errorf("read snapshot path %s: %w", clean, listErr)
+		}
+		for _, filePath := range files {
+			if err := uploadFile(filePath); err != nil {
+				return nil, fmt.Errorf("upload snapshot file %s: %w", filePath, err)
+			}
+		}
+	}
+	return &notebook.FSUploadSnapshotResponse{Files: uploaded}, nil
 }
 
 func (a *Worker) provisionNotebookVolume(ctx context.Context, req notebook.WorkerProvisionVolumeRequest) (*notebook.WorkerProvisionVolumeResponse, error) {

@@ -20,7 +20,8 @@ const (
 	MethodPipelineTaskResult = "pipeline.task_result"
 	MethodPipelineResultAck  = "pipeline.task_result_ack"
 
-	MethodFSListFiles = "fs.list_files"
+	MethodFSListFiles      = "fs.list_files"
+	MethodFSUploadSnapshot = "fs.upload_snapshot"
 
 	MethodLogAppend = "log.append"
 )

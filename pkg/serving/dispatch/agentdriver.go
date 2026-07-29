@@ -54,7 +54,7 @@ func (d *AgentDriver) WithStorage(url, token string) *AgentDriver {
 	return d
 }
 
-func (d *AgentDriver) ArtifactTarget() artifact.Target { return artifact.TargetS3 }
+func (d *AgentDriver) ArtifactTarget() artifact.Target { return artifact.TargetRemote }
 
 func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
 	agentInfo, err := d.selectAgent(spec.Spec.Driver.Placement.Worker, spec.Spec.Driver.Placement.Runtime)
@@ -89,6 +89,8 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 		"yaml":          yamlStr,
 		"local_path":    art.LocalPath,
 		"s3_uri":        art.S3URI,
+		"artifact_key":  art.ArtifactKey,
+		"artifact_uri":  art.RemoteURI,
 		"storage_url":   d.storageURL,
 		"storage_token": d.storageToken,
 		"env":           resolvedEnv,

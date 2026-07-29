@@ -16,7 +16,7 @@ func NewNotebookRepo(exec *dbstore.Executor, source string) notebook.Repository 
 	return &notebookRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
-const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_at, updated_at`
+const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_by, created_at, updated_at`
 
 func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) error {
 	now := time.Now()
@@ -24,10 +24,10 @@ func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) 
 	nb.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_by, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.WorkerID, nb.VolumeID, nb.Image, nb.YAML,
-			nb.CreatedAt, nb.UpdatedAt)
+			nb.CreatedBy, nb.CreatedAt, nb.UpdatedAt)
 		return err
 	})
 }

@@ -208,6 +208,26 @@ func (m *volumeBrowserManager) ListFiles(ctx context.Context, ep *browserEndpoin
 	}, nil
 }
 
+func (m *volumeBrowserManager) ReadFile(ctx context.Context, ep *browserEndpoint, filePath string) (io.ReadCloser, int64, error) {
+	reqURL := "http://" + ep.ServiceHost + "/file?path=" + url.QueryEscape(filePath)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if ep.Token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+ep.Token)
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, 0, fmt.Errorf("viewer file HTTP %d", resp.StatusCode)
+	}
+	return resp.Body, resp.ContentLength, nil
+}
+
 func (m *volumeBrowserManager) createPodAndService(ctx context.Context, volumeID, token string) error {
 	podName := viewerPodName(volumeID)
 	pvcName := notebookPVCName(volumeID)

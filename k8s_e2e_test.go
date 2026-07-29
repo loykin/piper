@@ -305,6 +305,125 @@ spec:
 		dumpK8sE2EDebug(t, ns)
 		t.Fatalf("expected worker-created notebook resources, got:\n%s", out)
 	}
+
+	// Exercise the local-store paths that require the worker tunnel:
+	// notebook PVC -> fs.upload_snapshot RPC -> master /store -> pipeline Job,
+	// then pipeline artifact -> serving init container -> /piper-model.
+	nb := k8sE2EGetNotebook(t, serverURL, nbName)
+	volumeID, _ := nb["volume_id"].(string)
+	if volumeID == "" {
+		t.Fatal("worker-mode notebook volume_id is empty")
+	}
+	notebookPod := "piper-nb-" + k8sE2EProjectID + "-" + nbName + "-0"
+	kubectl(t, "-n", ns, "exec", notebookPod, "--", "sh", "-c",
+		`printf '%s\n' '#!/bin/sh' 'test -f pipeline_entry.sh' 'printf local-store-model > "$PIPER_OUTPUT_DIR/model.txt"' > /home/jovyan/work/pipeline_entry.sh`)
+
+	templateBody, _ := json.Marshal(map[string]any{
+		"volume_id": volumeID,
+		"yaml": fmt.Sprintf(`
+metadata:
+  name: local-store-snapshot
+spec:
+  defaults:
+    driver:
+      placement:
+        runtime: k8s
+      k8s:
+        image: alpine:3.20
+        namespace: %s
+  steps:
+    - name: train
+      run:
+        source: local
+        path: pipeline_entry.sh
+        command: ["sh", "pipeline_entry.sh"]
+      outputs:
+        - name: model
+          path: model.txt
+`, ns),
+	})
+	templateResp, err := http.Post(serverURL+k8sE2EProjectBase()+"/pipelines", "application/json", bytes.NewReader(templateBody)) //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	if templateResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(templateResp.Body)
+		templateResp.Body.Close()
+		t.Fatalf("POST /pipelines status=%d: %s", templateResp.StatusCode, body)
+	}
+	var createdTemplate struct {
+		ID         string `json:"id"`
+		SnapshotID string `json:"snapshot_id"`
+	}
+	if err := json.NewDecoder(templateResp.Body).Decode(&createdTemplate); err != nil {
+		templateResp.Body.Close()
+		t.Fatal(err)
+	}
+	templateResp.Body.Close()
+	if createdTemplate.ID == "" || createdTemplate.SnapshotID == "" {
+		t.Fatalf("template snapshot metadata is incomplete: %+v", createdTemplate)
+	}
+
+	snapshotResp, err := http.Get(serverURL + "/store/snapshots/" + createdTemplate.SnapshotID + "/pipeline_entry.sh") //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBody, _ := io.ReadAll(snapshotResp.Body)
+	snapshotResp.Body.Close()
+	if snapshotResp.StatusCode != http.StatusOK || !bytes.Contains(snapshotBody, []byte("local-store-model")) {
+		t.Fatalf("snapshot object status=%d body=%q", snapshotResp.StatusCode, snapshotBody)
+	}
+
+	triggerResp, err := http.Post(serverURL+k8sE2EProjectBase()+"/pipelines/"+createdTemplate.ID+"/run", "application/json", bytes.NewReader([]byte(`{}`))) //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	if triggerResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(triggerResp.Body)
+		triggerResp.Body.Close()
+		t.Fatalf("POST template run status=%d: %s", triggerResp.StatusCode, body)
+	}
+	var triggered struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(triggerResp.Body).Decode(&triggered); err != nil {
+		triggerResp.Body.Close()
+		t.Fatal(err)
+	}
+	triggerResp.Body.Close()
+	if !waitK8sE2ERunStatus(t, serverURL, triggered.ID, "success", 2*time.Minute) {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("snapshot-backed run %s did not reach success", triggered.ID)
+	}
+
+	k8sE2EPostService(t, serverURL, fmt.Sprintf(`
+apiVersion: piper/v1
+kind: ModelService
+metadata:
+  name: local-store-serving
+spec:
+  model:
+    from_artifact:
+      pipeline: local-store-snapshot
+      step: train
+      artifact: model
+      run: %s
+  run:
+    command: ["sh", "-c", "test -f /piper-model/model.txt && sleep 3600"]
+    port: 8080
+  driver:
+    placement:
+      runtime: k8s
+    k8s:
+      image: alpine:3.20
+      namespace: %s
+`, triggered.ID, ns))
+	servingName := k8sE2EServingResourceName("local-store-serving")
+	waitK8sE2EDeployment(t, ns, servingName, 2*time.Minute)
+	modelContents := strings.TrimSpace(kubectl(t, "-n", ns, "exec", "deployment/"+servingName, "-c", "serving", "--", "cat", "/piper-model/model.txt"))
+	if modelContents != "local-store-model" {
+		t.Fatalf("downloaded serving artifact = %q, want local-store-model", modelContents)
+	}
 }
 
 func requireKubectlCluster(t *testing.T) {

@@ -82,8 +82,8 @@ func (p *Piper) resolveServiceModel(ctx context.Context, svc serving.ModelServic
 
 func (p *Piper) resolveModelURI(ctx context.Context, serviceName, uri string, target artifact.Target) (artifact.Resolved, error) {
 	if strings.HasPrefix(uri, "s3://") {
-		if target == artifact.TargetS3 {
-			return artifact.Resolved{S3URI: uri}, nil
+		if target == artifact.TargetS3 || target == artifact.TargetRemote {
+			return artifact.Resolved{S3URI: uri, RemoteURI: uri}, nil
 		}
 		if p.store == nil {
 			return artifact.Resolved{}, fmt.Errorf("local serving from s3:// URI requires a storage backend")
@@ -103,9 +103,15 @@ func (p *Piper) resolveModelURI(ctx context.Context, serviceName, uri string, ta
 		return artifact.Resolved{LocalPath: dir}, nil
 	}
 	if strings.HasPrefix(uri, "file://") {
+		if target == artifact.TargetRemote {
+			return artifact.Resolved{}, fmt.Errorf("remote serving cannot access a master-local file URI")
+		}
 		return artifact.Resolved{LocalPath: strings.TrimPrefix(uri, "file://")}, nil
 	}
 	if strings.HasPrefix(uri, "http://") || strings.HasPrefix(uri, "https://") {
+		if target == artifact.TargetRemote {
+			return artifact.Resolved{RemoteURI: uri}, nil
+		}
 		if target == artifact.TargetS3 {
 			return artifact.Resolved{}, fmt.Errorf("k8s serving from http(s) URI requires an s3:// URI")
 		}

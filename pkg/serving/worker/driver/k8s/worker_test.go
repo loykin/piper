@@ -63,6 +63,60 @@ spec:
 	}
 }
 
+func TestServingDeployDownloadsStoredArtifactWithInitContainer(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	a := New(Config{
+		Client:               client,
+		Namespaces:           []string{"serving"},
+		MasterURL:            "http://piper-master:8080",
+		WorkerToken:          "worker-token",
+		ArtifactFetcherImage: "piper:latest",
+	})
+
+	_, err := a.deployServing(context.Background(), servingDeployRequest{
+		ProjectID:   "project-a",
+		ArtifactKey: "projects/project-a/runs/run-a/model",
+		StorageURL:  "file:///var/lib/piper/store",
+		YAML: `
+metadata:
+  name: demo
+spec:
+  run:
+    command: ["python", "serve.py", "--model", "${PIPER_MODEL_DIR}"]
+    port: 8000
+  driver:
+    k8s:
+      image: model:latest
+      namespace: serving
+`,
+	})
+	if err != nil {
+		t.Fatalf("deployServing returned error: %v", err)
+	}
+
+	deployment, err := client.AppsV1().Deployments("serving").Get(context.Background(), "project-a--demo", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	pod := deployment.Spec.Template.Spec
+	if len(pod.InitContainers) != 1 || pod.InitContainers[0].Image != "piper:latest" {
+		t.Fatalf("init containers = %#v", pod.InitContainers)
+	}
+	if got := pod.Containers[0].Env[0].Value; got != "/piper-model" {
+		t.Fatalf("PIPER_MODEL_DIR = %q", got)
+	}
+	secret, err := client.CoreV1().Secrets("serving").Get(context.Background(), "project-a--demo-artifact", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get artifact secret: %v", err)
+	}
+	if got := secret.StringData["storage-url"]; got != "http://piper-master:8080/store" {
+		t.Fatalf("storage-url = %q", got)
+	}
+	if got := secret.StringData["storage-token"]; got != "worker-token" {
+		t.Fatalf("storage-token = %q", got)
+	}
+}
+
 func TestServingDeployInvalidResourcesReturnsError(t *testing.T) {
 	a := New(Config{
 		Client:     fake.NewSimpleClientset(),

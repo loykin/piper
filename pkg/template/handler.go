@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	iagent "github.com/piper/piper/internal/agent"
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/notebook"
 	"github.com/piper/piper/pkg/pipeline"
@@ -26,10 +27,14 @@ import (
 
 // HandlerDeps holds all external dependencies for the pipeline template handler.
 type HandlerDeps struct {
-	Templates Repository
-	Volumes   notebook.VolumeRepository
-	Schedules schedule.Repository
-	Store     storage.Store // nil when object storage is not configured
+	Templates    Repository
+	Volumes      notebook.VolumeRepository
+	Notebooks    notebook.Repository
+	Schedules    schedule.Repository
+	Store        storage.Store // nil when object storage is not configured
+	RPCSender    notebook.RPCSender
+	StorageURL   string
+	StorageToken string
 	// Sched keeps the in-memory Scheduler in sync when a deploy creates a schedule.
 	// If nil, the schedule is persisted to DB only.
 	Sched schedule.SchedulerAPI
@@ -123,8 +128,38 @@ func (h *Handler) submit(c *gin.Context) {
 			return
 		}
 
+		var uploadErr error
+		if vol.WorkerID != "" && h.deps.RPCSender != nil {
+			var active *notebook.NotebookServer
+			if h.deps.Notebooks != nil {
+				active, _ = h.deps.Notebooks.GetByVolumeID(c.Request.Context(), projectContext.ID, vol.ID)
+			}
+			rpcReq := notebook.FSUploadSnapshotRequest{
+				ProjectID:    projectContext.ID,
+				VolumeID:     vol.ID,
+				WorkDir:      vol.WorkDir,
+				SnapshotID:   snapshotID,
+				Paths:        localPaths,
+				StorageURL:   h.deps.StorageURL,
+				StorageToken: h.deps.StorageToken,
+			}
+			if active != nil {
+				rpcReq.Notebook = active.Name
+				rpcReq.Token = active.Token
+			}
+			var rpcResp notebook.FSUploadSnapshotResponse
+			uploadErr = h.deps.RPCSender.SendRPC(
+				c.Request.Context(),
+				vol.WorkerID,
+				iagent.MethodFSUploadSnapshot,
+				rpcReq,
+				&rpcResp,
+			)
+		} else {
+			uploadErr = h.uploadSnapshot(c.Request.Context(), snapshotID, vol.WorkDir, localPaths)
+		}
 		// Upload local files to object storage
-		if uploadErr := h.uploadSnapshot(c.Request.Context(), snapshotID, vol.WorkDir, localPaths); uploadErr != nil {
+		if uploadErr != nil {
 			// Rollback: delete snapshot prefix
 			if objs, _ := h.deps.Store.List(c.Request.Context(), "snapshots/"+snapshotID+"/"); len(objs) > 0 {
 				keys := make([]string, len(objs))

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { LoginBodyTemplate } from '@loykin/designkit'
 import { useNavigate } from '@/lib/router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -34,19 +35,24 @@ export default function LoginPage() {
 
   if (capabilities?.login_mode === 'redirect') {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
+      <LoginBodyTemplate
+        layout="centered"
+        card="card"
+        cardWidth="sm"
+        brand={<div className="flex h-10 w-10 items-center justify-center rounded bg-primary text-sm font-bold text-primary-foreground">P</div>}
+      >
         <Button onClick={() => window.location.assign(capabilities.login_url)}>
           Continue with SSO
         </Button>
-      </div>
+      </LoginBodyTemplate>
     )
   }
 
   if (capabilities?.login_mode !== 'password') {
     return (
-      <div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">
-        Authentication is managed by the host application.
-      </div>
+      <LoginBodyTemplate layout="centered" card="card" cardWidth="sm">
+        <p className="text-sm text-muted-foreground">Authentication is managed by the host application.</p>
+      </LoginBodyTemplate>
     )
   }
 
@@ -71,14 +77,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
+    <LoginBodyTemplate
+      layout="centered"
+      card="card"
+      cardWidth="sm"
+      brand={<div className="flex h-10 w-10 items-center justify-center rounded bg-primary text-sm font-bold text-primary-foreground">P</div>}
+    >
+      <div className="space-y-6">
         <div className="space-y-1 text-center">
-          <div className="flex justify-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded bg-primary text-sm font-bold text-primary-foreground">
-              P
-            </div>
-          </div>
           <h1 className="text-xl font-semibold">
             {needsBootstrap ? 'Create the admin account' : 'Sign in to piper'}
           </h1>
@@ -124,6 +130,6 @@ export default function LoginPage() {
           </Button>
         </form>
       </div>
-    </div>
+    </LoginBodyTemplate>
   )
 }

@@ -17,13 +17,13 @@ func NewRunRepo(exec *dbstore.Executor, source string) run.Repository {
 	return &runRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
-const pgRunSelectCols = `project_id, id, schedule_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json`
+const pgRunSelectCols = `project_id, id, schedule_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json, created_by`
 
 func (r *runRepo) Create(ctx context.Context, row *run.Run) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.NamedExecContext(ctx,
-			`INSERT INTO runs (project_id, id, schedule_id, experiment, pipeline_name, status, started_at, scheduled_at, pipeline_yaml, params_json)
-			 VALUES (:project_id, :id, :schedule_id, :experiment, :pipeline_name, :status, :started_at, :scheduled_at, :pipeline_yaml, :params_json)`,
+			`INSERT INTO runs (project_id, id, schedule_id, experiment, pipeline_name, status, started_at, scheduled_at, pipeline_yaml, params_json, created_by)
+			 VALUES (:project_id, :id, :schedule_id, :experiment, :pipeline_name, :status, :started_at, :scheduled_at, :pipeline_yaml, :params_json, :created_by)`,
 			row)
 		return err
 	})
@@ -51,7 +51,7 @@ func (r *runRepo) List(ctx context.Context, projectID string, filter run.RunFilt
 	var where []string
 
 	if metricSort {
-		query = `SELECT r.project_id, r.id, r.schedule_id, r.experiment, r.pipeline_name, r.status, r.started_at, r.ended_at, r.scheduled_at, r.pipeline_yaml, r.params_json
+		query = `SELECT r.project_id, r.id, r.schedule_id, r.experiment, r.pipeline_name, r.status, r.started_at, r.ended_at, r.scheduled_at, r.pipeline_yaml, r.params_json, r.created_by
 FROM runs r
 LEFT JOIN (SELECT project_id, run_id, MAX(value) AS mv FROM run_metrics WHERE project_id=? AND step_name=? AND key=? GROUP BY project_id, run_id) m
 	ON m.project_id=r.project_id AND m.run_id=r.id`

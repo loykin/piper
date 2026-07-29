@@ -15,6 +15,9 @@ var loader = cliconfig.NewLoader()
 var rootCmd = &cobra.Command{
 	Use:   "piper",
 	Short: "lightweight ML pipeline orchestrator",
+	CompletionOptions: cobra.CompletionOptions{
+		DisableDefaultCmd: true,
+	},
 	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		loader.SetConfigFile(cfgFile)
 		return nil
@@ -22,9 +25,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $HOME/.piper.yaml)")
-	rootCmd.PersistentFlags().String("log-format", "", "log format: text | json")
-	loader.MustBindFlag("log.format", rootCmd.PersistentFlags().Lookup("log-format"))
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: "+cliconfig.DefaultConfigPath()+")")
 }
 
 func main() {

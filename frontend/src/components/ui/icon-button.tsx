@@ -17,12 +17,13 @@ export function IconButton({ icon, label, onClick, disabled, className, variant 
       <TooltipTrigger
         render={
           <Button
-          aria-label={label}
-          variant={variant}
-          size="icon-sm"
-          disabled={disabled}
-          onClick={onClick}
-          className={className}
+            type="button"
+            aria-label={label}
+            variant={variant}
+            size="icon-sm"
+            disabled={disabled}
+            onClick={onClick}
+            className={className}
           />
         }
       >

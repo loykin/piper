@@ -20,8 +20,8 @@ func NewUserRepo(exec *dbstore.Executor, source string) auth.UserRepository {
 
 func (r *userRepo) Create(ctx context.Context, u *auth.User) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`INSERT INTO users (id, email, password_hash, system_admin, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-		_, err := db.ExecContext(ctx, q, u.ID, u.Email, u.PasswordHash, u.SystemAdmin, u.Disabled, u.CreatedAt, u.UpdatedAt)
+		q := db.Rebind(`INSERT INTO users (id, username, password_hash, system_admin, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		_, err := db.ExecContext(ctx, q, u.ID, u.Username, u.PasswordHash, u.SystemAdmin, u.Disabled, u.CreatedAt, u.UpdatedAt)
 		return err
 	})
 }
@@ -29,7 +29,7 @@ func (r *userRepo) Create(ctx context.Context, u *auth.User) error {
 func (r *userRepo) GetByID(ctx context.Context, id string) (*auth.User, error) {
 	var u auth.User
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT id, email, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE id=?`)
+		q := db.Rebind(`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE id=?`)
 		return db.GetContext(ctx, &u, q, id)
 	})
 	if err != nil {
@@ -38,11 +38,11 @@ func (r *userRepo) GetByID(ctx context.Context, id string) (*auth.User, error) {
 	return &u, nil
 }
 
-func (r *userRepo) GetByEmail(ctx context.Context, email string) (*auth.User, error) {
+func (r *userRepo) GetByUsername(ctx context.Context, username string) (*auth.User, error) {
 	var u auth.User
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT id, email, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE email=?`)
-		return db.GetContext(ctx, &u, q, email)
+		q := db.Rebind(`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE username=?`)
+		return db.GetContext(ctx, &u, q, username)
 	})
 	if err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func (r *userRepo) List(ctx context.Context) ([]*auth.User, error) {
 	var out []*auth.User
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		return db.SelectContext(ctx, &out,
-			`SELECT id, email, password_hash, system_admin, disabled, created_at, updated_at FROM users ORDER BY created_at DESC`)
+			`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users ORDER BY created_at DESC`)
 	})
 	if out == nil {
 		out = []*auth.User{}
@@ -65,8 +65,8 @@ func (r *userRepo) List(ctx context.Context) ([]*auth.User, error) {
 func (r *userRepo) Update(ctx context.Context, u *auth.User) error {
 	u.UpdatedAt = time.Now().UTC()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`UPDATE users SET email=?, password_hash=?, system_admin=?, disabled=?, updated_at=? WHERE id=?`)
-		_, err := db.ExecContext(ctx, q, u.Email, u.PasswordHash, u.SystemAdmin, u.Disabled, u.UpdatedAt, u.ID)
+		q := db.Rebind(`UPDATE users SET username=?, password_hash=?, system_admin=?, disabled=?, updated_at=? WHERE id=?`)
+		_, err := db.ExecContext(ctx, q, u.Username, u.PasswordHash, u.SystemAdmin, u.Disabled, u.UpdatedAt, u.ID)
 		return err
 	})
 }
@@ -205,9 +205,9 @@ func (r *sessionRepo) DeleteExpired(ctx context.Context) error {
 
 func (r *sessionRepo) RecordLoginAttempt(ctx context.Context, attempt *auth.LoginAttempt) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`INSERT INTO login_history (id, user_id, email, success, failure_reason, attempted_at) VALUES (?, ?, ?, ?, ?, ?)`)
+		q := db.Rebind(`INSERT INTO login_history (id, user_id, username, success, failure_reason, attempted_at) VALUES (?, ?, ?, ?, ?, ?)`)
 		_, err := db.ExecContext(ctx, q,
-			attempt.ID, attempt.UserID, attempt.Email, attempt.Success, attempt.FailureReason, attempt.AttemptedAt)
+			attempt.ID, attempt.UserID, attempt.Username, attempt.Success, attempt.FailureReason, attempt.AttemptedAt)
 		return err
 	})
 }

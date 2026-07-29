@@ -7,9 +7,39 @@ import (
 
 	"github.com/piper/piper/internal/store"
 	"github.com/piper/piper/internal/store/repotest"
+	sqliterepo "github.com/piper/piper/internal/store/sqlite"
+	"github.com/piper/piper/pkg/auth"
 	"github.com/piper/piper/pkg/project"
 	"github.com/piper/piper/pkg/schedule"
 )
+
+func TestUserRepoUsernameRoundTrip(t *testing.T) {
+	repos, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+
+	repo := sqliterepo.NewUserRepo(repos.Executor(), store.PrimarySource)
+	now := time.Now().UTC()
+	want := &auth.User{
+		ID:           "user-1",
+		Username:     "pipeline-operator",
+		PasswordHash: "hash",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := repo.Create(context.Background(), want); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	got, err := repo.GetByUsername(context.Background(), want.Username)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if got.ID != want.ID || got.Username != want.Username {
+		t.Fatalf("user = %#v, want id=%q username=%q", got, want.ID, want.Username)
+	}
+}
 
 func TestRunRepo_SQLite(t *testing.T) {
 	repos, err := store.Open(":memory:")

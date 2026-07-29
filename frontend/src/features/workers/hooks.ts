@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import type { Worker } from './types'
+import { backgroundPolling } from '@/lib/query'
 
 export const workerKeys = {
   all: ['workers'] as const,
@@ -28,8 +29,7 @@ export function useWorkers(capability?: WorkerCapability) {
     queryKey: workerKeys.list(),
     queryFn: api.listWorkers,
     select,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 

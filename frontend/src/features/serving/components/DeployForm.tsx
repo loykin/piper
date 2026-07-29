@@ -1,9 +1,13 @@
 // serving feature — Deploy form component
 import { useEffect, useState } from 'react'
 import {
-  DataBodyTemplate, DataPage,
+  DataBodyTemplate,
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
+  Tabs, TabsList, TabsTrigger,
 } from '@loykin/designkit'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useForm, useWatch } from 'react-hook-form'
+import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
@@ -20,17 +24,67 @@ interface DeployFormProps {
   onDeployed: () => void
 }
 
+const envVarSchema = z.object({
+  name: z.string(),
+  value: z.string(),
+  source: z.enum(['value', 'credential']),
+  credentialName: z.string(),
+  credentialKey: z.string(),
+})
+
+const deployFormSchema = z.object({
+  name: z.string().trim().min(1, 'Service name is required.'),
+  env: z.array(envVarSchema),
+  pipeline: z.string().min(1, 'Pipeline is required.'),
+  run: z.string().min(1),
+  step: z.string().min(1, 'Step is required.'),
+  artifact: z.string().min(1, 'Artifact is required.'),
+  templateKey: z.string(),
+  runtimeMode: z.string(),
+  image: z.string(),
+  command: z.string().trim().min(1, 'Command is required.'),
+  port: z.string().regex(/^\d+$/, 'Port must be a number.').refine(value => {
+    const port = Number(value)
+    return port > 0 && port <= 65535
+  }, 'Port must be between 1 and 65535.'),
+  healthPath: z.string().trim().min(1, 'Health path is required.'),
+  worker: z.string(),
+  k8sNamespace: z.string(),
+  k8sReplicas: z.string(),
+  k8sCPU: z.string(),
+  k8sMemory: z.string(),
+  k8sGPU: z.string(),
+  k8sImagePullPolicy: z.string(),
+}).superRefine((values, context) => {
+  if (values.runtimeMode !== 'k8s') return
+  if (!values.image.trim()) {
+    context.addIssue({ code: 'custom', path: ['image'], message: 'Container image is required for Kubernetes.' })
+  }
+  if (!/^[1-9]\d*$/.test(values.k8sReplicas)) {
+    context.addIssue({ code: 'custom', path: ['k8sReplicas'], message: 'Replicas must be at least 1.' })
+  }
+})
+
 export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const projectId = useProjectId()
   const { data: allRuns = [] } = useRuns({ status: 'success' })
   const { data: servingWorkers = [] } = useServingWorkers()
   const { mutateAsync: deploy, isPending: deploying } = useCreateService()
 
-  const [form, setForm] = useState<FormState>(DEFAULT_FORM)
   const [tab, setTab] = useState<'form' | 'yaml'>('form')
   const [yaml, setYaml] = useState(() => buildYAML(DEFAULT_FORM))
   const [error, setError] = useState('')
   const [artifacts, setArtifacts] = useState<StepArtifacts[]>([])
+  const {
+    control,
+    setValue,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<FormState>({
+    resolver: zodResolver(deployFormSchema),
+    defaultValues: DEFAULT_FORM,
+  })
+  const form = useWatch({ control, defaultValue: DEFAULT_FORM }) as FormState
 
   const pipelines = Array.from(new Set(allRuns.map(r => r.pipeline_name))).sort()
   const pipelineRuns = allRuns.filter(r => r.pipeline_name === form.pipeline)
@@ -66,15 +120,15 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const artifactNames = artifacts.find(sa => sa.step === form.step)?.artifacts.map(a => a.name) ?? []
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm(prev => {
-      const next = { ...prev, [key]: value }
-      if (key === 'pipeline') { next.run = 'latest'; next.step = ''; next.artifact = '' }
-      if (key === 'run') { next.step = ''; next.artifact = '' }
-      if (key === 'step') { next.artifact = '' }
-      if (key === 'command' || key === 'port' || key === 'healthPath') next.templateKey = 'custom'
-      setYaml(buildYAML(next))
-      return next
-    })
+    const next = { ...form, [key]: value }
+    if (key === 'pipeline') { next.run = 'latest'; next.step = ''; next.artifact = '' }
+    if (key === 'run') { next.step = ''; next.artifact = '' }
+    if (key === 'step') { next.artifact = '' }
+    if (key === 'command' || key === 'port' || key === 'healthPath') next.templateKey = 'custom'
+    for (const [field, fieldValue] of Object.entries(next) as [keyof FormState, FormState[keyof FormState]][]) {
+      setValue(field, fieldValue, { shouldDirty: true, shouldValidate: false })
+    }
+    setYaml(buildYAML(next))
   }
 
   function addEnv() {
@@ -89,13 +143,8 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
     setField('env', form.env.filter((_, i) => i !== rowIndex))
   }
 
-  async function handleDeploy() {
+  async function deployPayload(payload: string) {
     setError('')
-    if (tab === 'form' && !hasCompatibleWorkers) {
-      setError(`No ${form.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected.`)
-      return
-    }
-    const payload = tab === 'form' ? buildYAML(form) : yaml
     if (!payload.trim()) { setError('YAML is required.'); return }
     try {
       await deploy(payload.trim())
@@ -106,28 +155,46 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
     }
   }
 
+  async function handleDeploy(values: FormState) {
+    if (!hasCompatibleWorkers) {
+      setError(`No ${values.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected.`)
+      return
+    }
+    await deployPayload(buildYAML(values))
+  }
+
+  function handleYamlSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void deployPayload(yaml)
+  }
+
   return (
-    <DataPage.Group surface="bordered" className="mb-4">
-      <div className="p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <span className="text-sm font-semibold">Deploy ModelService</span>
-          <div className="flex items-center gap-2">
-            <div className="flex overflow-hidden rounded border border-border">
-              <Button type="button" size="sm" variant={tab === 'form' ? 'default' : 'ghost'}
-                onClick={() => { if (tab !== 'form') setTab('form') }}
-                className="h-7 rounded-none border-0 px-3 text-xs">
-                Form
-              </Button>
-              <Button type="button" size="sm" variant={tab === 'yaml' ? 'default' : 'ghost'}
-                onClick={() => { setYaml(buildYAML(form)); setTab('yaml') }}
-                className="h-7 rounded-none border-0 px-3 text-xs">
-                YAML
-              </Button>
-            </div>
-            <Button type="button" variant="ghost" size="sm" onClick={onClose} className="h-7 text-xs">
-              ✕ Cancel
-            </Button>
-          </div>
+    <DataBodyTemplate.Group
+      layout="stacked"
+      variant="bordered"
+      title="Deploy ModelService"
+      description="Deploy a pipeline artifact as a managed model serving endpoint."
+    >
+      <form
+        onSubmit={tab === 'form' ? handleSubmit(handleDeploy) : handleYamlSubmit}
+        className="space-y-4"
+        noValidate
+      >
+        <div className="flex items-center justify-between">
+          <Tabs
+            value={tab}
+            onValueChange={value => {
+              const nextTab = value as 'form' | 'yaml'
+              if (nextTab === 'yaml') setYaml(buildYAML(form))
+              setTab(nextTab)
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="form">Form</TabsTrigger>
+              <TabsTrigger value="yaml">YAML</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
         </div>
 
         {tab === 'form' ? (
@@ -138,7 +205,13 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
               </p>
             )}
             <DataBodyTemplate.Field label="Service Name">
-              <Input value={form.name} onChange={e => setField('name', e.target.value)} placeholder="my-model" />
+              <Input
+                value={form.name}
+                onChange={e => setField('name', e.target.value)}
+                placeholder="my-model"
+                aria-invalid={!!errors.name}
+              />
+              {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name.message}</p>}
             </DataBodyTemplate.Field>
 
             <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Model Source">
@@ -194,15 +267,21 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                     size="sm"
                     variant={form.templateKey === key ? 'default' : 'outline'}
                     title={tpl.description}
-                    onClick={() => setForm(prev => ({
-                      ...prev,
+                    onClick={() => {
+                      const next = {
+                      ...form,
                       templateKey: key,
                       runtimeMode: tpl.runtimeMode,
                       image: tpl.image,
                       command: tpl.command,
                       port: tpl.port,
                       healthPath: tpl.healthPath,
-                    }))}
+                      }
+                      for (const [field, fieldValue] of Object.entries(next) as [keyof FormState, FormState[keyof FormState]][]) {
+                        setValue(field, fieldValue, { shouldDirty: true })
+                      }
+                      setYaml(buildYAML(next))
+                    }}
                     className="rounded-full"
                   >
                     {tpl.label}
@@ -221,7 +300,13 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                   </Select>
                 </DataBodyTemplate.Field>
                 <DataBodyTemplate.Field label="Port">
-                  <Input value={form.port} onChange={e => setField('port', e.target.value)} placeholder="8000" />
+                  <Input
+                    value={form.port}
+                    onChange={e => setField('port', e.target.value)}
+                    placeholder="8000"
+                    aria-invalid={!!errors.port}
+                  />
+                  {errors.port && <p className="mt-1 text-xs text-destructive">{errors.port.message}</p>}
                 </DataBodyTemplate.Field>
                 <DataBodyTemplate.Field label="Health Path">
                   <Input value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
@@ -250,14 +335,27 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
               {form.runtimeMode === 'k8s' && (
                 <>
                   <DataBodyTemplate.Field label="Container Image">
-                    <Input value={form.image} onChange={e => setField('image', e.target.value)} placeholder="registry/image:tag" />
+                    <Input
+                      value={form.image}
+                      onChange={e => setField('image', e.target.value)}
+                      placeholder="registry/image:tag"
+                      aria-invalid={!!errors.image}
+                    />
+                    {errors.image && <p className="mt-1 text-xs text-destructive">{errors.image.message}</p>}
                   </DataBodyTemplate.Field>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <DataBodyTemplate.Field label="Namespace">
                       <Input value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
                     </DataBodyTemplate.Field>
                     <DataBodyTemplate.Field label="Replicas">
-                      <Input type="number" min="1" value={form.k8sReplicas} onChange={e => setField('k8sReplicas', e.target.value)} />
+                      <Input
+                        type="number"
+                        min="1"
+                        value={form.k8sReplicas}
+                        onChange={e => setField('k8sReplicas', e.target.value)}
+                        aria-invalid={!!errors.k8sReplicas}
+                      />
+                      {errors.k8sReplicas && <p className="mt-1 text-xs text-destructive">{errors.k8sReplicas.message}</p>}
                     </DataBodyTemplate.Field>
                     <DataBodyTemplate.Field label="Image Pull Policy">
                       <Select value={form.k8sImagePullPolicy} onValueChange={v => setField('k8sImagePullPolicy', v ?? '')}>
@@ -304,19 +402,19 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
           />
         )}
 
-        {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
 
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onClose}>Cancel</Button>
           <Button
+            type="submit"
             size="sm"
-            onClick={() => void handleDeploy()}
             disabled={deploying || (tab === 'form' && !hasCompatibleWorkers)}
           >
             {deploying ? 'Deploying…' : 'Deploy'}
           </Button>
         </div>
-      </div>
-    </DataPage.Group>
+      </form>
+    </DataBodyTemplate.Group>
   )
 }

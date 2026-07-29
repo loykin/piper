@@ -1,0 +1,23 @@
+# Single-node Docker deployment. Secrets are generated in /var/lib/piper and
+# persist in the piper-data volume.
+version: 4
+
+log:
+  format: json
+  level: info
+
+server:
+  http_addr: ":8080"
+  data_dir: /var/lib/piper
+  db:
+    driver: sqlite
+    path: /var/lib/piper/piper.db
+  local:
+    enabled: true
+    pipeline: true
+    notebook: true
+    serving: true
+    concurrency: 4
+    notebook_config:
+      notebooks_root: /var/lib/piper/notebooks
+      port_range: 8888-9900

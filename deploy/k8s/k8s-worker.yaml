@@ -7,6 +7,8 @@ metadata:
   namespace: piper
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: piper-k8s-worker
@@ -16,27 +18,55 @@ spec:
         app: piper-k8s-worker
     spec:
       serviceAccountName: piper
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: worker
-          image: piper/piper:latest
+          image: ghcr.io/loykin/piper:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           args:
-            - k8s-worker
-            - --master-url=http://piper-server.piper.svc.cluster.local:8080
-            - --cluster=piper
-            - --namespaces=piper
-            - --in-cluster
-            - --state-dir=/var/lib/piper
-            - --capabilities=pipeline,notebook,serving
-            - --pipeline-runner-image=piper/piper:latest
-            - --notebook-volume-browser-image=piper/piper:latest
+            - --config=/etc/piper/piper.yaml
+            - worker
+          env:
+            - name: PIPER_WORKER_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: piper-server-secrets
+                  key: worker_token
           volumeMounts:
+            - name: config
+              mountPath: /etc/piper
+              readOnly: true
             - name: worker-state
               mountPath: /var/lib/piper
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
       volumes:
+        - name: config
+          configMap:
+            name: piper-config
         - name: worker-state
           persistentVolumeClaim:
             claimName: piper-k8s-worker-state
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

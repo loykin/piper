@@ -5,6 +5,8 @@ metadata:
   namespace: piper
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: piper-server
@@ -14,21 +16,30 @@ spec:
         app: piper-server
     spec:
       serviceAccountName: piper
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: piper
-          image: piper/piper:latest
+          image: ghcr.io/loykin/piper:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           args:
+            - --config=/etc/piper/piper.yaml
             - server
-            - --addr=:8080
           ports:
             - name: http
               containerPort: 8080
           env:
-            - name: PIPER_SERVER_ADDR
-              value: :8080
-            - name: PIPER_SERVER_DATA_DIR
-              value: /var/lib/piper
             - name: PIPER_SERVER_AUTH_SIGNING_KEY
               valueFrom:
                 secretKeyRef:
@@ -39,6 +50,11 @@ spec:
                 secretKeyRef:
                   name: piper-server-secrets
                   key: secret_encryption_key
+            - name: PIPER_SERVER_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: piper-server-secrets
+                  key: worker_token
             # Artifact storage is configured once here, on the master — workers
             # never need their own copy; storage.url and storage.token are
             # forwarded to workers per-task over the existing tunnel (see
@@ -52,12 +68,41 @@ spec:
                   key: url
                   optional: true
           volumeMounts:
+            - name: config
+              mountPath: /etc/piper
+              readOnly: true
             - name: data
               mountPath: /var/lib/piper
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
       volumes:
+        - name: config
+          configMap:
+            name: piper-config
         - name: data
           persistentVolumeClaim:
             claimName: piper-server-data
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

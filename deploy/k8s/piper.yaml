@@ -1,0 +1,33 @@
+version: 4
+
+log:
+  format: json
+  level: info
+
+server:
+  http_addr: ":8080"
+  data_dir: /var/lib/piper
+  db:
+    driver: sqlite
+    path: /var/lib/piper/piper.db
+  local:
+    enabled: false
+
+worker:
+  master_url: http://piper-server.piper.svc.cluster.local:8080
+  state_dir: /var/lib/piper
+  k8s:
+    cluster: piper
+    namespaces:
+      - piper
+    in_cluster: true
+    result_outbox_dir: /var/lib/piper/result-outbox
+    pipeline_runner:
+      image: ghcr.io/loykin/piper:latest
+      image_pull_policy: IfNotPresent
+    notebook_volume_browser:
+      image: ghcr.io/loykin/piper:latest
+  capabilities:
+    pipeline: {}
+    notebook: {}
+    serving: {}

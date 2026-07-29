@@ -1,111 +1,111 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { DataGrid } from '@loykin/gridkit'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
-import { Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
-import { IconButton } from '@/components/ui/icon-button'
-import { useCreateUser, useDeleteUser, useUsers } from '@/features/access/hooks'
+import { userColumns } from '@/features/access/columns'
+import { UserDetailPanel } from '@/features/access/components/UserDetailPanel'
+import { useDeleteUser, useUsers } from '@/features/access/hooks'
 import type { User } from '@/features/access/types'
+import { useNavigate } from '@/lib/router'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
-export default function UsersPage() {
-  const { data: users = [] } = useUsers()
-  const { mutateAsync: createUser, isPending: creating } = useCreateUser()
-  const { mutate: deleteUser } = useDeleteUser()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [systemAdmin, setSystemAdmin] = useState(false)
-  const [error, setError] = useState('')
+function UsersPageInner() {
+  const navigate = useNavigate()
+  const { open } = useSidePanel()
+  const usersQuery = useUsers()
+  const users = usersQuery.data ?? []
+  const deleteUser = useDeleteUser()
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
+  const [actionError, setActionError] = useState('')
 
-  const columns = useMemo<DataGridColumnDef<User>[]>(() => [
-    { accessorKey: 'email', header: 'Email' },
-    { accessorKey: 'id', header: 'User ID' },
-    { accessorKey: 'display_name', header: 'Display name' },
-    {
-      accessorKey: 'system_admin',
-      header: 'System admin',
-      cell: ({ row }) => row.original.system_admin ? 'Yes' : 'No',
-    },
-    {
-      accessorKey: 'disabled',
-      header: 'Status',
-      cell: ({ row }) => row.original.disabled ? 'Disabled' : 'Active',
-    },
-    {
-      id: 'actions',
-      header: '',
-      cell: ({ row }) => (
-        <IconButton
-          icon={<Trash2 />}
-          label={`Delete ${row.original.email}`}
-          onClick={() => setDeleteTarget(row.original)}
-        />
-      ),
-    },
-  ], [])
-
-  async function submit() {
-    setError('')
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setActionError('')
     try {
-      await createUser({ email, password, system_admin: systemAdmin })
-      setEmail('')
-      setPassword('')
-      setSystemAdmin(false)
+      await deleteUser.mutateAsync(deleteTarget.id)
+      setDeleteTarget(null)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setActionError(cause instanceof Error ? cause.message : String(cause))
     }
   }
 
   return (
-    <DataBodyTemplate title="Users" description="Manage system accounts and administrator access.">
-      <DataBodyTemplate.Body>
-        <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Create user">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <DataBodyTemplate.Field label="Email">
-              <Input type="email" value={email} onChange={event => setEmail(event.target.value)} />
-            </DataBodyTemplate.Field>
-            <DataBodyTemplate.Field label="Temporary password">
-              <Input type="password" value={password} onChange={event => setPassword(event.target.value)} />
-            </DataBodyTemplate.Field>
-          </div>
-          <DataBodyTemplate.Field label="System administrator">
-            <Switch checked={systemAdmin} onCheckedChange={setSystemAdmin} />
-          </DataBodyTemplate.Field>
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <div>
-            <Button size="sm" disabled={creating || !email || !password} onClick={() => void submit()}>
-              {creating ? 'Creating…' : 'Create user'}
-            </Button>
-          </div>
-        </DataBodyTemplate.Group>
-        <DataGrid data={users} columns={columns} emptyMessage="No users found." tableWidthMode="fill-last" />
-      </DataBodyTemplate.Body>
+    <>
+      <DataBodyTemplate
+        title="Users"
+        description="System accounts and administrator access. Click a row to view account details."
+        actions={
+          <Button size="sm" onClick={() => void navigate('/users/new')}>
+            <Plus />
+            New User
+          </Button>
+        }
+      >
+        <DataBodyTemplate.Body>
+          {usersQuery.isError && usersQuery.data === undefined && (
+            <QueryErrorNotice
+              message="Failed to load users"
+              error={usersQuery.error}
+              onRetry={() => void usersQuery.refetch()}
+            />
+          )}
+          {actionError && <p className="mb-3 text-sm text-destructive">{actionError}</p>}
+          <DataGrid
+            data={users}
+            columns={userColumns}
+            isLoading={usersQuery.isLoading}
+            emptyMessage="No users found."
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(user) => open(
+              <UserDetailPanel user={user} onDelete={setDeleteTarget} />,
+              { size: 520 },
+            )}
+          />
+        </DataBodyTemplate.Body>
+      </DataBodyTemplate>
+
       <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this user?</AlertDialogTitle>
-            <AlertDialogDescription>{deleteTarget?.email} will lose access immediately.</AlertDialogDescription>
+            <AlertDialogDescription>
+              {deleteTarget?.username} will lose access immediately. This action cannot be undone.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={() => {
-                if (deleteTarget) deleteUser(deleteTarget.id)
-                setDeleteTarget(null)
-              }}
+              disabled={deleteUser.isPending}
+              onClick={() => void confirmDelete()}
             >
-              Delete
+              {deleteUser.isPending ? 'Deleting…' : 'Delete user'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </DataBodyTemplate>
+    </>
+  )
+}
+
+export default function UsersPage() {
+  return (
+    <SidePanelProvider defaultSize={520} defaultMinSize={380} defaultMaxSize={900}>
+      <UsersPageInner />
+    </SidePanelProvider>
   )
 }

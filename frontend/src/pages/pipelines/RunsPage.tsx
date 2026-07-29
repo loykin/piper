@@ -4,6 +4,8 @@ import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin
 import { listRuns, createRun, type Run } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useProjectId } from '@/lib/projectContext'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 
 const EXAMPLE_YAML = `apiVersion: piper/v1
 kind: Pipeline
@@ -73,13 +75,15 @@ export default function RunsPage() {
       header: 'Run ID',
       meta: { minWidth: 240 },
       cell: ({ row }) => (
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="xs"
           onClick={() => navigate(`/projects/${projectId}/runs/${row.original.id}`)}
-          className="font-mono text-xs text-indigo-400 hover:text-indigo-300"
+          className="px-0 font-mono"
         >
           {row.original.id}
-        </button>
+        </Button>
       ),
     },
     {
@@ -113,8 +117,8 @@ export default function RunsPage() {
     <div className="space-y-8">
       <section className="rounded-xl border border-gray-800 bg-gray-900 p-6">
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gray-300">New Run</h2>
-        <textarea
-          className="w-full resize-none rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-sm text-gray-200 focus:border-indigo-500 focus:outline-none"
+        <Textarea
+          className="font-mono"
           rows={10}
           value={yaml}
           onChange={e => setYaml(e.target.value)}
@@ -122,13 +126,13 @@ export default function RunsPage() {
         />
         {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
         <div className="mt-3 flex justify-end">
-          <button
+          <Button
+            type="button"
             onClick={handleRun}
             disabled={submitting}
-            className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
           >
             {submitting ? 'Submitting…' : '▶ Run Pipeline'}
-          </button>
+          </Button>
         </div>
       </section>
 

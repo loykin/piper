@@ -1,5 +1,5 @@
 # Single piper image build
-# - Server:    docker run piper/piper piper serve
+# - Server:    docker run ghcr.io/loykin/piper:latest server
 # - K8s agent: initContainer copies the /piper binary for use
 #
 # Build (local):
@@ -16,6 +16,6 @@ FROM alpine:3.20
 ARG TARGETARCH
 RUN apk add --no-cache ca-certificates tzdata
 # Copy the architecture-specific binary.
-# Local builds (make docker) use bin/piper-amd64.
+# Local builds (make docker) use the Linux binary matching the Docker host.
 COPY bin/piper-${TARGETARCH} /piper
 ENTRYPOINT ["/piper"]

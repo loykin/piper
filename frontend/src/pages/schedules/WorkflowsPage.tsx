@@ -14,12 +14,14 @@ import { usePipelines } from '@/features/pipelines/hooks'
 import { RowActions } from '@/shared/components/RowActions'
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import type { Schedule } from '@/features/schedules/api'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
 function WorkflowsPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
   const { open } = useSidePanel()
-  const { data: schedules = [], isError } = useSchedules()
+  const schedulesQuery = useSchedules()
+  const schedules = schedulesQuery.data ?? []
   const { data: pipelines = [] } = usePipelines()
   const { mutate: deleteSchedule } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
@@ -90,14 +92,17 @@ function WorkflowsPageInner() {
       }
     >
       <DataBodyTemplate.Body>
-        {isError && (
-          <div className="mb-4 rounded border border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-            Failed to load schedules.
-          </div>
+        {schedulesQuery.isError && schedulesQuery.data === undefined && (
+          <QueryErrorNotice
+            message="Failed to load schedules"
+            error={schedulesQuery.error}
+            onRetry={() => void schedulesQuery.refetch()}
+          />
         )}
         <DataGrid
           data={schedules}
           columns={columns}
+          isLoading={schedulesQuery.isLoading}
           emptyMessage="No schedules yet. Create one to start."
           tableWidthMode="fill-last"
           rowHeight={44}

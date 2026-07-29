@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import { useProjectId } from '@/lib/projectContext'
 import { useWorkers } from '@/features/workers/hooks'
+import { backgroundPolling } from '@/lib/query'
 
 export const servingKeys = {
   all: (projectId: string) => ['serving', projectId] as const,
@@ -16,8 +17,7 @@ export function useServices() {
     queryKey: servingKeys.list(projectId),
     queryFn: () => api.listServing(projectId),
     enabled: !!projectId,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 
@@ -27,8 +27,7 @@ export function useService(name: string) {
     queryKey: servingKeys.one(projectId, name),
     queryFn: () => api.getServing(projectId, name),
     enabled: !!projectId && !!name,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 

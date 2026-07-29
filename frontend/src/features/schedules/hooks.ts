@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import type { CreateScheduleOptions } from './types'
 import { useProjectId } from '@/lib/projectContext'
+import { backgroundPolling } from '@/lib/query'
 
 export const scheduleKeys = {
   all: (projectId: string) => ['schedules', projectId] as const,
@@ -17,8 +18,7 @@ export function useSchedules() {
     queryKey: scheduleKeys.list(projectId),
     queryFn: () => api.listSchedules(projectId),
     enabled: !!projectId,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 
@@ -28,8 +28,7 @@ export function useSchedule(id: string) {
     queryKey: scheduleKeys.one(projectId, id),
     queryFn: () => api.getSchedule(projectId, id),
     enabled: !!projectId && !!id,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 
@@ -39,8 +38,7 @@ export function useScheduleRuns(id: string) {
     queryKey: scheduleKeys.runs(projectId, id),
     queryFn: () => api.listScheduleRuns(projectId, id),
     enabled: !!projectId && !!id,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 

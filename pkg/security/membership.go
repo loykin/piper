@@ -32,3 +32,10 @@ type ProjectMemberManager interface {
 	UpdateMember(ctx context.Context, member *ProjectMember) error
 	RemoveMember(ctx context.Context, projectID, userID string) error
 }
+
+// UserMembershipDirectory exposes all project memberships for one user.
+// System-level account details use this optional capability to connect global
+// accounts with their project-specific roles.
+type UserMembershipDirectory interface {
+	ListUserMemberships(ctx context.Context, userID string) ([]*ProjectMember, error)
+}

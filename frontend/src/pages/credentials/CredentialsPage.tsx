@@ -18,6 +18,7 @@ import type { Credential, CredentialKind } from '@/features/credentials/types'
 import { useProjectId } from '@/lib/projectContext'
 import RotateCredentialDialog from './RotateCredentialDialog'
 import TestCredentialDialog from './TestCredentialDialog'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
 type KindFilter = 'all' | CredentialKind
 type PendingAction =
@@ -27,7 +28,8 @@ type PendingAction =
 export default function CredentialsPage() {
   const projectId = useProjectId()
   const navigate = useNavigate()
-  const { data = [], isLoading } = useCredentials()
+  const credentialsQuery = useCredentials()
+  const data = useMemo(() => credentialsQuery.data ?? [], [credentialsQuery.data])
   const patchCredential = usePatchCredential()
   const rotateCredential = useRotateCredential()
   const deleteCredential = useDeleteCredential()
@@ -134,11 +136,18 @@ export default function CredentialsPage() {
       }
     >
       <DataBodyTemplate.Body>
+        {credentialsQuery.isError && credentialsQuery.data === undefined && (
+          <QueryErrorNotice
+            message="Failed to load credentials"
+            error={credentialsQuery.error}
+            onRetry={() => void credentialsQuery.refetch()}
+          />
+        )}
         {actionError && <p className="mb-3 text-sm text-destructive">{actionError}</p>}
         <DataGrid
           data={filtered}
           columns={columns}
-          isLoading={isLoading}
+          isLoading={credentialsQuery.isLoading}
           emptyMessage="No credentials configured."
         />
       </DataBodyTemplate.Body>

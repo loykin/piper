@@ -1,6 +1,6 @@
 # K8s execution example
 #
-# When k8s.worker is enabled and a k8s-worker is connected, each step runs in a separate Pod.
+# When a worker with worker.k8s is connected, each step runs in a separate Pod.
 # Each step can use a different container image.
 #
 # Server configuration (piper.yaml):
@@ -9,7 +9,7 @@
 #
 # Run:
 #   piper server --config piper.yaml
-#   piper k8s-worker --master-url=http://piper-server:8080 --cluster=dev --pipeline-runner-image=piper/piper:latest
+#   piper worker --config ./config/k8s-worker.yaml
 
 apiVersion: piper/v1
 kind: Pipeline

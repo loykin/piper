@@ -54,14 +54,36 @@ as the entire ML platform.
 
 ## Quick Start
 
+### Run from this repository
+
+```bash
+make build
+
+# Reads ./config/piper.yaml and starts the API, UI, and embedded workers.
+./bin/piper server
+```
+
+Open `http://localhost:8080` to use the UI. Stop the server with `Ctrl+C`.
+The first browser visit creates the initial administrator.
+
+On first start Piper generates an authentication signing key and a
+credential-encryption key in `./piper-data/.server-secrets.yaml` with owner-only
+permissions. It reuses that file on restart; back it up with `piper.db`.
+
+The `server` command itself has no operational flags. Address, TLS, embedded
+workers, concurrency, and all other runtime settings come from config or
+`PIPER_*` environment variables.
+
+### Install with Go
+
 ```bash
 go install github.com/piper/piper/cmd/piper@latest
 
 # Run a pipeline as a self-contained local process
 piper run examples/basics/simple.yaml
 
-# Or start the API with embedded workers for trusted local development
-piper server --local --allow-insecure-trusted-mode --allow-insecure-dev-key
+# Or install the binary and provide your own ./config/piper.yaml:
+piper server
 
 # Submit to the running server
 curl -X POST http://localhost:8080/api/projects/default/runs \
@@ -69,7 +91,8 @@ curl -X POST http://localhost:8080/api/projects/default/runs \
   -d "{\"yaml\": $(jq -Rs . < examples/basics/simple.yaml)}"
 ```
 
-Open `http://localhost:8080` to view the UI.
+Explicit `server.auth_signing_key` and `server.secret_encryption_key` values from
+the config file or environment override generated keys.
 
 ## Pipeline YAML
 
@@ -186,7 +209,7 @@ example secret points at by default.
 | **Server needs kubeconfig** | — | no | no — worker owns cluster access |
 | **Artifact storage** | local or remote | local when co-located, otherwise remote | remote object storage |
 | **Cancellation** | context + subprocess termination | SIGTERM / docker stop | K8s Job deletion |
-| **Multi-cluster** | — | — | yes (one k8s-worker per cluster) |
+| **Multi-cluster** | — | — | yes (one Kubernetes worker per cluster) |
 | **Best for** | development, libraries | on-prem GPU servers | Kubernetes environments |
 
 ### 1. Local (self-contained)
@@ -207,12 +230,13 @@ Server and workers run separately. Workers connect to the master via gRPC and re
 # Terminal 1: API and worker tunnel share one endpoint
 piper server
 
-# Terminal 2: worker opens one outbound tunnel to master
-piper worker --master-url http://localhost:8080 --infrastructure baremetal --label trainer --concurrency 4
+# Terminal 2: worker reads infrastructure and capability from its config
+piper worker --config ./config/pipeline-worker.yaml
 ```
 
-- `--master-url`: the single master endpoint used by the worker tunnel
-- `--label`: label for routing (e.g. `gpu`, `cpu`, `large-mem`)
+The worker config sets `worker.master_url`, exactly one infrastructure
+(`baremetal`, `docker`, or `k8s`), and its capabilities. See the commented
+worker reference in `./config/piper.yaml`.
 
 Workers register with the master on connect. Active workers can be listed via `GET /api/workers`.
 
@@ -220,12 +244,14 @@ To pin an entire pipeline run to one bare-metal worker, set `spec.defaults.drive
 To route all steps to workers with a specific label, set `spec.defaults.driver.placement.label`.
 Individual steps can override placement via `step.driver.placement`.
 
-### 3. K8s Worker
+### 3. Kubernetes Worker
 
-A `piper k8s-worker` runs **inside the cluster** and connects outbound to the Piper master's unified HTTP/gRPC endpoint. The master never needs kubeconfig access or inbound cluster access — making this the right choice for isolated networks, firewall-restricted environments, or multi-cluster setups.
+A `piper worker` configured with `worker.k8s` runs **inside the cluster** and
+connects outbound to the Piper master's unified HTTP/gRPC endpoint. The master
+never needs kubeconfig access or inbound cluster access.
 
 ```
-piper-server (:8080 HTTP + gRPC) ←── outbound HTTP/2 tunnel ── piper k8s-worker
+piper-server (:8080 HTTP + gRPC) ←── outbound HTTP/2 tunnel ── piper worker
                                                               │
                                                        K8s API server
                                                   (Jobs / StatefulSets / PVCs)
@@ -240,79 +266,22 @@ step container (user image)  →  /piper-tools/piper agent exec --task-file=/pip
 
 > **vs Argo Workflows**: Argo manages workflows as K8s CRDs. Piper uses K8s only as a compute backend — DAG, retry, and state live in the Piper server. Piper runs identically in local and bare-metal modes with no K8s dependency.
 
-**Deploy the worker in the cluster:**
+**Deploy the server and worker in the cluster:**
 
 ```bash
-piper k8s-worker \
-  --master-url http://piper-server:8080 \
-  --cluster my-cluster \
-  --namespaces piper-jobs,piper-notebooks,piper-serving \
-  --in-cluster \
-  --capabilities pipeline,notebook,serving \
-  --notebook-volume-browser-image piper/piper:latest \
-  --pipeline-runner-image piper/piper:latest
+./deploy/k8s/install.sh
 ```
 
-Or as a Kubernetes Deployment (recommended):
-
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: piper-worker-state
-  namespace: piper-system
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 1Gi
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: piper-k8s-worker
-  namespace: piper-system
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: piper-k8s-worker
-  template:
-    metadata:
-      labels:
-        app: piper-k8s-worker
-    spec:
-      serviceAccountName: piper-k8s-worker   # needs Job/StatefulSet/PVC permissions
-      containers:
-      - name: worker
-        image: piper/piper:latest
-        args:
-        - k8s-worker
-        - --master-url=http://piper-server.piper-system.svc.cluster.local:8080
-        - --cluster=production
-        - --namespaces=piper-jobs,piper-notebooks,piper-serving
-        - --in-cluster
-        - --capabilities=pipeline,notebook,serving
-        - --state-dir=/var/lib/piper
-        - --notebook-volume-browser-image=piper/piper:latest
-        - --pipeline-runner-image=piper/piper:latest
-        # No storage env here: set storage.url once on the master (see the
-        # "Artifact Layout" section above) — it's forwarded to this worker
-        # per-task over the existing tunnel, not read from the worker's own env.
-        volumeMounts:
-        - name: worker-state
-          mountPath: /var/lib/piper
-      volumes:
-      - name: worker-state
-        persistentVolumeClaim:
-          claimName: piper-worker-state
-```
+The deployment mounts `deploy/k8s/configmap.yaml` into both processes. The
+server runs `piper server`; the Kubernetes worker runs the same `piper worker`
+command as every other worker type.
 
 The `piper-worker-state` PVC stores the generated worker identity across Pod
 replacement. Workload image, namespace, resources, and PVC size/class remain in
 the submitted manifests.
 
-For **multi-cluster**, deploy one `piper k8s-worker` per cluster with a different `--cluster` name.
+For **multi-cluster**, deploy one worker per cluster with a different
+`worker.k8s.cluster` value.
 Pipeline placement is run-level: one pipeline run executes on one selected worker or cluster.
 
 ## Agent API
@@ -436,14 +405,15 @@ Deploys the serving process on a **serving worker** — a separate process runni
 **Setup**
 
 ```bash
-# 1. Start Piper's unified HTTP/gRPC endpoint
-piper server --addr :8080
+# 1. Set server.http_addr in ./config/piper.yaml, then start the unified endpoint
+piper server
 
-# 2. Start a serving worker on the inference node
-piper serving-worker --master-url http://<server>:8080 --infrastructure baremetal
+# 2. Configure worker.baremetal and worker.capabilities.serving, then start it
+piper worker --config ./config/serving-worker.yaml
 ```
 
-**Multi-node**: run `piper serving-worker` on each inference node. To pin a deployment to a specific node, set `driver.placement.worker` in the ModelService YAML:
+**Multi-node**: run `piper worker` on each inference node. To pin a deployment
+to a specific node, set `driver.placement.worker` in the ModelService YAML:
 
 ```yaml
 spec:
@@ -511,19 +481,17 @@ JupyterLab is launched as a subprocess on a dedicated **notebook worker** node.
 # Install JupyterLab (one-time, on each worker node)
 pip install jupyterlab
 
-# Start Piper's unified HTTP/gRPC endpoint
-piper server --addr :8080
+# Set server.http_addr in ./config/piper.yaml, then start the unified endpoint
+piper server
 
-# Start notebook worker on each node
-piper notebook-worker \
-  --master-url http://<server>:8080 \
-  --infrastructure baremetal
+# Configure worker.baremetal and worker.capabilities.notebook, then start it
+piper worker --config ./config/notebook-worker.yaml
 ```
 
 **Single-node / dev** — embed everything in one process:
 
 ```bash
-piper server --local
+piper server
 ```
 
 Bare-metal and Kubernetes notebook workers both use the unified worker tunnel.
@@ -533,12 +501,13 @@ server does not connect directly to the Kubernetes API.
 
 ### K8s Worker
 
-The notebook lifecycle is managed by a `piper k8s-worker` running inside the cluster.
+The notebook lifecycle is managed by a `piper worker` with `worker.k8s`
+configuration running inside the cluster.
 Use this when the piper server cannot reach the cluster API server directly (firewall, VPN, multi-cluster).
 
 No Kubernetes workload settings are required on the server.
 
-Then deploy `piper k8s-worker` as described in the [K8s Worker](#3-k8s-worker) section above.
+Deploy it as described in the [Kubernetes Worker](#3-kubernetes-worker) section above.
 
 ### Notebook Server YAML
 
@@ -604,20 +573,16 @@ mux.Handle("/piper/ui/", http.StripPrefix("/piper/ui", ui.Handler()))
 svc, err := p.DeployService(ctx, "default", []byte(modelServiceYAML))
 ```
 
-## Configuration (`.piper.yaml`)
+## Configuration (`./config/piper.yaml`)
 
 ```yaml
 version: 4
 
 server:
   http_addr: ":8080"
-  # Required for authenticated server mode. For trusted local-only development,
-  # omit the key and explicitly set allow_insecure_trusted_mode: true instead.
+  # Optional. When omitted, Piper generates both keys in
+  # server.data_dir/.server-secrets.yaml and reuses them after restart.
   auth_signing_key: ""
-  allow_insecure_trusted_mode: false
-  # Required for credential encryption. Use a 32-byte key, base64 32-byte key,
-  # or pbkdf2:<strong-passphrase>. For local-only development, set
-  # allow_insecure_dev_key: true instead.
   secret_encryption_key: ""
   tls:
     enabled: false
@@ -697,9 +662,10 @@ worker:
 - Workers and workload runtimes may connect directly to `storage.url`; all other
   worker control-plane traffic uses the single master tunnel.
 
-CLI flags override environment variables, which override `.piper.yaml`, which
-override operational defaults. Worker Config never overrides submitted workload
-fields; incomplete manifests are rejected.
+An explicitly selected `--config` file overrides the default project-relative
+path. Environment variables override file values, which override operational
+defaults. Piper never searches the user home directory. Worker Config never
+overrides submitted workload fields; incomplete manifests are rejected.
 
 Command scope:
 
@@ -707,48 +673,81 @@ Command scope:
 |---|---|
 | `piper server` | `server`, `storage`, `source`, `log` |
 | `piper run` | local data/storage/source settings plus the submitted Pipeline manifest |
-| `piper worker` | `worker.baremetal` or `worker.docker`, plus `worker.capabilities.pipeline` |
-| `piper notebook-worker` | `worker.baremetal` or `worker.docker`, plus `worker.capabilities.notebook` |
-| `piper serving-worker` | `worker.baremetal` or `worker.docker`, plus `worker.capabilities.serving` |
-| `piper k8s-worker` | `worker.k8s`, `worker.capabilities`, `storage` |
+| `piper worker` | exactly one worker infrastructure plus `worker.capabilities` |
 
 On first startup, each worker role writes its generated identity metadata under
 `worker.state_dir` and reuses that ID after restart.
 
+Server configuration is documented in the checked-in project-relative file:
+
+```bash
+piper config validate --command server
+piper config show --command server
+```
+
+See `./config/piper.yaml` and `./config/piper.server.yaml`. Missing production keys
+are generated in `server.data_dir/.server-secrets.yaml`. Environment values
+`PIPER_SERVER_AUTH_SIGNING_KEY` and
+`PIPER_SERVER_SECRET_ENCRYPTION_KEY` take precedence and are recommended when a
+platform already manages secrets.
+
 ## CLI
 
 ```
+piper config validate --command server           validate effective config
 piper server                                     start server (API + UI)
-piper server --local                             start server with embedded worker/serving/notebook workers
 piper run <file.yaml>                            run a pipeline locally
 piper parse <file.yaml>                          validate YAML without running
-piper worker --master-url=<url> --infrastructure=baremetal          start a bare-metal pipeline worker
-piper serving-worker --master-url=<url> --infrastructure=baremetal  start a bare-metal serving worker
-piper notebook-worker --master-url=<url> --infrastructure=baremetal start a bare-metal notebook worker
-piper k8s-worker --master-url=<url> --cluster=<name> --namespaces=<ns> --in-cluster --capabilities=pipeline,notebook,serving
-piper agent exec --result-file=<path> ...         execute a step inside a K8s Pod (called automatically)
+piper worker                                     start the configured worker
 ```
 
 ## Docker
 
 ```bash
-# Build image
-make docker   # produces piper/piper:latest
+# Published image, persistent data, and automatic restart
+docker compose -f deploy/docker-compose.yaml up -d
 
-# Run server
-docker run -p 8080:8080 piper/piper server
-
-# Run on Kubernetes
-kubectl run piper --image=piper/piper:latest -- serve --config /etc/piper/.piper.yaml
+# Follow startup and inspect health
+docker compose -f deploy/docker-compose.yaml logs -f piper
+curl http://localhost:8080/health
 ```
 
-The same image is used as both the server, the K8s Job init container, and the K8s worker:
+The named volume preserves SQLite, artifacts, and
+`.server-secrets.yaml`. For an explicit one-container equivalent:
+
+```bash
+docker volume create piper-data
+docker run --name piper --restart unless-stopped -p 8080:8080 \
+  -v ./deploy/docker/piper.yaml:/etc/piper/piper.yaml:ro \
+  -v piper-data:/var/lib/piper \
+  ghcr.io/loykin/piper:latest \
+  --config=/etc/piper/piper.yaml server
+```
+
+To build locally, run `make docker` and set
+`PIPER_IMAGE=piper/piper:latest` for Compose.
+
+## Kubernetes
+
+The checked-in Kustomize deployment creates the server, persistent volumes,
+RBAC, and the outbound-tunnel Kubernetes worker. The installer generates the
+server Secret once and preserves it on later applies:
+
+```bash
+./deploy/k8s/install.sh
+kubectl -n piper port-forward service/piper-server 8080:8080
+```
+
+See [`deploy/k8s/README.md`](deploy/k8s/README.md) for storage, TLS exposure,
+custom images, backup requirements, and manual secret management.
+
+The same image is used as the server, K8s Job init container, and K8s worker:
 
 ```
 server:         piper server --config ...
 init container: cp /piper /piper-tools/piper
 step container: /piper-tools/piper agent exec ...
-k8s worker:      piper k8s-worker --master-url=... --cluster=...
+worker:         piper worker --config ...
 ```
 
 ## Building
@@ -774,7 +773,7 @@ make test                # unit tests
 make test-notebook-conformance
 make test-e2e            # in-process e2e (no external infra)
 make test-docker-notebook-e2e
-make test-k8s-e2e        # real K8s e2e, including k8s-worker mode
+make test-k8s-e2e        # real K8s e2e, including Kubernetes worker mode
 make test-integration    # requires a running Kubernetes cluster
 
 # Optional Docker notebook e2e. Image must already exist locally.

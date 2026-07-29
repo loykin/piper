@@ -1,6 +1,15 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, lazy, Suspense, useContext, useEffect, useState } from 'react'
-import { createRootRoute, createRoute, createRouter, Navigate, Outlet, RouterProvider } from '@tanstack/react-router'
+import { createContext, Suspense, useContext, useEffect, useState } from 'react'
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  lazyRouteComponent,
+  Navigate,
+  Outlet,
+  RouterProvider,
+  useRouter,
+} from '@tanstack/react-router'
 import { useLocation, useNavigate } from '@/lib/router'
 import {
   SidebarProvider,
@@ -27,29 +36,32 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
 import { AuthProvider, useAuth } from '@/features/auth/context'
+import { Skeleton } from '@/components/ui/skeleton'
 
-const LoginPage           = lazy(() => import('@/pages/LoginPage'))
-const NotebooksPage       = lazy(() => import('@/pages/notebooks/NotebooksPage'))
-const NotebookCreatePage  = lazy(() => import('@/pages/notebooks/NotebookCreatePage'))
-const NotebookVolumesPage = lazy(() => import('@/pages/notebooks/NotebookVolumesPage'))
-const PipelinesListPage   = lazy(() => import('@/pages/pipelines/PipelinesListPage'))
-const PipelineEditorPage  = lazy(() => import('@/pages/pipelines/PipelineEditorPage'))
-const HistoryPage         = lazy(() => import('@/pages/pipelines/HistoryPage'))
-const ExperimentsPage     = lazy(() => import('@/pages/pipelines/ExperimentsPage'))
-const RunDetailPage       = lazy(() => import('@/pages/pipelines/RunDetailPage'))
-const WorkflowsPage       = lazy(() => import('@/pages/schedules/WorkflowsPage'))
-const WorkflowCreatePage  = lazy(() => import('@/pages/schedules/WorkflowCreatePage'))
-const ScheduleDetailPage  = lazy(() => import('@/pages/schedules/ScheduleDetailPage'))
-const ServingPage         = lazy(() => import('@/pages/serving/ServingPage'))
-const ServingHistoryPage  = lazy(() => import('@/pages/serving/ServingHistoryPage'))
-const CredentialsPage        = lazy(() => import('@/pages/credentials/CredentialsPage'))
-const CredentialCreatePage   = lazy(() => import('@/pages/credentials/CredentialCreatePage'))
-const WorkersPage           = lazy(() => import('@/pages/system/WorkersPage'))
-const StoragePage           = lazy(() => import('@/pages/system/StoragePage'))
-const UsersPage             = lazy(() => import('@/pages/system/UsersPage'))
-const MembersPage           = lazy(() => import('@/pages/projects/MembersPage'))
-const PodPoliciesPage       = lazy(() => import('@/pages/kubernetes/PodPoliciesPage'))
-const PodPoliciesCreatePage = lazy(() => import('@/pages/kubernetes/PodPoliciesCreatePage'))
+const LoginPage              = lazyRouteComponent(() => import('@/pages/LoginPage'))
+const NotebooksPage          = lazyRouteComponent(() => import('@/pages/notebooks/NotebooksPage'))
+const NotebookCreatePage     = lazyRouteComponent(() => import('@/pages/notebooks/NotebookCreatePage'))
+const NotebookVolumesPage    = lazyRouteComponent(() => import('@/pages/notebooks/NotebookVolumesPage'))
+const PipelinesListPage      = lazyRouteComponent(() => import('@/pages/pipelines/PipelinesListPage'))
+const PipelineEditorPage     = lazyRouteComponent(() => import('@/pages/pipelines/PipelineEditorPage'))
+const HistoryPage            = lazyRouteComponent(() => import('@/pages/pipelines/HistoryPage'))
+const ExperimentsPage        = lazyRouteComponent(() => import('@/pages/pipelines/ExperimentsPage'))
+const RunDetailPage          = lazyRouteComponent(() => import('@/pages/pipelines/RunDetailPage'))
+const WorkflowsPage          = lazyRouteComponent(() => import('@/pages/schedules/WorkflowsPage'))
+const WorkflowCreatePage     = lazyRouteComponent(() => import('@/pages/schedules/WorkflowCreatePage'))
+const ScheduleDetailPage     = lazyRouteComponent(() => import('@/pages/schedules/ScheduleDetailPage'))
+const ServingPage            = lazyRouteComponent(() => import('@/pages/serving/ServingPage'))
+const ServingHistoryPage     = lazyRouteComponent(() => import('@/pages/serving/ServingHistoryPage'))
+const CredentialsPage        = lazyRouteComponent(() => import('@/pages/credentials/CredentialsPage'))
+const CredentialCreatePage   = lazyRouteComponent(() => import('@/pages/credentials/CredentialCreatePage'))
+const WorkersPage            = lazyRouteComponent(() => import('@/pages/system/WorkersPage'))
+const StoragePage            = lazyRouteComponent(() => import('@/pages/system/StoragePage'))
+const UsersPage              = lazyRouteComponent(() => import('@/pages/system/UsersPage'))
+const UserCreatePage         = lazyRouteComponent(() => import('@/pages/system/UserCreatePage'))
+const MembersPage            = lazyRouteComponent(() => import('@/pages/projects/MembersPage'))
+const MemberCreatePage       = lazyRouteComponent(() => import('@/pages/projects/MemberCreatePage'))
+const PodPoliciesPage        = lazyRouteComponent(() => import('@/pages/kubernetes/PodPoliciesPage'))
+const PodPoliciesCreatePage  = lazyRouteComponent(() => import('@/pages/kubernetes/PodPoliciesCreatePage'))
 
 type NavSubItem = {
   id: string
@@ -147,6 +159,11 @@ function AppSidebar() {
   const groups = navItems(projectId)
 
   const { isDark, toggleDark } = useAppTheme()
+  const router = useRouter()
+
+  function preloadRoute(to?: string) {
+    if (to) void router.preloadRoute({ to })
+  }
 
   return (
     <>
@@ -185,7 +202,7 @@ function AppSidebar() {
                             <ChevronRight className="ml-auto transition-transform duration-200 group-data-open/collapsible:rotate-90" />
                           </CollapsibleTrigger>
                           <CollapsibleContent>
-                            <SidebarMenuSub className="mr-0 pr-0">
+                            <SidebarMenuSub>
                               {item.children.map(child => {
                                 const childActive = child.exact
                                   ? location.pathname === child.to
@@ -194,8 +211,9 @@ function AppSidebar() {
                                 return (
                                   <SidebarMenuSubItem key={child.id}>
                                     <SidebarMenuSubButton
-                                      render={<button type="button" />}
                                       isActive={childActive}
+                                      onPointerEnter={() => preloadRoute(child.to)}
+                                      onFocus={() => preloadRoute(child.to)}
                                       onClick={() => {
                                         if (projectId || child.system) void navigate(child.to)
                                       }}
@@ -221,6 +239,8 @@ function AppSidebar() {
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
                         isActive={isActive}
+                        onPointerEnter={() => preloadRoute(item.to)}
+                        onFocus={() => preloadRoute(item.to)}
                         onClick={() => item.to && navigate(item.to)}
                         disabled={!projectId && !item.system}
                       >
@@ -244,10 +264,10 @@ function AppSidebar() {
                 <DropdownMenuTrigger className="w-full">
                   <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-xs font-semibold">
-                      {user.email.slice(0, 2).toUpperCase()}
+                      {user.username.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="min-w-0 flex-1 text-left">
-                      <p className="truncate text-sm font-medium">{user.email}</p>
+                      <p className="truncate text-sm font-medium">{user.username}</p>
                       {user.system_admin && (
                         <p className="truncate text-xs text-muted-foreground">System Admin</p>
                       )}
@@ -259,7 +279,7 @@ function AppSidebar() {
                   <DropdownMenuGroup>
                     <DropdownMenuLabel className="font-normal">
                       <div className="flex flex-col gap-0.5">
-                        <span className="truncate text-sm font-medium">{user.email}</span>
+                        <span className="truncate text-sm font-medium">{user.username}</span>
                         {user.system_admin && (
                           <span className="flex items-center gap-1 text-xs text-muted-foreground">
                             <ShieldCheck className="h-3 w-3" /> System Admin
@@ -278,8 +298,10 @@ function AppSidebar() {
                   </DropdownMenuCheckboxItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => { void logout().then(() => navigate('/login')) }}
+                    variant="destructive"
+                    onClick={() => {
+                      void logout().finally(() => navigate('/login', { replace: true }))
+                    }}
                   >
                     <LogOut className="mr-2 h-4 w-4" />
                     Sign out
@@ -298,10 +320,37 @@ function AppSidebar() {
   )
 }
 
+function PageLoadingSkeleton() {
+  return (
+    <div className="space-y-6 p-6" aria-label="Loading page">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-48" />
+        <Skeleton className="h-4 w-80 max-w-full" />
+      </div>
+      <div className="space-y-3">
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-2/3" />
+      </div>
+    </div>
+  )
+}
+
+function DelayedPageFallback() {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setVisible(true), 180)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  return visible ? <PageLoadingSkeleton /> : null
+}
+
 function RoutedContent() {
   const { user, capabilities, loading } = useAuth()
 
-  if (loading) return null
+  if (loading) return <PageLoadingSkeleton />
   if (
     capabilities?.authentication &&
     capabilities.login_routes &&
@@ -310,7 +359,11 @@ function RoutedContent() {
     return <Navigate to="/login" replace />
   }
 
-  return <Outlet />
+  return (
+    <Suspense fallback={<DelayedPageFallback />}>
+      <Outlet />
+    </Suspense>
+  )
 }
 
 function RootLayout() {
@@ -325,7 +378,7 @@ function RootLayout() {
     <ThemeContext.Provider value={{ isDark, toggleDark: setIsDark }}>
       <AuthProvider>
         <ProjectProvider>
-          <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>}>
+          <Suspense fallback={<DelayedPageFallback />}>
             <Outlet />
           </Suspense>
         </ProjectProvider>
@@ -417,6 +470,7 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-volumes', component: NotebookVolumesPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'storage', component: StoragePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'members', component: MembersPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'members/new', component: MemberCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: '$', component: ProjectScopedFallback }),
 ]
 
@@ -437,6 +491,7 @@ const routeTree = rootRoute.addChildren([
     projectRoute.addChildren(projectRoutes),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'workers', component: WorkersPage }),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'users', component: UsersPage }),
+    createRoute({ getParentRoute: () => appLayoutRoute, path: 'users/new', component: UserCreatePage }),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies', component: PodPoliciesPage }),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies/new', component: PodPoliciesCreatePage }),
     ...legacyProjectRoutes,
@@ -447,6 +502,8 @@ const routeTree = rootRoute.addChildren([
 export const router = createRouter({
   routeTree,
   basepath: '/ui',
+  defaultPreload: 'intent',
+  defaultPreloadDelay: 80,
 })
 
 declare module '@tanstack/react-router' {

@@ -1,7 +1,6 @@
 export interface AuthUser {
   id: string
-  email: string
-  display_name?: string
+  username: string
   system_admin: boolean
   disabled?: boolean
 }
@@ -17,6 +16,6 @@ export interface AuthCapabilities {
 }
 
 export interface LoginRequest {
-  email: string
+  username: string
   password: string
 }

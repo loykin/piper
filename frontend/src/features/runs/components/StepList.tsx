@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { PanelTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
+import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { RowActions } from '@/shared/components/RowActions'
 import type { Step } from '../types'
@@ -36,13 +37,15 @@ export function StepList({ steps, selectedId, onSelect, onRetry }: StepListProps
       header: 'Step',
       meta: { minWidth: 220, flex: 1 },
       cell: ({ row }) => (
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="xs"
           onClick={() => onSelect(row.original.step_name)}
-          className={`text-left ${selectedId === row.original.step_name ? 'text-indigo-300' : 'text-gray-200 hover:text-white'}`}
+          className={selectedId === row.original.step_name ? 'px-0 text-primary' : 'px-0 text-foreground'}
         >
           {row.original.step_name}
-        </button>
+        </Button>
       ),
     },
     {

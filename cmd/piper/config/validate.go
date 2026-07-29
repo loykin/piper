@@ -32,6 +32,39 @@ type ServingSelection struct {
 	DockerNetwork  string
 }
 
+// ValidateWorker validates the single worker process described by worker.* and
+// dispatches to the selected infrastructure and capability rules.
+func ValidateWorker(c RootConfig) error {
+	if c.Worker.K8s != nil {
+		return ValidateK8s(c)
+	}
+	count := 0
+	role := ""
+	if c.Worker.Capabilities.Pipeline != nil {
+		count++
+		role = "pipeline"
+	}
+	if c.Worker.Capabilities.Notebook != nil {
+		count++
+		role = "notebook"
+	}
+	if c.Worker.Capabilities.Serving != nil {
+		count++
+		role = "serving"
+	}
+	if count != 1 {
+		return fmt.Errorf("config: host worker requires exactly one pipeline, notebook, or serving capability")
+	}
+	switch role {
+	case "pipeline":
+		return ValidatePipeline(c)
+	case "notebook":
+		return ValidateNotebook(c)
+	default:
+		return ValidateServing(c)
+	}
+}
+
 func ValidatePipeline(c RootConfig) error {
 	selection, err := SelectPipeline(c)
 	if err != nil {
@@ -143,9 +176,6 @@ func ValidateK8s(c RootConfig) error {
 }
 
 func ValidateServer(c RootConfig) error {
-	if c.Server.AuthSigningKey == "" && !c.Server.AllowInsecureTrustedMode {
-		return fmt.Errorf("config: server.auth_signing_key is required; set server.allow_insecure_trusted_mode=true only for trusted local development")
-	}
 	if c.Server.TLS.Enabled && (c.Server.TLS.CertFile == "" || c.Server.TLS.KeyFile == "") {
 		return fmt.Errorf("config: server.tls requires cert_file and key_file")
 	}

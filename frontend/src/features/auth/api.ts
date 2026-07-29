@@ -47,7 +47,8 @@ export async function login(req: LoginRequest): Promise<AuthUser> {
 }
 
 export async function logout(): Promise<void> {
-  await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+  const res = await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+  await handleResponse<void>(res)
 }
 
 export async function refresh(): Promise<AuthUser | null> {

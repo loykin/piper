@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"log/slog"
 
 	piper "github.com/piper/piper"
 	cliconfig "github.com/piper/piper/cmd/piper/config"
@@ -20,6 +21,17 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 	}
 	if err := cliconfig.ValidateServer(root); err != nil {
 		return nil, err
+	}
+	secrets, err := cliconfig.EnsureServerSecrets(&root)
+	if err != nil {
+		return nil, err
+	}
+	if secrets.Path != "" {
+		if secrets.Generated {
+			slog.Info("generated persistent server secrets", "path", secrets.Path)
+		} else {
+			slog.Debug("loaded persistent server secrets", "path", secrets.Path)
+		}
 	}
 	cfg := piper.Config{
 		OutputDir: root.Server.DataDir,

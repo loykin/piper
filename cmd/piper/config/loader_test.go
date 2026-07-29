@@ -82,6 +82,42 @@ func TestLoaderCachesDecodedConfig(t *testing.T) {
 	}
 }
 
+func TestLoaderUsesProjectRelativeDefaultConfig(t *testing.T) {
+	projectDir := t.TempDir()
+	t.Chdir(projectDir)
+	configPath := filepath.Join(projectDir, DefaultConfigPath())
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("version: 4\nserver:\n  http_addr: ':4321'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := NewLoader().Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.HTTPAddr != ":4321" {
+		t.Fatalf("http_addr = %q, want :4321", cfg.Server.HTTPAddr)
+	}
+}
+
+func TestLoaderDoesNotReadHomeConfig(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Chdir(projectDir)
+	t.Setenv("HOME", homeDir)
+	if err := os.WriteFile(filepath.Join(homeDir, ".piper.yaml"), []byte("version: 4\nserver:\n  http_addr: ':9999'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := NewLoader().Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.HTTPAddr != ":8080" {
+		t.Fatalf("home config leaked into project: http_addr = %q", cfg.Server.HTTPAddr)
+	}
+}
+
 func TestLoaderReportsWinningSources(t *testing.T) {
 	t.Setenv("PIPER_LOG_FORMAT", "json")
 	l := NewLoader()

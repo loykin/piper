@@ -146,9 +146,9 @@ function FileBrowseDropdown({ files, ext, query, onQueryChange, onSelect }: File
   return (
     <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
       <div className="border-b border-border px-2 py-2">
-        <input
+        <Input
           autoFocus
-          className="w-full rounded bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground"
+          className="h-7 text-xs"
           placeholder={ext ? `Search ${ext} files…` : 'Search files…'}
           value={query}
           onChange={e => onQueryChange(e.target.value)}
@@ -159,15 +159,17 @@ function FileBrowseDropdown({ files, ext, query, onQueryChange, onSelect }: File
       ) : (
         <div className="max-h-48 overflow-y-auto">
           {filtered.map(f => (
-            <button
+            <Button
               key={f}
               type="button"
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start rounded-none px-3 font-normal"
               onClick={() => onSelect(f)}
             >
               {ext && <span className="font-mono text-muted-foreground">{ext}</span>}
               <span className="truncate font-mono">{f}</span>
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -202,9 +204,9 @@ function DepBrowseDropdown({ files, query, onQueryChange, onSelect }: DepBrowseD
   return (
     <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
       <div className="border-b border-border px-2 py-2">
-        <input
+        <Input
           autoFocus
-          className="w-full rounded bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground"
+          className="h-7 text-xs"
           placeholder="Search files and directories…"
           value={query}
           onChange={e => onQueryChange(e.target.value)}
@@ -218,13 +220,13 @@ function DepBrowseDropdown({ files, query, onQueryChange, onSelect }: DepBrowseD
             <>
               <p className="px-3 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Directories</p>
               {filteredDirs.map(d => (
-                <button key={d} type="button"
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
+                <Button key={d} type="button" variant="ghost" size="sm"
+                  className="w-full justify-start rounded-none px-3 font-normal"
                   onClick={() => onSelect(d)}
                 >
                   <span className="shrink-0 text-muted-foreground">📁</span>
                   <span className="truncate font-mono">{d}</span>
-                </button>
+                </Button>
               ))}
             </>
           )}
@@ -232,13 +234,13 @@ function DepBrowseDropdown({ files, query, onQueryChange, onSelect }: DepBrowseD
             <>
               <p className="px-3 pt-2 text-[10px] uppercase tracking-wider text-muted-foreground">Files</p>
               {filteredFiles.map(f => (
-                <button key={f} type="button"
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-accent"
+                <Button key={f} type="button" variant="ghost" size="sm"
+                  className="w-full justify-start rounded-none px-3 font-normal"
                   onClick={() => onSelect(f)}
                 >
                   <span className="shrink-0 text-muted-foreground">📄</span>
                   <span className="truncate font-mono">{f}</span>
-                </button>
+                </Button>
               ))}
             </>
           )}
@@ -324,14 +326,11 @@ function ArtifactSection({
                 <div className="flex gap-1.5">
                   <Input value={item.path} placeholder="path in workspace" onChange={e => onUpdate(rowIndex, { path: e.target.value })} />
                   {canBrowse && (
-                    <button
-                      type="button"
-                      title="Browse volume files"
+                    <IconButton
+                      icon={<FolderOpen />}
+                      label="Browse volume files"
                       onClick={() => onBrowseToggle(browseKey)}
-                      className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                    >
-                      <FolderOpen size={14} />
-                    </button>
+                    />
                   )}
                 </div>
                 {isBrowseOpen && (
@@ -932,18 +931,19 @@ export default function PipelineEditorPage() {
                 <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
                 <div className="space-y-2">
                   {(['notebook', 'python', 'command'] as PipelineTaskType[]).map(type => (
-                    <button
+                    <Button
                       key={type}
                       type="button"
+                      variant="outline"
                       draggable
                       onDragStart={e => handlePaletteDragStart(e, type)}
                       onDragEnd={handlePaletteDragEnd}
                       onClick={() => addTask(type)}
-                      className="flex w-full items-center justify-between rounded-xl border border-dashed border-border bg-background px-3 py-3 text-left transition hover:border-primary hover:bg-accent"
+                      className="h-auto w-full justify-between border-dashed py-3"
                     >
                       <div className="text-sm font-medium">{TASK_LABELS[type]}</div>
                       {TASK_ICONS[type]}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -1075,14 +1075,11 @@ export default function PipelineEditorPage() {
                         placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : 'scripts/train.py'}
                       />
                       {canBrowse && (
-                        <button
-                          type="button"
-                          title="Browse files in volume"
+                        <IconButton
+                          icon={<FolderOpen />}
+                          label="Browse files in volume"
                           onClick={() => { setBrowseQuery(''); setFileBrowserOpen(o => !o) }}
-                          className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                        >
-                          <FolderOpen size={14} />
-                        </button>
+                        />
                       )}
                     </div>
                     {fileBrowserOpen && canBrowse && (
@@ -1132,14 +1129,11 @@ export default function PipelineEditorPage() {
                                 onChange={e => updateDep(editingIndex, di, e.target.value)}
                               />
                               {canBrowse && (
-                                <button
-                                  type="button"
-                                  title="Browse volume files"
+                                <IconButton
+                                  icon={<FolderOpen />}
+                                  label="Browse volume files"
                                   onClick={() => { setBrowseQuery(''); setArtifactBrowseKey(k => k === browseKey ? null : browseKey) }}
-                                  className="flex shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                                >
-                                  <FolderOpen size={14} />
-                                </button>
+                                />
                               )}
                               <IconButton icon={<Trash2 />} label="Remove" onClick={() => removeDep(editingIndex, di)} className="text-destructive hover:bg-destructive/10" />
                             </div>

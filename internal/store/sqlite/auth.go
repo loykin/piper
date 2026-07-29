@@ -21,9 +21,9 @@ func NewUserRepo(exec *dbstore.Executor, source string) auth.UserRepository {
 func (r *userRepo) Create(ctx context.Context, u *auth.User) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO users (id, email, password_hash, system_admin, disabled, created_at, updated_at)
+			`INSERT INTO users (id, username, password_hash, system_admin, disabled, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			u.ID, u.Email, u.PasswordHash, u.SystemAdmin, u.Disabled, u.CreatedAt, u.UpdatedAt)
+			u.ID, u.Username, u.PasswordHash, u.SystemAdmin, u.Disabled, u.CreatedAt, u.UpdatedAt)
 		return err
 	})
 }
@@ -32,7 +32,7 @@ func (r *userRepo) GetByID(ctx context.Context, id string) (*auth.User, error) {
 	var u auth.User
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		return db.GetContext(ctx, &u,
-			`SELECT id, email, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE id=?`, id)
+			`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE id=?`, id)
 	})
 	if err != nil {
 		return nil, err
@@ -40,11 +40,11 @@ func (r *userRepo) GetByID(ctx context.Context, id string) (*auth.User, error) {
 	return &u, nil
 }
 
-func (r *userRepo) GetByEmail(ctx context.Context, email string) (*auth.User, error) {
+func (r *userRepo) GetByUsername(ctx context.Context, username string) (*auth.User, error) {
 	var u auth.User
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		return db.GetContext(ctx, &u,
-			`SELECT id, email, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE email=?`, email)
+			`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE username=?`, username)
 	})
 	if err != nil {
 		return nil, err
@@ -56,7 +56,7 @@ func (r *userRepo) List(ctx context.Context) ([]*auth.User, error) {
 	var out []*auth.User
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		return db.SelectContext(ctx, &out,
-			`SELECT id, email, password_hash, system_admin, disabled, created_at, updated_at FROM users ORDER BY created_at DESC`)
+			`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users ORDER BY created_at DESC`)
 	})
 	if out == nil {
 		out = []*auth.User{}
@@ -68,8 +68,8 @@ func (r *userRepo) Update(ctx context.Context, u *auth.User) error {
 	u.UpdatedAt = time.Now().UTC()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`UPDATE users SET email=?, password_hash=?, system_admin=?, disabled=?, updated_at=? WHERE id=?`,
-			u.Email, u.PasswordHash, u.SystemAdmin, u.Disabled, u.UpdatedAt, u.ID)
+			`UPDATE users SET username=?, password_hash=?, system_admin=?, disabled=?, updated_at=? WHERE id=?`,
+			u.Username, u.PasswordHash, u.SystemAdmin, u.Disabled, u.UpdatedAt, u.ID)
 		return err
 	})
 }
@@ -211,8 +211,8 @@ func (r *sessionRepo) DeleteExpired(ctx context.Context) error {
 func (r *sessionRepo) RecordLoginAttempt(ctx context.Context, attempt *auth.LoginAttempt) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO login_history (id, user_id, email, success, failure_reason, attempted_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			attempt.ID, attempt.UserID, attempt.Email, attempt.Success, attempt.FailureReason, attempt.AttemptedAt)
+			`INSERT INTO login_history (id, user_id, username, success, failure_reason, attempted_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			attempt.ID, attempt.UserID, attempt.Username, attempt.Success, attempt.FailureReason, attempt.AttemptedAt)
 		return err
 	})
 }

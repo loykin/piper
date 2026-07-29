@@ -68,12 +68,12 @@ echo "    server ready"
 # pipeline (training) and serving (model hosting) roles run as separate
 # processes even though they share this node and this config file.
 echo "==> Starting pipeline worker…"
-bin/piper --config examples/mlops/piper.yaml worker --master-url "$SERVER" --infrastructure baremetal &
+bin/piper --config examples/mlops/pipeline-worker.yaml worker &
 WORKER_PID=$!
 echo "    pipeline worker PID=$WORKER_PID"
 
 echo "==> Starting serving worker…"
-bin/piper --config examples/mlops/piper.yaml serving-worker --master-url "$SERVER" --infrastructure baremetal &
+bin/piper --config examples/mlops/serving-worker.yaml worker &
 SERVING_WORKER_PID=$!
 echo "    serving worker PID=$SERVING_WORKER_PID"
 

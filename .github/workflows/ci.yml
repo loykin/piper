@@ -287,10 +287,9 @@ jobs:
           kubectl apply -f deploy/k8s/namespace.yaml
           kubectl -n piper create secret generic piper-server-secrets \
             --from-literal=auth_signing_key=test-auth-signing-key \
-            --from-literal=secret_encryption_key=pbkdf2:test-secret-encryption-key
-          kubectl apply -f deploy/k8s/rbac.yaml
-          kubectl apply -f deploy/k8s/server.yaml
-          kubectl apply -f deploy/k8s/k8s-worker.yaml
+            --from-literal=secret_encryption_key=pbkdf2:test-secret-encryption-key \
+            --from-literal=worker_token=test-worker-token
+          kubectl apply -k deploy/k8s
           kubectl -n piper set image deployment/piper-server piper=piper/piper:e2e
           kubectl -n piper set image deployment/piper-k8s-worker worker=piper/piper:e2e
           kubectl -n piper rollout status deployment/piper-server --timeout=120s

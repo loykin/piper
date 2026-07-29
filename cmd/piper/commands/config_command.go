@@ -12,7 +12,7 @@ import (
 )
 
 func newConfigCmd(loader *cliconfig.Loader) *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Validate and inspect configuration"}
+	cmd := &cobra.Command{Use: "config", Short: "validate and inspect configuration"}
 	cmd.AddCommand(newConfigValidateCmd(loader), newConfigShowCmd(loader))
 	return cmd
 }
@@ -20,7 +20,7 @@ func newConfigCmd(loader *cliconfig.Loader) *cobra.Command {
 func newConfigValidateCmd(loader *cliconfig.Loader) *cobra.Command {
 	var role string
 	cmd := &cobra.Command{
-		Use: "validate", Short: "Validate the effective configuration",
+		Use: "validate", Short: "validate the effective configuration",
 		PreRunE: makePreRunE(loader),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loader.Load()
@@ -34,7 +34,7 @@ func newConfigValidateCmd(loader *cliconfig.Loader) *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&role, "command", "server", "role: server, worker, notebook-worker, serving-worker, k8s-worker")
+	cmd.Flags().StringVar(&role, "command", "server", "role: server or worker")
 	return cmd
 }
 
@@ -42,7 +42,7 @@ func newConfigShowCmd(loader *cliconfig.Loader) *cobra.Command {
 	var role string
 	var sources bool
 	cmd := &cobra.Command{
-		Use: "show", Short: "Print the redacted effective configuration",
+		Use: "show", Short: "print the redacted effective configuration",
 		PreRunE: makePreRunE(loader),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loader.Load()
@@ -91,13 +91,7 @@ func validateRole(cfg cliconfig.RootConfig, role string) error {
 	case "server":
 		return cliconfig.ValidateServer(cfg)
 	case "worker":
-		return cliconfig.ValidatePipeline(cfg)
-	case "notebook-worker":
-		return cliconfig.ValidateNotebook(cfg)
-	case "serving-worker":
-		return cliconfig.ValidateServing(cfg)
-	case "k8s-worker":
-		return cliconfig.ValidateK8s(cfg)
+		return cliconfig.ValidateWorker(cfg)
 	default:
 		return fmt.Errorf("unknown command role %q", role)
 	}

@@ -21,6 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import type { PipelineStepDraft } from '@/features/pipelines/editor'
 import type { DragEvent } from 'react'
 
@@ -108,18 +109,21 @@ function DeleteButtonEdge({
       />
       {selected && (
         <EdgeLabelRenderer>
-          <button
+          <Button
             type="button"
+            size="icon-xs"
+            variant="outline"
+            aria-label="Delete connection"
             style={{
               position: 'absolute',
               transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
             }}
-            className="nodrag nopan flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow hover:border-destructive hover:bg-destructive hover:text-white"
+            className="nodrag nopan size-5 rounded-full text-muted-foreground hover:text-destructive"
             onClick={() => deleteElements({ edges: [{ id }] })}
           >
             <X size={10} />
-          </button>
+          </Button>
         </EdgeLabelRenderer>
       )}
     </>

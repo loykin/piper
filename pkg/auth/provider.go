@@ -50,17 +50,19 @@ type Provider struct {
 }
 
 var (
-	_ LoginProvider                 = (*Provider)(nil)
-	_ security.Authenticator        = (*Provider)(nil)
-	_ security.Authorizer           = (*Provider)(nil)
-	_ security.UserDirectory        = (*Provider)(nil)
-	_ security.UserManager          = (*Provider)(nil)
-	_ security.ProjectMemberManager = (*Provider)(nil)
+	_ LoginProvider                    = (*Provider)(nil)
+	_ security.Authenticator           = (*Provider)(nil)
+	_ security.Authorizer              = (*Provider)(nil)
+	_ security.UserDirectory           = (*Provider)(nil)
+	_ security.UserLookup              = (*Provider)(nil)
+	_ security.UserManager             = (*Provider)(nil)
+	_ security.ProjectMemberManager    = (*Provider)(nil)
+	_ security.UserMembershipDirectory = (*Provider)(nil)
 )
 
 // LoginProvider implements the built-in login and session protocol.
 type LoginProvider interface {
-	Login(ctx context.Context, email, password string) (*LoginResult, error)
+	Login(ctx context.Context, username, password string) (*LoginResult, error)
 	Refresh(ctx context.Context, refreshToken string) (*LoginResult, error)
 	Logout(ctx context.Context, refreshToken string) error
 	RevokeAllSessions(ctx context.Context, userID string) error
@@ -152,12 +154,12 @@ type LoginResult struct {
 	User         *User
 }
 
-// Login authenticates with email+password and issues a new session.
-func (p *Provider) Login(ctx context.Context, email, password string) (*LoginResult, error) {
-	email = strings.ToLower(strings.TrimSpace(email))
+// Login authenticates with username+password and issues a new session.
+func (p *Provider) Login(ctx context.Context, username, password string) (*LoginResult, error) {
+	username = strings.ToLower(strings.TrimSpace(username))
 	attempt := &LoginAttempt{
 		ID:          uuid.NewString(),
-		Email:       email,
+		Username:    username,
 		AttemptedAt: time.Now().UTC(),
 	}
 	record := func(success bool, reason string) {
@@ -165,7 +167,7 @@ func (p *Provider) Login(ctx context.Context, email, password string) (*LoginRes
 		attempt.FailureReason = reason
 		_ = p.sessions.RecordLoginAttempt(ctx, attempt)
 	}
-	u, err := p.users.GetByEmail(ctx, email)
+	u, err := p.users.GetByUsername(ctx, username)
 	if err != nil || u == nil {
 		record(false, "invalid_credentials")
 		return nil, errors.New("invalid credentials")
@@ -229,6 +231,16 @@ func (p *Provider) Logout(ctx context.Context, refreshToken string) error {
 
 // CreateUser creates a new user account.
 func (p *Provider) CreateUser(ctx context.Context, input security.CreateUserInput) (*security.User, error) {
+	username := strings.ToLower(strings.TrimSpace(input.Username))
+	if username == "" {
+		return nil, errors.New("username is required")
+	}
+	if len(username) > 128 {
+		return nil, errors.New("username must be at most 128 characters")
+	}
+	if strings.ContainsAny(username, " \t\r\n") {
+		return nil, errors.New("username must not contain whitespace")
+	}
 	hash, err := hashPassword(input.Password)
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
@@ -236,7 +248,7 @@ func (p *Provider) CreateUser(ctx context.Context, input security.CreateUserInpu
 	now := time.Now().UTC()
 	u := &User{
 		ID:           uuid.NewString(),
-		Email:        strings.ToLower(strings.TrimSpace(input.Email)),
+		Username:     username,
 		PasswordHash: hash,
 		SystemAdmin:  input.SystemAdmin,
 		CreatedAt:    now,
@@ -279,8 +291,20 @@ func (p *Provider) GetUser(ctx context.Context, userID string) (*security.User, 
 	return userView(user), nil
 }
 
+func (p *Provider) FindUser(ctx context.Context, username string) (*security.User, error) {
+	user, err := p.users.GetByUsername(ctx, strings.ToLower(strings.TrimSpace(username)))
+	if err != nil || user == nil {
+		return nil, err
+	}
+	return userView(user), nil
+}
+
 func (p *Provider) ListMembers(ctx context.Context, projectID string) ([]*security.ProjectMember, error) {
 	return p.members.ListByProject(ctx, projectID)
+}
+
+func (p *Provider) ListUserMemberships(ctx context.Context, userID string) ([]*security.ProjectMember, error) {
+	return p.members.ListByUser(ctx, userID)
 }
 
 func (p *Provider) AddMember(ctx context.Context, member *security.ProjectMember) error {
@@ -337,7 +361,7 @@ func (p *Provider) createSession(ctx context.Context, u *User) (*LoginResult, er
 func userToIdentity(u *User) *security.Identity {
 	return &security.Identity{
 		ID:          u.ID,
-		Email:       u.Email,
+		Username:    u.Username,
 		SystemAdmin: u.SystemAdmin,
 	}
 }
@@ -345,7 +369,7 @@ func userToIdentity(u *User) *security.Identity {
 func userView(u *User) *security.User {
 	return &security.User{
 		ID:          u.ID,
-		Email:       u.Email,
+		Username:    u.Username,
 		SystemAdmin: u.SystemAdmin,
 		Disabled:    u.Disabled,
 	}

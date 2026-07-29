@@ -103,9 +103,9 @@ func (d *fakeDriver) Stop(_ context.Context, v *Viewer) error {
 	return nil
 }
 
-// ── Bug 1: UpdateStatus 실패 시 tempDir 누수 ─────────────────────────────────
+// ── Bug 1: tempDir leak when UpdateStatus fails ──────────────────────────────
 
-// UpdateStatus가 실패했을 때 materialze로 생성된 tempDir이 정리되는지 확인한다.
+// Verify that a tempDir created by materialize is cleaned up when UpdateStatus fails.
 func TestOpen_UpdateStatusFails_CleansTempDir(t *testing.T) {
 	repo := newFakeRepo()
 	repo.updateErr = errors.New("db down")
@@ -114,15 +114,15 @@ func TestOpen_UpdateStatusFails_CleansTempDir(t *testing.T) {
 	mgr := NewManager(repo, nil, t.TempDir()) // store=nil → local path
 	mgr.RegisterDriver(drv)
 
-	// store가 nil이면 materialize는 tempDir=""를 반환하므로, store 경로를
-	// 직접 테스트하기 위해 임시 디렉터리를 output dir로 쓴다.
-	// 대신 store 경로(tempDir != "")를 시뮬레이션하기 위해 memStore stub을 쓴다.
+	// When store is nil, materialize returns tempDir="", so use a temporary
+	// directory as the output directory to exercise the local path.
+	// A memStore stub is used below to simulate the store path (tempDir != "").
 	tmpRoot := t.TempDir()
 	artifactDir := filepath.Join(tmpRoot, "run-1", "train", "tb")
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// file을 하나 만들어 List가 결과를 반환하게 한다.
+	// Create a file so List returns a result.
 	if err := os.WriteFile(filepath.Join(artifactDir, "events.tfevents"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -135,22 +135,22 @@ func TestOpen_UpdateStatusFails_CleansTempDir(t *testing.T) {
 		t.Fatal("expected error from UpdateStatus, got nil")
 	}
 
-	// driver.Stop이 호출됐는지 확인 (프로세스 정리)
+	// Verify that driver.Stop was called to clean up the process.
 	if len(drv.stopped) == 0 {
 		t.Error("driver.Stop was not called after UpdateStatus failure")
 	}
 }
 
-// ── Bug 2: tempDir 누수 — 오브젝트 스토어 경로 ───────────────────────────────
+// ── Bug 2: tempDir leak on the object-store path ─────────────────────────────
 
-// Start 성공 후 UpdateStatus 실패 시 tempDir이 제거되는지 확인한다.
-// memStore를 사용해 materialize가 실제 tmpDir을 만들게 한다.
+// Verify that tempDir is removed when Start succeeds but UpdateStatus fails.
+// Use memStore so materialize creates a real tempDir.
 func TestOpen_UpdateStatusFails_RemovesTempDirFromObjectStore(t *testing.T) {
 	repo := newFakeRepo()
 
 	drv := &fakeDriver{typ: "fake"}
 
-	// store stub: List는 한 개의 object 반환, Get은 파일 내용 반환
+	// Store stub: List returns one object and Get returns its contents.
 	store := &stubStore{
 		keys: []string{"run-1/train/tb/events.tfevents"},
 		data: map[string][]byte{"run-1/train/tb/events.tfevents": []byte("data")},
@@ -159,13 +159,13 @@ func TestOpen_UpdateStatusFails_RemovesTempDirFromObjectStore(t *testing.T) {
 	mgr := NewManager(repo, store, t.TempDir())
 	mgr.RegisterDriver(drv)
 
-	// UpdateStatus가 성공하도록 먼저 한 번 성공 케이스를 확인하고,
-	// 이후 실패를 주입한다.
+	// First prepare the successful UpdateStatus path, then inject a failure.
 	var capturedWorkDir string
 	repo.updateErr = nil
 
-	// Start 이후 UpdateStatus 직전에 실패를 주입하기 위해 updateErr를 미리 설정한다.
-	// (Start가 return 하기 전에 updateErr가 설정되어야 하므로 처음부터 설정)
+	// Set updateErr in advance so the failure occurs after Start and immediately
+	// before UpdateStatus. It must be set from the beginning because Start must
+	// return before UpdateStatus runs.
 	repo.updateErr = errors.New("db error")
 
 	_, err := mgr.Open(context.Background(), "proj", "run-1", "train", "tb", "fake")
@@ -174,13 +174,13 @@ func TestOpen_UpdateStatusFails_RemovesTempDirFromObjectStore(t *testing.T) {
 	}
 	_ = capturedWorkDir
 
-	// 드라이버 Stop 호출 확인
+	// Verify that the driver was stopped.
 	if len(drv.stopped) == 0 {
 		t.Error("driver.Stop was not called")
 	}
 
-	// 임시 디렉터리가 /tmp/piper-viewer- 패턴으로 생성됐을 것이고 삭제됐어야 한다.
-	// glob으로 남은 디렉터리가 없는지 확인.
+	// The temporary directory should have been created with the
+	// /tmp/piper-viewer-* pattern and then removed. Verify that none remain.
 	matches, _ := filepath.Glob(os.TempDir() + "/piper-viewer-*")
 	for _, m := range matches {
 		if _, err := os.Stat(m); err == nil {
@@ -189,28 +189,28 @@ func TestOpen_UpdateStatusFails_RemovesTempDirFromObjectStore(t *testing.T) {
 	}
 }
 
-// ── Bug 3: 디렉토리 리스팅 차단 — handler 단위 테스트 ─────────────────────────
+// ── Bug 3: block directory listings in the handler ───────────────────────────
 
-// proxyViewer의 path guard가 디렉토리 경로를 차단하는지 확인한다.
-// handler는 net/http/httptest를 통해 직접 테스트한다.
+// Verify that proxyViewer's path guard rejects directory paths.
+// Exercise the handler directly through net/http/httptest.
 func TestProxyViewer_BlocksDirectoryPath(t *testing.T) {
 	workDir := t.TempDir()
-	// subdir 생성
+	// Create a subdirectory.
 	subDir := filepath.Join(workDir, "subdir")
 	if err := os.MkdirAll(subDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// path guard 로직만 추출해서 검증
+	// Exercise the path-guard logic in isolation.
 	cases := []struct {
 		subPath string
 		wantOK  bool
 	}{
-		{"", false},          // 빈 path → redirect (blocking)
-		{"subdir", false},    // 디렉토리 → 차단
-		{"subdir/", false},   // trailing slash 디렉토리
-		{"../escape", false}, // path traversal → 차단
-		{"file.html", true},  // 정상 파일 (stat 실패는 ServeFile이 처리)
+		{"", false},          // Empty path redirects and is therefore blocked.
+		{"subdir", false},    // Directory path is blocked.
+		{"subdir/", false},   // Directory path with a trailing slash is blocked.
+		{"../escape", false}, // Path traversal is blocked.
+		{"file.html", true},  // A normal file is allowed; ServeFile handles stat failures.
 	}
 
 	for _, tc := range cases {

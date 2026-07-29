@@ -10,6 +10,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { PodPolicyForm } from '@/features/workers/components/PodPolicyForm'
 import { useWorkerPodPolicies, useDeleteWorkerPodPolicy } from '@/features/workers/hooks'
 import type { WorkerPodPolicy } from '@/features/workers/types'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
 function relativeTime(ts: string): string {
   const ms = Date.now() - new Date(ts).getTime()
@@ -73,7 +74,8 @@ function EditPolicyPanel({ policy }: { policy: WorkerPodPolicy }) {
 
 function PodPoliciesContent() {
   const navigate = useNavigate()
-  const { data: policies = [], isLoading } = useWorkerPodPolicies()
+  const policiesQuery = useWorkerPodPolicies()
+  const policies = policiesQuery.data ?? []
   const { open } = useSidePanel()
 
   const columns = useMemo<DataGridColumnDef<WorkerPodPolicy>[]>(() => [
@@ -117,10 +119,17 @@ function PodPoliciesContent() {
       }
     >
       <DataBodyTemplate.Body>
+        {policiesQuery.isError && policiesQuery.data === undefined && (
+          <QueryErrorNotice
+            message="Failed to load pod policies"
+            error={policiesQuery.error}
+            onRetry={() => void policiesQuery.refetch()}
+          />
+        )}
         <DataGrid
           data={policies}
           columns={columns}
-          isLoading={isLoading}
+          isLoading={policiesQuery.isLoading}
           emptyMessage="No pod policies configured. Click 'Add policy' to create one."
           tableWidthMode="fill-last"
           rowHeight={44}

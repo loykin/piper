@@ -63,7 +63,7 @@ func requireBinary(t *testing.T) string {
 // The test verifies the full CLI path:
 //  1. Write a real piper.yaml with S3 credentials.
 //  2. Start `piper server --config piper.yaml` as a subprocess.
-//  3. Start `piper worker --config piper.yaml --master-url …` as a subprocess.
+//  3. Start `piper worker --config piper.yaml` as a subprocess.
 //  4. Submit a pipeline that produces an output artifact.
 //  5. Assert that the artifact appears in fake-S3.
 //
@@ -95,21 +95,20 @@ func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
 	writeBinaryE2EFile(t, configPath, fmt.Sprintf(`
 version: 4
 server:
+  http_addr: %q
   allow_insecure_trusted_mode: true
   allow_insecure_dev_key: true
 storage:
   url: "s3://%s?endpoint=http://%s&s3ForcePathStyle=true&accessKey=test&secretKey=test"
 worker:
+  master_url: %q
   baremetal: {}
   capabilities:
     pipeline: {}
-`, bucket, s3Endpoint))
+`, fmt.Sprintf("127.0.0.1:%d", serverPort), bucket, s3Endpoint, serverURL))
 
 	// ── Server subprocess ─────────────────────────────────────────────────────
-	// Pass --addr explicitly: server.addr in the config file is
-	// ignored because buildConfig() runs before initConfig() loads the YAML.
-	listenAddr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-	srvCmd := exec.Command(binary, "server", "--config", configPath, "--addr", listenAddr)
+	srvCmd := exec.Command(binary, "server", "--config", configPath)
 	srvCmd.Dir = workDir
 	srvCmd.Stdout = os.Stdout
 	srvCmd.Stderr = os.Stderr
@@ -125,7 +124,7 @@ worker:
 
 	// ── Worker subprocess ─────────────────────────────────────────────────────
 	// The worker opens one outbound tunnel; S3 credentials come from the config file.
-	wrkCmd := exec.Command(binary, "worker", "--config", configPath, "--master-url", serverURL)
+	wrkCmd := exec.Command(binary, "worker", "--config", configPath)
 	wrkCmd.Dir = workDir
 	wrkCmd.Stdout = os.Stdout
 	wrkCmd.Stderr = os.Stderr

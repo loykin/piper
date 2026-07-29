@@ -112,19 +112,16 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
         <p className="mb-2 block text-sm font-medium">Trigger Type</p>
         <div className="grid gap-2 sm:grid-cols-3">
           {TYPE_OPTIONS.map(({ type, label, desc }) => (
-            <button
+            <Button
               key={type}
               type="button"
+              variant={scheduleType === type ? 'default' : 'outline'}
               onClick={() => setScheduleType(type)}
-              className={`rounded-lg border px-3 py-3 text-left text-sm transition-colors ${
-                scheduleType === type
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border bg-card text-foreground hover:bg-accent'
-              }`}
+              className="h-auto flex-col items-start gap-0 py-3 text-left"
             >
               <div className="font-semibold">{label}</div>
               <div className="mt-0.5 text-xs opacity-70">{desc}</div>
-            </button>
+            </Button>
           ))}
         </div>
       </div>

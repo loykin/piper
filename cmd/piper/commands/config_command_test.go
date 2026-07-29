@@ -3,6 +3,8 @@ package commands
 import (
 	"net/url"
 	"testing"
+
+	cliconfig "github.com/piper/piper/cmd/piper/config"
 )
 
 func TestRedactURL(t *testing.T) {
@@ -13,5 +15,12 @@ func TestRedactURL(t *testing.T) {
 	}
 	if u.Query().Get("accessKey") != "******" || u.Query().Get("secretKey") != "******" {
 		t.Fatalf("credentials leaked: %s", got)
+	}
+}
+
+func TestConfigCommandDoesNotExposeInit(t *testing.T) {
+	cmd := newConfigCmd(cliconfig.NewLoader())
+	if found, _, err := cmd.Find([]string{"init"}); err == nil && found != cmd {
+		t.Fatal("config init should not be exposed")
 	}
 }

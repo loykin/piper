@@ -21,19 +21,9 @@ import (
 
 func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "server",
-		Short: "start the piper API server",
-		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			loader.MustBindFlag("server.http_addr", cmd.Flags().Lookup("addr"))
-			loader.MustBindFlag("server.tls.enabled", cmd.Flags().Lookup("tls"))
-			loader.MustBindFlag("server.tls.cert_file", cmd.Flags().Lookup("tls-cert"))
-			loader.MustBindFlag("server.tls.key_file", cmd.Flags().Lookup("tls-key"))
-			loader.MustBindFlag("server.local.enabled", cmd.Flags().Lookup("local"))
-			loader.MustBindFlag("server.local.concurrency", cmd.Flags().Lookup("local-concurrency"))
-			loader.MustBindFlag("server.allow_insecure_trusted_mode", cmd.Flags().Lookup("allow-insecure-trusted-mode"))
-			loader.MustBindFlag("server.allow_insecure_dev_key", cmd.Flags().Lookup("allow-insecure-dev-key"))
-			return loadAndLog(loader)
-		},
+		Use:     "server",
+		Short:   "start the piper API server",
+		PreRunE: makePreRunE(loader),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := loader.Load()
 			if err != nil {
@@ -121,15 +111,6 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			return eg.Wait()
 		},
 	}
-
-	cmd.Flags().String("addr", "", "listen address (default :8080)")
-	cmd.Flags().Bool("tls", false, "enable TLS")
-	cmd.Flags().String("tls-cert", "", "TLS certificate file")
-	cmd.Flags().String("tls-key", "", "TLS key file")
-	cmd.Flags().Bool("local", false, "embed a local worker for dev/single-node mode")
-	cmd.Flags().Int("local-concurrency", 0, "concurrency for the embedded local worker")
-	cmd.Flags().Bool("allow-insecure-trusted-mode", false, "disable authentication for trusted local development")
-	cmd.Flags().Bool("allow-insecure-dev-key", false, "use an insecure credential-encryption key for local development")
 
 	return cmd
 }

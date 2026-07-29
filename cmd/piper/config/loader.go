@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -41,6 +42,12 @@ func NewLoader() *Loader {
 		_ = v.BindEnv(key)
 	}
 	return l
+}
+
+// DefaultConfigPath is project-relative and uses the host OS path separator.
+// Piper never searches the user's home directory implicitly.
+func DefaultConfigPath() string {
+	return "." + string(os.PathSeparator) + filepath.Join("config", "piper.yaml")
 }
 
 func (l *Loader) SetConfigFile(path string) { l.path = path }
@@ -88,28 +95,25 @@ func (l *Loader) Read() error {
 		}
 		return nil
 	}
-	home, _ := os.UserHomeDir()
-	if home != "" {
-		l.v.AddConfigPath(home)
-	}
-	l.v.AddConfigPath(".")
-	l.v.SetConfigName(".piper")
-	l.v.SetConfigType("yaml")
-	if err := l.v.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if !errors.As(err, &notFound) {
-			l.readErr = fmt.Errorf("config: %w", err)
-			return l.readErr
-		}
+	defaultPath := DefaultConfigPath()
+	if _, err := os.Stat(defaultPath); errors.Is(err, os.ErrNotExist) {
 		return nil
+	} else if err != nil {
+		l.readErr = fmt.Errorf("config: inspect %s: %w", defaultPath, err)
+		return l.readErr
 	}
-	if err := strictFile(l.v.ConfigFileUsed()); err != nil {
+	if err := strictFile(defaultPath); err != nil {
 		l.readErr = err
 		return err
 	}
-	if err := l.recordExplicitFileKeys(l.v.ConfigFileUsed()); err != nil {
+	if err := l.recordExplicitFileKeys(defaultPath); err != nil {
 		l.readErr = err
 		return err
+	}
+	l.v.SetConfigFile(defaultPath)
+	if err := l.v.ReadInConfig(); err != nil {
+		l.readErr = fmt.Errorf("config: %w", err)
+		return l.readErr
 	}
 	return nil
 }

@@ -32,7 +32,7 @@ export function EnvVarEditor({
     <div>
       <div className="mb-2 flex items-center justify-between">
         <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">{label}</label>
-        <Button variant="outline" size="sm" onClick={onAdd}>
+        <Button type="button" variant="outline" size="sm" onClick={onAdd}>
           <Plus size={14} className="mr-1.5" /> Add
         </Button>
       </div>

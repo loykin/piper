@@ -1,4 +1,4 @@
-.PHONY: build ui docker test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto check-deps
+.PHONY: build ui docker build-linux-native test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto check-deps
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
@@ -35,6 +35,11 @@ build-linux-arm64:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 	go build -ldflags="-s -w" -o bin/piper-arm64 ./cmd/piper
 
+# Static Linux build matching the current Docker host architecture.
+build-linux-native:
+	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 \
+	go build -ldflags="-s -w" -o bin/piper-$(ARCH) ./cmd/piper
+
 # Build the React UI and update pkg/ui/dist (commit after building)
 ui:
 	cd frontend && pnpm run build
@@ -43,8 +48,8 @@ ui:
 	@echo "UI built. Commit pkg/ui/dist/ to include in go install."
 
 # Build Docker image (serves as both server and K8s agent)
-docker: build-linux
-	docker build --build-arg TARGETARCH=amd64 -t $(IMAGE) .
+docker: build-linux-native
+	docker build --build-arg TARGETARCH=$(ARCH) -t $(IMAGE) .
 
 # Run tests
 test:

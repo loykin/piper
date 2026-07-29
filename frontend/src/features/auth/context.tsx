@@ -52,10 +52,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = async () => {
-    if (capabilities?.login_routes) {
-      await apiLogout()
+    try {
+      if (capabilities?.login_routes) {
+        await apiLogout()
+      }
+    } finally {
+      setUser(null)
     }
-    setUser(null)
   }
 
   return (

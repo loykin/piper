@@ -500,6 +500,22 @@ data:
       data_dir: /tmp/piper-outputs
       allow_insecure_trusted_mode: true
       allow_insecure_dev_key: true
+    worker:
+      master_url: http://piper-server.%[1]s.svc.cluster.local:8080
+      state_dir: /tmp/piper-worker-state
+      k8s:
+        cluster: agent-e2e
+        namespaces: [%[1]s]
+        in_cluster: true
+        pipeline_runner:
+          image: %[2]q
+          image_pull_policy: IfNotPresent
+        notebook_volume_browser:
+          image: %[2]q
+      capabilities:
+        pipeline: {}
+        notebook: {}
+        serving: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -521,7 +537,7 @@ spec:
         - name: piper
           image: %[2]q
           imagePullPolicy: IfNotPresent
-          args: ["server", "--config", "/etc/piper/piper.yaml", "--addr", ":8080"]
+          args: ["--config=/etc/piper/piper.yaml", "server"]
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -555,21 +571,17 @@ spec:
           image: %[2]q
           imagePullPolicy: IfNotPresent
           args:
-            - k8s-worker
-            - --master-url=http://piper-server.%[1]s.svc.cluster.local:8080
-            - --state-dir=/tmp/piper-worker-state
-            - --cluster=agent-e2e
-            - --namespaces=%[1]s
-            - --in-cluster
-            - --capabilities=pipeline,notebook,serving
-            - --notebook-volume-browser-image=%[2]s
-            - --pipeline-runner-image=%[2]s
-            - --pipeline-runner-image-pull-policy=IfNotPresent
-            - --storage-url=s3://piper-artifacts?endpoint=http://seaweedfs:9000&s3ForcePathStyle=true&accessKey=anyadmin&secretKey=anypassword
+            - --config=/etc/piper/piper.yaml
+            - worker
           volumeMounts:
+            - name: config
+              mountPath: /etc/piper
             - name: worker-state
               mountPath: /tmp/piper-worker-state
       volumes:
+        - name: config
+          configMap:
+            name: piper-config
         - name: worker-state
           persistentVolumeClaim:
             claimName: piper-worker-state

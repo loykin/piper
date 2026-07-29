@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import { useProjectId } from '@/lib/projectContext'
 import { useWorkers } from '@/features/workers/hooks'
+import { backgroundPolling, backgroundPollingNotifications } from '@/lib/query'
 
 export const notebookKeys = {
   all: (projectId: string) => ['notebooks', projectId] as const,
@@ -19,8 +20,7 @@ export function useNotebooks() {
     queryKey: notebookKeys.list(projectId),
     queryFn: () => api.listNotebooks(projectId),
     enabled: !!projectId,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 
@@ -35,7 +35,7 @@ export function useNotebook(name: string) {
       return status === 'running' || status === 'provisioning' || status === 'starting' || status === 'stopping'
         ? 3000 : 5000
     },
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPollingNotifications,
   })
 }
 
@@ -82,8 +82,7 @@ export function useNotebookVolumes() {
     queryKey: notebookKeys.volumes(projectId),
     queryFn: () => api.listNotebookVolumes(projectId),
     enabled: !!projectId,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 
@@ -95,7 +94,7 @@ export function useVolumeFiles(volumeId: string, ext?: string) {
     enabled: !!projectId && !!volumeId,
     refetchInterval: (query) =>
       query.state.data?.state === 'transitioning' ? 2000 : false,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPollingNotifications,
   })
 }
 

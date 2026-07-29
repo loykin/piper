@@ -1,0 +1,18 @@
+# Piper control-plane configuration.
+# See ./config/piper.yaml for the complete commented option reference.
+# Supply keys through PIPER_SERVER_*_KEY or let Piper persist generated keys
+# in /var/lib/piper/.server-secrets.yaml. Back up that file with the database.
+version: 4
+
+log:
+  format: json
+  level: info
+
+server:
+  http_addr: ":8080"
+  data_dir: /var/lib/piper
+  db:
+    driver: sqlite
+    path: /var/lib/piper/piper.db
+  local:
+    enabled: false

@@ -568,6 +568,9 @@ func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
 	startE2EWorker(t, srv.URL)
 	startE2EServingWorker(t, srv.URL, "serving-agent")
 	pipelineWorkerID := findE2EAgentByCapability(t, srv.URL, "pipeline")
+	modelServer := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("e2e-model"))
+	}))
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
 metadata:
@@ -584,21 +587,21 @@ spec:
 `, pipelineWorkerID))
 	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
 
-	postService(t, srv.URL, `
+	postService(t, srv.URL, fmt.Sprintf(`
 apiVersion: piper/v1
 kind: ModelService
 metadata:
   name: baremetal-worker-service
 spec:
   model:
-    from_uri: file:///tmp/model
+    from_uri: %s/model
   run:
     command: ["sleep", "60"]
     port: 18080
   driver:
     placement:
       worker: serving-agent
-`)
+`, modelServer.URL))
 	t.Cleanup(func() { _ = p.StopService(context.Background(), "", "baremetal-worker-service") })
 	svc := getE2EService(t, srv.URL, "baremetal-worker-service")
 	if svc.WorkerID != "serving-agent" {

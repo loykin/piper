@@ -35,9 +35,12 @@ importers:
       '@fontsource-variable/geist':
         specifier: ^5.2.9
         version: 5.2.9
+      '@hookform/resolvers':
+        specifier: ^5.5.7
+        version: 5.5.7(ajv@8.20.0)(react-hook-form@7.83.0(react@19.2.7))(zod@4.4.3)
       '@loykin/designkit':
-        specifier: 0.0.1-dev.6
-        version: 0.0.1-dev.6(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))
+        specifier: 0.0.1
+        version: 0.0.1(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))
       '@loykin/gridkit':
         specifier: ^0.2.0
         version: 0.2.0(@tanstack/react-table@8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@tanstack/react-virtual@3.14.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
@@ -77,6 +80,9 @@ importers:
       react-dom:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
+      react-hook-form:
+        specifier: ^7.83.0
+        version: 7.83.0(react@19.2.7)
       shadcn:
         specifier: ^4.10.0
         version: 4.10.0(@types/node@25.9.1)(typescript@6.0.3)
@@ -89,6 +95,9 @@ importers:
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -432,6 +441,84 @@ packages:
     peerDependencies:
       hono: '>=4.12.27'
 
+  '@hookform/resolvers@5.5.7':
+    resolution: {integrity: sha512-CyPCYV8/KlXfEXLWj8HHHhVsR/IZ6Ckm3b/a4fWtO/lRnRK1huqncb8LlAWrmpPRsse5glF5aVuDRMHEr3UGag==}
+    peerDependencies:
+      '@sinclair/typebox': '>=0.25.24'
+      '@standard-schema/spec': ^1.0.0
+      '@typeschema/main': '>=0.13.7'
+      '@vinejs/vine': ^2.0.0 || ^3.0.0
+      ajv: ^8.12.0
+      ajv-errors: ^3.0.0
+      ajv-formats: ^2.1.1
+      arktype: ^2.0.0
+      ata-validator: ^0.7.0
+      class-transformer: '>=0.4.0'
+      class-validator: '>=0.12.0'
+      computed-types: ^1.0.0
+      effect: ^3.10.3
+      fluentvalidation-ts: ^3.0.0
+      fp-ts: ^2.7.0
+      io-ts: ^2.0.0
+      joi: ^17.0.0
+      nope-validator: '>=0.12.0'
+      react-hook-form: ^7.55.0
+      superstruct: '>=0.12.0'
+      typanion: ^3.3.2
+      valibot: '>=0.31.0 || ^1.0.0-beta.4 || ^1.0.0-rc'
+      vest: '>=3.0.0'
+      yup: ^1.0.0
+      zod: ^3.25.0 || ^4.0.0
+    peerDependenciesMeta:
+      '@sinclair/typebox':
+        optional: true
+      '@standard-schema/spec':
+        optional: true
+      '@typeschema/main':
+        optional: true
+      '@vinejs/vine':
+        optional: true
+      ajv:
+        optional: true
+      ajv-errors:
+        optional: true
+      ajv-formats:
+        optional: true
+      arktype:
+        optional: true
+      ata-validator:
+        optional: true
+      class-transformer:
+        optional: true
+      class-validator:
+        optional: true
+      computed-types:
+        optional: true
+      effect:
+        optional: true
+      fluentvalidation-ts:
+        optional: true
+      fp-ts:
+        optional: true
+      io-ts:
+        optional: true
+      joi:
+        optional: true
+      nope-validator:
+        optional: true
+      superstruct:
+        optional: true
+      typanion:
+        optional: true
+      valibot:
+        optional: true
+      vest:
+        optional: true
+      yup:
+        optional: true
+      zod:
+        optional: true
+
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
     engines: {node: '>=18.18.0'}
@@ -515,8 +602,8 @@ packages:
   '@lezer/yaml@1.0.4':
     resolution: {integrity: sha512-2lrrHqxalACEbxIbsjhqGpSW8kWpUKuY6RHgnSAFZa6qK62wvnPxA8hGOwOoDbwHcOFs5M4o27mjGu+P7TvBmw==}
 
-  '@loykin/designkit@0.0.1-dev.6':
-    resolution: {integrity: sha512-ijWIaOOYjlu1hR/7Uq6bTUz+2znkwwqigs8e4jDY+W3RzzGJM+KRkAiJ4v8LAPfHjbL59jPyVtQ+Tt0P1mm9EQ==}
+  '@loykin/designkit@0.0.1':
+    resolution: {integrity: sha512-khh50RGAUA4ZSoCFBIhZMdHykHds3MsbACezNh3BhbjbUC3Z8ZYWVCH7X+hCA4xk4cLWD5qP9Nox8LLkn9UowQ==}
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
@@ -707,6 +794,9 @@ packages:
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
+
+  '@standard-schema/utils@0.3.0':
+    resolution: {integrity: sha512-e7Mew686owMaPJVNNLs55PUvgz371nKgwsc4vxE49zsODpJEnxgxRo2y/OKrqueavXgZNMDVj3DdHFlaSAeU8g==}
 
   '@tailwindcss/node@4.3.0':
     resolution: {integrity: sha512-aFb4gUhFOgdh9AXo4IzBEOzBkkAxm9VigwDJnMIYv3lcfXCJVesNfbEaBl4BNgVRyid92AmdviqwBUBRKSeY3g==}
@@ -2205,6 +2295,12 @@ packages:
     peerDependencies:
       react: ^19.2.7
 
+  react-hook-form@7.83.0:
+    resolution: {integrity: sha512-AXt8cMCmx5a7u4uvpb2uRFVrWQhllI4pV+LSykxIac/hjt44TnQkmX9BKuQi2i+LDC62esmiLpilkav+kjVf/A==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      react: ^16.8.0 || ^17 || ^18 || ^19
+
   react@19.2.7:
     resolution: {integrity: sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ==}
     engines: {node: '>=0.10.0'}
@@ -3065,6 +3161,14 @@ snapshots:
     dependencies:
       hono: 4.12.32
 
+  '@hookform/resolvers@5.5.7(ajv@8.20.0)(react-hook-form@7.83.0(react@19.2.7))(zod@4.4.3)':
+    dependencies:
+      '@standard-schema/utils': 0.3.0
+      react-hook-form: 7.83.0(react@19.2.7)
+    optionalDependencies:
+      ajv: 8.20.0
+      zod: 4.4.3
+
   '@humanfs/core@0.19.2':
     dependencies:
       '@humanfs/types': 0.15.0
@@ -3143,7 +3247,7 @@ snapshots:
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
 
-  '@loykin/designkit@0.0.1-dev.6(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))':
+  '@loykin/designkit@0.0.1(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))':
     dependencies:
       '@base-ui/react': 1.5.0(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       class-variance-authority: 0.7.1
@@ -3321,6 +3425,8 @@ snapshots:
   '@sec-ant/readable-stream@0.4.1': {}
 
   '@sindresorhus/merge-streams@4.0.0': {}
+
+  '@standard-schema/utils@0.3.0': {}
 
   '@tailwindcss/node@4.3.0':
     dependencies:
@@ -4727,6 +4833,10 @@ snapshots:
     dependencies:
       react: 19.2.7
       scheduler: 0.27.0
+
+  react-hook-form@7.83.0(react@19.2.7):
+    dependencies:
+      react: 19.2.7
 
   react@19.2.7: {}
 

@@ -12,6 +12,7 @@ import { usePipelineColumns } from '@/features/pipelines/columns'
 import { DeployModal } from '@/features/pipelines/components/DeployModal'
 import { PipelineDetailPanel } from '@/features/pipelines/components/PipelineDetailPanel'
 import type { PipelineTemplate } from '@/features/pipelines/types'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
 function GroupHeader({ row }: { row: Row<PipelineTemplate> }) {
   const first = row.subRows[0]?.original
@@ -34,7 +35,15 @@ function PipelinesListPageInner() {
   const [searchParams] = useSearchParams()
   const filterName = searchParams.get('name') ?? ''
 
-  const { data: templates = [], error: loadError } = usePipelines(filterName || undefined)
+  const {
+    data: templateData,
+    error: loadError,
+    isError: loadFailed,
+    isLoading: templatesLoading,
+    refetch: refetchTemplates,
+  } = usePipelines(filterName || undefined)
+  const templates = templateData ?? []
+  const initialLoadFailed = loadFailed && templateData === undefined
   const { mutateAsync: deletePipeline } = useDeletePipeline()
   const { mutateAsync: runPipeline } = useRunPipeline()
 
@@ -113,8 +122,12 @@ function PipelinesListPageInner() {
         }
       >
         <DataBodyTemplate.Body>
-          {loadError && (
-            <p className="mb-4 text-sm text-destructive">Failed to load pipeline templates.</p>
+          {initialLoadFailed && (
+            <QueryErrorNotice
+              message="Failed to load pipeline templates"
+              error={loadError}
+              onRetry={() => void refetchTemplates()}
+            />
           )}
           {actionError && (
             <p className="mb-4 text-sm text-destructive">{actionError}</p>
@@ -122,6 +135,7 @@ function PipelinesListPageInner() {
           <DataGrid
             data={templates}
             columns={columns}
+            isLoading={templatesLoading}
             enableGrouping
             grouping={['name']}
             visibilityState={{ name: false }}

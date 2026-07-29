@@ -1,0 +1,1 @@
+var e={notifyOnChangeProps:[`data`,`isLoading`]};function t(t){return{refetchInterval:t,...e}}export{e as n,t};

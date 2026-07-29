@@ -1,0 +1,19 @@
+version: 4
+
+worker:
+  master_url: http://localhost:8080
+  state_dir: ./piper-worker-state/k8s
+  k8s:
+    cluster: development
+    namespaces:
+      - piper
+    kubeconfig: ./kubeconfig
+    in_cluster: false
+    result_outbox_dir: ./piper-worker-state/k8s/result-outbox
+    pipeline_runner:
+      image: ghcr.io/loykin/piper:latest
+      image_pull_policy: IfNotPresent
+    notebook_volume_browser:
+      image: ghcr.io/loykin/piper:latest
+  capabilities:
+    pipeline: {}

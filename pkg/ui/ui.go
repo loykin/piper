@@ -41,10 +41,16 @@ func Handler() http.Handler {
 		}
 		if _, err := fs.Stat(sub, path); err != nil {
 			// SPA fallback
+			w.Header().Set("Cache-Control", "no-cache")
 			r2 := r.Clone(r.Context())
 			r2.URL.Path = "/"
 			fileServer.ServeHTTP(w, r2)
 			return
+		}
+		if path == "index.html" {
+			w.Header().Set("Cache-Control", "no-cache")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		fileServer.ServeHTTP(w, r)
 	})

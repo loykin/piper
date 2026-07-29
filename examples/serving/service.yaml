@@ -23,4 +23,4 @@ spec:
     health_path: /health  # Piper polls this until 200 before marking service "running"
 
   # driver.placement.runtime defaults to whatever capability-matched worker is
-  # available; this demo runs a single baremetal serving-worker (see setup.sh).
+  # available; this demo runs one worker with the serving capability (see setup.sh).

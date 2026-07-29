@@ -4,14 +4,22 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      try {
+        const savedTheme = localStorage.getItem('piper-theme')
+        const dark = savedTheme === 'dark' ||
+          (savedTheme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+      } catch {}
+    </script>
     <title>piper</title>
-    <script type="module" crossorigin src="/ui/assets/index.js"></script>
-    <link rel="modulepreload" crossorigin href="/ui/assets/rolldown-runtime.js">
-    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-codemirror.js">
-    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-loykin.js">
-    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-ui.js">
-    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-react.js">
-    <link rel="stylesheet" crossorigin href="/ui/assets/index.css">
+    <script type="module" crossorigin src="/ui/assets/index-CkdBZckL.js"></script>
+    <link rel="modulepreload" crossorigin href="/ui/assets/rolldown-runtime-Bh1tDfsg.js">
+    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-codemirror-v0C_7AHL.js">
+    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-loykin-Bf4ps4tK.js">
+    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-ui-B6chref3.js">
+    <link rel="modulepreload" crossorigin href="/ui/assets/vendor-react-LmNE_v4L.js">
+    <link rel="stylesheet" crossorigin href="/ui/assets/index-Bp1lkvis.css">
   </head>
   <body>
     <div id="root"></div>

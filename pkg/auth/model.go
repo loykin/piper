@@ -5,7 +5,7 @@ import "time"
 // User is the persisted user account.
 type User struct {
 	ID           string    `db:"id"`
-	Email        string    `db:"email"`
+	Username     string    `db:"username"`
 	PasswordHash string    `db:"password_hash"`
 	SystemAdmin  bool      `db:"system_admin"`
 	Disabled     bool      `db:"disabled"`
@@ -28,7 +28,7 @@ type Session struct {
 type LoginAttempt struct {
 	ID            string    `db:"id"`
 	UserID        string    `db:"user_id"`
-	Email         string    `db:"email"`
+	Username      string    `db:"username"`
 	Success       bool      `db:"success"`
 	FailureReason string    `db:"failure_reason"`
 	AttemptedAt   time.Time `db:"attempted_at"`

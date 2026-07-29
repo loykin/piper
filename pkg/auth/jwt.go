@@ -9,7 +9,7 @@ import (
 
 type jwtClaims struct {
 	UserID      string `json:"uid"`
-	Email       string `json:"email"`
+	Username    string `json:"username"`
 	SystemAdmin bool   `json:"sa,omitempty"`
 	jwt.RegisteredClaims
 }
@@ -19,7 +19,7 @@ func issueAccessToken(u *User, signingKey []byte, issuer string, ttl time.Durati
 	now := time.Now().UTC()
 	claims := jwtClaims{
 		UserID:      u.ID,
-		Email:       u.Email,
+		Username:    u.Username,
 		SystemAdmin: u.SystemAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    issuer,

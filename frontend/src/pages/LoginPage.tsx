@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { LoginBodyTemplate } from '@loykin/designkit'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useForm } from 'react-hook-form'
+import { z } from 'zod'
 import { useNavigate } from '@/lib/router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -7,16 +10,28 @@ import { Label } from '@/components/ui/label'
 import { login, bootstrap, bootstrapStatus } from '@/features/auth/api'
 import { useAuth } from '@/features/auth/context'
 
+const loginSchema = z.object({
+  username: z.string().trim().min(1, 'Username is required.').max(128, 'Username must be at most 128 characters.').regex(/^\S+$/, 'Username must not contain spaces.'),
+  password: z.string().min(1, 'Password is required.'),
+})
+
+type LoginValues = z.infer<typeof loginSchema>
+
 export default function LoginPage() {
   const navigate = useNavigate()
   const { capabilities, loading: authLoading, setUser } = useAuth()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [submitError, setSubmitError] = useState('')
   // undefined while we haven't checked yet — avoids flashing the sign-in
   // form before we know whether this is a fresh install with zero users.
   const [needsBootstrap, setNeedsBootstrap] = useState<boolean | undefined>(undefined)
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { username: '', password: '' },
+  })
 
   useEffect(() => {
     if (!authLoading && capabilities && !capabilities.authentication) {
@@ -56,23 +71,19 @@ export default function LoginPage() {
     )
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
+  async function submit(values: LoginValues) {
+    setSubmitError('')
     try {
       if (needsBootstrap) {
-        await bootstrap({ email, password })
+        await bootstrap(values)
         // Bootstrap only creates the account; sign in with the same
         // credentials to establish a session, same as any other login.
       }
-      const user = await login({ email, password })
+      const user = await login(values)
       setUser(user)
       navigate('/', { replace: true })
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : (needsBootstrap ? 'Setup failed' : 'Login failed'))
-    } finally {
-      setLoading(false)
+      setSubmitError(err instanceof Error ? err.message : (needsBootstrap ? 'Setup failed' : 'Login failed'))
     }
   }
 
@@ -96,18 +107,17 @@ export default function LoginPage() {
           )}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
           <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="username">Username</Label>
             <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
+              id="username"
+              autoComplete="username"
+              placeholder="admin"
+              aria-invalid={!!errors.username}
+              {...register('username')}
             />
+            {errors.username && <p className="text-xs text-destructive">{errors.username.message}</p>}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="password">Password</Label>
@@ -115,16 +125,16 @@ export default function LoginPage() {
               id="password"
               type="password"
               autoComplete={needsBootstrap ? 'new-password' : 'current-password'}
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
+              aria-invalid={!!errors.password}
+              {...register('password')}
             />
+            {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
           </div>
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
+          {submitError && (
+            <p className="text-sm text-destructive" role="alert">{submitError}</p>
           )}
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading
+          <Button type="submit" className="w-full" disabled={isSubmitting}>
+            {isSubmitting
               ? (needsBootstrap ? 'Creating account…' : 'Signing in…')
               : (needsBootstrap ? 'Create admin account' : 'Sign in')}
           </Button>

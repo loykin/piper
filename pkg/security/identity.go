@@ -10,7 +10,7 @@ import (
 type Identity struct {
 	ID          string
 	DisplayName string
-	Email       string
+	Username    string
 	SystemAdmin bool
 }
 

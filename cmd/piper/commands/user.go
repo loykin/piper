@@ -21,7 +21,7 @@ import (
 func newUserCmd(loader *cliconfig.Loader) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "user",
-		Short: "Manage piper users",
+		Short: "manage piper users",
 	}
 	cmd.AddCommand(
 		newUserCreateCmd(loader),
@@ -106,20 +106,20 @@ func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, e
 }
 
 func newUserCreateCmd(loader *cliconfig.Loader) *cobra.Command {
-	var email string
+	var username string
 	var admin bool
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a new user",
+		Short: "create a new user",
 		Long: `Create a new piper user.  The password is read interactively from the terminal.
 
 Example:
-  piper user create --email admin@example.com --admin`,
+  piper user create --username admin --admin`,
 		PreRunE: makePreRunE(loader),
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if email == "" {
-				return fmt.Errorf("--email is required")
+			if username == "" {
+				return fmt.Errorf("--username is required")
 			}
 
 			_, _ = fmt.Fprint(os.Stderr, "Password: ")
@@ -139,18 +139,18 @@ Example:
 			defer func() { _ = closeDB() }()
 
 			u, err := provider.CreateUser(context.Background(), security.CreateUserInput{
-				Email:       email,
+				Username:    username,
 				Password:    string(passwordBytes),
 				SystemAdmin: admin,
 			})
 			if err != nil {
 				return fmt.Errorf("create user: %w", err)
 			}
-			fmt.Printf("Created user %s (id: %s)\n", u.Email, u.ID)
+			fmt.Printf("Created user %s (id: %s)\n", u.Username, u.ID)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&email, "email", "", "User email address (required)")
+	cmd.Flags().StringVar(&username, "username", "", "Login username (required)")
 	cmd.Flags().BoolVar(&admin, "admin", false, "Grant system admin privileges")
 	return cmd
 }
@@ -158,7 +158,7 @@ Example:
 func newUserListCmd(loader *cliconfig.Loader) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List all users",
+		Short:   "list all users",
 		PreRunE: makePreRunE(loader),
 		RunE: func(_ *cobra.Command, _ []string) error {
 			provider, closeDB, err := openAuthProvider(loader)
@@ -175,13 +175,13 @@ func newUserListCmd(loader *cliconfig.Loader) *cobra.Command {
 				fmt.Println("No users.")
 				return nil
 			}
-			fmt.Printf("%-36s  %-30s  %s\n", "ID", "Email", "Admin")
+			fmt.Printf("%-36s  %-30s  %s\n", "ID", "Username", "Admin")
 			for _, u := range users {
 				adminStr := ""
 				if u.SystemAdmin {
 					adminStr = "yes"
 				}
-				fmt.Printf("%-36s  %-30s  %s\n", u.ID, u.Email, adminStr)
+				fmt.Printf("%-36s  %-30s  %s\n", u.ID, u.Username, adminStr)
 			}
 			return nil
 		},
@@ -191,7 +191,7 @@ func newUserListCmd(loader *cliconfig.Loader) *cobra.Command {
 func newUserDeleteCmd(loader *cliconfig.Loader) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <id>",
-		Short:   "Delete a user and revoke all sessions",
+		Short:   "delete a user and revoke all sessions",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: makePreRunE(loader),
 		RunE: func(_ *cobra.Command, args []string) error {

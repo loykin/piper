@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import * as api from './api'
 import type { LogLine, RunFilter, SweepRequest } from './types'
 import { useProjectId } from '@/lib/projectContext'
+import { backgroundPolling, backgroundPollingNotifications } from '@/lib/query'
 
 export const runKeys = {
   all: (projectId: string) => ['runs', projectId] as const,
@@ -20,8 +21,7 @@ export function useRuns(filter?: RunFilter) {
     queryKey: runKeys.list(projectId, filter),
     queryFn: () => api.listRuns(projectId, filter),
     enabled: !!projectId,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 
@@ -31,8 +31,7 @@ export function useRun(id: string) {
     queryKey: runKeys.one(projectId, id),
     queryFn: () => api.getRun(projectId, id),
     enabled: !!projectId && !!id,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPolling(5000),
   })
 }
 
@@ -46,7 +45,7 @@ export function useRunSteps(runId: string) {
       const steps = query.state.data ?? []
       return steps.some(s => s.status === 'running' || s.status === 'pending') ? 2000 : 5000
     },
-    notifyOnChangeProps: ['data', 'isLoading'],
+    ...backgroundPollingNotifications,
   })
 }
 

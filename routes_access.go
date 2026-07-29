@@ -34,12 +34,13 @@ func (p *Piper) registerAuthRoutes(r *gin.Engine, userAPI *gin.RouterGroup) {
 		routes.RegisterAuthenticatedRoutes(userAPI)
 	}
 	if directory := p.cfg.Auth.UserDirectory; directory != nil {
-		userHandler := authpkg.NewUserHandler(directory, p.cfg.Auth.UserManager)
+		memberships, _ := p.cfg.Auth.ProjectMemberManager.(security.UserMembershipDirectory)
+		userHandler := authpkg.NewUserHandler(directory, p.cfg.Auth.UserManager, memberships)
 		userHandler.RegisterRoutes(userAPI.Group("", p.requireSystemAdmin()))
 		userHandler.RegisterBootstrapRoutes(r.Group("/api"))
 	}
 	if members := p.cfg.Auth.ProjectMemberManager; members != nil {
-		project.NewMemberHandler(members).RegisterRoutes(userAPI.Group(
+		project.NewMemberHandler(members, p.cfg.Auth.UserDirectory).RegisterRoutes(userAPI.Group(
 			"/projects/:project_id",
 			project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer),
 		))

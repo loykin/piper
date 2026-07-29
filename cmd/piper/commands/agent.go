@@ -16,8 +16,9 @@ import (
 // Used as the K8s Job entrypoint. It reports only to its parent worker.
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "agent",
-		Short: "Agent that executes a step inside a K8s Pod",
+		Use:    "agent",
+		Short:  "Agent that executes a step inside a K8s Pod",
+		Hidden: true,
 	}
 	cmd.AddCommand(newAgentExecCmd())
 	return cmd

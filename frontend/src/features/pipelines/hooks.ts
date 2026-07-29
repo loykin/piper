@@ -16,8 +16,7 @@ export function usePipelines(name?: string, limit?: number) {
     queryKey: pipelineKeys.list(projectId, name),
     queryFn: () => api.listPipelines(projectId, name, limit),
     enabled: !!projectId,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],
+    staleTime: 30_000,
   })
 }
 

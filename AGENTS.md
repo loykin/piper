@@ -22,7 +22,8 @@
 - React 19, TypeScript, Vite
 - Tailwind CSS v4, `@loykin/designkit`, `@loykin/gridkit`
 - React Query (`@tanstack/react-query`) for all server state
-- React Router v6
+- TanStack Router (`@tanstack/react-router`)
+- React Hook Form + Zod for validated forms
 
 ## Directory Layout
 
@@ -105,10 +106,13 @@ System-scoped hooks (workers, notebook-workers, serving-workers) use `api` direc
 ```
 /projects/:project_id/*   — project routes (most pages)
 /workers                  — system route (no project)
+/users                    — system user list
+/users/new                — system user creation form
 /login                    — auth
 ```
 
-Project routes are nested inside `<Routes>` under `projects/:project_id/*`.
+Project routes are children of `projectRoute` in `App.tsx`. System routes are
+children of `appLayoutRoute` and must not require a project ID.
 
 ## UI Components — No Raw HTML, No Custom CSS
 
@@ -150,6 +154,65 @@ Styles must be imported in `index.css` via `@import`, not in `main.tsx` via JS `
 - Each page is lazy-loaded via `React.lazy` in `App.tsx`.
 - **Use `DataBodyTemplate`** for data/list/settings pages (see DesignKit section above).
 
+### Resource List Interaction Pattern
+
+Resource management pages must use the same interaction model unless a
+documented domain constraint requires an exception:
+
+1. The list route renders `DataBodyTemplate` with a `DataGrid`.
+2. The primary create action is placed in `DataBodyTemplate.actions` and
+   navigates to a dedicated route such as `/users/new` or
+   `/projects/:project_id/credentials/new`.
+3. Do not place a create/edit form permanently above the list.
+4. Do not put a create/edit form in a `Dialog`, `AlertDialog`, or SidePanel.
+5. Clicking a data row opens a detail SidePanel using
+   `SidePanelProvider`, `useSidePanel()`, and DesignKit `PanelTemplate`.
+6. Detail panels belong in `features/<domain>/components/`, not inline in the
+   page. They may show metadata and quick actions but are not full create/edit
+   pages.
+7. Set `rowCursor` when `onRowClick` is present. Interactive controls inside a
+   row must call `event.stopPropagation()` so they do not also open the detail
+   panel.
+8. Use `AlertDialog` only for explicit confirmation of destructive or
+   irreversible actions.
+
+Reference implementations:
+
+- List + SidePanel: `pages/pipelines/PipelinesListPage.tsx`,
+  `pages/notebooks/NotebooksPage.tsx`, `pages/system/UsersPage.tsx`
+- Dedicated create page: `pages/credentials/CredentialCreatePage.tsx`,
+  `pages/system/UserCreatePage.tsx`
+- Detail panel: `features/pipelines/components/PipelineDetailPanel.tsx`,
+  `features/access/components/UserDetailPanel.tsx`
+
+### Form Convention
+
+- Validated create/edit forms with multiple fields use React Hook Form with a
+  Zod schema and `zodResolver`.
+- Render controls from `@/components/ui/` or public DesignKit exports.
+- The form lives on a routed page composed with `DataBodyTemplate`.
+- Follow the DesignKit playground's **Form Stacked** composition: render a
+  direct `DataBodyTemplate.Group layout="stacked"` child with a title and
+  description, put the form inside the group, use `space-y-3` field spacing,
+  and place compact Cancel/Submit buttons at the form's bottom-right.
+- Do not wrap a standard stacked form in `DataBodyTemplate.Body`, constrain it
+  with an arbitrary one-off width, or move its submit button into page actions.
+- Keep API submission in a feature mutation hook. The page handles navigation
+  and user-visible submission errors.
+
+### Users and Project Members
+
+- A User is a system identity. Its built-in login identifier is `username`;
+  do not invent profile fields that the backend cannot persist.
+- `system_admin` is the only global privilege. It grants system administration
+  and implicit access to every project.
+- `viewer`, `member`, and `admin` are project-specific roles stored on Project
+  Memberships, not on User accounts.
+- The Users detail SidePanel must show the account's project memberships so
+  global and project access are visibly connected.
+- The Project Members page manages memberships for the current project.
+  Add members by exact username; never require users to copy an opaque user ID.
+
 ## DataGrid (list pages)
 
 ```ts
@@ -173,6 +236,22 @@ const loading = l1 || l2 || l3
 <Section isLoading={l2} ... />
 ```
 
+## Route Loading
+
+- Use TanStack Router's `lazyRouteComponent`, not `React.lazy`, for routed
+  pages so the router can preload route modules.
+- Configure intent preloading and preload imperative sidebar destinations on
+  pointer/focus intent.
+- Keep the application shell and sidebar outside the page-level `Suspense`
+  boundary. A lazy page must never replace the entire application with a
+  loading message.
+- Delay the page fallback briefly so cached or fast route modules do not flash
+  a transient loading state.
+- During authentication bootstrap, render a stable content skeleton instead of
+  returning `null`.
+- Apply the saved/system theme in `index.html` before the first paint. Do not
+  force a temporary theme in `main.tsx`.
+
 ## Polling Queries (`refetchInterval`)
 
 React Query distinguishes two loading states:
@@ -184,17 +263,23 @@ React Query distinguishes two loading states:
 
 **Rules for hooks that use `refetchInterval`:**
 
-1. Always add `notifyOnChangeProps: ['data', 'isLoading']` — prevents re-renders on every `isFetching` toggle (which happens twice per interval).
+0. Poll only genuinely live status/monitoring resources. Catalog and
+   configuration resources such as pipeline templates must rely on mutation
+   invalidation and normal stale/refocus behavior instead of interval polling.
+1. Use `backgroundPolling()` from `lib/query.ts` for fixed intervals, or
+   `backgroundPollingNotifications` for state-dependent intervals. Do not
+   duplicate `refetchInterval`/`notifyOnChangeProps` boilerplate in hooks.
 2. Never pass `isLoading={isLoading}` to `DataGrid` on monitoring/status pages — the skeleton will flash on every poll. Omit the prop; the DataGrid shows the empty/data state immediately and updates silently.
 
 ```ts
 // hooks — polling query
+import { backgroundPolling } from '@/lib/query'
+
 export function useWorkers() {
   return useQuery({
     queryKey: workerKeys.list(),
     queryFn: api.listWorkers,
-    refetchInterval: 5000,
-    notifyOnChangeProps: ['data', 'isLoading'],  // ← required
+    ...backgroundPolling(5000),
   })
 }
 

@@ -4,6 +4,7 @@ import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin
 import { listRuns, type Step } from '@/features/runs/api'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useProjectId } from '@/lib/projectContext'
+import { Button } from '@/components/ui/button'
 
 interface TaskHistoryRow {
   runId: string
@@ -91,13 +92,15 @@ export default function TaskHistoryPage() {
         header: 'Run',
         meta: { minWidth: 220 },
         cell: ({ row }) => (
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="xs"
             onClick={() => navigate(`/projects/${projectId}/runs/${row.original.runId}`)}
-            className="font-mono text-xs text-indigo-400 hover:text-indigo-300"
+            className="px-0 font-mono"
           >
             {row.original.runId}
-          </button>
+          </Button>
         ),
       },
       {

@@ -45,7 +45,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(rg *gin.RouterGroup) {
 }
 
 type loginRequest struct {
-	Email    string `json:"email"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
@@ -55,7 +55,7 @@ func (h *Handler) login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	result, err := h.sessions.Login(c.Request.Context(), req.Email, req.Password)
+	result, err := h.sessions.Login(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
@@ -147,25 +147,54 @@ func refreshTokenFromRequest(c *gin.Context) string {
 
 // UserHandler exposes optional system-admin user directory and management APIs.
 type UserHandler struct {
-	directory security.UserDirectory
-	manager   security.UserManager
+	directory   security.UserDirectory
+	manager     security.UserManager
+	memberships security.UserMembershipDirectory
 	// bootstrapMu serializes bootstrap() so two concurrent first-run requests
 	// can't both observe zero users and both create an admin account.
 	bootstrapMu sync.Mutex
 }
 
-func NewUserHandler(directory security.UserDirectory, manager security.UserManager) *UserHandler {
-	return &UserHandler{directory: directory, manager: manager}
+func NewUserHandler(
+	directory security.UserDirectory,
+	manager security.UserManager,
+	memberships ...security.UserMembershipDirectory,
+) *UserHandler {
+	h := &UserHandler{directory: directory, manager: manager}
+	if len(memberships) > 0 {
+		h.memberships = memberships[0]
+	}
+	return h
 }
 
 // RegisterRoutes mounts the routes supported by the configured capabilities.
 // The caller must supply a system-admin-only route group.
 func (h *UserHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/users", h.listUsers)
+	if h.memberships != nil {
+		rg.GET("/users/:id/memberships", h.listUserMemberships)
+	}
 	if h.manager != nil {
 		rg.POST("/users", h.createUser)
 		rg.DELETE("/users/:id", h.deleteUser)
 	}
+}
+
+func (h *UserHandler) listUserMemberships(c *gin.Context) {
+	memberships, err := h.memberships.ListUserMemberships(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	out := make([]membershipViewDTO, len(memberships))
+	for i, membership := range memberships {
+		out[i] = membershipViewDTO{
+			ProjectID: membership.ProjectID,
+			UserID:    membership.UserID,
+			Role:      membership.Role,
+		}
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // RegisterBootstrapRoutes mounts the unauthenticated first-run setup routes.
@@ -211,7 +240,7 @@ func (h *UserHandler) bootstrap(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Email    string `json:"email"`
+		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -219,7 +248,7 @@ func (h *UserHandler) bootstrap(c *gin.Context) {
 		return
 	}
 	u, err := h.manager.CreateUser(c.Request.Context(), security.CreateUserInput{
-		Email:       req.Email,
+		Username:    req.Username,
 		Password:    req.Password,
 		SystemAdmin: true,
 	})
@@ -245,7 +274,7 @@ func (h *UserHandler) listUsers(c *gin.Context) {
 
 func (h *UserHandler) createUser(c *gin.Context) {
 	var req struct {
-		Email       string `json:"email"`
+		Username    string `json:"username"`
 		Password    string `json:"password"`
 		SystemAdmin bool   `json:"system_admin"`
 	}
@@ -254,7 +283,7 @@ func (h *UserHandler) createUser(c *gin.Context) {
 		return
 	}
 	u, err := h.manager.CreateUser(c.Request.Context(), security.CreateUserInput{
-		Email:       req.Email,
+		Username:    req.Username,
 		Password:    req.Password,
 		SystemAdmin: req.SystemAdmin,
 	})
@@ -278,16 +307,21 @@ func (h *UserHandler) deleteUser(c *gin.Context) {
 
 type userViewDTO struct {
 	ID          string `json:"id"`
-	Email       string `json:"email"`
-	DisplayName string `json:"display_name,omitempty"`
+	Username    string `json:"username"`
 	SystemAdmin bool   `json:"system_admin"`
 	Disabled    bool   `json:"disabled"`
+}
+
+type membershipViewDTO struct {
+	ProjectID string `json:"project_id"`
+	UserID    string `json:"user_id"`
+	Role      string `json:"role"`
 }
 
 func persistedUserView(u *User) userViewDTO {
 	return userViewDTO{
 		ID:          u.ID,
-		Email:       u.Email,
+		Username:    u.Username,
 		SystemAdmin: u.SystemAdmin,
 		Disabled:    u.Disabled,
 	}
@@ -296,8 +330,7 @@ func persistedUserView(u *User) userViewDTO {
 func securityUserView(u *security.User) userViewDTO {
 	return userViewDTO{
 		ID:          u.ID,
-		Email:       u.Email,
-		DisplayName: u.DisplayName,
+		Username:    u.Username,
 		SystemAdmin: u.SystemAdmin,
 		Disabled:    u.Disabled,
 	}

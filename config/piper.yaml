@@ -1,0 +1,125 @@
+# Piper single-node configuration and option reference.
+# Run from the project root: ./bin/piper server
+version: 4
+
+log:
+  format: text # text | json
+  level: info  # debug | info | warn | error
+
+# Artifact storage defaults to the built-in file store under server.data_dir.
+# For distributed workers, configure an S3-compatible URL here. Secrets should
+# come from PIPER_STORAGE_TOKEN or the credential referenced by credentialRef.
+# storage:
+#   disabled: false
+#   url: "s3://bucket?region=us-east-1"
+#   token: ""
+#   credentialRef: ""
+
+# Optional Git credentials used when fetching private pipeline sources.
+# Prefer PIPER_SOURCE_GIT_USER and PIPER_SOURCE_GIT_TOKEN.
+# source:
+#   git:
+#     user: ""
+#     token: ""
+
+server:
+  # HTTP API, UI, and gRPC worker tunnel share this single address.
+  http_addr: ":8080"
+
+  # Persistent database, artifacts, generated keys, and local worker state.
+  data_dir: ./piper-data
+
+  # Omit both keys to generate them on first startup. Piper stores them in
+  # ./piper-data/.server-secrets.yaml with owner-only permissions and reuses
+  # them after restart. Back up that file together with the database.
+  # auth_signing_key: ""
+  # secret_encryption_key: ""
+
+  # Optional shared secret required from standalone workers.
+  # Prefer PIPER_SERVER_WORKER_TOKEN instead of committing it.
+  # worker_token: ""
+
+  # Enable when Piper terminates TLS itself. When TLS terminates at an ingress
+  # or reverse proxy, leave this disabled.
+  # tls:
+  #   enabled: false
+  #   cert_file: ./certs/server.crt
+  #   key_file: ./certs/server.key
+
+  # SQLite is appropriate for a single server replica.
+  db:
+    driver: sqlite
+    path: ./piper-data/piper.db
+    # PostgreSQL alternative:
+    # driver: postgres
+    # dsn: "host=localhost port=5432 dbname=piper user=piper sslmode=require"
+
+  # Optional cleanup. Zero disables the corresponding cleanup.
+  # retention:
+  #   run_ttl: 0s
+  #   artifact_ttl: 0s
+
+  # Schedule recovery after downtime.
+  # schedule:
+  #   misfire_policy: run_once # run_once | skip
+  #   misfire_grace_period: 5m
+
+  # serving:
+  #   model_dir: ./piper-data/models
+
+  # Embedded workers are convenient for a single-node installation. Disable
+  # this block on a control plane served by standalone workers.
+  local:
+    enabled: true
+    pipeline: true
+    notebook: true
+    serving: true
+    concurrency: 4
+    notebook_config:
+      notebooks_root: ./notebooks
+      port_range: 8888-9900
+
+# Standalone worker reference. A worker process configures exactly one
+# infrastructure and, for baremetal/docker, exactly one capability. Kubernetes
+# workers may enable multiple capabilities. Start every variant with:
+#   piper worker --config ./config/<worker-file>.yaml
+#
+# worker:
+#   master_url: http://localhost:8080
+#   worker_token: "" # prefer PIPER_WORKER_WORKER_TOKEN
+#   hostname: ""     # empty uses the OS hostname
+#   state_dir: ./piper-worker-state
+#   labels:
+#     accelerator: cpu
+#
+#   # Choose exactly one infrastructure:
+#   baremetal: {}
+#   # docker:
+#   #   network: bridge
+#   #   volumes:
+#   #     - name: notebooks
+#   #       host_path: ./notebooks
+#   #       container_path: /notebooks
+#   #       read_only: false
+#   # k8s:
+#   #   cluster: production
+#   #   namespaces: [piper]
+#   #   kubeconfig: "" # required only outside the cluster
+#   #   in_cluster: true
+#   #   result_outbox_dir: ./piper-worker-state/result-outbox
+#   #   pipeline_runner:
+#   #     image: ghcr.io/loykin/piper:latest
+#   #     image_pull_policy: IfNotPresent
+#   #   notebook_volume_browser:
+#   #     image: ghcr.io/loykin/piper:latest
+#
+#   capabilities:
+#     pipeline:
+#       label: ""
+#       concurrency: 4
+#       output_dir: ./piper-outputs
+#       meta_dir: ""
+#     # notebook:
+#     #   notebooks_root: ./notebooks
+#     #   port_range: 8888-9900
+#     # serving: {}

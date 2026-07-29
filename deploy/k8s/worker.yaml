@@ -1,6 +1,23 @@
 # Bare-metal worker example. Use this only when the container or host provides
 # the commands and runtimes required by submitted pipeline steps. A Kubernetes
 # deployment that executes steps as Jobs should use k8s-worker.yaml instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: piper-host-worker-config
+  namespace: piper
+data:
+  piper.yaml: |
+    version: 4
+    worker:
+      master_url: http://piper-server.piper.svc.cluster.local:8080
+      state_dir: /var/lib/piper
+      baremetal: {}
+      capabilities:
+        pipeline:
+          concurrency: 2
+          output_dir: /var/lib/piper/outputs
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,13 +36,29 @@ spec:
       serviceAccountName: piper
       containers:
         - name: worker
-          image: piper/piper:latest
+          image: ghcr.io/loykin/piper:latest
           imagePullPolicy: IfNotPresent
           args:
+            - --config=/etc/piper/piper.yaml
             - worker
-            - --master-url=http://piper-server.piper.svc.cluster.local:8080
-            - --concurrency=2
-            - --infrastructure=baremetal
+          env:
+            - name: PIPER_WORKER_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: piper-server-secrets
+                  key: worker_token
+          volumeMounts:
+            - name: config
+              mountPath: /etc/piper
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/piper
           # No storage env here: artifact storage is configured once on the
           # master (see server.yaml) and forwarded to this worker per-task
           # over the existing tunnel.
+      volumes:
+        - name: config
+          configMap:
+            name: piper-host-worker-config
+        - name: state
+          emptyDir: {}

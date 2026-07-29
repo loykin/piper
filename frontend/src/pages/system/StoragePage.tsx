@@ -399,7 +399,7 @@ export default function StoragePage() {
           </DataBodyTemplate.Row>
 
           <DataBodyTemplate.Row label="File">
-            <input
+            <Input
               ref={fileInputRef}
               type="file"
               className="hidden"

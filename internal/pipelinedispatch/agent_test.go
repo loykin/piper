@@ -97,6 +97,40 @@ func TestAgentBackendDispatchUsesPipelinePlacement(t *testing.T) {
 	}
 }
 
+// TestAgentBackendDispatchRespectsExplicitRuntimeAmongMixedInfrastructure
+// reproduces a pipeline declaring driver.placement.runtime="docker" while a
+// k8s worker is registered first and a docker worker second, both
+// advertising the pipeline capability. Without an infrastructure filter,
+// taskPlacement never forwards the declared runtime and the router can pick
+// the k8s worker, silently ignoring the explicit runtime selection.
+func TestAgentBackendDispatchRespectsExplicitRuntimeAmongMixedInfrastructure(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{
+		ID:             "k8s-agent",
+		Infrastructure: iagent.InfrastructureK8s,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+	})
+	reg.Register(iagent.Info{
+		ID:             "docker-agent",
+		Infrastructure: iagent.InfrastructureDocker,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+	})
+	rpc := &recordingPipelineAgentRPC{}
+	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
+	pl := pipeline.Pipeline{}
+	pl.Spec.Defaults = &pipeline.PipelineDefaults{Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Runtime: iagent.InfrastructureDocker}}}
+	pipelineJSON, _ := json.Marshal(pl)
+	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
+
+	if err := backend.Dispatch(context.Background(), task); err != nil {
+		t.Fatalf("Dispatch returned error: %v", err)
+	}
+	calls := rpc.snapshot()
+	if calls[0].AgentID != "docker-agent" {
+		t.Fatalf("agent id = %q, want docker-agent", calls[0].AgentID)
+	}
+}
+
 func TestAgentBackendDispatchPreservesTaskEnv(t *testing.T) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{ID: "agent-1", Capabilities: []string{iagent.CapabilityPipeline}})

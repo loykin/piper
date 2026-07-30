@@ -36,7 +36,7 @@ spec:
             readOnlyRootFilesystem: true
           args:
             - --config=/etc/piper/piper.yaml
-            - worker
+            - k8s-worker
           env:
             - name: PIPER_WORKER_WORKER_TOKEN
               valueFrom:

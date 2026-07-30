@@ -181,6 +181,7 @@ func taskPlacement(task *proto.Task) (iagent.Placement, error) {
 	placement := iagent.Placement{
 		WorkerID:         defaults.Driver.Placement.Worker,
 		Namespace:        ns,
+		Infrastructure:   defaults.Driver.Placement.Runtime,
 		RequireContainer: pipelineRequiresContainer(&pl),
 	}
 	if pipelineRequiresNotebook(&pl) {

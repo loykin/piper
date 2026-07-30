@@ -15,6 +15,7 @@ import (
 func newWorkerCmd(loader *cliconfig.Loader) *cobra.Command {
 	return &cobra.Command{
 		Use:     "worker",
+		Aliases: []string{"k8s-worker"},
 		Short:   "start the worker configured in piper.yaml",
 		PreRunE: makePreRunE(loader),
 		RunE: func(_ *cobra.Command, _ []string) error {

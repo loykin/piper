@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
@@ -16,15 +17,31 @@ func NewStepRepo(exec *dbstore.Executor, source string) run.StepRepository {
 
 func (r *stepRepo) Upsert(ctx context.Context, s *run.Step) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		normalized := *s
+		normalized.StartedAt = utcPtr(s.StartedAt)
+		normalized.EndedAt = utcPtr(s.EndedAt)
 		_, err := db.NamedExecContext(ctx, `
 			INSERT INTO steps (project_id, run_id, step_name, status, started_at, ended_at, error, attempts)
 			VALUES (:project_id, :run_id, :step_name, :status, :started_at, :ended_at, :error, :attempts)
 			ON CONFLICT(project_id, run_id, step_name) DO UPDATE SET
 				status=excluded.status, started_at=excluded.started_at,
 				ended_at=excluded.ended_at, error=excluded.error, attempts=excluded.attempts
-		`, s)
+		`, &normalized)
 		return err
 	})
+}
+
+// utcPtr normalizes t to UTC. Timestamps that cross a process/network
+// boundary (e.g. a worker's JSON-encoded task result) can carry a numeric,
+// unnamed timezone offset; SQLite's default text-based time round-trip
+// cannot parse that back into a time.Time on read ("unsupported Scan ...
+// into type *time.Time"). A UTC location always round-trips.
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
 
 func (r *stepRepo) List(ctx context.Context, projectID, runID string) ([]*run.Step, error) {

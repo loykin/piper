@@ -270,6 +270,42 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		}
 	})
 
+	t.Run("Upsert_and_List_with_timestamps", func(t *testing.T) {
+		runID := uuid.NewString()
+		// Reproduces a worker reporting a result over JSON RPC: unmarshaling
+		// an RFC3339 timestamp with a numeric (non-"Z") offset yields a
+		// time.Time in an unnamed fixed-offset zone whenever that offset
+		// doesn't happen to match the host's local zone. Constructed
+		// directly (rather than via time.Parse) so the repro doesn't depend
+		// on — and can't accidentally match — the test host's local TZ.
+		started := time.Date(2026, 8, 1, 18, 39, 0, 123456789, time.FixedZone("", 5*3600+30*60))
+		ended := started.Add(90 * time.Second)
+		step := &run.Step{
+			ProjectID: projectID,
+			RunID:     runID,
+			StepName:  "reported",
+			Status:    "success",
+			StartedAt: &started,
+			EndedAt:   &ended,
+		}
+		if err := repo.Upsert(ctx, step); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		steps, err := repo.List(ctx, projectID, runID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(steps) != 1 {
+			t.Fatalf("expected 1 step, got %d", len(steps))
+		}
+		if steps[0].StartedAt == nil || !steps[0].StartedAt.Equal(started) {
+			t.Errorf("StartedAt = %v, want %v", steps[0].StartedAt, started)
+		}
+		if steps[0].EndedAt == nil || !steps[0].EndedAt.Equal(ended) {
+			t.Errorf("EndedAt = %v, want %v", steps[0].EndedAt, ended)
+		}
+	})
+
 	t.Run("Upsert_updates_existing", func(t *testing.T) {
 		runID := uuid.NewString()
 		step := &run.Step{ProjectID: projectID, RunID: runID, StepName: "eval", Status: "pending"}

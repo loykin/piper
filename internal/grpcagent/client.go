@@ -36,6 +36,9 @@ type ClientConfig struct {
 	Capabilities   []string
 	ClusterName    string
 	Labels         map[string]string
+	// Namespaces lists the Kubernetes namespaces this worker is allowed to
+	// manage. Empty means unrestricted. Only meaningful for k8s workers.
+	Namespaces []string
 	// Capacity is the maximum number of concurrent tasks (0 = unlimited).
 	Capacity int
 }
@@ -180,6 +183,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 				Capabilities:   c.cfg.Capabilities,
 				ClusterName:    c.cfg.ClusterName,
 				Labels:         labels,
+				Namespaces:     c.cfg.Namespaces,
 			},
 		},
 	}); err != nil {

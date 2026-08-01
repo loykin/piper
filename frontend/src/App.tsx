@@ -261,19 +261,21 @@ function AppSidebar() {
           <SidebarMenuItem>
             {user ? (
               <DropdownMenu>
-                <DropdownMenuTrigger className="w-full">
-                  <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-xs font-semibold">
-                      {user.username.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0 flex-1 text-left">
-                      <p className="truncate text-sm font-medium">{user.username}</p>
-                      {user.system_admin && (
-                        <p className="truncate text-xs text-muted-foreground">System Admin</p>
-                      )}
-                    </div>
-                    <ChevronsUpDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
-                  </SidebarMenuButton>
+                <DropdownMenuTrigger
+                  render={
+                    <SidebarMenuButton size="lg" className="w-full data-[popup-open]:bg-sidebar-accent" />
+                  }
+                >
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-xs font-semibold">
+                    {user.username.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1 text-left">
+                    <p className="truncate text-sm font-medium">{user.username}</p>
+                    {user.system_admin && (
+                      <p className="truncate text-xs text-muted-foreground">System Admin</p>
+                    )}
+                  </div>
+                  <ChevronsUpDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="start" className="w-56">
                   <DropdownMenuGroup>

@@ -175,6 +175,7 @@ func New(cfg Config) (*Piper, error) {
 				Capabilities:   reg.Capabilities,
 				ClusterName:    reg.ClusterName,
 				Labels:         reg.Labels,
+				Namespaces:     reg.Namespaces,
 			}
 			// Extract capacity encoded in Labels by grpcagent.Client.
 			if c := reg.Labels["capacity"]; c != "" {

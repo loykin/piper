@@ -407,6 +407,11 @@ export default function PipelineEditorPage() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitModalOpen, setSubmitModalOpen] = useState(false)
+  // Draft resolved at Submit time — see resolveSubmitDraft(). Keeping it in a
+  // ref (rather than re-reading `tasks`/`defaults` state) guarantees
+  // confirmSubmit() sends exactly what was validated, even though the YAML
+  // tab's content only lands in state asynchronously.
+  const pendingSubmitDraftRef = useRef<{ name: string; steps: PipelineStepDraft[]; defaults: PipelineDefaultsDraft } | null>(null)
   const [submitVolumeId, setSubmitVolumeId] = useState('')
   const [resetKey, setResetKey] = useState(0)
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
@@ -640,24 +645,55 @@ export default function PipelineEditorPage() {
     }
   }
 
+  // Resolves the draft that Submit should act on. When the YAML tab is
+  // active, yamlText is authoritative — even if "Apply YAML to Graph" was
+  // never clicked — because the editor already told the user "Draft looks
+  // valid" for that exact text. Falls back to the Design canvas state
+  // otherwise. Also syncs canvas state from a successful YAML parse so the
+  // two views don't drift once Submit has run.
+  function resolveSubmitDraft(): { name: string; steps: PipelineStepDraft[]; defaults: PipelineDefaultsDraft } | null {
+    if (activeTab !== 'yaml') {
+      return { name: pipelineName, steps: tasks, defaults }
+    }
+    try {
+      const parsed = parsePipelineDraftYaml(yamlText)
+      setPipelineName(parsed.name)
+      setTasks(parsed.steps)
+      setDefaults(parsed.defaults)
+      setPositions(buildPositions(parsed.steps))
+      setSelectedId(parsed.steps[0]?.id ?? '')
+      setEditingId(null)
+      setActiveTab('design')
+      return { name: parsed.name, steps: parsed.steps, defaults: parsed.defaults }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      return null
+    }
+  }
+
   async function handleSubmit() {
-    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks, defaults })
+    const draft = resolveSubmitDraft()
+    if (!draft) return
+    const messages = validatePipelineDraft({ name: draft.name, steps: draft.steps, defaults: draft.defaults })
     if (messages.length > 0) { setError(messages[0]); return }
+    setError('')
+    pendingSubmitDraftRef.current = draft
     setSubmitModalOpen(true)
     setSubmitVolumeId(editorSourceKind === 'notebook-volume' ? editorVolumeId : '')
   }
 
   async function confirmSubmit() {
+    const draft = pendingSubmitDraftRef.current ?? { name: pipelineName, steps: tasks, defaults }
     setSubmitting(true)
     setError('')
     try {
-      const yaml = buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults })
+      const yaml = buildPipelineDraftYaml({ name: draft.name, steps: draft.steps, source: pipelineSource, defaults: draft.defaults })
       await createPipeline(projectId, {
         yaml,
         volume_id: submitVolumeId || undefined,
       })
       setSubmitModalOpen(false)
-      navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(pipelineName)}`)
+      navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(draft.name)}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

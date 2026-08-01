@@ -160,6 +160,7 @@ type Registration struct {
 	ClusterName    string                 `protobuf:"bytes,6,opt,name=cluster_name,json=clusterName,proto3" json:"cluster_name,omitempty"`
 	Labels         map[string]string      `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Infrastructure string                 `protobuf:"bytes,9,opt,name=infrastructure,proto3" json:"infrastructure,omitempty"` // "baremetal" | "docker" | "k8s"
+	Namespaces     []string               `protobuf:"bytes,10,rep,name=namespaces,proto3" json:"namespaces,omitempty"`        // allowed namespaces for k8s workers; empty means unrestricted
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -234,6 +235,13 @@ func (x *Registration) GetInfrastructure() string {
 		return x.Infrastructure
 	}
 	return ""
+}
+
+func (x *Registration) GetNamespaces() []string {
+	if x != nil {
+		return x.Namespaces
+	}
+	return nil
 }
 
 // RPCResponse carries the result (or error) for a MasterMessage command.
@@ -698,14 +706,18 @@ const file_agent_proto_rawDesc = "" +
 	"proxy_data\x18\x04 \x01(\v2\x19.piper.agent.v1.ProxyDataH\x00R\tproxyData\x12=\n" +
 	"\vproxy_close\x18\x05 \x01(\v2\x1a.piper.agent.v1.ProxyCloseH\x00R\n" +
 	"proxyCloseB\t\n" +
-	"\apayload\"\xca\x02\n" +
+	"\apayload\"\xea\x02\n" +
 	"\fRegistration\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\"\n" +
 	"\fcapabilities\x18\x05 \x03(\tR\fcapabilities\x12!\n" +
 	"\fcluster_name\x18\x06 \x01(\tR\vclusterName\x12@\n" +
 	"\x06labels\x18\a \x03(\v2(.piper.agent.v1.Registration.LabelsEntryR\x06labels\x12&\n" +
-	"\x0einfrastructure\x18\t \x01(\tR\x0einfrastructure\x1a9\n" +
+	"\x0einfrastructure\x18\t \x01(\tR\x0einfrastructure\x12\x1e\n" +
+	"\n" +
+	"namespaces\x18\n" +
+	" \x03(\tR\n" +
+	"namespaces\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\x04\x10\x05J\x04\b\b\x10\tR\x04kindR\x04gpusR\x04mode\"\\\n" +

@@ -62,7 +62,7 @@ func New(cfg Config) (*Driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker driver: resolve executable: %w", err)
 	}
-	cli, err := dockerclient.New(dockerclient.FromEnv)
+	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		return nil, fmt.Errorf("docker driver: create client: %w", err)
 	}

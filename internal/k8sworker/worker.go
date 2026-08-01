@@ -103,6 +103,7 @@ func New(cfg Config) *Worker {
 		ClusterName:    cfg.Agent.ClusterName,
 		Capabilities:   capabilities,
 		Labels:         cfg.Agent.Labels,
+		Namespaces:     cfg.K8s.Namespaces,
 	})
 
 	var outbox *pdriver.ResultOutbox

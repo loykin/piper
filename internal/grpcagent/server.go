@@ -98,6 +98,7 @@ type Registration struct {
 	Capabilities   []string
 	ClusterName    string
 	Labels         map[string]string
+	Namespaces     []string
 	ConnectedAt    time.Time
 }
 
@@ -150,6 +151,7 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 		Capabilities:   reg.Capabilities,
 		ClusterName:    reg.ClusterName,
 		Labels:         reg.Labels,
+		Namespaces:     reg.Namespaces,
 		ConnectedAt:    time.Now(),
 	}
 

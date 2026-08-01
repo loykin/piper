@@ -78,6 +78,33 @@ func TestRouterSelectRespectsExplicitRuntimeAmongMixedInfrastructure(t *testing.
 	}
 }
 
+// TestRouterSelectRespectsNamespaceAllowList reproduces a k8s worker
+// registered with a restricted Namespaces allow-list (as sent over the gRPC
+// registration protocol). A placement targeting a namespace outside that
+// list must not be routed to it, and one inside it must succeed.
+func TestRouterSelectRespectsNamespaceAllowList(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{
+		ID:             "k8s-worker",
+		Infrastructure: InfrastructureK8s,
+		Capabilities:   []string{CapabilityNotebook},
+		Namespaces:     []string{"piper"},
+	})
+	router := NewRouter(reg)
+
+	if _, err := router.Select(WorkloadNotebook, Placement{Namespace: "notebooks"}); err == nil {
+		t.Fatal("expected no candidate for a namespace outside the worker's allow-list")
+	}
+
+	got, err := router.Select(WorkloadNotebook, Placement{Namespace: "piper"})
+	if err != nil {
+		t.Fatalf("Select returned error: %v", err)
+	}
+	if got.ID != "k8s-worker" {
+		t.Fatalf("selected worker = %q, want k8s-worker", got.ID)
+	}
+}
+
 // TestRouterSelectRejectsExplicitWorkerWithMismatchedRuntime ensures that
 // even an explicit worker_id is rejected if it contradicts a declared
 // driver.placement.runtime, mirroring RequireContainer's behavior.

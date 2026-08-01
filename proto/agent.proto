@@ -42,6 +42,7 @@ message Registration {
   string              cluster_name = 6;
   map<string, string> labels       = 7;
   string              infrastructure = 9; // "baremetal" | "docker" | "k8s"
+  repeated string     namespaces     = 10; // allowed namespaces for k8s workers; empty means unrestricted
 }
 
 // RPCResponse carries the result (or error) for a MasterMessage command.

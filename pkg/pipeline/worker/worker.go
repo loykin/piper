@@ -6,6 +6,7 @@ package pipelineworker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,6 +33,10 @@ const (
 	RuntimeDocker    RuntimeType = "docker"
 )
 
+// defaultShutdownGrace bounds how long a worker waits for in-flight jobs to
+// stop gracefully during shutdown when AgentConfig.ShutdownGrace is unset.
+const defaultShutdownGrace = 20 * time.Second
+
 // AgentConfig configures the gRPC connection to the master agent server
 // and this worker's identity within the agent registry.
 type AgentConfig struct {
@@ -43,6 +48,9 @@ type AgentConfig struct {
 	Hostname     string
 	Concurrency  int
 	Capabilities []string // execution capabilities; pipeline is always included
+	// ShutdownGrace bounds how long shutdown() waits for in-flight jobs to
+	// stop gracefully before Run returns. Defaults to 20s.
+	ShutdownGrace time.Duration
 }
 
 // StoreConfig holds the master connection and artifact store settings
@@ -76,11 +84,18 @@ type Config struct {
 	Docker    DockerConfig
 }
 
-// trackedTask holds state for an in-flight step execution.
+// trackedTask holds state for an in-flight step execution. It is registered
+// (with starting=true and no handle yet) atomically with the capacity
+// reservation in dispatch, before the potentially-slow driver.Start call, so
+// a cancelRun arriving mid-Start can find and cancel it instead of finding
+// nothing.
 type trackedTask struct {
-	handle pdriver.Handle
-	cancel context.CancelFunc
-	logs   logsink.LogSink
+	runID    string // set at reservation time, before handle exists
+	handle   pdriver.Handle
+	cancel   context.CancelFunc
+	logs     logsink.LogSink
+	starting bool // true between reservation and driver.Start returning
+	canceled bool // set by cancelRun if it canceled this entry while starting
 }
 
 // Worker manages pipeline workloads via gRPC.
@@ -93,6 +108,7 @@ type Worker struct {
 	mu       sync.Mutex
 	active   map[string]*trackedTask // runtimeKey → trackedTask
 	inFlight int
+	draining bool
 }
 
 // New creates a new Worker.
@@ -105,6 +121,9 @@ func New(cfg Config) (*Worker, error) {
 	}
 	if cfg.Agent.ID == "" {
 		cfg.Agent.ID = NewID("")
+	}
+	if cfg.Agent.ShutdownGrace <= 0 {
+		cfg.Agent.ShutdownGrace = defaultShutdownGrace
 	}
 	hostname := cfg.Agent.Hostname
 	if hostname == "" {
@@ -209,8 +228,7 @@ func New(cfg Config) (*Worker, error) {
 		return nil, err
 	}
 	if err := grpcagent.RegisterJSON(d, iagent.MethodPipelineCancelRun, func(_ context.Context, req cancelRunRequest) (any, error) {
-		w.cancelRun(req.RunID)
-		return nil, nil
+		return nil, w.cancelRun(req.RunID)
 	}); err != nil {
 		closeDriver()
 		return nil, err
@@ -257,23 +275,55 @@ func (w *Worker) Run(ctx context.Context) error {
 	go w.outbox.Run(ctx)
 
 	err := w.client.Run(ctx)
-	w.shutdown()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Agent.ShutdownGrace)
+	defer cancel()
+	w.shutdown(shutdownCtx)
 	return err
 }
 
 // dispatch is called by the gRPC dispatcher when the master sends a pipeline.dispatch RPC.
-func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
+func (w *Worker) dispatch(_ context.Context, task *proto.Task) error {
 	if task.ProjectID == "" {
 		return fmt.Errorf("pipeline worker: project_id is required")
 	}
-	w.mu.Lock()
-	if w.inFlight >= w.cfg.Agent.Concurrency {
-		w.mu.Unlock()
-		return &iagent.BusyError{Reason: "worker at capacity"}
-	}
-	w.mu.Unlock()
 
 	runtimeKey := pdriver.RuntimeKey(w.cfg.Agent.ID, task.RunID, task.StepName, task.Attempt)
+	var taskCtx context.Context
+	var cancel context.CancelFunc
+	if task.Deadline != nil && !task.Deadline.IsZero() {
+		taskCtx, cancel = context.WithDeadline(context.Background(), *task.Deadline)
+	} else {
+		taskCtx, cancel = context.WithCancel(context.Background())
+	}
+
+	// Reserve capacity and a "starting" placeholder atomically with the
+	// capacity check, before the potentially-slow driver.Start call below.
+	// This closes the race where two concurrent dispatches both observe
+	// spare capacity and both Start, exceeding configured concurrency, and
+	// makes an in-progress Start interruptible by cancelRun (which can now
+	// find and cancel a "starting" entry instead of finding nothing).
+	w.mu.Lock()
+	if w.draining {
+		w.mu.Unlock()
+		cancel()
+		return &iagent.BusyError{Reason: "worker draining"}
+	}
+	if w.inFlight >= w.cfg.Agent.Concurrency {
+		w.mu.Unlock()
+		cancel()
+		return &iagent.BusyError{Reason: "worker at capacity"}
+	}
+	w.inFlight++
+	w.active[runtimeKey] = &trackedTask{runID: task.RunID, cancel: cancel, starting: true}
+	w.mu.Unlock()
+
+	rollback := func() {
+		w.mu.Lock()
+		delete(w.active, runtimeKey)
+		w.inFlight--
+		w.mu.Unlock()
+	}
+
 	storageURL, storageToken := taskStorageForWorker(task, w.cfg.Agent.MasterURL, w.cfg.Agent.WorkerToken, w.cfg.Store.LocalStoreAccess)
 	execEnv := mergeExecutionEnv(w.gitEnv(), task.Env)
 	taskCopy := *task
@@ -292,21 +342,38 @@ func (w *Worker) dispatch(ctx context.Context, task *proto.Task) error {
 	if w.cfg.Runtime == RuntimeDocker {
 		image, err := pdriver.ResolveImage(&taskCopy, string(RuntimeDocker))
 		if err != nil {
+			rollback()
+			spec.LogSink.Stop()
 			return err
 		}
 		spec.Image = image
 	}
 
-	handle, err := w.driver.Start(ctx, &taskCopy, spec)
+	handle, err := w.driver.Start(taskCtx, &taskCopy, spec)
 	if err != nil {
+		rollback()
 		spec.LogSink.Stop()
 		return fmt.Errorf("start job: %w", err)
 	}
 
-	taskCtx, cancel := context.WithCancel(context.Background())
 	w.mu.Lock()
-	w.active[runtimeKey] = &trackedTask{handle: handle, cancel: cancel, logs: spec.LogSink}
-	w.inFlight++
+	tt, stillTracked := w.active[runtimeKey]
+	canceledMidStart := !stillTracked || tt.canceled
+	if canceledMidStart {
+		// cancelRun marked this "starting" entry canceled (or, defensively,
+		// it's altogether missing) while Start was in flight. Don't publish
+		// it as active or hand it to observe — stop what was just started
+		// and clean up the reservation instead.
+		delete(w.active, runtimeKey)
+		w.inFlight--
+		w.mu.Unlock()
+		_ = w.driver.Stop(context.Background(), handle, 10*time.Second)
+		spec.LogSink.Stop()
+		return nil
+	}
+	tt.handle = handle
+	tt.logs = spec.LogSink
+	tt.starting = false
 	w.mu.Unlock()
 
 	go w.observe(taskCtx, handle)
@@ -392,7 +459,26 @@ func (w *Worker) observe(ctx context.Context, handle pdriver.Handle) {
 
 	exit, err := w.driver.Wait(ctx, handle)
 	if err != nil {
-		// ctx cancelled (worker shutdown or run cancel).
+		// The master's own timeout enforcement (via Queue.startTaskLocked's
+		// timer) is authoritative; this is a local backstop so the process
+		// actually stops even if the master tunnel is down. An explicit
+		// cancelRun()/shutdown() already owns Stop() for the Canceled case —
+		// only act here when our own deadline fired.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			_ = w.driver.Stop(context.Background(), handle, 10*time.Second)
+			result := proto.TaskResult{
+				TaskID:    handle.TaskID,
+				WorkerID:  w.cfg.Agent.ID,
+				Status:    proto.TaskStatusFailed,
+				Error:     "task execution timeout",
+				StartedAt: time.Now(),
+				EndedAt:   time.Now(),
+				Attempt:   handle.Attempt,
+			}
+			if enqErr := w.outbox.Enqueue(result); enqErr != nil {
+				slog.Error("pipeline worker: persist timeout result failed", "task_id", result.TaskID, "err", enqErr)
+			}
+		}
 		return
 	}
 
@@ -442,23 +528,38 @@ func (w *Worker) buildResult(handle pdriver.Handle, exit pdriver.Exit) proto.Tas
 	}
 }
 
-// cancelRun stops all active jobs for the given run.
-func (w *Worker) cancelRun(runID string) {
+// cancelRun stops all active jobs for the given run and reports any stop
+// failures back to the caller so they can be surfaced to the master as a
+// best-effort-remote-stop warning rather than silently swallowed.
+func (w *Worker) cancelRun(runID string) error {
 	w.mu.Lock()
 	var toStop []trackedTask
 	for _, tt := range w.active {
-		if tt.handle.RunID == runID {
-			toStop = append(toStop, *tt)
-			tt.cancel()
+		if tt.runID != runID {
+			continue
 		}
+		tt.cancel()
+		if tt.starting {
+			// No handle yet: canceling taskCtx is what interrupts the
+			// in-progress driver.Start call. Mark it so dispatch's
+			// post-Start check stops the workload instead of publishing it
+			// as active — there is nothing to Stop here yet.
+			tt.canceled = true
+			continue
+		}
+		toStop = append(toStop, *tt)
 	}
 	w.mu.Unlock()
 
 	// Stop the drivers using the handles captured under the lock.
 	// Re-querying w.active would race with the observe goroutine's cleanup.
+	var errs []error
 	for _, tt := range toStop {
-		_ = w.driver.Stop(context.Background(), tt.handle, 10*time.Second)
+		if err := w.driver.Stop(context.Background(), tt.handle, 10*time.Second); err != nil {
+			errs = append(errs, fmt.Errorf("stop %s: %w", tt.runID, err))
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // leaseLoop pushes active task IDs to the master every 10 seconds.
@@ -488,18 +589,26 @@ func (w *Worker) leaseLoop(ctx context.Context) {
 	}
 }
 
-// shutdown stops all in-flight jobs gracefully.
-func (w *Worker) shutdown() {
+// shutdown stops all in-flight jobs gracefully, bounded by ctx. It rejects
+// any further dispatch() calls immediately (draining) so no new work is
+// admitted while in-flight jobs are being stopped.
+func (w *Worker) shutdown(ctx context.Context) {
 	w.mu.Lock()
+	w.draining = true
 	handles := make([]pdriver.Handle, 0, len(w.active))
 	for _, tt := range w.active {
 		tt.cancel()
+		if tt.starting {
+			// No handle yet; canceling taskCtx is what interrupts the
+			// in-progress driver.Start call (see dispatch's post-Start check).
+			continue
+		}
 		handles = append(handles, tt.handle)
 	}
 	w.mu.Unlock()
 
 	for _, h := range handles {
-		_ = w.driver.Stop(context.Background(), h, 15*time.Second)
+		_ = w.driver.Stop(ctx, h, 15*time.Second)
 	}
 	if closer, ok := w.driver.(interface{ Close() error }); ok {
 		_ = closer.Close()

@@ -69,6 +69,13 @@ type Task struct {
 	// Workers must not independently choose artifact/source storage.
 	StorageURL   string `json:"storage_url,omitempty"`
 	StorageToken string `json:"storage_token,omitempty"`
+
+	// Deadline is the absolute time by which this task must complete, derived
+	// from step.options.timeout by the master. Nil/zero means unlimited. The
+	// worker enforces this locally (so it can stop the process/container even
+	// if the master tunnel is down) in addition to the master's own
+	// authoritative enforcement.
+	Deadline *time.Time `json:"deadline,omitempty"`
 }
 
 // TaskResult is the result a worker reports back to the server

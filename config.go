@@ -50,6 +50,9 @@ type Config struct {
 	// Retention controls automatic cleanup. Zero values disable cleanup.
 	Retention RetentionConfig `yaml:"retention" mapstructure:"retention"`
 
+	// Queue controls the master's run/step retry and restart-recovery policy.
+	Queue QueueConfig `yaml:"queue" mapstructure:"queue"`
+
 	// Schedule controls cron/once scheduling behavior.
 	Schedule ScheduleConfig `yaml:"schedule" mapstructure:"schedule"`
 
@@ -146,6 +149,21 @@ type TLSConfig struct {
 type RetentionConfig struct {
 	RunTTL      time.Duration `yaml:"run_ttl"      mapstructure:"run_ttl"`
 	ArtifactTTL time.Duration `yaml:"artifact_ttl" mapstructure:"artifact_ttl"`
+}
+
+// QueueConfig controls the master's run/step state machine: retry policy and
+// the grace period a "running" step gets after a server restart before it's
+// treated as failed/retried instead of being re-dispatched immediately.
+type QueueConfig struct {
+	// MaxAttempts is the total attempts per step, including the first try.
+	// Zero/unset means 1 (no automatic retry).
+	MaxAttempts int `yaml:"max_attempts"   mapstructure:"max_attempts"`
+	// RetryDelay is the delay before a retried step becomes ready again.
+	RetryDelay time.Duration `yaml:"retry_delay"    mapstructure:"retry_delay"`
+	// RecoveryGrace is how long a step that was "running" when the server
+	// crashed waits for its owning worker to reconnect and renew its lease
+	// before being failed or retried. Zero/unset means a built-in default.
+	RecoveryGrace time.Duration `yaml:"recovery_grace" mapstructure:"recovery_grace"`
 }
 
 type ScheduleConfig struct {

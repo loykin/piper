@@ -459,3 +459,39 @@ func TestAgentBackendDispatch_NoPolicyNoChange(t *testing.T) {
 		t.Errorf("pipeline should be unchanged when no policy repo is configured")
 	}
 }
+
+// TestCancelRunTombstonesUnboundRun reproduces the race where CancelRun
+// arrives before any Dispatch call has bound a run to a worker: without the
+// tombstone, CancelRun silently no-ops (returns nil) and a subsequently
+// racing Dispatch call still sends the workload to a worker.
+func TestCancelRunTombstonesUnboundRun(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{
+		ID:           "agent-1",
+		Capabilities: []string{iagent.CapabilityPipeline},
+	})
+	rpc := &recordingPipelineAgentRPC{}
+	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
+
+	if err := backend.CancelRun(context.Background(), "run-1"); err != nil {
+		t.Fatalf("CancelRun on unbound run returned error: %v", err)
+	}
+
+	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{})
+	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
+	if err := backend.Dispatch(context.Background(), task); err == nil {
+		t.Fatal("Dispatch succeeded for a run that was canceled before any binding existed")
+	}
+	if calls := rpc.snapshot(); len(calls) != 0 {
+		t.Fatalf("expected no RPC calls after tombstoned dispatch, got %#v", calls)
+	}
+
+	// The tombstone must be consumed so it doesn't leak: a fresh dispatch for
+	// a *different* run must not be affected.
+	backend.runMu.Lock()
+	_, stillTombstoned := backend.canceledRuns["run-1"]
+	backend.runMu.Unlock()
+	if stillTombstoned {
+		t.Fatal("tombstone was not cleaned up after the aborted dispatch consumed it")
+	}
+}

@@ -8,6 +8,7 @@ package k8s
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -453,13 +454,15 @@ func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, job := range jobs.Items {
 		if err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{}); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("delete job %s: %w", job.Name, err))
+			continue
 		}
 		_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecretName(job.Name), metav1.DeleteOptions{})
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (l *Launcher) createTaskSecret(ctx context.Context, jobName string, task *proto.Task) (*corev1.Secret, error) {
@@ -563,9 +566,23 @@ func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, 
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: ttl,
 			BackoffLimit:            &backoffLimit,
+			ActiveDeadlineSeconds:   activeDeadlineSeconds(step.Options.Timeout),
 			Template:                podTemplate,
 		},
 	}, nil
+}
+
+// activeDeadlineSeconds converts step.options.timeout (seconds, 0 = unlimited)
+// into a Job-level deadline. Reading the raw user-declared value directly
+// (rather than a master-computed absolute deadline) means Kubernetes itself
+// enforces the same timeout as an independent layer even if master/worker
+// deadline propagation were ever wrong or unreachable.
+func activeDeadlineSeconds(timeoutSeconds int) *int64 {
+	if timeoutSeconds <= 0 {
+		return nil
+	}
+	v := int64(timeoutSeconds)
+	return &v
 }
 
 func decodeTaskStep(task *proto.Task) pipeline.Step {

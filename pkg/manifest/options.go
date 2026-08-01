@@ -7,12 +7,16 @@ package manifest
 //   - Pipeline step env: injected into the step process environment.
 //   - Notebook env: injected into the notebook server process/container.
 //   - Serving env: injected into the serving deployment process/container.
+//   - Pipeline step timeout: enforced by the master queue (authoritative),
+//     the worker's local task context (backstop when the tunnel is down),
+//     and the K8s Job's activeDeadlineSeconds (independent cluster-level
+//     backstop). Zero means unlimited.
 //
 // Not yet enforced:
-//   - Timeout: enforced in a future release.
+//   - Notebook/serving timeout: not applied to those kinds yet.
 type SpecOptions struct {
 	Env     []EnvVar `yaml:"env,omitempty"     json:"env,omitempty"`
-	Timeout int      `yaml:"timeout,omitempty" json:"timeout,omitempty"` // seconds; not yet enforced
+	Timeout int      `yaml:"timeout,omitempty" json:"timeout,omitempty"` // seconds; 0 = unlimited. Pipeline steps only.
 }
 
 // EnvVar is a single environment variable. Exactly one of Value or ValueFrom must

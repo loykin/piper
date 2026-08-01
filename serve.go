@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -108,7 +109,7 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		addr = ":8080"
 	}
 
-	grpcSrv := p.grpcAgentServer.GRPCServer(p.workerTokenGRPCOptions()...)
+	grpcSrv := p.grpcAgentServer.GRPCServer(append(grpcKeepaliveOptions(), p.workerTokenGRPCOptions()...)...)
 	combinedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			grpcSrv.ServeHTTP(w, r)
@@ -449,7 +450,7 @@ func (p *Piper) handlerContext(ctx context.Context, extra http.Handler) (http.Ha
 	mgr.RegisterDriver(viewertb.New())
 	mgr.RegisterDriver(viewerhtml.New())
 	handler := p.newRouter(extra, mgr)
-	grpcSrv := p.grpcAgentServer.GRPCServer(p.workerTokenGRPCOptions()...)
+	grpcSrv := p.grpcAgentServer.GRPCServer(append(grpcKeepaliveOptions(), p.workerTokenGRPCOptions()...)...)
 	stopped := make(chan struct{})
 	go func() {
 		<-ctx.Done()
@@ -615,6 +616,25 @@ func (p *Piper) workerTokenGRPCOptions() []grpc.ServerOption {
 				return err
 			}
 			return handler(srv, ss)
+		}),
+	}
+}
+
+// grpcKeepaliveOptions returns gRPC server options enforcing conservative
+// keepalive so the master can detect a half-open worker tunnel (e.g. the
+// worker process died without a clean TCP close, or sits behind a NAT that
+// silently dropped the mapping) instead of holding a dead connection open
+// indefinitely. Unlike workerTokenGRPCOptions this is never nil — it must
+// apply regardless of whether a worker token is configured.
+func grpcKeepaliveOptions() []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    20 * time.Second,
+			Timeout: 10 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
 		}),
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/piper/piper/internal/agentpb"
@@ -41,6 +42,53 @@ type ClientConfig struct {
 	Namespaces []string
 	// Capacity is the maximum number of concurrent tasks (0 = unlimited).
 	Capacity int
+
+	// DefaultCommandTimeout bounds a single RPC handler invocation as a
+	// generic safety net (0 = defaultCommandTimeout). This is not the
+	// authoritative per-task deadline — that's step.options.timeout, carried
+	// in the dispatch payload and enforced separately.
+	DefaultCommandTimeout time.Duration
+	// CommandConcurrency bounds how many RPC handlers run at once per
+	// connection (0 = defaultCommandConcurrency).
+	CommandConcurrency int
+
+	// KeepaliveTime is how often the client pings the master on an idle
+	// tunnel to detect a half-open connection (0 = defaultKeepaliveTime).
+	// This is a transport-level liveness check, distinct from — and must
+	// not be conflated with — the pipeline task lease (worker ownership of
+	// a specific task) or step.options.timeout (application-level
+	// execution deadline). See leaseLoop and Queue.scheduleTimeoutLocked.
+	KeepaliveTime time.Duration
+	// KeepaliveTimeout bounds how long the client waits for a keepalive
+	// ping ack before considering the connection dead (0 = defaultKeepaliveTimeout).
+	KeepaliveTimeout time.Duration
+}
+
+const (
+	defaultKeepaliveTime    = 20 * time.Second
+	defaultKeepaliveTimeout = 10 * time.Second
+)
+
+// dialOptions builds the grpc.DialOptions for a worker's connection to
+// master, including keepalive. Pulled out as a pure function so it's
+// unit-testable without an actual network dial.
+func dialOptions(cfg ClientConfig, transport credentials.TransportCredentials) []grpc.DialOption {
+	keepaliveTime := cfg.KeepaliveTime
+	if keepaliveTime <= 0 {
+		keepaliveTime = defaultKeepaliveTime
+	}
+	keepaliveTimeout := cfg.KeepaliveTimeout
+	if keepaliveTimeout <= 0 {
+		keepaliveTimeout = defaultKeepaliveTimeout
+	}
+	return []grpc.DialOption{
+		grpc.WithTransportCredentials(transport),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                keepaliveTime,
+			Timeout:             keepaliveTimeout,
+			PermitWithoutStream: true, // ping even when this worker has no active task, to catch a half-open idle tunnel
+		}),
+	}
 }
 
 // Client manages the worker-side gRPC tunnel lifecycle:
@@ -48,6 +96,7 @@ type ClientConfig struct {
 type Client struct {
 	cfg        ClientConfig
 	dispatcher *Dispatcher
+	exec       *commandExecutor
 
 	// current active stream, guarded by streamMu. nil when disconnected.
 	streamMu sync.RWMutex
@@ -56,7 +105,11 @@ type Client struct {
 
 // NewClient creates a new worker-side gRPC client.
 func NewClient(cfg ClientConfig) *Client {
-	return &Client{cfg: cfg, dispatcher: NewDispatcher()}
+	return &Client{
+		cfg:        cfg,
+		dispatcher: NewDispatcher(),
+		exec:       newCommandExecutor(cfg.CommandConcurrency),
+	}
 }
 
 // Dispatcher returns the RPC dispatcher. Register handlers before calling Run.
@@ -114,7 +167,7 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	} else {
 		transport = insecure.NewCredentials()
 	}
-	conn, err := grpc.NewClient(u.Host, grpc.WithTransportCredentials(transport))
+	conn, err := grpc.NewClient(u.Host, dialOptions(c.cfg, transport)...)
 	if err != nil {
 		return err
 	}
@@ -133,13 +186,50 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	return c.serve(ctx, stream)
+}
 
-	// streamMu guards all stream.Send calls — both RPC responses and proxy frames.
-	var streamMu sync.Mutex
+// workerStream is the subset of agentpb.AgentService_ConnectClient that
+// serve's frame loop needs. The real generated stream type satisfies this
+// structurally; tests inject a fake implementation (see fakestream_test.go)
+// instead of requiring a real network listener.
+type workerStream interface {
+	Send(*agentpb.WorkerMessage) error
+	Recv() (*agentpb.MasterMessage, error)
+}
+
+// serve runs the registration handshake and the frame-demux loop against an
+// already-established stream. Split out from connectAndServe so it can be
+// exercised directly in tests against a fake workerStream.
+func (c *Client) serve(ctx context.Context, stream workerStream) error {
+	// sendQueue schedules every outbound frame (registration, RPC responses,
+	// pushes, proxy data/close) by lane priority instead of strict arrival
+	// order, so bulk proxy traffic can never starve control frames on this
+	// tunnel. A single dedicated goroutine owns the actual stream.Send calls
+	// (gRPC streams require a single sender); send() blocks the caller until
+	// its frame is actually sent, preserving the original synchronous
+	// error-return contract every call site here already relies on.
+	sendQueue := newBoundedLaneQueue()
+	senderDone := make(chan struct{})
+	go func() {
+		defer close(senderDone)
+		for {
+			item, ok := sendQueue.next()
+			if !ok {
+				return
+			}
+			err := stream.Send(item.msg)
+			if item.result != nil {
+				item.result <- err
+			}
+		}
+	}()
+	defer func() {
+		sendQueue.close()
+		<-senderDone
+	}()
 	send := func(msg *agentpb.WorkerMessage) error {
-		streamMu.Lock()
-		defer streamMu.Unlock()
-		return stream.Send(msg)
+		return sendQueue.enqueueMsgWait(classifyFrameLane(msg), msg)
 	}
 
 	// Register the current send function so SendPush can use it.
@@ -203,13 +293,21 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 
 		switch p := msg.Payload.(type) {
 		case *agentpb.MasterMessage_RpcCmd:
-			resp := c.dispatcher.handleCmd(ctx, p.RpcCmd)
-			if err := send(&agentpb.WorkerMessage{
-				Payload: &agentpb.WorkerMessage_Response{Response: resp},
-			}); err != nil {
-				closeAllProxies()
-				return err
-			}
+			// Run off the recv loop: a slow handler (e.g. pipeline.dispatch
+			// starting a container) must not block reading of other frames —
+			// other RPCs, cancels, proxy data — sharing this tunnel. A send
+			// failure here is not fed back into this loop directly; the
+			// stream is bidirectional, so a broken connection will also
+			// surface as a Recv() error on the next iteration above.
+			cmd := p.RpcCmd
+			c.exec.runBounded(ctx, c.cfg.DefaultCommandTimeout, func(cmdCtx context.Context) {
+				resp := c.dispatcher.handleCmd(cmdCtx, cmd)
+				if err := send(&agentpb.WorkerMessage{
+					Payload: &agentpb.WorkerMessage_Response{Response: resp},
+				}); err != nil {
+					slog.Warn("grpc agent: send rpc response failed", "method", cmd.Method, "err", err)
+				}
+			})
 
 		case *agentpb.MasterMessage_ProxyOpen:
 			po := p.ProxyOpen
@@ -276,7 +374,21 @@ func (c *Client) connectAndServe(ctx context.Context) error {
 		case *agentpb.MasterMessage_ProxyData:
 			pd := p.ProxyData
 			if sessionAny, ok := proxySessions.Load(pd.ChannelId); ok {
-				sessionAny.(*clientProxySession).send(pd.Data)
+				session := sessionAny.(*clientProxySession)
+				if !session.send(pd.Data) {
+					// Overflow: the local target connection isn't being
+					// drained fast enough. Silently dropping bytes here
+					// would corrupt the tunneled stream, so tear the
+					// session down loudly and tell master why, instead.
+					proxySessions.Delete(pd.ChannelId)
+					session.close()
+					cause := "backpressure: receiver too slow"
+					_ = send(&agentpb.WorkerMessage{
+						Payload: &agentpb.WorkerMessage_ProxyClose{
+							ProxyClose: &agentpb.ProxyClose{ChannelId: pd.ChannelId, Error: cause},
+						},
+					})
+				}
 			}
 
 		case *agentpb.MasterMessage_ProxyClose:
@@ -317,14 +429,26 @@ func (s *clientProxySession) attach(conn net.Conn) bool {
 	}
 }
 
-func (s *clientProxySession) send(data []byte) {
+// send delivers data to the session's buffered incoming channel, reporting
+// whether it was accepted. A full channel means writeToTarget isn't
+// draining fast enough; callers must not treat that as a benign drop — see
+// the MasterMessage_ProxyData case in serve, which tears the session down
+// loudly instead of silently corrupting the tunneled stream.
+func (s *clientProxySession) send(data []byte) (sent bool) {
 	b := make([]byte, len(data))
 	copy(b, data)
-	defer func() { recover() }()
+	defer func() {
+		if recover() != nil {
+			sent = false
+		}
+	}()
 	select {
 	case <-s.closed:
+		return false
 	case s.incoming <- b:
+		return true
 	default:
+		return false
 	}
 }
 

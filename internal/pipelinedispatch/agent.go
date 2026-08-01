@@ -24,8 +24,9 @@ type AgentBackend struct {
 	podPolicies iagent.WorkerPodPolicyRepository
 	taskAgents  sync.Map // task id -> pipelineTaskAgent
 
-	runMu     sync.Mutex
-	runAgents map[string]*pipelineRunAgent // run id -> fixed agent for the whole run
+	runMu        sync.Mutex
+	runAgents    map[string]*pipelineRunAgent // run id -> fixed agent for the whole run
+	canceledRuns map[string]struct{}          // run id -> canceled before any binding existed
 }
 
 type pipelineRunAgent struct {
@@ -41,9 +42,10 @@ type pipelineTaskAgent struct {
 
 func NewAgentBackend(router *iagent.Router, rpc AgentRPC, policies ...iagent.WorkerPodPolicyRepository) *AgentBackend {
 	b := &AgentBackend{
-		router:    router,
-		rpc:       rpc,
-		runAgents: make(map[string]*pipelineRunAgent),
+		router:       router,
+		rpc:          rpc,
+		runAgents:    make(map[string]*pipelineRunAgent),
+		canceledRuns: make(map[string]struct{}),
 	}
 	if len(policies) > 0 {
 		b.podPolicies = policies[0]
@@ -96,6 +98,21 @@ func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 			}
 		}
 	}
+	b.runMu.Lock()
+	_, tombstoned := b.canceledRuns[task.RunID]
+	b.runMu.Unlock()
+	if tombstoned {
+		b.router.Release(runAgent.AgentID)
+		b.runMu.Lock()
+		runAgent.Pending--
+		if !runAgent.Committed && runAgent.Pending == 0 && b.runAgents[task.RunID] == runAgent {
+			delete(b.runAgents, task.RunID)
+		}
+		delete(b.canceledRuns, task.RunID)
+		b.runMu.Unlock()
+		return fmt.Errorf("pipeline agent dispatch: run %s was canceled before dispatch", task.RunID)
+	}
+
 	b.taskAgents.Store(task.ID, pipelineTaskAgent{AgentID: runAgent.AgentID})
 	if err := b.rpc.SendRPC(ctx, runAgent.AgentID, iagent.MethodPipelineDispatch, &taskCopy, nil); err != nil {
 		b.taskAgents.Delete(task.ID)
@@ -139,6 +156,7 @@ func (b *AgentBackend) ReleaseTask(taskID string) {
 func (b *AgentBackend) ReleaseRun(runID string) {
 	b.runMu.Lock()
 	delete(b.runAgents, runID)
+	delete(b.canceledRuns, runID)
 	b.runMu.Unlock()
 }
 
@@ -148,6 +166,12 @@ func (b *AgentBackend) CancelRun(ctx context.Context, runID string) error {
 	}
 	b.runMu.Lock()
 	runAgent, ok := b.runAgents[runID]
+	if !ok {
+		// No binding yet: an in-flight Dispatch() goroutine may still be
+		// racing to create one. Record a tombstone so Dispatch aborts instead
+		// of silently starting a workload after cancel already "succeeded."
+		b.canceledRuns[runID] = struct{}{}
+	}
 	b.runMu.Unlock()
 	if !ok {
 		return nil

@@ -197,6 +197,10 @@ func New(cfg Config) (*Piper, error) {
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
+	if cfg.Queue.MaxAttempts > 0 || cfg.Queue.RetryDelay > 0 {
+		q.SetRetryPolicy(cfg.Queue.MaxAttempts, cfg.Queue.RetryDelay)
+	}
+	q.SetRecoveryGracePeriod(cfg.Queue.RecoveryGrace)
 	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv, repos.Log, repos.Metric))
 	// On agent (re)connect: sync notebook status so master DB catches up on any
 	// state changes that occurred while the connection was down.
@@ -419,7 +423,7 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 				if s.StartedAt != nil {
 					startedAt = *s.StartedAt
 				}
-				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, StartedAt: startedAt})
+				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, StartedAt: startedAt, Attempts: s.Attempts})
 			}
 		}
 		var params map[string]any

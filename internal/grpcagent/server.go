@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -35,59 +36,6 @@ type Server struct {
 	onLost         func(agentID string)       // called when a worker disconnects
 	pushHandler    PushHandler
 	connectHandler func(agentID string) // called after onReg completes
-}
-
-type pushMessage struct {
-	method  string
-	payload []byte
-}
-
-type pushQueue struct {
-	mu     sync.Mutex
-	cond   *sync.Cond
-	items  []pushMessage
-	closed bool
-}
-
-func newPushQueue() *pushQueue {
-	q := &pushQueue{}
-	q.cond = sync.NewCond(&q.mu)
-	return q
-}
-
-func (q *pushQueue) enqueue(msg pushMessage) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.closed {
-		return false
-	}
-	q.items = append(q.items, msg)
-	q.cond.Signal()
-	return true
-}
-
-func (q *pushQueue) next() (pushMessage, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for len(q.items) == 0 && !q.closed {
-		q.cond.Wait()
-	}
-	if len(q.items) == 0 {
-		return pushMessage{}, false
-	}
-	msg := q.items[0]
-	q.items[0] = pushMessage{}
-	q.items = q.items[1:]
-	return msg, true
-}
-
-func (q *pushQueue) close() {
-	q.mu.Lock()
-	if !q.closed {
-		q.closed = true
-		q.cond.Broadcast()
-	}
-	q.mu.Unlock()
 }
 
 // Registration carries the metadata a worker sends on first connect.
@@ -182,7 +130,7 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 			conn.deliver(p.Response)
 		case *agentpb.WorkerMessage_Push:
 			payload := append([]byte(nil), p.Push.Payload...)
-			conn.pushQueue.enqueue(pushMessage{method: p.Push.Method, payload: payload})
+			conn.pushQueue.enqueue(p.Push.Method, payload)
 		case *agentpb.WorkerMessage_ProxyData:
 			conn.deliverProxyData(p.ProxyData.ChannelId, p.ProxyData.Data)
 		case *agentpb.WorkerMessage_ProxyClose:
@@ -217,7 +165,7 @@ func (s *Server) SendRPC(ctx context.Context, agentID, method string, payload an
 // DialProxy opens a proxy channel to target (host:port) through the given agent.
 // The returned net.Conn tunnels raw bytes over the gRPC Connect stream.
 // target is a "host:port" address reachable from inside the agent's cluster.
-func (s *Server) DialProxy(_ context.Context, agentID, target string) (net.Conn, error) {
+func (s *Server) DialProxy(ctx context.Context, agentID, target string) (net.Conn, error) {
 	s.mu.RLock()
 	conn := s.conns[agentID]
 	s.mu.RUnlock()
@@ -257,7 +205,20 @@ func (s *Server) DialProxy(_ context.Context, agentID, target string) (net.Conn,
 		_ = pw.CloseWithError(err)
 		return nil, fmt.Errorf("send ProxyOpen: %w", err)
 	}
-	return &proxyConn{channelID: channelID, wconn: conn, pc: pc, pr: pr}, nil
+
+	pcn := &proxyConn{channelID: channelID, wconn: conn, pc: pc, pr: pr, closed: make(chan struct{})}
+	// ctx is the caller's dial-scope context, not tied to the tunnel itself.
+	// If it's canceled (e.g. the HTTP request that triggered this dial ends)
+	// before the caller explicitly closes pcn, tear the channel down instead
+	// of leaking it until the tunnel connection itself goes away.
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = pcn.Close()
+		case <-pcn.closed:
+		}
+	}()
+	return pcn, nil
 }
 
 // Connected reports whether the agent has an active stream.
@@ -328,10 +289,14 @@ type workerConn struct {
 	writeMu       sync.Mutex
 	pending       sync.Map // requestID → chan *agentpb.RPCResponse
 	proxyChannels sync.Map // channelID → *proxyChannel
-	pushQueue     *pushQueue
-	pushDone      chan struct{}
-	closed        chan struct{}
-	once          sync.Once
+	// pushQueue holds worker-initiated StatusPush messages, drained by
+	// runPushLoop in strict lane-priority order (control > durable >
+	// telemetry > bulk) so a slow DB-backed log handler can't starve task
+	// results or lease renewals behind it. See lane.go.
+	pushQueue *boundedLaneQueue
+	pushDone  chan struct{}
+	closed    chan struct{}
+	once      sync.Once
 }
 
 // proxyChannel holds the buffered incoming channel and the pipe write end for
@@ -346,7 +311,7 @@ func newWorkerConn(agentID string, stream agentpb.AgentService_ConnectServer) *w
 	return &workerConn{
 		agentID:   agentID,
 		stream:    stream,
-		pushQueue: newPushQueue(),
+		pushQueue: newBoundedLaneQueue(),
 		pushDone:  make(chan struct{}),
 		closed:    make(chan struct{}),
 	}
@@ -355,12 +320,12 @@ func newWorkerConn(agentID string, stream agentpb.AgentService_ConnectServer) *w
 func (c *workerConn) runPushLoop(handler PushHandler) {
 	defer close(c.pushDone)
 	for {
-		msg, ok := c.pushQueue.next()
+		item, ok := c.pushQueue.next()
 		if !ok {
 			return
 		}
 		if handler != nil {
-			handler(context.Background(), c.agentID, msg.method, msg.payload)
+			handler(context.Background(), c.agentID, item.method, item.payload)
 		}
 	}
 }
@@ -418,12 +383,21 @@ func (c *workerConn) deliver(resp *agentpb.RPCResponse) {
 
 // deliverProxyData is called from the gRPC recv loop and must not block.
 // It sends data to the buffered incoming channel; the per-channel goroutine
-// started in DialProxy writes it to the io.Pipe asynchronously.
+// started in DialProxy writes it to the io.Pipe asynchronously. On overflow
+// (the local reader isn't draining fast enough) it does NOT silently drop
+// bytes — that would corrupt the tunneled stream. Instead it tears the
+// channel down loudly and tells the worker why, so exactly one HTTP/WS
+// connection resets cleanly instead of delivering truncated data.
 func (c *workerConn) deliverProxyData(channelID string, data []byte) {
-	if pcAny, ok := c.proxyChannels.Load(channelID); ok {
-		b := make([]byte, len(data))
-		copy(b, data)
-		proxyChannelSend(pcAny.(*proxyChannel).incoming, b)
+	pcAny, ok := c.proxyChannels.Load(channelID)
+	if !ok {
+		return
+	}
+	pc := pcAny.(*proxyChannel)
+	b := make([]byte, len(data))
+	copy(b, data)
+	if !proxyChannelSend(pc.incoming, b) {
+		c.closeProxyChannelWithError(channelID, pc, fmt.Errorf("backpressure: receiver too slow"))
 	}
 }
 
@@ -435,6 +409,24 @@ func (c *workerConn) deliverProxyClose(channelID, errMsg string) {
 		}
 		proxyChannelClose(pc.incoming)
 	}
+}
+
+// closeProxyChannelWithError tears down channelID locally and tells the
+// worker to stop forwarding for it, carrying cause so the failure isn't
+// silent on either end.
+func (c *workerConn) closeProxyChannelWithError(channelID string, pc *proxyChannel, cause error) {
+	if _, loaded := c.proxyChannels.LoadAndDelete(channelID); !loaded {
+		return // already torn down by someone else
+	}
+	_ = pc.pw.CloseWithError(cause)
+	proxyChannelClose(pc.incoming)
+	c.writeMu.Lock()
+	_ = c.stream.Send(&agentpb.MasterMessage{
+		Payload: &agentpb.MasterMessage_ProxyClose{
+			ProxyClose: &agentpb.ProxyClose{ChannelId: channelID, Error: cause.Error()},
+		},
+	})
+	c.writeMu.Unlock()
 }
 
 func (c *workerConn) close() {
@@ -459,11 +451,22 @@ type proxyConn struct {
 	pc        *proxyChannel
 	pr        *io.PipeReader
 	once      sync.Once
+	closed    chan struct{} // closed once, by Close — lets the DialProxy ctx-watcher goroutine stop
+
+	deadlineMu    sync.Mutex
+	writeDeadline time.Time
+	readTimer     *time.Timer
 }
 
 func (p *proxyConn) Read(b []byte) (int, error) { return p.pr.Read(b) }
 
 func (p *proxyConn) Write(b []byte) (int, error) {
+	p.deadlineMu.Lock()
+	wd := p.writeDeadline
+	p.deadlineMu.Unlock()
+	if !wd.IsZero() && time.Now().After(wd) {
+		return 0, os.ErrDeadlineExceeded
+	}
 	p.wconn.writeMu.Lock()
 	err := p.wconn.stream.Send(&agentpb.MasterMessage{
 		Payload: &agentpb.MasterMessage_ProxyData{
@@ -479,6 +482,12 @@ func (p *proxyConn) Write(b []byte) (int, error) {
 
 func (p *proxyConn) Close() error {
 	p.once.Do(func() {
+		close(p.closed)
+		p.deadlineMu.Lock()
+		if p.readTimer != nil {
+			p.readTimer.Stop()
+		}
+		p.deadlineMu.Unlock()
 		_ = p.pr.CloseWithError(io.ErrClosedPipe)
 		if _, loaded := p.wconn.proxyChannels.LoadAndDelete(p.channelID); loaded {
 			proxyChannelClose(p.pc.incoming)
@@ -494,11 +503,58 @@ func (p *proxyConn) Close() error {
 	return nil
 }
 
-func (p *proxyConn) LocalAddr() net.Addr                { return proxyAddr("master") }
-func (p *proxyConn) RemoteAddr() net.Addr               { return proxyAddr(p.channelID) }
-func (p *proxyConn) SetDeadline(_ time.Time) error      { return nil }
-func (p *proxyConn) SetReadDeadline(_ time.Time) error  { return nil }
-func (p *proxyConn) SetWriteDeadline(_ time.Time) error { return nil }
+func (p *proxyConn) LocalAddr() net.Addr  { return proxyAddr("master") }
+func (p *proxyConn) RemoteAddr() net.Addr { return proxyAddr(p.channelID) }
+
+func (p *proxyConn) SetDeadline(t time.Time) error {
+	if err := p.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return p.SetWriteDeadline(t)
+}
+
+// SetReadDeadline arms a timer that force-closes the underlying pipe reader
+// with os.ErrDeadlineExceeded once the deadline passes, unblocking a stalled
+// Read. Note: because io.Pipe cannot be "un-closed," once a deadline fires
+// this connection's reads are permanently done — matching how a caller
+// should treat a deadline-exceeded net.Conn in practice (close and redial),
+// even though the standard net.Conn contract technically allows extending a
+// deadline and continuing.
+func (p *proxyConn) SetReadDeadline(t time.Time) error {
+	p.deadlineMu.Lock()
+	defer p.deadlineMu.Unlock()
+	if p.readTimer != nil {
+		p.readTimer.Stop()
+		p.readTimer = nil
+	}
+	if t.IsZero() {
+		return nil
+	}
+	d := time.Until(t)
+	if d <= 0 {
+		// io.Pipe: to make pr.Read() return a specific error, the WRITER
+		// side must be closed with it (closing the reader instead only
+		// affects future writes, not reads) — see io.PipeWriter.CloseWithError.
+		_ = p.pc.pw.CloseWithError(os.ErrDeadlineExceeded)
+		return nil
+	}
+	p.readTimer = time.AfterFunc(d, func() {
+		_ = p.pc.pw.CloseWithError(os.ErrDeadlineExceeded)
+	})
+	return nil
+}
+
+// SetWriteDeadline records the deadline; Write checks it at call time and
+// fails fast once passed. This is an honest partial implementation: unlike
+// SetReadDeadline it cannot interrupt a Write already in flight (Write here
+// is a single non-blocking-ish gRPC Send, not a long blocking syscall), but
+// it does prevent new writes after the deadline.
+func (p *proxyConn) SetWriteDeadline(t time.Time) error {
+	p.deadlineMu.Lock()
+	p.writeDeadline = t
+	p.deadlineMu.Unlock()
+	return nil
+}
 
 type proxyAddr string
 
@@ -507,14 +563,23 @@ func (a proxyAddr) String() string  { return string(a) }
 
 // ── channel helpers ───────────────────────────────────────────────────────────
 
-// proxyChannelSend sends data to the channel without blocking.
-// A full channel (1024 items) indicates something is severely wrong; data is dropped.
-// A closed-channel panic is silently recovered.
-func proxyChannelSend(ch chan []byte, data []byte) {
-	defer func() { recover() }()
+// proxyChannelSend sends data to the channel without blocking, reporting
+// whether it was actually accepted. A full channel (1024 items) means the
+// local reader isn't keeping up; callers must not treat that as a benign
+// drop — see deliverProxyData/closeProxyChannelWithError, which tear the
+// channel down loudly instead of silently corrupting the tunneled stream. A
+// closed-channel panic is treated the same as "not accepted."
+func proxyChannelSend(ch chan []byte, data []byte) (sent bool) {
+	defer func() {
+		if recover() != nil {
+			sent = false
+		}
+	}()
 	select {
 	case ch <- data:
+		return true
 	default:
+		return false
 	}
 }
 

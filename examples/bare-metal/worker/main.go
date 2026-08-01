@@ -107,7 +107,15 @@ func runAgentExec(args []string) {
 		os.Exit(1)
 	}
 
-	result := r.Run(context.Background(), task)
+	// The baremetal driver's Stop()/cancelRun/timeout paths all work by
+	// sending SIGTERM to this process. Without a handler here, the OS
+	// terminates it immediately on SIGTERM before any Go code runs, leaving
+	// the step's own child process (its own process group, see
+	// pkg/pipeline/executor/command.go) orphaned and still running instead
+	// of being killed by that file's ctx.Done() branch.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	result := r.Run(ctx, task)
 	if err := agent.DeliverResult(result, *resultFile); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: deliver result: %v\n", err)
 		os.Exit(1)

@@ -75,10 +75,10 @@ func TestWorkerConnPushLoopProcessesMessagesInOrder(t *testing.T) {
 		}
 	})
 
-	if !conn.pushQueue.enqueue(pushMessage{method: "one"}) {
+	if !conn.pushQueue.enqueue("one", nil) {
 		t.Fatal("enqueue one failed")
 	}
-	if !conn.pushQueue.enqueue(pushMessage{method: "two"}) {
+	if !conn.pushQueue.enqueue("two", nil) {
 		t.Fatal("enqueue two failed")
 	}
 

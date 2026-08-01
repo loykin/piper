@@ -241,6 +241,31 @@ func TestBuildJob_stepRuntimeOptions(t *testing.T) {
 	}
 }
 
+func TestBuildJob_activeDeadlineSecondsFromStepTimeout(t *testing.T) {
+	l := &Launcher{cfg: Config{AgentImage: "piper/agent:latest"}}
+	step := pipeline.Step{Name: "train", Options: manifest.SpecOptions{Timeout: 300}}
+	task := makeTask("run-1", "train", step, pipeline.Pipeline{})
+
+	job := mustBuildJob(t, l, task, "python:3.11", nil)
+	if job.Spec.ActiveDeadlineSeconds == nil {
+		t.Fatal("ActiveDeadlineSeconds is nil, want set from step.options.timeout")
+	}
+	if got := *job.Spec.ActiveDeadlineSeconds; got != 300 {
+		t.Fatalf("ActiveDeadlineSeconds = %d, want 300", got)
+	}
+}
+
+func TestBuildJob_activeDeadlineSecondsOmittedWhenTimeoutZero(t *testing.T) {
+	l := &Launcher{cfg: Config{AgentImage: "piper/agent:latest"}}
+	step := pipeline.Step{Name: "train"}
+	task := makeTask("run-1", "train", step, pipeline.Pipeline{})
+
+	job := mustBuildJob(t, l, task, "python:3.11", nil)
+	if job.Spec.ActiveDeadlineSeconds != nil {
+		t.Fatalf("ActiveDeadlineSeconds = %v, want nil for options.timeout=0", *job.Spec.ActiveDeadlineSeconds)
+	}
+}
+
 func TestBuildJob_invalidResourcesReturnsError(t *testing.T) {
 	l := &Launcher{cfg: Config{AgentImage: "piper/agent:latest"}}
 	step := pipeline.Step{
@@ -280,6 +305,43 @@ func TestCancelRunDeletesJobsByRunLabel(t *testing.T) {
 	}
 	if len(jobs.Items) != 1 || jobs.Items[0].Labels["piper.io/run-id"] != "run-2" {
 		t.Fatalf("remaining jobs = %#v, want only run-2", jobs.Items)
+	}
+}
+
+func TestCancelRunContinuesAfterOneJobDeleteFails(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}
+
+	task1 := &proto.Task{RunID: "run-1", StepName: "train"}
+	task2 := &proto.Task{RunID: "run-1", StepName: "evaluate"}
+	job1 := mustBuildJob(t, l, task1, "python:3.11", nil)
+	job2 := mustBuildJob(t, l, task2, "python:3.11", nil)
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), job1, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), job2, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	failedName := job1.Name
+	clientset.PrependReactor("delete", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if da, ok := action.(k8stesting.DeleteAction); ok && da.GetName() == failedName {
+			return true, nil, errors.New("delete job failed")
+		}
+		return false, nil, nil
+	})
+
+	err := l.CancelRun(context.Background(), "run-1")
+	if err == nil {
+		t.Fatal("expected CancelRun to return the accumulated delete error")
+	}
+
+	jobs, listErr := clientset.BatchV1().Jobs("default").List(context.Background(), metav1.ListOptions{})
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(jobs.Items) != 1 || jobs.Items[0].Name != failedName {
+		t.Fatalf("jobs after partial-failure cancel = %#v, want only the failed-to-delete job %q to remain", jobs.Items, failedName)
 	}
 }
 

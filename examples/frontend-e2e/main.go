@@ -298,7 +298,13 @@ func runAgentExec(args []string) int {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec runner init: %v\n", err)
 		return 1
 	}
-	result := runner.Run(context.Background(), task)
+	// See cmd/piper/commands/agent.go for why this needs a SIGTERM handler:
+	// without it, the baremetal driver's Stop()/cancelRun/timeout signal
+	// kills this process before its child (its own process group) can be
+	// cleaned up by pkg/pipeline/executor/command.go's ctx.Done() branch.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	result := runner.Run(ctx, task)
 	if err := agent.DeliverResult(result, resultFile); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec deliver result: %v\n", err)
 		return 1

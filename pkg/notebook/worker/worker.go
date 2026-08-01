@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
@@ -40,7 +41,13 @@ type Config struct {
 	Hostname       string
 	ID             string // stable worker identity assigned by the caller
 	Labels         map[string]string
+	// ShutdownGrace bounds how long Run waits for KillAll to stop in-flight
+	// notebook containers/processes before returning. Defaults to 20s.
+	ShutdownGrace time.Duration
 }
+
+// defaultShutdownGrace bounds KillAll during shutdown when Config.ShutdownGrace is unset.
+const defaultShutdownGrace = 20 * time.Second
 
 // Worker is the notebook worker agent.
 type Worker struct {
@@ -80,6 +87,9 @@ func logRuntimeStart(mode, name, workDir string, port int) {
 
 // New creates a new Worker.
 func New(cfg Config) *Worker {
+	if cfg.ShutdownGrace <= 0 {
+		cfg.ShutdownGrace = defaultShutdownGrace
+	}
 	drv, err := newDriver(cfg)
 	if err != nil {
 		drv = &failingDriver{err: err}
@@ -146,7 +156,9 @@ func (r *failingDriver) Status(context.Context, string) string { return notebook
 func (w *Worker) Run(ctx context.Context) error {
 	w.recoverContainers(ctx)
 	defer func() {
-		if err := w.driver.KillAll(context.Background()); err != nil {
+		killCtx, cancel := context.WithTimeout(context.Background(), w.cfg.ShutdownGrace)
+		defer cancel()
+		if err := w.driver.KillAll(killCtx); err != nil {
 			slog.Warn("notebook worker cleanup failed", "err", err)
 		}
 	}()

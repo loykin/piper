@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/signal"
 	"sort"
+	"syscall"
 
 	"github.com/piper/piper/internal/proto"
 	"github.com/piper/piper/pkg/pipeline/worker/agent"
@@ -42,7 +45,17 @@ func newAgentExecCmd() *cobra.Command {
 		Short: "Execute a step and write the result",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentExec(cmd.Context(), f)
+			// The baremetal driver's Stop()/cancelRun/timeout paths all work
+			// by sending SIGTERM to this process (see provisr's Stop and
+			// pkg/pipeline/worker/driver/baremetal). Without a handler here,
+			// the OS terminates this process immediately on SIGTERM before
+			// any Go code runs, leaving the step's own child process (which
+			// executor.CommandExecutor puts in its own process group)
+			// orphaned and still running instead of being killed by the
+			// ctx.Done() branch in pkg/pipeline/executor/command.go.
+			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+			return runAgentExec(ctx, f)
 		},
 	}
 

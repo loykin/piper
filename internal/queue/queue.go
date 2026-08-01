@@ -30,6 +30,11 @@ const (
 	taskReady    taskStatus = "ready"
 	taskRunning  taskStatus = "running"
 	taskRetrying taskStatus = "retrying"
+	// taskRecovering is a transient post-restart state for a step that was
+	// running when the server crashed: it waits up to Queue.recoveryGrace for
+	// the owning worker to reconnect and renew its lease before falling back
+	// to failOrRetryLocked, instead of being re-dispatched immediately.
+	taskRecovering taskStatus = "recovering"
 	// taskDone and taskFailed use proto constants to stay in sync with worker/agent reporting.
 	taskDone     taskStatus = proto.TaskStatusDone
 	taskFailed   taskStatus = proto.TaskStatusFailed
@@ -46,7 +51,13 @@ type taskEntry struct {
 	assignedWorkerID string
 	startedAt        *time.Time
 	leaseAt          *time.Time
-	retryTimer       *time.Timer
+	// deadline is the absolute time by which a running task must complete,
+	// derived from step.options.timeout. Nil means unlimited.
+	deadline *time.Time
+	// timer is the single per-entry timer slot: retry-delay, timeout-deadline,
+	// and recovery-grace are mutually exclusive (an entry is only ever in one
+	// of those states at a time), so one slot is enough.
+	timer *time.Timer
 }
 
 type runEntry struct {
@@ -60,18 +71,19 @@ type runEntry struct {
 
 // Queue is the DAG-aware task queue for distributed worker execution.
 type Queue struct {
-	mu           sync.Mutex
-	runs         map[string]*runEntry // runID → entry
-	runRepo      run.Repository
-	stepRepo     run.StepRepository
-	backend      pipelinedispatch.ExecutionBackend // nil means dispatch is disabled
-	serverCtx    context.Context                   // cancelled on server shutdown; used for backend dispatch
-	maxAttempts  int                               // total attempts, including the first try
-	retryDelay   time.Duration
-	storageURL   string
-	storageToken string
-	OnRunSuccess func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
-	events       event.Publisher
+	mu            sync.Mutex
+	runs          map[string]*runEntry // runID → entry
+	runRepo       run.Repository
+	stepRepo      run.StepRepository
+	backend       pipelinedispatch.ExecutionBackend // nil means dispatch is disabled
+	serverCtx     context.Context                   // cancelled on server shutdown; used for backend dispatch
+	maxAttempts   int                               // total attempts, including the first try
+	retryDelay    time.Duration
+	recoveryGrace time.Duration // how long a recovered "running" step waits for the worker to reconnect
+	storageURL    string
+	storageToken  string
+	OnRunSuccess  func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
+	events        event.Publisher
 }
 
 // NewQueue creates a new Queue backed by the given repositories.
@@ -120,6 +132,22 @@ func (q *Queue) SetRetryPolicy(maxAttempts int, retryDelay time.Duration) {
 	defer q.mu.Unlock()
 	q.maxAttempts = maxAttempts
 	q.retryDelay = retryDelay
+}
+
+// defaultRecoveryGrace is used when SetRecoveryGracePeriod is never called
+// (or called with d<=0). It must comfortably exceed the worker's lease
+// renewal interval (10s, see leaseLoop) so a single missed tick doesn't
+// spuriously fail an otherwise-healthy recovered run.
+const defaultRecoveryGrace = 45 * time.Second
+
+// SetRecoveryGracePeriod configures how long a step that was "running" when
+// the server crashed waits, after restart, for its owning worker to
+// reconnect and renew its lease before failOrRetryLocked runs. d<=0 resets
+// to defaultRecoveryGrace.
+func (q *Queue) SetRecoveryGracePeriod(d time.Duration) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.recoveryGrace = d
 }
 
 // MakeTaskID creates a task ID from runID and stepName.
@@ -204,6 +232,7 @@ type RecoveredStep struct {
 	Name      string
 	Done      bool
 	StartedAt time.Time // meaningful only when !Done
+	Attempts  int       // meaningful only when !Done; historical attempt count before the crash
 }
 
 // Recover re-adds an interrupted run from a previous server session.
@@ -265,12 +294,20 @@ func (q *Queue) RecoverWithEnv(ctx context.Context, projectID string, pl *pipeli
 			if rs.Done {
 				entry.status = taskDone
 			} else if !rs.StartedAt.IsZero() {
-				// Step was in-flight when the server crashed. Reset to pending so it
-				// gets re-dispatched immediately. For K8s this may cause at-most-once
-				// duplication (old pod + new dispatch), but the stale result is rejected
-				// by the worker-ownership check in Complete(). For embedded/bare-metal
-				// workers the previous process is gone and re-dispatch is required.
-				entry.status = taskPending
+				// Step was in-flight when the server crashed. Rather than
+				// re-dispatching immediately (which risks a duplicate
+				// side-effecting workload racing the original, still-running
+				// one), wait up to recoveryGrace for the owning worker to
+				// reconnect and renew its lease — see RenewLeases and
+				// scheduleRecoveryGraceLocked.
+				entry.status = taskRecovering
+				entry.attempts = rs.Attempts
+				startedAt := rs.StartedAt
+				entry.startedAt = &startedAt
+				now := time.Now()
+				entry.leaseAt = &now
+				q.emit(projectID, "step.recovering", map[string]any{"run_id": runID, "step": s.Name})
+				q.scheduleRecoveryGraceLocked(runID, entry)
 			}
 		}
 		r.tasks[s.Name] = entry
@@ -364,7 +401,7 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	q.emit(r.projectID, "step.reported", map[string]any{"run_id": runID, "step": stepName, "task_id": result.TaskID, "status": result.Status})
 
 	if result.Status == string(taskDone) {
-		q.stopRetryTimerLocked(entry)
+		q.stopEntryTimerLocked(entry)
 		entry.status = taskDone
 		entry.startedAt = nil
 		entry.leaseAt = nil
@@ -382,8 +419,26 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 			slog.Warn("upsert step failed", "task_id", result.TaskID, "err", err)
 		}
 		q.promoteReady(ctx, r)
-	} else if entry.attempts < entry.maxAttempts {
-		q.stopRetryTimerLocked(entry)
+		q.finalizeRunIfAllTerminalLocked(ctx, r)
+	} else {
+		q.failOrRetryLocked(ctx, r, entry, result.Error, &result.StartedAt, endedAt)
+	}
+
+	return nil
+}
+
+// failOrRetryLocked marks entry retrying (if attempts remain) or terminally
+// failed (skipping downstream steps and finalizing the run if that was the
+// last non-terminal step). It mirrors Complete()'s non-done branch so
+// callers outside a real Complete() call — step timeout expiry, recovery
+// grace expiry — get identical retry/finalize semantics instead of
+// duplicating this decision. Called with q.mu held.
+func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskEntry, errMsg string, startedAt *time.Time, endedAt time.Time) {
+	runID := r.runID
+	stepName := entry.step.Name
+
+	if entry.attempts < entry.maxAttempts {
+		q.stopEntryTimerLocked(entry)
 		entry.status = taskRetrying
 		entry.assignedWorkerID = ""
 		entry.startedAt = nil
@@ -393,63 +448,69 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 			RunID:     runID,
 			StepName:  stepName,
 			Status:    string(taskRunning),
-			StartedAt: &result.StartedAt,
+			StartedAt: startedAt,
 			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
-			Error:     result.Error,
+			Error:     errMsg,
 		}); err != nil {
-			slog.Warn("upsert retry step failed", "task_id", result.TaskID, "err", err)
+			slog.Warn("upsert retry step failed", "task_id", entry.task.ID, "err", err)
 		}
 		q.scheduleRetryLocked(ctx, entry)
-	} else {
-		q.stopRetryTimerLocked(entry)
-		entry.status = taskFailed
-		entry.startedAt = nil
-		entry.leaseAt = nil
-		q.emit(r.projectID, "step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": result.Error})
-		if err := q.stepRepo.Upsert(ctx, &run.Step{
-			ProjectID: r.projectID,
-			RunID:     runID,
-			StepName:  stepName,
-			Status:    result.Status,
-			StartedAt: &result.StartedAt,
-			EndedAt:   &endedAt,
-			Attempts:  entry.attempts,
-			Error:     result.Error,
-		}); err != nil {
-			slog.Warn("upsert step failed", "task_id", result.TaskID, "err", err)
-		}
-		q.skipDownstream(ctx, r, stepName)
+		return
 	}
 
-	// If all steps are in a terminal state, the run is complete
-	if q.allTerminal(r) {
-		runStatus := run.StatusSuccess
-		for _, e := range r.tasks {
-			if e.status == taskFailed {
-				runStatus = run.StatusFailed
-				break
-			}
-		}
-		finishedAt := time.Now()
-		if err := q.runRepo.UpdateStatus(ctx, r.projectID, runID, runStatus, &finishedAt); err != nil {
-			slog.Warn("update run status failed", "run_id", runID, "err", err)
-		}
-		pl := r.pl
-		delete(q.runs, runID)
-		if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
-			owner.ReleaseRun(runID)
-		}
-		q.emit(r.projectID, "run.completed", map[string]any{"run_id": runID, "status": runStatus})
+	q.stopEntryTimerLocked(entry)
+	entry.status = taskFailed
+	entry.startedAt = nil
+	entry.leaseAt = nil
+	q.emit(r.projectID, "step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": errMsg})
+	if err := q.stepRepo.Upsert(ctx, &run.Step{
+		ProjectID: r.projectID,
+		RunID:     runID,
+		StepName:  stepName,
+		Status:    string(taskFailed),
+		StartedAt: startedAt,
+		EndedAt:   &endedAt,
+		Attempts:  entry.attempts,
+		Error:     errMsg,
+	}); err != nil {
+		slog.Warn("upsert step failed", "task_id", entry.task.ID, "err", err)
+	}
+	q.skipDownstream(ctx, r, stepName)
+	q.finalizeRunIfAllTerminalLocked(ctx, r)
+}
 
-		if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
-			// Use a detached context so the callback isn't cancelled when the
-			// HTTP request context that triggered Complete() ends.
-			q.OnRunSuccess(project.WithContext(context.Background(), project.Context{ID: r.projectID}), runID, pl)
+// finalizeRunIfAllTerminalLocked marks the run success/failed and removes it
+// from the in-memory queue once every step has reached a terminal state.
+// Called with q.mu held.
+func (q *Queue) finalizeRunIfAllTerminalLocked(ctx context.Context, r *runEntry) {
+	if !q.allTerminal(r) {
+		return
+	}
+	runID := r.runID
+	runStatus := run.StatusSuccess
+	for _, e := range r.tasks {
+		if e.status == taskFailed {
+			runStatus = run.StatusFailed
+			break
 		}
 	}
+	finishedAt := time.Now()
+	if err := q.runRepo.UpdateStatus(ctx, r.projectID, runID, runStatus, &finishedAt); err != nil {
+		slog.Warn("update run status failed", "run_id", runID, "err", err)
+	}
+	pl := r.pl
+	delete(q.runs, runID)
+	if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
+		owner.ReleaseRun(runID)
+	}
+	q.emit(r.projectID, "run.completed", map[string]any{"run_id": runID, "status": runStatus})
 
-	return nil
+	if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
+		// Use a detached context so the callback isn't cancelled when the
+		// HTTP request context that triggered this call ends.
+		q.OnRunSuccess(project.WithContext(context.Background(), project.Context{ID: r.projectID}), runID, pl)
+	}
 }
 
 // Cancel stops queue-owned work for a run and marks any non-terminal steps as canceled.
@@ -458,6 +519,7 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 	q.mu.Lock()
 	r, ok := q.runs[runID]
 	b := q.backend
+	owner, hasOwner := b.(pipelinedispatch.TaskOwner)
 	if ok {
 		projectID = r.projectID
 		for _, entry := range r.tasks {
@@ -465,7 +527,7 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 			case taskDone, taskFailed, taskSkipped, taskCanceled:
 				continue
 			default:
-				q.stopRetryTimerLocked(entry)
+				q.stopEntryTimerLocked(entry)
 				startedAt := entry.startedAt
 				entry.status = taskCanceled
 				entry.startedAt = nil
@@ -481,21 +543,38 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 				}); err != nil {
 					slog.Warn("upsert canceled step failed", "task_id", entry.task.ID, "err", err)
 				}
+				// A dispatched-but-never-Complete()'d task (the normal case
+				// for a cancel: the worker stops it without reporting a
+				// result) would otherwise never release its router-level
+				// capacity reservation, permanently starving future
+				// dispatches to this agent. Safe to call unconditionally —
+				// ReleaseTask no-ops for tasks that were never dispatched.
+				if hasOwner {
+					owner.ReleaseTask(entry.task.ID)
+				}
 			}
 		}
 		delete(q.runs, runID)
 	}
 	q.mu.Unlock()
 
+	// Commit the local terminal state unconditionally: Piper's cancel contract
+	// is "stop dispatch/retry and confirm locally," not "remote stop succeeded."
+	// The remote call below is best-effort observability, not a precondition.
+	now := time.Now()
+	if err := q.runRepo.UpdateStatus(ctx, projectID, runID, run.StatusCanceled, &now); err != nil {
+		return err
+	}
+	q.emit(projectID, "run.canceled", map[string]any{"run_id": runID})
+
 	if cb, ok := b.(pipelinedispatch.CancelableBackend); ok {
 		if err := cb.CancelRun(ctx, runID); err != nil {
-			return err
+			slog.Warn("remote cancel best-effort failed", "run_id", runID, "err", err)
+			q.emit(projectID, "run.cancel_remote_failed", map[string]any{"run_id": runID, "err": err.Error()})
 		}
 	}
 
-	now := time.Now()
-	q.emit(projectID, "run.canceled", map[string]any{"run_id": runID})
-	return q.runRepo.UpdateStatus(ctx, projectID, runID, run.StatusCanceled, &now)
+	return nil
 }
 
 func (q *Queue) promoteReady(ctx context.Context, r *runEntry) {
@@ -519,6 +598,14 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 	now := time.Now()
 	entry.startedAt = &now
 	entry.leaseAt = &now
+	entry.deadline = nil
+	entry.task.Deadline = nil
+	if timeout := entry.step.Options.Timeout; timeout > 0 {
+		deadline := now.Add(time.Duration(timeout) * time.Second)
+		entry.deadline = &deadline
+		entry.task.Deadline = &deadline
+		q.scheduleTimeoutLocked(runID, entry, deadline)
+	}
 	q.emit(entry.task.ProjectID, "step.running", map[string]any{"run_id": runID, "step": entry.step.Name, "task_id": entry.task.ID, "attempt": entry.attempts})
 	if err := q.stepRepo.Upsert(ctx, &run.Step{
 		ProjectID: entry.task.ProjectID,
@@ -530,6 +617,74 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 	}); err != nil {
 		slog.Warn("upsert running step failed", "task_id", entry.task.ID, "err", err)
 	}
+}
+
+// scheduleTimeoutLocked arms entry.timer to fail (or retry) the step once
+// its declared step.options.timeout deadline passes. Late real results are
+// unaffected: Complete()'s terminal-idempotency check silently ignores a
+// success that arrives after the step has already been marked failed here.
+// Called with q.mu held.
+func (q *Queue) scheduleTimeoutLocked(runID string, entry *taskEntry, deadline time.Time) {
+	q.stopEntryTimerLocked(entry)
+	entry.timer = time.AfterFunc(time.Until(deadline), func() {
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		if q.serverCtx.Err() != nil || entry.status != taskRunning {
+			return
+		}
+		r, ok := q.runs[runID]
+		if !ok {
+			return
+		}
+		entry.timer = nil
+		// Unlike Complete(), this path never goes through a result, so it
+		// must release the router-level capacity reservation itself —
+		// otherwise the agent's reserved-slot count leaks by one on every
+		// timeout, eventually starving all future dispatches to it even
+		// though nothing is actually running.
+		if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
+			owner.ReleaseTask(entry.task.ID)
+		}
+		// Use a fresh context, not the caller's: the ctx that originally
+		// scheduled this timer (an HTTP request or dispatch-result context)
+		// is long since canceled by the time this fires, which would make
+		// the DB writes below fail immediately (matches the established
+		// pattern in scheduleRetryLocked/requeue below).
+		q.failOrRetryLocked(context.Background(), r, entry, "task execution timeout", entry.startedAt, time.Now())
+	})
+}
+
+// scheduleRecoveryGraceLocked arms entry.timer to fail (or retry, if a
+// retry policy is configured) a step that was "running" when the server
+// crashed, unless the owning worker reconnects and renews its lease for it
+// within the grace period (see RenewLeases, which promotes a matching
+// taskRecovering entry back to taskRunning and stops this timer). Called
+// with q.mu held.
+func (q *Queue) scheduleRecoveryGraceLocked(runID string, entry *taskEntry) {
+	grace := q.recoveryGrace
+	if grace <= 0 {
+		grace = defaultRecoveryGrace
+	}
+	q.stopEntryTimerLocked(entry)
+	entry.timer = time.AfterFunc(grace, func() {
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		if q.serverCtx.Err() != nil || entry.status != taskRecovering {
+			return
+		}
+		r, ok := q.runs[runID]
+		if !ok {
+			return
+		}
+		entry.timer = nil
+		// See scheduleTimeoutLocked: release the router-level reservation
+		// ourselves (no Complete() result on this path) and use a fresh
+		// context (the caller's is long dead by the time this fires).
+		if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
+			owner.ReleaseTask(entry.task.ID)
+		}
+		q.failOrRetryLocked(context.Background(), r, entry, "recovery grace period expired without worker reconnect", entry.startedAt, time.Now())
+	})
 }
 
 // RenewLeases records that workerID is still executing the given tasks.
@@ -551,7 +706,7 @@ func (q *Queue) RenewLeases(workerID string, taskIDs []string) {
 			continue
 		}
 		entry := r.tasks[stepName]
-		if entry == nil || entry.status != taskRunning {
+		if entry == nil || (entry.status != taskRunning && entry.status != taskRecovering) {
 			continue
 		}
 		if entry.assignedWorkerID == "" {
@@ -562,6 +717,13 @@ func (q *Queue) RenewLeases(workerID string, taskIDs []string) {
 		}
 		if entry.assignedWorkerID != workerID {
 			continue
+		}
+		if entry.status == taskRecovering {
+			// The owning worker reconnected and is still executing this task:
+			// stop waiting out the grace period and resume normal running state.
+			q.stopEntryTimerLocked(entry)
+			entry.status = taskRunning
+			q.emit(r.projectID, "step.recovered", map[string]any{"run_id": runID, "step": stepName})
 		}
 		entry.leaseAt = &now
 	}
@@ -589,9 +751,25 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	}
 	runID := entry.task.RunID
 	q.startTaskLocked(ctx, runID, entry)
-	task := entry.task
+	// Copy rather than alias entry.task: the goroutine below reads task
+	// fields without holding q.mu, and entry.task is mutated in place by a
+	// later startTaskLocked call if this same entry gets retried (e.g. after
+	// a fast timeout/failure with zero retry delay) before this goroutine's
+	// Dispatch call has finished reading it.
+	taskCopy := *entry.task
+	task := &taskCopy
 	dispatchCtx := q.serverCtx
 	go func() {
+		// entry may have been canceled between this goroutine's scheduling and
+		// its run (Cancel() removes the run from q.runs but the entry pointer
+		// stays valid). Re-check right before the actual dispatch call to close
+		// the window where a cancel arrives before any run-worker binding exists.
+		q.mu.Lock()
+		canceled := entry.status == taskCanceled
+		q.mu.Unlock()
+		if canceled {
+			return
+		}
 		if err := b.Dispatch(dispatchCtx, task); err != nil {
 			var de *pipelinedispatch.DispatchError
 			if errors.As(err, &de) && de.Retryable {
@@ -646,11 +824,11 @@ func (q *Queue) requeueBusyLocked(runID, stepName string, reason error) {
 	entry.startedAt = nil
 	entry.leaseAt = nil
 	slog.Info("task requeued after retryable dispatch failure", "task_id", entry.task.ID, "err", reason)
-	q.stopRetryTimerLocked(entry)
-	entry.retryTimer = time.AfterFunc(2*time.Second, func() {
+	q.stopEntryTimerLocked(entry)
+	entry.timer = time.AfterFunc(2*time.Second, func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		entry.retryTimer = nil
+		entry.timer = nil
 		// serverCtx is cancelled on shutdown; without this check a timer that
 		// outlives Close() (e.g. mid-flight when the process/test tears down)
 		// would dispatch against an already-closed store.
@@ -664,32 +842,32 @@ func (q *Queue) requeueBusyLocked(runID, stepName string, reason error) {
 func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
 	if q.retryDelay <= 0 {
 		entry.status = taskReady
-		entry.retryTimer = nil
+		entry.timer = nil
 		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
 		q.dispatchIfNeeded(ctx, entry)
 		return
 	}
-	q.stopRetryTimerLocked(entry)
+	q.stopEntryTimerLocked(entry)
 	retry := func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
 		if entry.status != taskRetrying {
 			return
 		}
-		entry.retryTimer = nil
+		entry.timer = nil
 		entry.status = taskReady
 		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
 		q.dispatchIfNeeded(context.Background(), entry)
 	}
-	entry.retryTimer = time.AfterFunc(q.retryDelay, retry)
+	entry.timer = time.AfterFunc(q.retryDelay, retry)
 }
 
-func (q *Queue) stopRetryTimerLocked(entry *taskEntry) {
-	if entry.retryTimer == nil {
+func (q *Queue) stopEntryTimerLocked(entry *taskEntry) {
+	if entry.timer == nil {
 		return
 	}
-	entry.retryTimer.Stop()
-	entry.retryTimer = nil
+	entry.timer.Stop()
+	entry.timer = nil
 }
 
 func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep string) {
@@ -761,7 +939,7 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 				case taskDone, taskFailed, taskSkipped, taskCanceled:
 					continue
 				default:
-					q.stopRetryTimerLocked(entry)
+					q.stopEntryTimerLocked(entry)
 					entry.status = taskFailed
 					entry.startedAt = nil
 					entry.leaseAt = nil
@@ -792,7 +970,11 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 
 func (q *Queue) runExpiredLocked(r *runEntry, cutoff time.Time) bool {
 	for _, entry := range r.tasks {
-		if entry.status != taskRunning || entry.leaseAt == nil {
+		// taskRecovering is included as a backstop in case its own grace
+		// timer is ever lost (e.g. a second server restart racing the
+		// timer); the normal path is scheduleRecoveryGraceLocked's own
+		// shorter timer, not this coarser TTL sweep.
+		if (entry.status != taskRunning && entry.status != taskRecovering) || entry.leaseAt == nil {
 			continue
 		}
 		if entry.leaseAt.Before(cutoff) {

@@ -3,6 +3,7 @@ package pipelinedispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
@@ -128,6 +129,48 @@ func TestAgentBackendDispatchRespectsExplicitRuntimeAmongMixedInfrastructure(t *
 	calls := rpc.snapshot()
 	if calls[0].AgentID != "docker-agent" {
 		t.Fatalf("agent id = %q, want docker-agent", calls[0].AgentID)
+	}
+}
+
+// TestAgentBackendDispatchRejectsAmbiguousInfrastructureAsNonRetryable
+// reproduces the live bug found during adversarial QA (2026-08-02): a
+// pipeline with no declared driver.placement.runtime, dispatched while a
+// baremetal and a docker worker are both registered, must fail clearly and
+// permanently instead of being silently (and non-deterministically)
+// load-balanced onto a worker it was never configured to run on. Marking it
+// Retryable would make the queue retry forever without ever succeeding,
+// since nothing about the pipeline changes between attempts.
+func TestAgentBackendDispatchRejectsAmbiguousInfrastructureAsNonRetryable(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{
+		ID:             "bm-agent",
+		Infrastructure: iagent.InfrastructureBaremetal,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+	})
+	reg.Register(iagent.Info{
+		ID:             "docker-agent",
+		Infrastructure: iagent.InfrastructureDocker,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+	})
+	rpc := &recordingPipelineAgentRPC{}
+	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
+	pl := pipeline.Pipeline{}
+	pipelineJSON, _ := json.Marshal(pl)
+	task := &proto.Task{ID: "run-1:train", RunID: "run-1", Pipeline: pipelineJSON}
+
+	err := backend.Dispatch(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected Dispatch to fail for unset placement across mixed infrastructure types")
+	}
+	var de *DispatchError
+	if !errors.As(err, &de) {
+		t.Fatalf("error = %v (%T), want *DispatchError", err, err)
+	}
+	if de.Retryable {
+		t.Fatal("ambiguous-infrastructure dispatch failure must not be marked Retryable — it will never resolve on its own")
+	}
+	if len(rpc.snapshot()) != 0 {
+		t.Fatal("no RPC should have been sent for a rejected ambiguous dispatch")
 	}
 }
 

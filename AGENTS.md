@@ -4,6 +4,16 @@
 
 # Piper — Frontend Agent Guide
 
+## Pre-Release QA
+
+Before signing off on a feature or fix as verified, read
+`docs/adversarial-qa-playbook.md`. Unit/e2e tests and a single-worker manual
+smoke test do not satisfy this — the playbook specifically requires
+registering multiple worker infrastructure types (`baremetal`, `docker`,
+`k8s`) at once, submitting through the real rendered UI forms rather than
+hand-built API payloads, and cross-checking server logs rather than trusting
+API success responses alone.
+
 ## Worker Network Invariant
 
 - Workers establish one outbound tunnel to the Piper master using `worker.master_url`.

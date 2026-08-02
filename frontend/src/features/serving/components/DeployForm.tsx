@@ -97,6 +97,8 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
       : worker.infrastructure !== 'k8s',
   )
   const hasCompatibleWorkers = compatibleWorkers.length > 0
+  const localInfraTypes = [...new Set(compatibleWorkers.map(w => w.infrastructure))]
+  const ambiguousLocalInfra = form.runtimeMode === 'local' && localInfraTypes.length > 1 && !form.worker
 
   useEffect(() => {
     let canceled = false
@@ -158,6 +160,10 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   async function handleDeploy(values: FormState) {
     if (!hasCompatibleWorkers) {
       setError(`No ${values.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected.`)
+      return
+    }
+    if (ambiguousLocalInfra) {
+      setError(`Multiple worker infrastructure types are registered (${localInfraTypes.join(', ')}) — choose a Worker before deploying.`)
       return
     }
     await deployPayload(buildYAML(values))
@@ -289,6 +295,16 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                 ))}
               </div>
 
+              {!hasCompatibleWorkers && (
+                <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  No {form.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected. Deploying would fail immediately — register one first, or switch Mode.
+                </p>
+              )}
+              {ambiguousLocalInfra && (
+                <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {localInfraTypes.length} worker infrastructure types are registered ({localInfraTypes.join(', ')}) — choose a Worker so this service always runs where you expect.
+                </p>
+              )}
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <DataBodyTemplate.Field label="Mode">
                   <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')}>
@@ -314,14 +330,21 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
               </div>
 
               {form.runtimeMode === 'local' && (
-                <DataBodyTemplate.Field label="Worker" description="Deploy to a specific worker node. Leave blank to auto-assign.">
+                <DataBodyTemplate.Field
+                  label="Worker"
+                  description={
+                    localInfraTypes.length > 1
+                      ? 'Multiple infrastructure types are registered — pick the worker to run on.'
+                      : 'Optional. Leave unassigned to load-balance across matching workers.'
+                  }
+                >
                   <Select
-                    value={form.worker || '__auto__'}
+                    value={form.worker || (localInfraTypes.length <= 1 ? '__auto__' : '')}
                     onValueChange={v => setField('worker', v === '__auto__' ? '' : (v ?? ''))}
                   >
-                    <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
+                    <SelectTrigger size="sm"><SelectValue placeholder="— select worker —" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__auto__">auto assign</SelectItem>
+                      {localInfraTypes.length <= 1 && <SelectItem value="__auto__">auto assign</SelectItem>}
                       {compatibleWorkers.map(w => (
                         <SelectItem key={w.id} value={w.id}>
                           {w.hostname || w.id}
@@ -409,7 +432,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
           <Button
             type="submit"
             size="sm"
-            disabled={deploying || (tab === 'form' && !hasCompatibleWorkers)}
+            disabled={deploying || (tab === 'form' && (!hasCompatibleWorkers || ambiguousLocalInfra))}
           >
             {deploying ? 'Deploying…' : 'Deploy'}
           </Button>

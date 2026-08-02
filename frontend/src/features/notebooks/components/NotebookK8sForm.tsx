@@ -91,6 +91,12 @@ export function NotebookK8sForm({
 
   const hasWorkers = workers.length > 0
 
+  const notebookInfraTypes = useMemo(
+    () => [...new Set(workers.map(w => w.infrastructure))],
+    [workers],
+  )
+  const ambiguousInfra = notebookInfraTypes.length > 1 && !selectedWorkerID
+
   const runtime = useMemo<'k8s' | 'docker' | 'baremetal'>(() => {
 		if (selectedWorker) return selectedWorker.infrastructure
 		if (workers.some(w => w.infrastructure === 'baremetal')) return 'baremetal'
@@ -201,7 +207,7 @@ export function NotebookK8sForm({
   return (
     <DataBodyTemplate
       title="Launch Notebook Server"
-      description={<RuntimeBadge runtime={runtime} />}
+      description={ambiguousInfra ? undefined : <RuntimeBadge runtime={runtime} />}
       activeTab={tab}
       onTabChange={handleTabChange}
       actions={
@@ -211,7 +217,7 @@ export function NotebookK8sForm({
           <Button
             size="sm"
             onClick={handleSubmit}
-            disabled={submitting || !hasWorkers || (tab === 'form' && (
+            disabled={submitting || !hasWorkers || ambiguousInfra || (tab === 'form' && (
               runtime === 'k8s'
                 ? !k8sForm.name.trim() || !k8sForm.image.trim() || !resolveK8sForm(k8sForm).namespace.trim() || !k8sForm.storageSize.trim()
                 : !workerForm.name.trim() || (runtime === 'docker' && !workerForm.dockerImage.trim())
@@ -230,12 +236,26 @@ export function NotebookK8sForm({
             </p>
           </DataBodyTemplate.Group>
         )}
+        {ambiguousInfra && (
+          <DataBodyTemplate.Group layout="stacked">
+            <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {notebookInfraTypes.length} worker infrastructure types are registered ({notebookInfraTypes.join(', ')}) — choose a Worker so this notebook always runs where you expect.
+            </p>
+          </DataBodyTemplate.Group>
+        )}
         <DataBodyTemplate.Group layout="stacked">
-          <DataBodyTemplate.Field label="Worker" description="Select a specific worker. Auto-assign stays within the runtime shown above.">
+          <DataBodyTemplate.Field
+            label="Worker"
+            description={
+              notebookInfraTypes.length > 1
+                ? 'Multiple infrastructure types are registered — pick the worker to run on.'
+                : 'Optional. Leave unassigned to load-balance across matching workers.'
+            }
+          >
             <Select value={selectedWorkerID} onValueChange={onWorkerChange}>
-              <SelectTrigger size="sm"><SelectValue placeholder="— auto assign —" /></SelectTrigger>
+              <SelectTrigger size="sm"><SelectValue placeholder="— select worker —" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">auto assign</SelectItem>
+                {notebookInfraTypes.length <= 1 && <SelectItem value="">auto assign</SelectItem>}
                 {workers.map(w => (
                   <SelectItem key={w.id} value={w.id}>
                     <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${

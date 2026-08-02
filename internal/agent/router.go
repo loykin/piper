@@ -26,6 +26,40 @@ func (r *Router) SetDefault(kind WorkloadKind, placement Placement) {
 	r.defaults[kind] = placement
 }
 
+// AmbiguousInfrastructureError is returned by Select/Reserve when candidates
+// span more than one infrastructure type and the caller did not set
+// placement.Infrastructure (driver.placement.runtime in the workload spec)
+// to disambiguate. Baremetal, Docker, and Kubernetes workers have materially
+// different execution semantics — an image-less pipeline step, for example,
+// only runs on baremetal, but nothing in an unset placement says so.
+// Silently load-balancing across infrastructure types would route a task to
+// an environment it was never configured for, non-deterministically (which
+// candidate happens to be least loaded at that moment). This is a
+// configuration problem, not a transient capacity issue: callers should
+// treat it as non-retryable, unlike a plain "no capacity" refusal.
+type AmbiguousInfrastructureError struct {
+	Kind  WorkloadKind
+	Types []string
+}
+
+func (e *AmbiguousInfrastructureError) Error() string {
+	return fmt.Sprintf("ambiguous placement for %s: %d infrastructure types registered (%v) and none was requested; set placement.runtime to disambiguate", e.Kind, len(e.Types), e.Types)
+}
+
+// distinctInfrastructures returns the set of distinct Info.Infrastructure
+// values present among candidates, in first-seen order.
+func distinctInfrastructures(candidates []Info) []string {
+	seen := make(map[string]bool, len(candidates))
+	var out []string
+	for _, c := range candidates {
+		if !seen[c.Infrastructure] {
+			seen[c.Infrastructure] = true
+			out = append(out, c.Infrastructure)
+		}
+	}
+	return out
+}
+
 // Select returns the best agent for the given placement.
 // When multiple candidates match it selects the one with the lowest load
 // (reserved/capacity ratio). Unlimited-capacity agents (Capacity==0) are
@@ -65,7 +99,13 @@ func (r *Router) Select(kind WorkloadKind, placement Placement) (*Info, error) {
 	case 1:
 		return &candidates[0], nil
 	default:
-		// Multiple candidates: pick the least-loaded one.
+		if placement.Infrastructure == "" {
+			if types := distinctInfrastructures(candidates); len(types) > 1 {
+				return nil, &AmbiguousInfrastructureError{Kind: kind, Types: types}
+			}
+		}
+		// Multiple candidates, all the same infrastructure type: pick the
+		// least-loaded one.
 		r.loadMu.Lock()
 		best := selectLeastLoaded(candidates, r.reserved)
 		r.loadMu.Unlock()
@@ -111,6 +151,11 @@ func (r *Router) Reserve(kind WorkloadKind, placement Placement) (*Info, error) 
 		candidates = []Info{*agentInfo}
 	} else {
 		candidates = r.registry.Candidates(kind, placement)
+		if placement.Infrastructure == "" {
+			if types := distinctInfrastructures(candidates); len(types) > 1 {
+				return nil, &AmbiguousInfrastructureError{Kind: kind, Types: types}
+			}
+		}
 	}
 
 	best := selectLeastLoaded(candidates, r.reserved)

@@ -21,6 +21,7 @@ import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/fea
 import { useCredentials } from '@/features/credentials/hooks'
 import { createPipeline } from '@/features/pipelines/api'
 import { getPipeline } from '@/features/pipelines/api'
+import { useWorkers } from '@/features/workers/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
@@ -394,6 +395,27 @@ export default function PipelineEditorPage() {
   const [volumeFilesStatus, setVolumeFilesStatus] = useState<'ready' | 'transitioning' | 'unavailable' | null>(null)
   const [tasks, setTasks] = useState<PipelineStepDraft[]>(initialDraft.steps)
   const [defaults, setDefaults] = useState<PipelineDefaultsDraft>(initialDraft.defaults)
+
+  // Runtime is explicit-only (no "Auto"): a pipeline with no image can only
+  // ever run on baremetal, but nothing about an unset runtime says so — the
+  // router now rejects an ambiguous placement rather than silently guessing
+  // when more than one infrastructure type is registered. Mirror that here:
+  // prefill the sole registered type once, and require an explicit choice
+  // when more than one type is registered.
+  const { data: pipelineWorkers = [] } = useWorkers('pipeline')
+  const pipelineInfraTypes = useMemo(
+    () => Array.from(new Set(pipelineWorkers.map(w => w.infrastructure))),
+    [pipelineWorkers],
+  )
+  const runtimeAutofilledRef = useRef(false)
+  useEffect(() => {
+    if (runtimeAutofilledRef.current) return
+    if (pipelineWorkers.length === 0) return
+    runtimeAutofilledRef.current = true
+    if (pipelineInfraTypes.length === 1 && !defaults.placementRuntime) {
+      setDefaults(prev => (prev.placementRuntime ? prev : { ...prev, placementRuntime: pipelineInfraTypes[0] }))
+    }
+  }, [pipelineWorkers.length, pipelineInfraTypes, defaults.placementRuntime])
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => buildPositions(initialDraft.steps))
   const [selectedId, setSelectedId] = useState<string>(initialDraft.steps[0]?.id ?? '')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -674,6 +696,10 @@ export default function PipelineEditorPage() {
   async function handleSubmit() {
     const draft = resolveSubmitDraft()
     if (!draft) return
+    if (pipelineInfraTypes.length > 1 && !draft.defaults.placementRuntime) {
+      setError(`Multiple worker infrastructure types are registered (${pipelineInfraTypes.join(', ')}) — choose a Runtime before submitting.`)
+      return
+    }
     const messages = validatePipelineDraft({ name: draft.name, steps: draft.steps, defaults: draft.defaults })
     if (messages.length > 0) { setError(messages[0]); return }
     setError('')
@@ -927,41 +953,59 @@ export default function PipelineEditorPage() {
             </div>
             <div className="space-y-4 overflow-y-auto p-4">
               <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime Defaults">
-                <DataBodyTemplate.Field label="Runtime">
+               <div className="space-y-3">
+                {pipelineWorkers.length === 0 && (
+                  <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    No worker in this project advertises the pipeline capability yet. You can still save this pipeline, but running it will fail until one connects.
+                  </p>
+                )}
+                {pipelineInfraTypes.length > 1 && !defaults.placementRuntime && (
+                  <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {pipelineInfraTypes.length} worker infrastructure types are registered ({pipelineInfraTypes.join(', ')}) — choose a Runtime so this pipeline always runs where you expect.
+                  </p>
+                )}
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Runtime</label>
                   <Select
-                    value={defaults.placementRuntime || '__auto__'}
-                    onValueChange={value => updateDefaults({ placementRuntime: value === '__auto__' ? '' : (value ?? '') })}
+                    value={defaults.placementRuntime}
+                    onValueChange={value => updateDefaults({ placementRuntime: value ?? '' })}
                   >
-                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger size="sm" className="w-full"><SelectValue placeholder="— select runtime —" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__auto__">Auto</SelectItem>
                       <SelectItem value="baremetal">Bare metal</SelectItem>
                       <SelectItem value="docker">Docker</SelectItem>
                       <SelectItem value="k8s">Kubernetes</SelectItem>
                     </SelectContent>
                   </Select>
-                </DataBodyTemplate.Field>
-                <DataBodyTemplate.Field label="Worker" description="Optional exact worker ID.">
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker</label>
                   <Input value={defaults.placementWorker} onChange={e => updateDefaults({ placementWorker: e.target.value })} />
-                </DataBodyTemplate.Field>
-                <DataBodyTemplate.Field label="Worker Label">
+                  <p className="mt-1 text-xs text-muted-foreground">Optional exact worker ID.</p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker Label</label>
                   <Input value={defaults.placementLabel} onChange={e => updateDefaults({ placementLabel: e.target.value })} />
-                </DataBodyTemplate.Field>
+                </div>
                 {defaults.placementRuntime === 'k8s' && (
                   <>
-                    <DataBodyTemplate.Field label="Container Image">
+                    <div>
+                      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Container Image</label>
                       <Input value={defaults.k8sImage} onChange={e => updateDefaults({ k8sImage: e.target.value })} />
-                    </DataBodyTemplate.Field>
-                    <DataBodyTemplate.Field label="Namespace">
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Namespace</label>
                       <Input value={defaults.k8sNamespace} onChange={e => updateDefaults({ k8sNamespace: e.target.value })} />
-                    </DataBodyTemplate.Field>
+                    </div>
                   </>
                 )}
                 {defaults.placementRuntime === 'docker' && (
-                  <DataBodyTemplate.Field label="Container Image">
+                  <div>
+                    <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Container Image</label>
                     <Input value={defaults.dockerImage} onChange={e => updateDefaults({ dockerImage: e.target.value })} />
-                  </DataBodyTemplate.Field>
+                  </div>
                 )}
+               </div>
               </DataBodyTemplate.Group>
               <div>
                 <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
@@ -1244,14 +1288,16 @@ export default function PipelineEditorPage() {
               />
 
               <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime Override">
-                <DataBodyTemplate.Field label="Runtime" description="Leave as Inherit to use pipeline defaults.">
+               <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Runtime</label>
                   <Select
                     value={editingTask.driver.placementRuntime || '__inherit__'}
                     onValueChange={value => updateTaskDriver(editingIndex, {
                       placementRuntime: value === '__inherit__' ? '' : (value ?? ''),
                     })}
                   >
-                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__inherit__">Inherit</SelectItem>
                       <SelectItem value="baremetal">Bare metal</SelectItem>
@@ -1259,45 +1305,52 @@ export default function PipelineEditorPage() {
                       <SelectItem value="k8s">Kubernetes</SelectItem>
                     </SelectContent>
                   </Select>
-                </DataBodyTemplate.Field>
+                  <p className="mt-1 text-xs text-muted-foreground">Leave as Inherit to use pipeline defaults.</p>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <DataBodyTemplate.Field label="Worker">
+                  <div>
+                    <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker</label>
                     <Input
                       value={editingTask.driver.placementWorker}
                       onChange={e => updateTaskDriver(editingIndex, { placementWorker: e.target.value })}
                     />
-                  </DataBodyTemplate.Field>
-                  <DataBodyTemplate.Field label="Worker Label">
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker Label</label>
                     <Input
                       value={editingTask.driver.placementLabel}
                       onChange={e => updateTaskDriver(editingIndex, { placementLabel: e.target.value })}
                     />
-                  </DataBodyTemplate.Field>
+                  </div>
                 </div>
                 {editingTask.driver.placementRuntime === 'k8s' && (
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <DataBodyTemplate.Field label="Container Image">
+                    <div>
+                      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Container Image</label>
                       <Input
                         value={editingTask.driver.k8sImage}
                         onChange={e => updateTaskDriver(editingIndex, { k8sImage: e.target.value })}
                       />
-                    </DataBodyTemplate.Field>
-                    <DataBodyTemplate.Field label="Namespace">
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Namespace</label>
                       <Input
                         value={editingTask.driver.k8sNamespace}
                         onChange={e => updateTaskDriver(editingIndex, { k8sNamespace: e.target.value })}
                       />
-                    </DataBodyTemplate.Field>
+                    </div>
                   </div>
                 )}
                 {editingTask.driver.placementRuntime === 'docker' && (
-                  <DataBodyTemplate.Field label="Container Image">
+                  <div>
+                    <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Container Image</label>
                     <Input
                       value={editingTask.driver.dockerImage}
                       onChange={e => updateTaskDriver(editingIndex, { dockerImage: e.target.value })}
                     />
-                  </DataBodyTemplate.Field>
+                  </div>
                 )}
+               </div>
               </DataBodyTemplate.Group>
 
               <div className="grid grid-cols-3 gap-3">

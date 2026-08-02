@@ -3,6 +3,7 @@ package pipelinedispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -67,6 +68,14 @@ func (b *AgentBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 		agentInfo, selectErr := b.router.Reserve(iagent.WorkloadPipeline, placement)
 		if selectErr != nil {
 			b.runMu.Unlock()
+			var ambiguous *iagent.AmbiguousInfrastructureError
+			if errors.As(selectErr, &ambiguous) {
+				// A configuration problem (no driver.placement.runtime to
+				// disambiguate multiple infrastructure types), not a
+				// transient capacity issue — retrying changes nothing until
+				// the pipeline is fixed.
+				return &DispatchError{Retryable: false, Err: selectErr}
+			}
 			// No available worker — retryable so the queue re-attempts after a short delay.
 			return &DispatchError{Retryable: true, Err: selectErr}
 		}

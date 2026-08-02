@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -277,5 +278,97 @@ func TestRegistryKeepsOneActiveK8sAgentPerCluster(t *testing.T) {
 	}
 	if got.ClusterName != "gpu-a" {
 		t.Fatalf("cluster = %q, want gpu-a", got.ClusterName)
+	}
+}
+
+// TestRouterSelectRejectsAmbiguousMixedInfrastructure reproduces the live
+// bug found during adversarial QA (2026-08-02): with a baremetal and a
+// docker pipeline worker both registered, a task with no
+// driver.placement.runtime and no image (RequireContainer=false) used to be
+// silently load-balanced across them by selectLeastLoaded — non-deterministically
+// landing on the docker worker, where it fails immediately with "no docker
+// image configured". Select must now refuse to guess and return
+// AmbiguousInfrastructureError instead.
+func TestRouterSelectRejectsAmbiguousMixedInfrastructure(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "bm", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "dk", Infrastructure: InfrastructureDocker, Capabilities: []string{CapabilityPipeline}})
+	router := NewRouter(reg)
+
+	_, err := router.Select(WorkloadPipeline, Placement{})
+	if err == nil {
+		t.Fatal("expected an error for an unset placement across mixed infrastructure types")
+	}
+	var ambiguous *AmbiguousInfrastructureError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %v (%T), want *AmbiguousInfrastructureError", err, err)
+	}
+	if len(ambiguous.Types) != 2 {
+		t.Fatalf("ambiguous.Types = %v, want 2 entries", ambiguous.Types)
+	}
+}
+
+// TestRouterReserveRejectsAmbiguousMixedInfrastructure is the Reserve()
+// counterpart — the atomic reserve-a-slot path used by pipeline dispatch
+// must apply the same check, not just the read-only Select() path.
+func TestRouterReserveRejectsAmbiguousMixedInfrastructure(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "bm", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}, Capacity: 4})
+	reg.Register(Info{ID: "dk", Infrastructure: InfrastructureDocker, Capabilities: []string{CapabilityPipeline}, Capacity: 4})
+	router := NewRouter(reg)
+
+	_, err := router.Reserve(WorkloadPipeline, Placement{})
+	var ambiguous *AmbiguousInfrastructureError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %v (%T), want *AmbiguousInfrastructureError", err, err)
+	}
+
+	// Reserve must not have side-effected any reservation on either
+	// candidate when it bails out ambiguous — a later, correctly-disambiguated
+	// call must still see full capacity on both.
+	got, err := router.Reserve(WorkloadPipeline, Placement{Infrastructure: InfrastructureBaremetal})
+	if err != nil {
+		t.Fatalf("Reserve with explicit runtime failed: %v", err)
+	}
+	if got.ID != "bm" {
+		t.Fatalf("selected worker = %q, want bm", got.ID)
+	}
+}
+
+// TestRouterSelectAllowsMultipleWorkersOfSameInfrastructure ensures the
+// ambiguity check is scoped to *different* infrastructure types, not just
+// "more than one candidate" — N interchangeable workers of the same type
+// must keep load-balancing exactly as before.
+func TestRouterSelectAllowsMultipleWorkersOfSameInfrastructure(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "bm1", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "bm2", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "bm3", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
+	router := NewRouter(reg)
+
+	got, err := router.Select(WorkloadPipeline, Placement{})
+	if err != nil {
+		t.Fatalf("Select returned error for same-infrastructure candidates: %v", err)
+	}
+	if got.ID != "bm1" && got.ID != "bm2" && got.ID != "bm3" {
+		t.Fatalf("unexpected worker ID %q", got.ID)
+	}
+}
+
+// TestRouterSelectExplicitRuntimeResolvesMixedInfrastructure confirms that
+// setting placement.Infrastructure (driver.placement.runtime) is still all
+// that's needed to disambiguate — the new check only fires when it's unset.
+func TestRouterSelectExplicitRuntimeResolvesMixedInfrastructure(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "bm", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "dk", Infrastructure: InfrastructureDocker, Capabilities: []string{CapabilityPipeline}})
+	router := NewRouter(reg)
+
+	got, err := router.Select(WorkloadPipeline, Placement{Infrastructure: InfrastructureDocker})
+	if err != nil {
+		t.Fatalf("Select returned error: %v", err)
+	}
+	if got.ID != "dk" {
+		t.Fatalf("selected worker = %q, want dk", got.ID)
 	}
 }

@@ -51,6 +51,15 @@ func (r *capturingRunRepo) Delete(context.Context, string, string) error { retur
 func (r *capturingRunRepo) GetLatestSuccessful(context.Context, string, string) (*Run, error) {
 	return nil, nil
 }
+func (r *capturingRunRepo) Count(context.Context, string, RunFilter) (int, error) {
+	return len(r.runs), nil
+}
+func (r *capturingRunRepo) ListTerminalBefore(context.Context, string, time.Time) ([]*Run, error) {
+	return nil, nil
+}
+func (r *capturingRunRepo) ExistingIDs(context.Context, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
 
 type emptyStepRepo struct{}
 

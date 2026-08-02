@@ -1,22 +1,41 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import { runColumns } from '@/features/runs/columns'
 import { RunDetailPanel } from '@/features/runs/components/RunDetailPanel'
-import { useRuns, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
+import { useRunsPaged, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
 import { useSchedules } from '@/features/schedules/hooks'
 import { RowActions } from '@/shared/components/RowActions'
 import type { Run } from '@/features/runs/api'
 
+const PAGE_SIZE = 20
+
 function HistoryPageInner() {
   const { open } = useSidePanel()
-  const { data: runs = [] } = useRuns({ include_steps: true })
+  const [pageIndex, setPageIndex] = useState(0)
+  const { data } = useRunsPaged({ include_steps: true, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE })
+  const runs = data?.runs ?? []
+  const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
+
+  // Deleting the last row of the last page shrinks `total` below what
+  // pageIndex needs, leaving the grid showing an empty page. This
+  // synchronizes local pagination state with that external total once it's
+  // known — not derivable during render, since the offset used to fetch
+  // `data` in the first place depends on the very pageIndex being corrected.
+  useEffect(() => {
+    if (data === undefined) return
+    const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+    if (pageIndex > pageCount - 1) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- correcting local page state to stay in range of a total that just changed underneath it, not a derived-render substitute
+      setPageIndex(pageCount - 1)
+    }
+  }, [data, total, pageIndex])
 
   const scheduleById = useMemo(
     () => new Map(schedules.map(s => [s.id, s])),
@@ -92,13 +111,14 @@ function HistoryPageInner() {
           rowCursor
           onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 720 })}
           initialSorting={[{ id: 'started_at', desc: true }]}
-          pagination={{ pageSize: 20 }}
-          footer={(table) => (
-            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-              <span>{runs.length} results</span>
-              <DataGridPaginationCompact table={table} />
-            </div>
-          )}
+          classNames={{ footer: 'pt-3' }}
+          pagination={{
+            pageSize: PAGE_SIZE,
+            pageIndex,
+            pageCount: Math.ceil(total / PAGE_SIZE),
+            onPageChange: setPageIndex,
+          }}
+          footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
         />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>

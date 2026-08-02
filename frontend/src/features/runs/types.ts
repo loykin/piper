@@ -69,6 +69,9 @@ export interface RunFilter {
   metric_order?: string
   schedule_id?: string
   include_steps?: boolean
+  /** Caps the number of rows returned. Omit for "no limit" (existing behavior). */
+  limit?: number
+  offset?: number
 }
 
 export interface SweepTrial {

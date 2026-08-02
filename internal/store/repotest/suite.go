@@ -183,6 +183,52 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 		}
 	})
 
+	t.Run("ListTerminalBefore", func(t *testing.T) {
+		pname := "terminal-before-" + uuid.NewString()
+		now := time.Now().UTC()
+		mk := func(id, status string, endedAt *time.Time) {
+			if err := repo.Create(ctx, &run.Run{
+				ID:           id,
+				ProjectID:    projectID,
+				PipelineName: pname,
+				Status:       status,
+				StartedAt:    now,
+			}); err != nil {
+				t.Fatalf("Create %s: %v", id, err)
+			}
+			if endedAt != nil {
+				if err := repo.UpdateStatus(ctx, projectID, id, status, endedAt); err != nil {
+					t.Fatalf("UpdateStatus %s: %v", id, err)
+				}
+			}
+		}
+		expired := now.Add(-2 * time.Hour)
+		fresh := now.Add(-10 * time.Minute)
+		mk(uuid.NewString(), run.StatusSuccess, &expired) // expired, terminal -> should match
+		mk(uuid.NewString(), run.StatusSuccess, &fresh)   // not expired -> should not match
+		mk(uuid.NewString(), run.StatusRunning, nil)      // non-terminal, no EndedAt -> should not match
+
+		got, err := repo.ListTerminalBefore(ctx, projectID, now.Add(-time.Hour))
+		if err != nil {
+			t.Fatalf("ListTerminalBefore: %v", err)
+		}
+		var matched int
+		for _, r := range got {
+			if r.PipelineName == pname {
+				matched++
+				if r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
+					t.Errorf("ListTerminalBefore returned a non-terminal run: %+v", r)
+				}
+				if r.EndedAt == nil || !r.EndedAt.Before(now.Add(-time.Hour)) {
+					t.Errorf("ListTerminalBefore returned a run not before cutoff: %+v", r)
+				}
+			}
+		}
+		if matched != 1 {
+			t.Errorf("ListTerminalBefore matched %d runs for %s, want 1", matched, pname)
+		}
+	})
+
 	t.Run("GetLatestSuccessful", func(t *testing.T) {
 		pname := "pipeline-" + uuid.NewString()
 		now := time.Now().UTC()
@@ -217,6 +263,107 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 		}
 		if missing != nil {
 			t.Errorf("expected nil for missing pipeline, got %+v", missing)
+		}
+	})
+
+	t.Run("List_pagination_and_Count", func(t *testing.T) {
+		pname := "pagination-" + uuid.NewString()
+		now := time.Now().UTC()
+		const total = 5
+		for i := 0; i < total; i++ {
+			startedAt := now.Add(time.Duration(i) * time.Second)
+			if err := repo.Create(ctx, &run.Run{
+				ID:           uuid.NewString(),
+				ProjectID:    projectID,
+				PipelineName: pname,
+				Status:       run.StatusSuccess,
+				StartedAt:    startedAt,
+			}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+		}
+
+		count, err := repo.Count(ctx, projectID, run.RunFilter{PipelineName: pname})
+		if err != nil {
+			t.Fatalf("Count: %v", err)
+		}
+		if count != total {
+			t.Errorf("Count = %d, want %d", count, total)
+		}
+
+		page1, err := repo.List(ctx, projectID, run.RunFilter{PipelineName: pname, Limit: 2, Offset: 0})
+		if err != nil {
+			t.Fatalf("List page1: %v", err)
+		}
+		if len(page1) != 2 {
+			t.Fatalf("page1 len = %d, want 2", len(page1))
+		}
+		page2, err := repo.List(ctx, projectID, run.RunFilter{PipelineName: pname, Limit: 2, Offset: 2})
+		if err != nil {
+			t.Fatalf("List page2: %v", err)
+		}
+		if len(page2) != 2 {
+			t.Fatalf("page2 len = %d, want 2", len(page2))
+		}
+		if page1[0].ID == page2[0].ID || page1[1].ID == page2[1].ID {
+			t.Errorf("page1 and page2 overlap: page1=%v page2=%v", []string{page1[0].ID, page1[1].ID}, []string{page2[0].ID, page2[1].ID})
+		}
+		page3, err := repo.List(ctx, projectID, run.RunFilter{PipelineName: pname, Limit: 2, Offset: 4})
+		if err != nil {
+			t.Fatalf("List page3: %v", err)
+		}
+		if len(page3) != 1 {
+			t.Fatalf("page3 (last, partial) len = %d, want 1", len(page3))
+		}
+
+		// Limit=0 must mean "no limit" — every existing caller relies on this.
+		all, err := repo.List(ctx, projectID, run.RunFilter{PipelineName: pname})
+		if err != nil {
+			t.Fatalf("List all: %v", err)
+		}
+		if len(all) != total {
+			t.Errorf("List with no Limit = %d rows, want %d (Limit:0 must not truncate)", len(all), total)
+		}
+	})
+
+	t.Run("List_pagination_stable_with_tied_started_at", func(t *testing.T) {
+		// Every row shares the exact same started_at, the only column the
+		// default ORDER BY sorts on besides a tiebreaker. Without a unique
+		// secondary sort key (id), the DB is free to return ties in any
+		// order per query, so paging by offset can duplicate or skip rows
+		// across pages even though nothing changed between calls.
+		pname := "pagination-tie-" + uuid.NewString()
+		tied := time.Now().UTC()
+		const total = 6
+		for i := 0; i < total; i++ {
+			if err := repo.Create(ctx, &run.Run{
+				ID:           uuid.NewString(),
+				ProjectID:    projectID,
+				PipelineName: pname,
+				Status:       run.StatusSuccess,
+				StartedAt:    tied,
+			}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+		}
+
+		seen := make(map[string]int)
+		for page := 0; page*2 < total; page++ {
+			rows, err := repo.List(ctx, projectID, run.RunFilter{PipelineName: pname, Limit: 2, Offset: page * 2})
+			if err != nil {
+				t.Fatalf("List page %d: %v", page, err)
+			}
+			for _, r := range rows {
+				seen[r.ID]++
+			}
+		}
+		if len(seen) != total {
+			t.Errorf("saw %d distinct rows across pages, want %d (ties without a stable tiebreaker duplicate/skip rows): %v", len(seen), total, seen)
+		}
+		for id, n := range seen {
+			if n != 1 {
+				t.Errorf("row %s appeared on %d pages, want exactly 1", id, n)
+			}
 		}
 	})
 

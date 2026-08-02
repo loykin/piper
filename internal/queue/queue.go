@@ -84,6 +84,54 @@ type Queue struct {
 	storageToken  string
 	OnRunSuccess  func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
 	events        event.Publisher
+	// pendingWrites accumulates repository writes decided by the current
+	// locked call while q.mu is held (see appendWrite). Only ever touched
+	// under q.mu, same as every other field on Queue — no separate
+	// synchronization needed. Each top-level entry point (Complete, Cancel,
+	// Cleanup, a fired timer, ...) drains it into a local slice and calls
+	// flushPending *after* releasing q.mu, so the DB I/O itself never happens
+	// while the lock is held. There is no owned goroutine or background
+	// queue: the write runs synchronously, on whatever goroutine triggered
+	// the state transition, right after that goroutine's own q.mu.Unlock().
+	pendingWrites []pendingWrite
+	// pendingEffects accumulates non-persistence side effects (event
+	// emission, the OnRunSuccess callback) decided under the same lock — see
+	// appendEffect. Drained and run together with pendingWrites by
+	// flushPending, always *after* the writes, so a subscriber can never
+	// observe a state-transition event before the DB row backing it is
+	// durable.
+	pendingEffects []func(ctx context.Context)
+	// wg tracks every ephemeral goroutine the queue spawns on its own
+	// initiative — the dispatch goroutine in dispatchIfNeeded and each armed
+	// entry.timer's AfterFunc callback (timeout, retry, requeue, recovery
+	// grace). Close blocks until this drains (or its context expires) so a
+	// caller tearing down the server never closes the DB out from under a
+	// write one of these goroutines is still in the middle of flushing.
+	// Add(1) always happens under q.mu, at the same point the goroutine/timer
+	// is created; Done() is called exactly once per Add — either by the
+	// goroutine/callback itself, or by stopEntryTimerLocked when it manages
+	// to cancel the timer before it fires (see the comment there).
+	wg sync.WaitGroup
+}
+
+// Close waits for every in-flight queue-initiated goroutine (dispatch calls,
+// armed timeout/retry/recovery-grace timers) to finish, bounded by ctx. Call
+// this — with serverCtx (the context passed to NewQueue) still live — before
+// cancelling that context or closing the repositories it writes to: a
+// goroutine that's mid-flush needs both to still be alive to complete
+// durably. Returns ctx.Err() if the deadline/cancellation won first.
+func (q *Queue) Close(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		q.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // NewQueue creates a new Queue backed by the given repositories.
@@ -96,6 +144,92 @@ func NewQueue(serverCtx context.Context, runRepo run.Repository, stepRepo run.St
 		stepRepo:    stepRepo,
 		serverCtx:   serverCtx,
 		maxAttempts: 1,
+	}
+}
+
+// pendingWrite is one repository write a state-transition function decided
+// on while holding q.mu, deferred until after the lock is released.
+type pendingWrite struct {
+	desc string
+	fn   func(ctx context.Context) error
+}
+
+// appendWrite records a repository write to run once the caller's top-level
+// lock scope releases q.mu. Call this instead of calling stepRepo/runRepo
+// directly from any Locked function — it's what keeps q.mu from being held
+// across real DB I/O. Must be called with q.mu held.
+func (q *Queue) appendWrite(desc string, fn func(ctx context.Context) error) {
+	q.pendingWrites = append(q.pendingWrites, pendingWrite{desc: desc, fn: fn})
+}
+
+// appendEffect records a non-persistence side effect (event emission, the
+// OnRunSuccess callback) to run once the caller's top-level lock scope
+// releases q.mu, after pendingWrites have been flushed. Call this instead of
+// calling q.emit or OnRunSuccess directly from any Locked function that also
+// records a write for the same state transition — it's what keeps
+// subscribers from observing an event before its DB row is durable. Must be
+// called with q.mu held.
+func (q *Queue) appendEffect(fn func(ctx context.Context)) {
+	q.pendingEffects = append(q.pendingEffects, fn)
+}
+
+// pendingOutcome is the pair of deferred work a Locked function hands back
+// to its public wrapper: writes to persist, and effects (events, callbacks)
+// to run once those writes are done.
+type pendingOutcome struct {
+	writes  []pendingWrite
+	effects []func(ctx context.Context)
+}
+
+// takePendingLocked detaches and returns the accumulated writes and effects
+// so the caller can run them after unlocking. Must be called with q.mu held,
+// as the last thing before unlock.
+func (q *Queue) takePendingLocked() pendingOutcome {
+	out := pendingOutcome{writes: q.pendingWrites, effects: q.pendingEffects}
+	q.pendingWrites = nil
+	q.pendingEffects = nil
+	return out
+}
+
+// flushPending persists each accumulated write in order, retrying
+// individually with bounded backoff, then runs the accumulated effects
+// (event emission, OnRunSuccess) — always after the writes, never
+// interleaved. Must be called without q.mu held — this is what actually
+// performs the DB I/O and side effects that Locked functions only decided
+// on.
+func flushPending(ctx context.Context, out pendingOutcome) {
+	for _, w := range out.writes {
+		persistWithRetry(ctx, w.desc, w.fn)
+	}
+	for _, fn := range out.effects {
+		fn(ctx)
+	}
+}
+
+// persistWithRetry retries a single write with bounded exponential backoff.
+// This is deliberately not "retry forever": giving up is logged at ERROR —
+// loud enough to alert on — rather than silently moving on, but a write that
+// keeps failing does not block anything else (there is no shared queue left
+// for it to stall).
+func persistWithRetry(ctx context.Context, desc string, fn func(ctx context.Context) error) {
+	const maxAttempts = 5
+	backoff := 100 * time.Millisecond
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := fn(ctx)
+		if err == nil {
+			return
+		}
+		if attempt == maxAttempts {
+			slog.Error("queue: persist failed, giving up after retries", "op", desc, "attempts", attempt, "err", err)
+			return
+		}
+		slog.Warn("queue: persist failed, retrying", "op", desc, "attempt", attempt, "err", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
 	}
 }
 
@@ -170,6 +304,11 @@ func (q *Queue) Add(ctx context.Context, projectID string, pl *pipeline.Pipeline
 }
 
 func (q *Queue) AddWithEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, envByStep map[string][]string) {
+	outcome := q.addWithEnvLocked(ctx, projectID, pl, dag, runID, workDir, outputDir, vars, runParams, envByStep)
+	flushPending(ctx, outcome)
+}
+
+func (q *Queue) addWithEnvLocked(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, envByStep map[string][]string) pendingOutcome {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -222,6 +361,7 @@ func (q *Queue) AddWithEnv(ctx context.Context, projectID string, pl *pipeline.P
 
 	q.promoteReady(ctx, r)
 	q.runs[runID] = r
+	return q.takePendingLocked()
 }
 
 // RecoveredStep describes the persisted state of a step from a previous server session.
@@ -242,6 +382,11 @@ func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipe
 }
 
 func (q *Queue) RecoverWithEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep, envByStep map[string][]string) {
+	outcome := q.recoverWithEnvLocked(ctx, projectID, pl, dag, runID, workDir, outputDir, vars, runParams, recovered, envByStep)
+	flushPending(ctx, outcome)
+}
+
+func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep, envByStep map[string][]string) pendingOutcome {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -323,34 +468,43 @@ func (q *Queue) RecoverWithEnv(ctx context.Context, projectID string, pl *pipeli
 			}
 		}
 		finishedAt := time.Now()
-		_ = q.runRepo.UpdateStatus(ctx, projectID, runID, runStatus, &finishedAt)
-		return
+		q.appendWrite("run status (recovered all-terminal)", func(ctx context.Context) error {
+			return q.runRepo.UpdateStatus(ctx, projectID, runID, runStatus, &finishedAt)
+		})
+		return q.takePendingLocked()
 	}
 
 	q.promoteReady(ctx, r)
 	q.runs[runID] = r
 	slog.Info("run recovered into queue", "run_id", runID, "recovered_steps", len(recovered))
+	return q.takePendingLocked()
 }
 
 // Complete records the task result and processes downstream steps.
 func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
+	err, outcome := q.completeLocked(ctx, result)
+	flushPending(ctx, outcome)
+	return err
+}
+
+func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (error, pendingOutcome) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	runID, stepName, err := SplitTaskID(result.TaskID)
 	if err != nil {
-		return err
+		return err, q.takePendingLocked()
 	}
 
 	r, ok := q.runs[runID]
 	if !ok {
 		// Run was removed from the in-memory queue (completed, failed, or canceled).
 		// Treat any late result as idempotent rather than an error.
-		return nil
+		return nil, q.takePendingLocked()
 	}
 	entry, ok := r.tasks[stepName]
 	if !ok {
-		return fmt.Errorf("step %s not found in run %s", stepName, runID)
+		return fmt.Errorf("step %s not found in run %s", stepName, runID), q.takePendingLocked()
 	}
 	ownerID := entry.assignedWorkerID
 	if ownerID == "" {
@@ -362,10 +516,10 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		}
 	}
 	if ownerID != "" && result.WorkerID == "" {
-		return fmt.Errorf("task %s completion missing worker identity", result.TaskID)
+		return fmt.Errorf("task %s completion missing worker identity", result.TaskID), q.takePendingLocked()
 	}
 	if result.WorkerID != "" && ownerID != "" && result.WorkerID != ownerID {
-		return fmt.Errorf("task %s owned by worker %q, result from %q rejected", result.TaskID, ownerID, result.WorkerID)
+		return fmt.Errorf("task %s owned by worker %q, result from %q rejected", result.TaskID, ownerID, result.WorkerID), q.takePendingLocked()
 	}
 	resultAttempt := result.Attempt
 	if resultAttempt == 0 {
@@ -375,18 +529,18 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 	// Idempotency: ignore duplicate result for an already-terminal step.
 	switch entry.status {
 	case taskDone, taskFailed, taskSkipped, taskCanceled:
-		return nil
+		return nil, q.takePendingLocked()
 	}
 
 	// Stale result: arrived late from a previous attempt.
 	if entry.attempts > 0 && resultAttempt < entry.attempts {
 		slog.Warn("stale task result ignored", "task_id", result.TaskID, "result_attempt", resultAttempt, "current_attempt", entry.attempts)
-		return nil
+		return nil, q.takePendingLocked()
 	}
 
 	// Future attempt: should never happen in normal flow.
 	if resultAttempt > entry.attempts {
-		return fmt.Errorf("task %s: result attempt %d exceeds current attempt %d", result.TaskID, resultAttempt, entry.attempts)
+		return fmt.Errorf("task %s: result attempt %d exceeds current attempt %d", result.TaskID, resultAttempt, entry.attempts), q.takePendingLocked()
 	}
 
 	if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
@@ -405,8 +559,11 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 		entry.status = taskDone
 		entry.startedAt = nil
 		entry.leaseAt = nil
-		q.emit(r.projectID, "step.done", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts})
-		if err := q.stepRepo.Upsert(ctx, &run.Step{
+		projectID, attempts := r.projectID, entry.attempts
+		q.appendEffect(func(context.Context) {
+			q.emit(projectID, "step.done", map[string]any{"run_id": runID, "step": stepName, "attempts": attempts})
+		})
+		step := &run.Step{
 			ProjectID: r.projectID,
 			RunID:     runID,
 			StepName:  stepName,
@@ -415,16 +572,17 @@ func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
 			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
 			Error:     result.Error,
-		}); err != nil {
-			slog.Warn("upsert step failed", "task_id", result.TaskID, "err", err)
 		}
+		q.appendWrite("step done "+result.TaskID, func(ctx context.Context) error {
+			return q.stepRepo.Upsert(ctx, step)
+		})
 		q.promoteReady(ctx, r)
 		q.finalizeRunIfAllTerminalLocked(ctx, r)
 	} else {
 		q.failOrRetryLocked(ctx, r, entry, result.Error, &result.StartedAt, endedAt)
 	}
 
-	return nil
+	return nil, q.takePendingLocked()
 }
 
 // failOrRetryLocked marks entry retrying (if attempts remain) or terminally
@@ -443,7 +601,7 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 		entry.assignedWorkerID = ""
 		entry.startedAt = nil
 		entry.leaseAt = nil
-		if err := q.stepRepo.Upsert(ctx, &run.Step{
+		retryingStep := &run.Step{
 			ProjectID: r.projectID,
 			RunID:     runID,
 			StepName:  stepName,
@@ -452,9 +610,10 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
 			Error:     errMsg,
-		}); err != nil {
-			slog.Warn("upsert retry step failed", "task_id", entry.task.ID, "err", err)
 		}
+		q.appendWrite("step retrying "+entry.task.ID, func(ctx context.Context) error {
+			return q.stepRepo.Upsert(ctx, retryingStep)
+		})
 		q.scheduleRetryLocked(ctx, entry)
 		return
 	}
@@ -463,8 +622,11 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 	entry.status = taskFailed
 	entry.startedAt = nil
 	entry.leaseAt = nil
-	q.emit(r.projectID, "step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": entry.attempts, "error": errMsg})
-	if err := q.stepRepo.Upsert(ctx, &run.Step{
+	projectID, attempts := r.projectID, entry.attempts
+	q.appendEffect(func(context.Context) {
+		q.emit(projectID, "step.failed", map[string]any{"run_id": runID, "step": stepName, "attempts": attempts, "error": errMsg})
+	})
+	failedStep := &run.Step{
 		ProjectID: r.projectID,
 		RunID:     runID,
 		StepName:  stepName,
@@ -473,9 +635,10 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 		EndedAt:   &endedAt,
 		Attempts:  entry.attempts,
 		Error:     errMsg,
-	}); err != nil {
-		slog.Warn("upsert step failed", "task_id", entry.task.ID, "err", err)
 	}
+	q.appendWrite("step failed "+entry.task.ID, func(ctx context.Context) error {
+		return q.stepRepo.Upsert(ctx, failedStep)
+	})
 	q.skipDownstream(ctx, r, stepName)
 	q.finalizeRunIfAllTerminalLocked(ctx, r)
 }
@@ -496,20 +659,26 @@ func (q *Queue) finalizeRunIfAllTerminalLocked(ctx context.Context, r *runEntry)
 		}
 	}
 	finishedAt := time.Now()
-	if err := q.runRepo.UpdateStatus(ctx, r.projectID, runID, runStatus, &finishedAt); err != nil {
-		slog.Warn("update run status failed", "run_id", runID, "err", err)
-	}
+	q.appendWrite("run finalized "+runID, func(ctx context.Context) error {
+		return q.runRepo.UpdateStatus(ctx, r.projectID, runID, runStatus, &finishedAt)
+	})
 	pl := r.pl
 	delete(q.runs, runID)
 	if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
 		owner.ReleaseRun(runID)
 	}
-	q.emit(r.projectID, "run.completed", map[string]any{"run_id": runID, "status": runStatus})
+	projectID := r.projectID
+	q.appendEffect(func(context.Context) {
+		q.emit(projectID, "run.completed", map[string]any{"run_id": runID, "status": runStatus})
+	})
 
 	if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
-		// Use a detached context so the callback isn't cancelled when the
-		// HTTP request context that triggered this call ends.
-		q.OnRunSuccess(project.WithContext(context.Background(), project.Context{ID: r.projectID}), runID, pl)
+		onSuccess := q.OnRunSuccess
+		q.appendEffect(func(context.Context) {
+			// Use a detached context so the callback isn't cancelled when the
+			// HTTP request context that triggered this call ends.
+			onSuccess(project.WithContext(context.Background(), project.Context{ID: projectID}), runID, pl)
+		})
 	}
 }
 
@@ -532,7 +701,7 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 				entry.status = taskCanceled
 				entry.startedAt = nil
 				now := time.Now()
-				if err := q.stepRepo.Upsert(ctx, &run.Step{
+				canceledStep := &run.Step{
 					ProjectID: r.projectID,
 					RunID:     runID,
 					StepName:  entry.step.Name,
@@ -540,9 +709,10 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 					StartedAt: startedAt,
 					EndedAt:   &now,
 					Attempts:  entry.attempts,
-				}); err != nil {
-					slog.Warn("upsert canceled step failed", "task_id", entry.task.ID, "err", err)
 				}
+				q.appendWrite("step canceled "+entry.task.ID, func(ctx context.Context) error {
+					return q.stepRepo.Upsert(ctx, canceledStep)
+				})
 				// A dispatched-but-never-Complete()'d task (the normal case
 				// for a cancel: the worker stops it without reporting a
 				// result) would otherwise never release its router-level
@@ -556,7 +726,9 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 		}
 		delete(q.runs, runID)
 	}
+	outcome := q.takePendingLocked()
 	q.mu.Unlock()
+	flushPending(ctx, outcome)
 
 	// Commit the local terminal state unconditionally: Piper's cancel contract
 	// is "stop dispatch/retry and confirm locally," not "remote stop succeeded."
@@ -606,17 +778,22 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 		entry.task.Deadline = &deadline
 		q.scheduleTimeoutLocked(runID, entry, deadline)
 	}
+	// Emitted immediately (not deferred via appendEffect like the terminal
+	// events below): a crash between this event and its write below just
+	// means the step is recovered as never-started on restart — safe, no
+	// duplicate-execution risk the way a lost step.done/step.failed would be.
 	q.emit(entry.task.ProjectID, "step.running", map[string]any{"run_id": runID, "step": entry.step.Name, "task_id": entry.task.ID, "attempt": entry.attempts})
-	if err := q.stepRepo.Upsert(ctx, &run.Step{
+	runningStep := &run.Step{
 		ProjectID: entry.task.ProjectID,
 		RunID:     runID,
 		StepName:  entry.step.Name,
 		Status:    string(taskRunning),
 		StartedAt: &now,
 		Attempts:  entry.attempts,
-	}); err != nil {
-		slog.Warn("upsert running step failed", "task_id", entry.task.ID, "err", err)
 	}
+	q.appendWrite("step running "+entry.task.ID, func(ctx context.Context) error {
+		return q.stepRepo.Upsert(ctx, runningStep)
+	})
 }
 
 // scheduleTimeoutLocked arms entry.timer to fail (or retry) the step once
@@ -626,32 +803,40 @@ func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEn
 // Called with q.mu held.
 func (q *Queue) scheduleTimeoutLocked(runID string, entry *taskEntry, deadline time.Time) {
 	q.stopEntryTimerLocked(entry)
+	q.wg.Add(1)
 	entry.timer = time.AfterFunc(time.Until(deadline), func() {
-		q.mu.Lock()
-		defer q.mu.Unlock()
-		if q.serverCtx.Err() != nil || entry.status != taskRunning {
-			return
-		}
-		r, ok := q.runs[runID]
-		if !ok {
-			return
-		}
-		entry.timer = nil
-		// Unlike Complete(), this path never goes through a result, so it
-		// must release the router-level capacity reservation itself —
-		// otherwise the agent's reserved-slot count leaks by one on every
-		// timeout, eventually starving all future dispatches to it even
-		// though nothing is actually running.
-		if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
-			owner.ReleaseTask(entry.task.ID)
-		}
+		defer q.wg.Done()
+		outcome := q.timeoutFiredLocked(runID, entry)
 		// Use a fresh context, not the caller's: the ctx that originally
 		// scheduled this timer (an HTTP request or dispatch-result context)
 		// is long since canceled by the time this fires, which would make
 		// the DB writes below fail immediately (matches the established
 		// pattern in scheduleRetryLocked/requeue below).
-		q.failOrRetryLocked(context.Background(), r, entry, "task execution timeout", entry.startedAt, time.Now())
+		flushPending(context.Background(), outcome)
 	})
+}
+
+func (q *Queue) timeoutFiredLocked(runID string, entry *taskEntry) pendingOutcome {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.serverCtx.Err() != nil || entry.status != taskRunning {
+		return pendingOutcome{}
+	}
+	r, ok := q.runs[runID]
+	if !ok {
+		return pendingOutcome{}
+	}
+	entry.timer = nil
+	// Unlike Complete(), this path never goes through a result, so it
+	// must release the router-level capacity reservation itself —
+	// otherwise the agent's reserved-slot count leaks by one on every
+	// timeout, eventually starving all future dispatches to it even
+	// though nothing is actually running.
+	if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
+		owner.ReleaseTask(entry.task.ID)
+	}
+	q.failOrRetryLocked(context.Background(), r, entry, "task execution timeout", entry.startedAt, time.Now())
+	return q.takePendingLocked()
 }
 
 // scheduleRecoveryGraceLocked arms entry.timer to fail (or retry, if a
@@ -666,25 +851,33 @@ func (q *Queue) scheduleRecoveryGraceLocked(runID string, entry *taskEntry) {
 		grace = defaultRecoveryGrace
 	}
 	q.stopEntryTimerLocked(entry)
+	q.wg.Add(1)
 	entry.timer = time.AfterFunc(grace, func() {
-		q.mu.Lock()
-		defer q.mu.Unlock()
-		if q.serverCtx.Err() != nil || entry.status != taskRecovering {
-			return
-		}
-		r, ok := q.runs[runID]
-		if !ok {
-			return
-		}
-		entry.timer = nil
-		// See scheduleTimeoutLocked: release the router-level reservation
-		// ourselves (no Complete() result on this path) and use a fresh
-		// context (the caller's is long dead by the time this fires).
-		if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
-			owner.ReleaseTask(entry.task.ID)
-		}
-		q.failOrRetryLocked(context.Background(), r, entry, "recovery grace period expired without worker reconnect", entry.startedAt, time.Now())
+		defer q.wg.Done()
+		outcome := q.recoveryGraceFiredLocked(runID, entry)
+		flushPending(context.Background(), outcome)
 	})
+}
+
+func (q *Queue) recoveryGraceFiredLocked(runID string, entry *taskEntry) pendingOutcome {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.serverCtx.Err() != nil || entry.status != taskRecovering {
+		return pendingOutcome{}
+	}
+	r, ok := q.runs[runID]
+	if !ok {
+		return pendingOutcome{}
+	}
+	entry.timer = nil
+	// See scheduleTimeoutLocked: release the router-level reservation
+	// ourselves (no Complete() result on this path) and use a fresh
+	// context (the caller's is long dead by the time this fires).
+	if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
+		owner.ReleaseTask(entry.task.ID)
+	}
+	q.failOrRetryLocked(context.Background(), r, entry, "recovery grace period expired without worker reconnect", entry.startedAt, time.Now())
+	return q.takePendingLocked()
 }
 
 // RenewLeases records that workerID is still executing the given tasks.
@@ -759,7 +952,9 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 	taskCopy := *entry.task
 	task := &taskCopy
 	dispatchCtx := q.serverCtx
+	q.wg.Add(1)
 	go func() {
+		defer q.wg.Done()
 		// entry may have been canceled between this goroutine's scheduling and
 		// its run (Cancel() removes the run from q.runs but the entry pointer
 		// stays valid). Re-check right before the actual dispatch call to close
@@ -825,18 +1020,26 @@ func (q *Queue) requeueBusyLocked(runID, stepName string, reason error) {
 	entry.leaseAt = nil
 	slog.Info("task requeued after retryable dispatch failure", "task_id", entry.task.ID, "err", reason)
 	q.stopEntryTimerLocked(entry)
+	q.wg.Add(1)
 	entry.timer = time.AfterFunc(2*time.Second, func() {
-		q.mu.Lock()
-		defer q.mu.Unlock()
-		entry.timer = nil
-		// serverCtx is cancelled on shutdown; without this check a timer that
-		// outlives Close() (e.g. mid-flight when the process/test tears down)
-		// would dispatch against an already-closed store.
-		if q.serverCtx.Err() != nil || entry.status != taskReady {
-			return
-		}
-		q.dispatchIfNeeded(context.Background(), entry)
+		defer q.wg.Done()
+		outcome := q.requeuedDispatchFiredLocked(entry)
+		flushPending(context.Background(), outcome)
 	})
+}
+
+func (q *Queue) requeuedDispatchFiredLocked(entry *taskEntry) pendingOutcome {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry.timer = nil
+	// serverCtx is cancelled on shutdown; without this check a timer that
+	// outlives Close() (e.g. mid-flight when the process/test tears down)
+	// would dispatch against an already-closed store.
+	if q.serverCtx.Err() != nil || entry.status != taskReady {
+		return pendingOutcome{}
+	}
+	q.dispatchIfNeeded(context.Background(), entry)
+	return q.takePendingLocked()
 }
 
 func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
@@ -848,25 +1051,39 @@ func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
 		return
 	}
 	q.stopEntryTimerLocked(entry)
-	retry := func() {
-		q.mu.Lock()
-		defer q.mu.Unlock()
-		if entry.status != taskRetrying {
-			return
-		}
-		entry.timer = nil
-		entry.status = taskReady
-		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
-		q.dispatchIfNeeded(context.Background(), entry)
+	q.wg.Add(1)
+	entry.timer = time.AfterFunc(q.retryDelay, func() {
+		defer q.wg.Done()
+		outcome := q.retryFiredLocked(entry)
+		flushPending(context.Background(), outcome)
+	})
+}
+
+func (q *Queue) retryFiredLocked(entry *taskEntry) pendingOutcome {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if entry.status != taskRetrying {
+		return pendingOutcome{}
 	}
-	entry.timer = time.AfterFunc(q.retryDelay, retry)
+	entry.timer = nil
+	entry.status = taskReady
+	slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
+	q.dispatchIfNeeded(context.Background(), entry)
+	return q.takePendingLocked()
 }
 
 func (q *Queue) stopEntryTimerLocked(entry *taskEntry) {
 	if entry.timer == nil {
 		return
 	}
-	entry.timer.Stop()
+	if entry.timer.Stop() {
+		// Stop() reported it prevented the fire: the timer's own callback
+		// (and the q.wg.Done it owns, see scheduleTimeoutLocked et al.) will
+		// never run, so balance the wg.Add made when the timer was armed
+		// here instead. If Stop() returns false the callback already fired
+		// or is running and will call q.wg.Done() itself — never both.
+		q.wg.Done()
+	}
 	entry.timer = nil
 }
 
@@ -878,15 +1095,19 @@ func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep stri
 		for _, dep := range entry.step.DependsOn {
 			if dep == failedStep {
 				entry.status = taskSkipped
-				if err := q.stepRepo.Upsert(ctx, &run.Step{
+				skippedStep := &run.Step{
 					ProjectID: r.projectID,
 					RunID:     r.runID,
 					StepName:  entry.step.Name,
 					Status:    "skipped",
-				}); err != nil {
-					slog.Warn("upsert skipped step failed", "task_id", entry.task.ID, "err", err)
 				}
-				q.emit(r.projectID, "step.skipped", map[string]any{"run_id": r.runID, "step": entry.step.Name, "task_id": entry.task.ID, "failed_dep": failedStep})
+				q.appendWrite("step skipped "+entry.task.ID, func(ctx context.Context) error {
+					return q.stepRepo.Upsert(ctx, skippedStep)
+				})
+				projectID, runID, stepName, taskID := r.projectID, r.runID, entry.step.Name, entry.task.ID
+				q.appendEffect(func(context.Context) {
+					q.emit(projectID, "step.skipped", map[string]any{"run_id": runID, "step": stepName, "task_id": taskID, "failed_dep": failedStep})
+				})
 				q.skipDownstream(ctx, r, entry.step.Name)
 				break
 			}
@@ -927,6 +1148,11 @@ func depsAllDone(deps []string, done map[string]bool) bool {
 // Cleanup fails runs with actively running tasks older than ttl without reaching a terminal state.
 // This guards against orphaned runs (e.g. a K8s job that never reports back).
 func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
+	outcome := q.cleanupLocked(ttl)
+	flushPending(ctx, outcome)
+}
+
+func (q *Queue) cleanupLocked(ttl time.Duration) pendingOutcome {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -943,7 +1169,7 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 					entry.status = taskFailed
 					entry.startedAt = nil
 					entry.leaseAt = nil
-					if err := q.stepRepo.Upsert(ctx, &run.Step{
+					expiredStep := &run.Step{
 						ProjectID: r.projectID,
 						RunID:     runID,
 						StepName:  entry.step.Name,
@@ -951,21 +1177,26 @@ func (q *Queue) Cleanup(ctx context.Context, ttl time.Duration) {
 						EndedAt:   &now,
 						Attempts:  entry.attempts,
 						Error:     "task lease expired",
-					}); err != nil {
-						slog.Warn("upsert expired step failed", "task_id", entry.task.ID, "err", err)
 					}
+					q.appendWrite("step expired "+entry.task.ID, func(ctx context.Context) error {
+						return q.stepRepo.Upsert(ctx, expiredStep)
+					})
 				}
 			}
-			if err := q.runRepo.UpdateStatus(ctx, r.projectID, runID, run.StatusFailed, &now); err != nil {
-				slog.Warn("update expired run failed", "run_id", runID, "err", err)
-			}
-			q.emit(r.projectID, "run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
+			q.appendWrite("run expired "+runID, func(ctx context.Context) error {
+				return q.runRepo.UpdateStatus(ctx, r.projectID, runID, run.StatusFailed, &now)
+			})
+			projectID := r.projectID
+			q.appendEffect(func(context.Context) {
+				q.emit(projectID, "run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
+			})
 			delete(q.runs, runID)
 			if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
 				owner.ReleaseRun(runID)
 			}
 		}
 	}
+	return q.takePendingLocked()
 }
 
 func (q *Queue) runExpiredLocked(r *runEntry, cutoff time.Time) bool {

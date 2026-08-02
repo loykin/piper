@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/piper/piper/internal/artifact"
 	"github.com/piper/piper/pkg/storage"
@@ -87,5 +88,100 @@ func TestResolveModelURI_fileScheme(t *testing.T) {
 	}
 	if resolved.LocalPath != dir {
 		t.Fatalf("LocalPath = %q, want %q", resolved.LocalPath, dir)
+	}
+}
+
+// ── cleanupOrphanArtifacts ──────────────────────────────────────────────────
+
+type fakeExistenceChecker struct {
+	existing map[string]bool
+}
+
+func (f *fakeExistenceChecker) ExistingIDs(_ context.Context, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if f.existing[id] {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
+func TestCleanupOrphanArtifacts(t *testing.T) {
+	outputDir := t.TempDir()
+	mkDir := func(name string, age time.Duration) {
+		t.Helper()
+		dir := filepath.Join(outputDir, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		modTime := time.Now().Add(-age)
+		if err := os.Chtimes(dir, modTime, modTime); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
+	}
+
+	mkDir("run-orphan-old", 20*time.Minute)  // old, no DB row -> should be removed
+	mkDir("run-known-old", 20*time.Minute)   // old, has DB row -> should be kept
+	mkDir("run-orphan-fresh", 1*time.Minute) // fresh, no DB row -> too new, kept for now
+
+	checker := &fakeExistenceChecker{existing: map[string]bool{"run-known-old": true}}
+	cleanupOrphanArtifacts(context.Background(), checker, nil, outputDir)
+
+	assertExists := func(name string, want bool) {
+		t.Helper()
+		_, err := os.Stat(filepath.Join(outputDir, name))
+		got := err == nil
+		if got != want {
+			t.Errorf("%s exists = %v, want %v (err=%v)", name, got, want, err)
+		}
+	}
+	assertExists("run-orphan-old", false)
+	assertExists("run-known-old", true)
+	assertExists("run-orphan-fresh", true)
+}
+
+func TestCleanupOrphanArtifacts_excludesNamedDirs(t *testing.T) {
+	outputDir := t.TempDir()
+	old := time.Now().Add(-time.Hour)
+	for _, name := range []string{"models", "run-orphan-old"} {
+		dir := filepath.Join(outputDir, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
+	}
+
+	checker := &fakeExistenceChecker{}
+	cleanupOrphanArtifacts(context.Background(), checker, nil, outputDir, "models")
+
+	if _, err := os.Stat(filepath.Join(outputDir, "models")); err != nil {
+		t.Fatalf("excluded dir 'models' should survive the sweep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "run-orphan-old")); !os.IsNotExist(err) {
+		t.Fatalf("non-excluded orphan should still be removed, err=%v", err)
+	}
+}
+
+func TestCleanupOrphanArtifacts_skipsWhenBlobstoreConfigured(t *testing.T) {
+	outputDir := t.TempDir()
+	dir := filepath.Join(outputDir, "run-orphan")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(dir, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	checker := &fakeExistenceChecker{}
+	// A non-nil storage.Store means artifacts live in a blobstore, not
+	// outputDir — the local sweep must not touch anything in that mode.
+	cleanupOrphanArtifacts(context.Background(), checker, storage.NewMemStore(), outputDir)
+
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("directory should be untouched when a blobstore is configured: %v", err)
 	}
 }

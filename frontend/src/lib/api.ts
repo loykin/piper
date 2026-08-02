@@ -40,11 +40,7 @@ async function tryRefresh(): Promise<boolean> {
   return _refreshPromise
 }
 
-async function request<T = unknown>(
-  url: string,
-  init?: RequestInit,
-  retried = false,
-): Promise<T> {
+async function fetchOk(url: string, init?: RequestInit, retried = false): Promise<Response> {
   const res = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
@@ -55,13 +51,35 @@ async function request<T = unknown>(
   })
   if (res.status === 401 && !retried && _refreshEnabled) {
     const ok = await tryRefresh()
-    if (ok) return request<T>(url, init, true)
+    if (ok) return fetchOk(url, init, true)
   }
   if (!res.ok) {
     throw new ApiError(res.status, await parseError(res))
   }
+  return res
+}
+
+async function request<T = unknown>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetchOk(url, init)
   const text = await res.text()
   return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+/**
+ * Like `request`, but also reads the `X-Total-Count` response header —
+ * for endpoints that support `limit`/`offset` pagination and report the
+ * total row count matching the filter (ignoring limit/offset) that way.
+ * `total` is null when the endpoint didn't set the header (e.g. no
+ * limit was requested).
+ */
+async function requestWithTotal<T = unknown>(url: string, init?: RequestInit): Promise<{ data: T; total: number | null }> {
+  const res = await fetchOk(url, init)
+  const totalHeader = res.headers.get('X-Total-Count')
+  const text = await res.text()
+  return {
+    data: text ? (JSON.parse(text) as T) : (undefined as T),
+    total: totalHeader !== null ? Number(totalHeader) : null,
+  }
 }
 
 async function upload<T = unknown>(url: string, form: FormData): Promise<T> {
@@ -98,6 +116,7 @@ export function projectApi(projectId: string) {
   const base = `/api/projects/${encodeURIComponent(projectId)}`
   return {
     get: <T>(path: string) => request<T>(`${base}${path}`),
+    getWithTotal: <T>(path: string) => requestWithTotal<T>(`${base}${path}`),
     post: <T>(path: string, body?: unknown) =>
       request<T>(`${base}${path}`, {
         method: 'POST',

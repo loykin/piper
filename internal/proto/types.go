@@ -16,7 +16,7 @@ func MergeParams(stepParams, runParams map[string]any) map[string]any {
 	if len(runParams) == 0 {
 		return stepParams
 	}
-	merged := make(map[string]any, len(stepParams)+len(runParams))
+	merged := make(map[string]any, len(stepParams))
 	for k, v := range stepParams {
 		merged[k] = v
 	}

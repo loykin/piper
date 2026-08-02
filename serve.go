@@ -981,23 +981,36 @@ func (p *Piper) retryStep(ctx context.Context, runID, stepName string) (string, 
 	return "", fmt.Errorf("step %q not found in pipeline yaml", stepName)
 }
 
-// deleteRunWithArtifacts deletes the run's artifacts and then the run record.
+// deleteRunWithArtifacts deletes the run record and then its artifacts.
+// The DB row goes first: it's the authoritative reference, and losing it
+// after a successful artifact delete would just mean a 404 on a run that's
+// genuinely gone. Doing it the other way — as this used to — risked the
+// opposite: an artifact-delete failure left the DB row erased anyway, so the
+// artifacts became permanently unreachable orphans (nothing left pointing at
+// them). cleanupOrphanArtifacts sweeps up whatever this order still misses
+// (e.g. a crash between the two steps).
 func (p *Piper) deleteRunWithArtifacts(ctx context.Context, runID string) error {
+	projectContext, _ := project.FromContext(ctx)
+	if err := p.repos.DeleteRun(ctx, projectContext.ID, runID); err != nil {
+		return err
+	}
 	if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, runID); err != nil {
 		slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
 	}
-	projectContext, _ := project.FromContext(ctx)
-	return p.repos.DeleteRun(ctx, projectContext.ID, runID)
+	return nil
 }
 
 func (p *Piper) deleteRunsWithArtifacts(ctx context.Context, runIDs []string) error {
+	projectContext, _ := project.FromContext(ctx)
+	if err := p.repos.DeleteRuns(ctx, projectContext.ID, runIDs); err != nil {
+		return err
+	}
 	for _, runID := range runIDs {
 		if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, runID); err != nil {
 			slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
 		}
 	}
-	projectContext, _ := project.FromContext(ctx)
-	return p.repos.DeleteRuns(ctx, projectContext.ID, runIDs)
+	return nil
 }
 
 // ── piperRunHooks — bridges Hooks into run.RunHooks ──────────────────────────

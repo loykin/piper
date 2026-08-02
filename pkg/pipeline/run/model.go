@@ -77,4 +77,8 @@ type RunFilter struct {
 	MetricStep  string
 	MetricKey   string
 	MetricOrder string
+	// Limit caps the number of rows returned. 0 = no limit (return everything
+	// matching the filter). Offset is only meaningful when Limit > 0.
+	Limit  int
+	Offset int
 }

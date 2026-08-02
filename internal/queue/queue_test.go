@@ -82,12 +82,22 @@ func (r *memoryRunRepo) Delete(context.Context, string, string) error { return n
 func (r *memoryRunRepo) GetLatestSuccessful(context.Context, string, string) (*run.Run, error) {
 	return nil, nil
 }
+func (r *memoryRunRepo) Count(context.Context, string, run.RunFilter) (int, error) { return 0, nil }
+func (r *memoryRunRepo) ListTerminalBefore(context.Context, string, time.Time) ([]*run.Run, error) {
+	return nil, nil
+}
+func (r *memoryRunRepo) ExistingIDs(context.Context, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
 
 type memoryStepRepo struct {
+	mu    sync.Mutex
 	steps map[string]*run.Step
 }
 
 func (r *memoryStepRepo) Upsert(_ context.Context, step *run.Step) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.steps == nil {
 		r.steps = map[string]*run.Step{}
 	}
@@ -102,6 +112,16 @@ func (r *memoryStepRepo) ListByRuns(context.Context, string, []string) (map[stri
 	return map[string][]*run.Step{}, nil
 }
 func (r *memoryStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
+
+// stepOf reads a step under the same lock Upsert uses, so tests can inspect
+// it from the main goroutine while the queue's background persist writer
+// runs concurrently, without racing on the underlying map (mirrors
+// memoryRunRepo.statusOf).
+func (r *memoryStepRepo) stepOf(runID, stepName string) *run.Step {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.steps[runID+":"+stepName]
+}
 
 // ctxCheckingRunRepo/ctxCheckingStepRepo wrap the in-memory repos to fail
 // like a real database/sql-backed repo would when handed an already-canceled
@@ -338,7 +358,7 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 	if err := q.Complete(ctx, proto.TaskResult{TaskID: firstAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom", StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if skipped := stepRepo.steps["run-retry:second"]; skipped != nil {
+	if skipped := stepRepo.stepOf("run-retry", "second"); skipped != nil {
 		t.Fatalf("downstream skipped before retry exhausted: %#v", skipped)
 	}
 
@@ -355,11 +375,11 @@ func TestCompleteRetriesBeforeSkippingDownstream(t *testing.T) {
 	if err := q.Complete(ctx, proto.TaskResult{TaskID: secondAttempt.ID, Status: proto.TaskStatusFailed, Error: "boom again", StartedAt: now, EndedAt: now, Attempt: 2}); err != nil {
 		t.Fatal(err)
 	}
-	failed := stepRepo.steps["run-retry:first"]
+	failed := stepRepo.stepOf("run-retry", "first")
 	if failed == nil || failed.Status != proto.TaskStatusFailed || failed.Attempts != 2 {
 		t.Fatalf("first step = %#v, want failed with 2 attempts", failed)
 	}
-	skipped := stepRepo.steps["run-retry:second"]
+	skipped := stepRepo.stepOf("run-retry", "second")
 	if skipped == nil || skipped.Status != "skipped" {
 		t.Fatalf("second step = %#v, want skipped", skipped)
 	}
@@ -415,7 +435,7 @@ func TestCompleteCanSucceedAfterRetry(t *testing.T) {
 	if runRepo.statusOf("run-retry-success") != run.StatusSuccess {
 		t.Fatalf("run status = %q, want success", runRepo.statusOf("run-retry-success"))
 	}
-	first := stepRepo.steps["run-retry-success:first"]
+	first := stepRepo.stepOf("run-retry-success", "first")
 	if first == nil || first.Status != proto.TaskStatusDone || first.Attempts != 2 {
 		t.Fatalf("first step = %#v, want done with 2 attempts", first)
 	}
@@ -546,7 +566,7 @@ func TestTimeoutFiresFailsStepWithoutRetryPolicy(t *testing.T) {
 	}) {
 		t.Fatalf("run status = %q, want failed after timeout", runRepo.statusOf("run-timeout-fail"))
 	}
-	step := stepRepo.steps["run-timeout-fail:step"]
+	step := stepRepo.stepOf("run-timeout-fail", "step")
 	if step == nil || step.Status != string(taskFailed) {
 		t.Fatalf("step = %#v, want failed", step)
 	}
@@ -589,7 +609,7 @@ func TestTimeoutFiresCommitsStatusAfterCallerContextCanceled(t *testing.T) {
 	}) {
 		t.Fatalf("run status = %q, want failed after timeout even though the caller's ctx was canceled", runRepo.statusOf("run-timeout-canceled-caller"))
 	}
-	step := stepRepo.steps["run-timeout-canceled-caller:step"]
+	step := stepRepo.stepOf("run-timeout-canceled-caller", "step")
 	if step == nil || step.Status != string(taskFailed) {
 		t.Fatalf("step = %#v, want failed", step)
 	}
@@ -681,7 +701,7 @@ func TestLateResultAfterTimeoutIsIgnored(t *testing.T) {
 	if err := q.Complete(ctx, proto.TaskResult{TaskID: task.ID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatalf("late completion after timeout returned error: %v", err)
 	}
-	step := stepRepo.steps["run-timeout-late:step"]
+	step := stepRepo.stepOf("run-timeout-late", "step")
 	if step == nil || step.Status != string(taskFailed) {
 		t.Fatalf("step = %#v, want to remain failed after late success", step)
 	}
@@ -708,7 +728,7 @@ func TestPermanentDispatchFailureCompletesOwnedTask(t *testing.T) {
 	}) {
 		t.Fatalf("run status = %q, want failed", runRepo.statusOf("run-dispatch-failure"))
 	}
-	step := stepRepo.steps["run-dispatch-failure:step"]
+	step := stepRepo.stepOf("run-dispatch-failure", "step")
 	if step == nil {
 		t.Fatal("failed step was not persisted")
 	}
@@ -891,7 +911,7 @@ func TestRecoveryGraceExpiryFailsStepWithoutRetryPolicy(t *testing.T) {
 	}) {
 		t.Fatalf("run status = %q, want failed after grace expiry", runRepo.statusOf("run-recover-fail"))
 	}
-	step := stepRepo.steps["run-recover-fail:first"]
+	step := stepRepo.stepOf("run-recover-fail", "first")
 	if step == nil || step.Status != string(taskFailed) {
 		t.Fatalf("step = %#v, want failed", step)
 	}
@@ -924,7 +944,7 @@ func TestRecoveryGraceExpiryCommitsStatusAfterCallerContextCanceled(t *testing.T
 	}) {
 		t.Fatalf("run status = %q, want failed after grace expiry even though the caller's ctx was canceled", runRepo.statusOf("run-recover-grace-canceled-caller"))
 	}
-	step := stepRepo.steps["run-recover-grace-canceled-caller:first"]
+	step := stepRepo.stepOf("run-recover-grace-canceled-caller", "first")
 	if step == nil || step.Status != string(taskFailed) {
 		t.Fatalf("step = %#v, want failed", step)
 	}
@@ -999,7 +1019,7 @@ func TestLateResultAfterRecoveryGraceExpiryIsIgnored(t *testing.T) {
 	if err := q.Complete(ctx, proto.TaskResult{TaskID: taskID, Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}); err != nil {
 		t.Fatalf("late completion after recovery grace expiry returned error: %v", err)
 	}
-	step := stepRepo.steps["run-recover-late:first"]
+	step := stepRepo.stepOf("run-recover-late", "first")
 	if step == nil || step.Status != string(taskFailed) {
 		t.Fatalf("step = %#v, want to remain failed after late success", step)
 	}
@@ -1095,7 +1115,7 @@ func TestCancelRemovesQueuedRunAndMarksStepsCanceled(t *testing.T) {
 		t.Fatalf("run status = %q, want canceled", runRepo.statusOf("run-cancel"))
 	}
 	for _, stepName := range []string{"first", "second"} {
-		step := stepRepo.steps["run-cancel:"+stepName]
+		step := stepRepo.stepOf("run-cancel", stepName)
 		if step == nil || step.Status != "canceled" {
 			t.Fatalf("%s step = %#v, want canceled", stepName, step)
 		}
@@ -1145,7 +1165,7 @@ func TestCancelCommitsLocalStatusEvenWhenBackendCancelFails(t *testing.T) {
 	if got := runRepo.statusOf("run-remote-fail"); got != run.StatusCanceled {
 		t.Fatalf("run status = %q, want canceled (must commit locally regardless of remote CancelRun failure)", got)
 	}
-	step := stepRepo.steps["run-remote-fail:step"]
+	step := stepRepo.stepOf("run-remote-fail", "step")
 	if step == nil || step.Status != "canceled" {
 		t.Fatalf("step = %#v, want canceled", step)
 	}
@@ -1239,6 +1259,110 @@ func TestCancelRaceWithInFlightDispatchGoroutineSkipsSend(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if backend.wasCalled() {
 		t.Fatal("Dispatch was called on a run that was canceled before the dispatch goroutine ran")
+	}
+}
+
+func TestCloseWaitsForInFlightDispatchGoroutine(t *testing.T) {
+	ctx := context.Background()
+	pl := singleStepPipeline("close-wait")
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &blockingDispatchBackend{release: make(chan struct{})}
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
+	q.SetBackend(backend)
+	q.Add(ctx, "project-a", pl, dag, "run-close-wait", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	if !waitUntil(time.Second, backend.wasCalled) {
+		t.Fatal("dispatch goroutine never reached Dispatch")
+	}
+
+	closeErr := make(chan error, 1)
+	go func() {
+		closeErr <- q.Close(context.Background())
+	}()
+
+	select {
+	case err := <-closeErr:
+		t.Fatalf("Close returned before the in-flight dispatch goroutine finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+		// Still blocked, as expected — Dispatch hasn't returned yet.
+	}
+
+	close(backend.release)
+	select {
+	case err := <-closeErr:
+		if err != nil {
+			t.Fatalf("Close returned error after dispatch finished: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return after the in-flight dispatch goroutine finished")
+	}
+}
+
+func TestCloseTimesOutIfGoroutineNeverFinishes(t *testing.T) {
+	ctx := context.Background()
+	pl := singleStepPipeline("close-timeout")
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &blockingDispatchBackend{release: make(chan struct{})}
+	defer close(backend.release)
+	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
+	q.SetBackend(backend)
+	q.Add(ctx, "project-a", pl, dag, "run-close-timeout", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+
+	if !waitUntil(time.Second, backend.wasCalled) {
+		t.Fatal("dispatch goroutine never reached Dispatch")
+	}
+
+	shortCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := q.Close(shortCtx); err == nil {
+		t.Fatal("expected Close to time out while the dispatch goroutine is still blocked")
+	}
+}
+
+// TestTimerWaitGroupBalance exercises every entry.timer AfterFunc site
+// (timeout, retry, requeue, recovery grace) both letting it fire and
+// stopping it before it fires, then calls Close with a short-but-nonzero
+// deadline — a missed q.wg.Done() (fired-but-uncounted, or stopped-but-not-
+// balanced) would leave a stuck counter and make this hang past the
+// deadline; a double Done() would panic ("negative WaitGroup counter") under
+// -race. Run with -race and a high -count for real coverage of the
+// Stop()-vs-fire race in stopEntryTimerLocked.
+func TestTimerWaitGroupBalance(t *testing.T) {
+	ctx := context.Background()
+	runRepo := &memoryRunRepo{}
+	stepRepo := &memoryStepRepo{}
+
+	// Retry timer: fires naturally (retryDelay elapses).
+	q1 := NewQueue(context.Background(), runRepo, stepRepo)
+	q1.SetRetryPolicy(2, 10*time.Millisecond)
+	q1.SetBackend(&failingOwnedBackend{err: fmt.Errorf("dispatch failed")})
+	pl := singleStepPipeline("balance-retry")
+	dag, _ := pipeline.BuildDAG(pl)
+	q1.Add(ctx, "project-a", pl, dag, "run-balance-retry", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+	time.Sleep(50 * time.Millisecond) // let the retry timer fire
+
+	// Retry timer: stopped before firing (Cancel while retrying).
+	q2 := NewQueue(context.Background(), runRepo, stepRepo)
+	q2.SetRetryPolicy(2, time.Hour)
+	q2.SetBackend(&failingOwnedBackend{err: fmt.Errorf("dispatch failed")})
+	q2.Add(ctx, "project-a", pl, dag, "run-balance-retry-stop", ".", t.TempDir(), proto.BuiltinVars{}, nil)
+	time.Sleep(20 * time.Millisecond)
+	if err := q2.Cancel(ctx, "project-a", "run-balance-retry-stop"); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	for i, q := range []*Queue{q1, q2} {
+		closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		if err := q.Close(closeCtx); err != nil {
+			t.Errorf("queue %d: Close did not drain within budget (wg leak?): %v", i, err)
+		}
+		cancel()
 	}
 }
 

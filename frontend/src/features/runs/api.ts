@@ -8,7 +8,7 @@ export type {
 import type { Run, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, RunMetrics } from './types'
 import { projectApi } from '@/lib/api'
 
-export async function listRuns(projectId: string, filter?: RunFilter): Promise<Run[]> {
+function runListParams(filter?: RunFilter): URLSearchParams {
   const params = new URLSearchParams()
   if (filter?.status) params.set('status', filter.status)
   if (filter?.pipeline) params.set('pipeline_name', filter.pipeline)
@@ -18,9 +18,26 @@ export async function listRuns(projectId: string, filter?: RunFilter): Promise<R
   if (filter?.metric_order) params.set('metric_order', filter.metric_order)
   if (filter?.schedule_id) params.set('schedule_id', filter.schedule_id)
   if (filter?.include_steps) params.set('include_steps', 'true')
-  const qs = params.toString()
+  if (filter?.limit) params.set('limit', String(filter.limit))
+  if (filter?.offset) params.set('offset', String(filter.offset))
+  return params
+}
+
+export async function listRuns(projectId: string, filter?: RunFilter): Promise<Run[]> {
+  const qs = runListParams(filter).toString()
   const data = await projectApi(projectId).get<Run[]>(`/runs${qs ? `?${qs}` : ''}`)
   return Array.isArray(data) ? data : []
+}
+
+/**
+ * Like `listRuns`, but for `filter.limit`-paginated views: also returns the
+ * total row count matching the filter (ignoring limit/offset), read from the
+ * `X-Total-Count` response header the server only sets when a limit was sent.
+ */
+export async function listRunsPaged(projectId: string, filter: RunFilter): Promise<{ runs: Run[]; total: number }> {
+  const qs = runListParams(filter).toString()
+  const { data, total } = await projectApi(projectId).getWithTotal<Run[]>(`/runs${qs ? `?${qs}` : ''}`)
+  return { runs: Array.isArray(data) ? data : [], total: total ?? 0 }
 }
 
 export async function createRun(projectId: string, yaml: string, params?: Record<string, unknown>): Promise<{ run_id: string }> {

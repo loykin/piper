@@ -840,6 +840,143 @@ func TestCleanupScheduleRetentionKeepsNewestTerminalRuns(t *testing.T) {
 	}
 }
 
+// TestCleanupScheduleRetentionNonTerminalNewestDoesNotConsumeQuota guards
+// against a real bug caught while bounding the retention list fetch: a
+// non-terminal run positioned among the *newest* rows (not the oldest, as in
+// the test above) must not count toward max_runs. If it did, the bounded
+// fetch window would treat one extra terminal run as overflow and delete a
+// run the documented policy says to keep.
+func TestCleanupScheduleRetentionNonTerminalNewestDoesNotConsumeQuota(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := context.Background()
+	projectID := project.DefaultID
+	now := time.Now().UTC()
+
+	sc := &schedule.Schedule{
+		ProjectID:    projectID,
+		ID:           "sch-retention-newest-running",
+		Name:         "retention-newest-running",
+		ScheduleType: "cron",
+		CronExpr:     "0 * * * *",
+		Enabled:      true,
+		MaxRuns:      2,
+		NextRunAt:    now.Add(time.Hour),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := p.repos.Schedule.Create(ctx, sc); err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+
+	createRun := func(id string, status string, startedAt time.Time, endedAt *time.Time) {
+		t.Helper()
+		r := &run.Run{
+			ProjectID:    projectID,
+			ID:           id,
+			ScheduleID:   sc.ID,
+			PipelineName: "retention-pipeline",
+			Status:       status,
+			StartedAt:    startedAt,
+			ScheduledAt:  &startedAt,
+			PipelineYAML: "metadata:\n  name: retention-pipeline\nspec:\n  steps: []",
+			ParamsJSON:   "{}",
+		}
+		if err := p.repos.Run.Create(ctx, r); err != nil {
+			t.Fatalf("create run %s: %v", id, err)
+		}
+		if endedAt != nil {
+			if err := p.repos.Run.UpdateStatus(ctx, projectID, id, status, endedAt); err != nil {
+				t.Fatalf("finish run %s: %v", id, err)
+			}
+		}
+	}
+
+	// Newest-first order: run-running (still running, no EndedAt), then three
+	// terminal runs. With max_runs=2, the two newest *terminal* runs
+	// (run-new, run-mid) must be kept regardless of run-running's position.
+	oldEnd := now.Add(-3 * time.Hour)
+	midEnd := now.Add(-2 * time.Hour)
+	newEnd := now.Add(-1 * time.Hour)
+	createRun("run-running", run.StatusRunning, now, nil)
+	createRun("run-new", run.StatusSuccess, newEnd, &newEnd)
+	createRun("run-mid", run.StatusSuccess, midEnd, &midEnd)
+	createRun("run-old", run.StatusSuccess, oldEnd, &oldEnd)
+
+	p.cleanupScheduleRetention(ctx)
+
+	if got, err := p.repos.Run.Get(ctx, projectID, "run-old"); err != nil {
+		t.Fatalf("get old run: %v", err)
+	} else if got != nil {
+		t.Fatalf("oldest terminal run was not deleted")
+	}
+	for _, id := range []string{"run-mid", "run-new", "run-running"} {
+		got, err := p.repos.Run.Get(ctx, projectID, id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if got == nil {
+			t.Fatalf("%s should be retained (a non-terminal newest run must not consume a kept slot)", id)
+		}
+	}
+}
+
+// TestCleanupRetentionDeletesExpiredRunsByTTL exercises the TTL-based path of
+// cleanupRetention, which now sources candidates from the indexed
+// ListTerminalBefore query instead of the project's full run history.
+func TestCleanupRetentionDeletesExpiredRunsByTTL(t *testing.T) {
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Retention: RetentionConfig{RunTTL: time.Hour},
+	})
+	ctx := context.Background()
+	projectID := project.DefaultID
+	now := time.Now().UTC()
+
+	createRun := func(id string, status string, startedAt time.Time, endedAt *time.Time) {
+		t.Helper()
+		r := &run.Run{
+			ProjectID:    projectID,
+			ID:           id,
+			PipelineName: "ttl-pipeline",
+			Status:       status,
+			StartedAt:    startedAt,
+			PipelineYAML: "metadata:\n  name: ttl-pipeline\nspec:\n  steps: []",
+			ParamsJSON:   "{}",
+		}
+		if err := p.repos.Run.Create(ctx, r); err != nil {
+			t.Fatalf("create run %s: %v", id, err)
+		}
+		if endedAt != nil {
+			if err := p.repos.Run.UpdateStatus(ctx, projectID, id, status, endedAt); err != nil {
+				t.Fatalf("finish run %s: %v", id, err)
+			}
+		}
+	}
+
+	expiredEnd := now.Add(-2 * time.Hour)  // older than the 1h TTL — should be deleted
+	freshEnd := now.Add(-10 * time.Minute) // within the 1h TTL — should be kept
+	createRun("run-expired", run.StatusSuccess, expiredEnd, &expiredEnd)
+	createRun("run-fresh", run.StatusSuccess, freshEnd, &freshEnd)
+	createRun("run-still-running", run.StatusRunning, now.Add(-3*time.Hour), nil)
+
+	p.cleanupRetention(ctx)
+
+	if got, err := p.repos.Run.Get(ctx, projectID, "run-expired"); err != nil {
+		t.Fatalf("get run-expired: %v", err)
+	} else if got != nil {
+		t.Fatalf("run past RunTTL was not deleted")
+	}
+	for _, id := range []string{"run-fresh", "run-still-running"} {
+		got, err := p.repos.Run.Get(ctx, projectID, id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if got == nil {
+			t.Fatalf("%s should be retained", id)
+		}
+	}
+}
+
 func TestAuthCapabilitiesControlRouteRegistration(t *testing.T) {
 	provider := &testSecurityProvider{
 		identity: &security.Identity{ID: "admin", SystemAdmin: true},

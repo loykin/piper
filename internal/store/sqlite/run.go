@@ -103,9 +103,17 @@ LEFT JOIN (SELECT project_id, run_id, MAX(value) AS mv FROM run_metrics WHERE pr
 		if filter.MetricOrder == "asc" {
 			order = "ASC"
 		}
-		query += " ORDER BY m.mv " + order + " NULLS LAST"
+		// id as a tiebreaker: two runs can tie on the sorted metric value (or
+		// both lack one), and without a unique secondary key offset paging
+		// isn't guaranteed a stable order — the same row can appear on two
+		// pages, or get skipped, if ties land differently across queries.
+		query += " ORDER BY m.mv " + order + " NULLS LAST, r.id " + order
 	} else {
-		query += " ORDER BY started_at DESC"
+		query += " ORDER BY started_at DESC, id DESC"
+	}
+	if filter.Limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, filter.Limit, filter.Offset)
 	}
 
 	var out []*run.Run
@@ -116,6 +124,73 @@ LEFT JOIN (SELECT project_id, run_id, MAX(value) AS mv FROM run_metrics WHERE pr
 		out = []*run.Run{}
 	}
 	return out, err
+}
+
+func (r *runRepo) ListTerminalBefore(ctx context.Context, projectID string, cutoff time.Time) ([]*run.Run, error) {
+	var out []*run.Run
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.SelectContext(ctx, &out,
+			`SELECT `+runSelectCols+` FROM runs
+			 WHERE project_id=? AND ended_at IS NOT NULL AND ended_at<?
+			   AND status NOT IN ('running', 'scheduled')
+			 ORDER BY ended_at ASC`,
+			projectID, cutoff)
+	})
+	if out == nil {
+		out = []*run.Run{}
+	}
+	return out, err
+}
+
+func (r *runRepo) ExistingIDs(ctx context.Context, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var found []string
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		query, args, err := sqlx.In(`SELECT DISTINCT id FROM runs WHERE id IN (?)`, ids)
+		if err != nil {
+			return err
+		}
+		return db.SelectContext(ctx, &found, db.Rebind(query), args...)
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range found {
+		out[id] = true
+	}
+	return out, nil
+}
+
+func (r *runRepo) Count(ctx context.Context, projectID string, filter run.RunFilter) (int, error) {
+	query := `SELECT COUNT(*) FROM runs`
+	where := []string{"project_id=?"}
+	args := []any{projectID}
+	if filter.Experiment != "" {
+		where = append(where, "experiment=?")
+		args = append(args, filter.Experiment)
+	}
+	if filter.PipelineName != "" {
+		where = append(where, "pipeline_name=?")
+		args = append(args, filter.PipelineName)
+	}
+	if filter.ScheduleID != "" {
+		where = append(where, "schedule_id=?")
+		args = append(args, filter.ScheduleID)
+	}
+	if filter.Status != "" {
+		where = append(where, "status=?")
+		args = append(args, filter.Status)
+	}
+	query += " WHERE " + strings.Join(where, " AND ")
+
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &count, query, args...)
+	})
+	return count, err
 }
 
 func (r *runRepo) UpdateStatus(ctx context.Context, projectID, id, status string, endedAt *time.Time) error {

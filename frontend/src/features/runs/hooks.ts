@@ -25,6 +25,18 @@ export function useRuns(filter?: RunFilter) {
   })
 }
 
+/** Like `useRuns`, but for a `filter.limit`-paginated page — also returns `total`. */
+export function useRunsPaged(filter: RunFilter) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: runKeys.list(projectId, filter),
+    queryFn: () => api.listRunsPaged(projectId, filter),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
+    ...backgroundPolling(5000),
+  })
+}
+
 export function useRun(id: string) {
   const projectId = useProjectId()
   return useQuery({

@@ -68,7 +68,18 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	for _, entry := range extraEnv {
 		cmd.Env = setEnv(cmd.Env, entry)
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Deliberately NOT Setpgid: true. When this executor runs inside "piper
+	// agent exec" (the baremetal driver's subprocess wrapper, see
+	// cmd/piper/commands/agent.go), giving this command its own process
+	// group means provisr's Stop() — which sends SIGTERM/SIGKILL to the
+	// *wrapper's* process group — never reaches it: the wrapper can be
+	// killed by the raw signal before its own Go-level ctx.Done() handler
+	// gets scheduled, orphaning this command. Leaving it in the wrapper's
+	// group means the OS itself delivers that same group signal here too,
+	// with no dependency on any Go code running in between. The ctx.Done()
+	// branch below still kills it directly as a second line of defense for
+	// cancellation that isn't accompanied by a process-group signal (e.g.
+	// local "piper run").
 	for k, v := range cfg.Params {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("PIPER_PARAM_%s=%v", k, v))
 	}
@@ -85,7 +96,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 		return err
 	case <-ctx.Done():
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = syscall.Kill(cmd.Process.Pid, syscall.SIGKILL)
 		}
 		<-done
 		return ctx.Err()

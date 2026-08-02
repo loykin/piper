@@ -351,8 +351,20 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			p.reconcileBackend(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.cleanupRetention(ctx)
+			p.cleanupOrphanArtifacts(ctx)
 		}
 	}
+}
+
+// cleanupOrphanArtifacts sweeps outputDir for run directories with no
+// matching DB row, excluding the default serving model dir (outputDir/models)
+// when Serving.ModelDir wasn't overridden to point elsewhere — see modelDir().
+func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
+	var exclude []string
+	if p.cfg.Serving.ModelDir == "" {
+		exclude = append(exclude, "models")
+	}
+	cleanupOrphanArtifacts(ctx, p.repos.Run, p.store, p.cfg.OutputDir, exclude...)
 }
 
 type jobReconciler interface {
@@ -441,19 +453,38 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 	}
 }
 
+// retentionScheduleBatch bounds how many overflow runs cleanupScheduleRetention
+// deletes per schedule per cycle, so a schedule with a very long backlog (e.g.
+// max_runs just lowered on a schedule with years of history) drains over
+// several 15s cycles instead of loading its entire run history in one pass.
+const retentionScheduleBatch = 200
+
 func (p *Piper) cleanupRetention(ctx context.Context) {
 	runTTL := p.cfg.Retention.RunTTL
 	artifactTTL := p.cfg.Retention.ArtifactTTL
 	if runTTL > 0 || artifactTTL > 0 {
-		runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{})
+		// Only pull runs old enough to possibly match *either* TTL — the
+		// smaller of the two positive values is the earliest cutoff either
+		// branch below could act on. ListTerminalBefore does this filtering
+		// in SQL (indexed on (project_id, ended_at)) instead of loading every
+		// run a project has ever had, terminal or not, expired or not.
+		cutoffTTL := runTTL
+		if artifactTTL > 0 && (cutoffTTL <= 0 || artifactTTL < cutoffTTL) {
+			cutoffTTL = artifactTTL
+		}
+		now := time.Now().UTC()
+		cutoff := now.Add(-cutoffTTL)
+		projects, err := p.repos.Project.List(ctx)
 		if err != nil {
-			slog.Warn("retention list runs failed", "err", err)
-		} else {
-			now := time.Now().UTC()
+			slog.Warn("retention list projects failed", "err", err)
+		}
+		for _, projectRecord := range projects {
+			runs, err := p.repos.Run.ListTerminalBefore(ctx, projectRecord.ID, cutoff)
+			if err != nil {
+				slog.Warn("retention list terminal runs failed", "project_id", projectRecord.ID, "err", err)
+				continue
+			}
 			for _, r := range runs {
-				if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
-					continue
-				}
 				if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
 					if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
 						slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
@@ -479,8 +510,18 @@ func (p *Piper) cleanupScheduleRetention(ctx context.Context) {
 	}
 	for _, sc := range schedules {
 		// List returns runs newest-first (started_at DESC); we keep the first
-		// max_runs terminal runs and delete the remainder.
-		runs, err := p.repos.Run.List(ctx, sc.ProjectID, run.RunFilter{ScheduleID: sc.ID})
+		// max_runs terminal runs and delete the remainder — a non-terminal run
+		// doesn't consume a "kept" slot, exactly as before. The fetch is now
+		// bounded to max_runs+retentionScheduleBatch instead of the schedule's
+		// entire run history: if the kept quota isn't reached within that
+		// window (only possible with an implausible number of non-terminal
+		// runs interspersed among the newest rows), this cycle simply deletes
+		// nothing for this schedule rather than risk treating an uncounted
+		// run as overflow — safe to pick up next cycle.
+		runs, err := p.repos.Run.List(ctx, sc.ProjectID, run.RunFilter{
+			ScheduleID: sc.ID,
+			Limit:      sc.MaxRuns + retentionScheduleBatch,
+		})
 		if err != nil {
 			slog.Warn("retention list schedule runs failed", "project_id", sc.ProjectID, "schedule_id", sc.ID, "err", err)
 			continue
@@ -505,10 +546,26 @@ func (p *Piper) cleanupScheduleRetention(ctx context.Context) {
 	}
 }
 
+// queueDrainGrace bounds how long Close waits for the queue's own in-flight
+// goroutines (dispatch calls, fired timeout/retry/recovery-grace timers) to
+// finish flushing before giving up and tearing down the DB out from under
+// them anyway.
+const queueDrainGrace = 20 * time.Second
+
 // Close stops background goroutines and closes the store.
 func (p *Piper) Close() error {
-	p.stopCtx() // cancel runCleanup and any pending dispatches
 	p.scheduler.Stop()
+	// Drain the queue's own goroutines *before* cancelling p.ctx (== the
+	// queue's serverCtx) and closing the DB: several of them persist a
+	// write using that same ctx/repos, and cutting either out from under a
+	// goroutine that's mid-flush would silently drop the write. Bounded so a
+	// goroutine that's genuinely stuck can't hang shutdown forever.
+	drainCtx, cancel := context.WithTimeout(context.Background(), queueDrainGrace)
+	defer cancel()
+	if err := p.queue.Close(drainCtx); err != nil {
+		slog.Warn("queue drain did not finish before shutdown grace expired", "err", err)
+	}
+	p.stopCtx() // cancel runCleanup and any pending dispatches
 	p.wg.Wait()
 	return p.repos.Close()
 }

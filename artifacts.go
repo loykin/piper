@@ -3,6 +3,7 @@ package piper
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -141,6 +142,79 @@ func listArtifactsStore(ctx context.Context, st storage.Store, runID string) ([]
 		result = append(result, stepArtifacts{Step: step, Artifacts: stepMap[step]})
 	}
 	return result, nil
+}
+
+// runExistenceChecker is the narrow slice of run.Repository the orphan sweep
+// needs — kept separate from the full interface so it's trivial to fake in
+// tests.
+type runExistenceChecker interface {
+	ExistingIDs(ctx context.Context, ids []string) (map[string]bool, error)
+}
+
+// cleanupOrphanArtifacts removes local artifact directories with no matching
+// run row. deleteRunWithArtifacts now deletes the DB row before its
+// artifacts (see its comment), which trades "orphan artifact directory" for
+// "orphan DB row" as the failure mode when the two steps don't both
+// complete — this sweep is what actually reclaims the former. Only the
+// local filesystem layout is swept; blobstore-backed artifact storage (S3,
+// etc.) needs prefix enumeration with a different cost profile and isn't
+// covered here.
+//
+// excludeDirs lists non-run subdirectories that legitimately live under
+// outputDir and must never be swept, no matter their age — for example the
+// default serving model dir (outputDir/models, see Piper.modelDir). A run ID
+// never collides with these names, so excluding them by exact basename is
+// safe.
+func cleanupOrphanArtifacts(ctx context.Context, repo runExistenceChecker, st storage.Store, outputDir string, excludeDirs ...string) {
+	if st != nil || outputDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("orphan artifact sweep: read output dir failed", "err", err)
+		}
+		return
+	}
+	exclude := make(map[string]bool, len(excludeDirs))
+	for _, d := range excludeDirs {
+		exclude[d] = true
+	}
+	// Skip anything recent enough that its run may simply not have committed
+	// to the DB yet — Create() happens before a run produces output, but
+	// give it a comfortable margin rather than racing a fresh run.
+	const graceAge = 10 * time.Minute
+	now := time.Now()
+	candidates := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() || exclude[e.Name()] {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || now.Sub(info.ModTime()) < graceAge {
+			continue
+		}
+		candidates = append(candidates, e.Name())
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	existing, err := repo.ExistingIDs(ctx, candidates)
+	if err != nil {
+		slog.Warn("orphan artifact sweep: check existing runs failed", "err", err)
+		return
+	}
+	for _, name := range candidates {
+		if existing[name] {
+			continue
+		}
+		dir := filepath.Join(outputDir, name)
+		if err := os.RemoveAll(dir); err != nil {
+			slog.Warn("orphan artifact sweep: remove failed", "dir", dir, "err", err)
+			continue
+		}
+		slog.Info("orphan artifact sweep: removed directory with no matching run", "run_id", name)
+	}
 }
 
 // deleteArtifacts removes all artifact files for a run.

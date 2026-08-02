@@ -127,6 +127,13 @@ func (r stubRunRepo) Delete(context.Context, string, string) error              
 func (r stubRunRepo) GetLatestSuccessful(context.Context, string, string) (*run.Run, error) {
 	return nil, nil
 }
+func (r stubRunRepo) Count(context.Context, string, run.RunFilter) (int, error) { return 0, nil }
+func (r stubRunRepo) ListTerminalBefore(context.Context, string, time.Time) ([]*run.Run, error) {
+	return nil, nil
+}
+func (r stubRunRepo) ExistingIDs(context.Context, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
 
 // --- helpers ---
 

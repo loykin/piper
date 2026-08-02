@@ -118,12 +118,26 @@ func (h *Handler) listRuns(c *gin.Context) {
 		}
 		filter.PipelineName = pipelineName
 	}
+	if limit, err := strconv.Atoi(c.Query("limit")); err == nil && limit > 0 {
+		filter.Limit = limit
+		if offset, err := strconv.Atoi(c.Query("offset")); err == nil && offset > 0 {
+			filter.Offset = offset
+		}
+	}
 
 	projectID := projectID(c)
 	runs, err := h.deps.Runs.List(c.Request.Context(), projectID, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if filter.Limit > 0 {
+		total, err := h.deps.Runs.Count(c.Request.Context(), projectID, filter)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.Header("X-Total-Count", strconv.Itoa(total))
 	}
 
 	includeSteps := c.Query("include_steps") == "true" || c.Query("include_steps") == "1"

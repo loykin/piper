@@ -437,7 +437,7 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 		entry := &taskEntry{task: task, step: &sCopy, status: taskPending, maxAttempts: q.maxAttempts}
 		if rs, ok := recoveredByName[s.Name]; ok {
 			if rs.Done {
-				entry.status = taskDone
+				q.transitionTaskLocked(entry, taskDone)
 			} else if !rs.StartedAt.IsZero() {
 				// Step was in-flight when the server crashed. Rather than
 				// re-dispatching immediately (which risks a duplicate
@@ -445,7 +445,7 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 				// one), wait up to recoveryGrace for the owning worker to
 				// reconnect and renew its lease — see RenewLeases and
 				// scheduleRecoveryGraceLocked.
-				entry.status = taskRecovering
+				q.transitionTaskLocked(entry, taskRecovering)
 				entry.attempts = rs.Attempts
 				startedAt := rs.StartedAt
 				entry.startedAt = &startedAt
@@ -459,7 +459,14 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 	}
 
 	if q.allTerminal(r) {
-		// All steps already in terminal state — finalise the run without re-queuing.
+		// All steps already in terminal state — finalise the run without
+		// re-queuing. Goes through the same finalizeRunLocked as every other
+		// termination path now, so this recovered run also gets its
+		// run.completed event and OnRunSuccess trigger (a real gap before
+		// this consolidation: a run that finished between its last write and
+		// the crash used to be silently finalized with no event at all) and
+		// a ReleaseRun call (cleans up a stale router reservation this run
+		// may still hold from before the crash).
 		runStatus := run.StatusSuccess
 		for _, e := range r.tasks {
 			if e.status == taskFailed {
@@ -467,10 +474,7 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 				break
 			}
 		}
-		finishedAt := time.Now()
-		q.appendWrite("run status (recovered all-terminal)", func(ctx context.Context) error {
-			return q.runRepo.UpdateStatus(ctx, projectID, runID, runStatus, &finishedAt)
-		})
+		q.finalizeRunLocked(r, runStatus, "run.completed")
 		return q.takePendingLocked()
 	}
 
@@ -556,7 +560,7 @@ func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (er
 
 	if result.Status == string(taskDone) {
 		q.stopEntryTimerLocked(entry)
-		entry.status = taskDone
+		q.transitionTaskLocked(entry, taskDone)
 		entry.startedAt = nil
 		entry.leaseAt = nil
 		projectID, attempts := r.projectID, entry.attempts
@@ -577,7 +581,7 @@ func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (er
 			return q.stepRepo.Upsert(ctx, step)
 		})
 		q.promoteReady(ctx, r)
-		q.finalizeRunIfAllTerminalLocked(ctx, r)
+		q.finalizeRunIfAllTerminalLocked(r)
 	} else {
 		q.failOrRetryLocked(ctx, r, entry, result.Error, &result.StartedAt, endedAt)
 	}
@@ -597,7 +601,7 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 
 	if entry.attempts < entry.maxAttempts {
 		q.stopEntryTimerLocked(entry)
-		entry.status = taskRetrying
+		q.transitionTaskLocked(entry, taskRetrying)
 		entry.assignedWorkerID = ""
 		entry.startedAt = nil
 		entry.leaseAt = nil
@@ -619,7 +623,7 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 	}
 
 	q.stopEntryTimerLocked(entry)
-	entry.status = taskFailed
+	q.transitionTaskLocked(entry, taskFailed)
 	entry.startedAt = nil
 	entry.leaseAt = nil
 	projectID, attempts := r.projectID, entry.attempts
@@ -640,17 +644,15 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 		return q.stepRepo.Upsert(ctx, failedStep)
 	})
 	q.skipDownstream(ctx, r, stepName)
-	q.finalizeRunIfAllTerminalLocked(ctx, r)
+	q.finalizeRunIfAllTerminalLocked(r)
 }
 
-// finalizeRunIfAllTerminalLocked marks the run success/failed and removes it
-// from the in-memory queue once every step has reached a terminal state.
-// Called with q.mu held.
-func (q *Queue) finalizeRunIfAllTerminalLocked(ctx context.Context, r *runEntry) {
+// finalizeRunIfAllTerminalLocked finalizes the run (as success/failed) once
+// every step has reached a terminal state. Called with q.mu held.
+func (q *Queue) finalizeRunIfAllTerminalLocked(r *runEntry) {
 	if !q.allTerminal(r) {
 		return
 	}
-	runID := r.runID
 	runStatus := run.StatusSuccess
 	for _, e := range r.tasks {
 		if e.status == taskFailed {
@@ -658,21 +660,43 @@ func (q *Queue) finalizeRunIfAllTerminalLocked(ctx context.Context, r *runEntry)
 			break
 		}
 	}
+	q.finalizeRunLocked(r, runStatus, "run.completed")
+}
+
+// finalizeRunLocked is the single point through which a run reaches a
+// terminal status — the consolidation of what used to be 4 independently
+// implemented termination sites (normal completion, Cancel, TTL expiry, and
+// RecoverWithEnv's all-terminal shortcut), each with its own DB write
+// mechanism (some retried, one synchronous and un-retried), q.runs removal
+// timing, event, and ReleaseRun/OnRunSuccess behavior. Uses
+// FinalizeStatusCAS rather than a plain UPDATE so a second finalize attempt
+// racing this one (e.g. a delayed cleanup sweep) can't clobber whichever
+// terminal status won first — the DB row, not q.runs, is the actual source
+// of truth for "is this run really done". Must be called with q.mu held.
+func (q *Queue) finalizeRunLocked(r *runEntry, status, eventType string) {
+	runID := r.runID
+	projectID := r.projectID
+	pl := r.pl
 	finishedAt := time.Now()
 	q.appendWrite("run finalized "+runID, func(ctx context.Context) error {
-		return q.runRepo.UpdateStatus(ctx, r.projectID, runID, runStatus, &finishedAt)
+		applied, err := q.runRepo.FinalizeStatusCAS(ctx, projectID, runID, status, &finishedAt)
+		if err != nil {
+			return err
+		}
+		if !applied {
+			slog.Warn("queue: run was already terminal, not overwriting", "run_id", runID, "attempted_status", status)
+		}
+		return nil
 	})
-	pl := r.pl
 	delete(q.runs, runID)
 	if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
 		owner.ReleaseRun(runID)
 	}
-	projectID := r.projectID
 	q.appendEffect(func(context.Context) {
-		q.emit(projectID, "run.completed", map[string]any{"run_id": runID, "status": runStatus})
+		q.emit(projectID, eventType, map[string]any{"run_id": runID, "status": status})
 	})
 
-	if runStatus == run.StatusSuccess && q.OnRunSuccess != nil {
+	if status == run.StatusSuccess && q.OnRunSuccess != nil {
 		onSuccess := q.OnRunSuccess
 		q.appendEffect(func(context.Context) {
 			// Use a detached context so the callback isn't cancelled when the
@@ -684,6 +708,12 @@ func (q *Queue) finalizeRunIfAllTerminalLocked(ctx context.Context, r *runEntry)
 
 // Cancel stops queue-owned work for a run and marks any non-terminal steps as canceled.
 // Active backends may also receive a cancellation request to stop in-flight work.
+// The local terminal state is committed unconditionally: Piper's cancel
+// contract is "stop dispatch/retry and confirm locally," not "remote stop
+// succeeded" — the remote CancelRun call below is best-effort observability,
+// not a precondition, and (like every other termination path since the
+// finalizeRunLocked consolidation) the run-status write itself is retried in
+// the background rather than blocking this call on it.
 func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 	q.mu.Lock()
 	r, ok := q.runs[runID]
@@ -698,7 +728,7 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 			default:
 				q.stopEntryTimerLocked(entry)
 				startedAt := entry.startedAt
-				entry.status = taskCanceled
+				q.transitionTaskLocked(entry, taskCanceled)
 				entry.startedAt = nil
 				now := time.Now()
 				canceledStep := &run.Step{
@@ -724,20 +754,26 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 				}
 			}
 		}
-		delete(q.runs, runID)
+		q.finalizeRunLocked(r, run.StatusCanceled, "run.canceled")
+	} else {
+		// Not tracked in memory — already finished, or an id that was never
+		// added. Still attempt the write (a genuinely-running-but-untracked
+		// row should still end up canceled), but go through the same CAS
+		// path as everything else: FinalizeStatusCAS's "not already
+		// terminal" guard means a run that already reached success/failed
+		// is left alone instead of being overwritten to "canceled".
+		now := time.Now()
+		q.appendWrite("run canceled (untracked) "+runID, func(ctx context.Context) error {
+			_, err := q.runRepo.FinalizeStatusCAS(ctx, projectID, runID, run.StatusCanceled, &now)
+			return err
+		})
+		q.appendEffect(func(context.Context) {
+			q.emit(projectID, "run.canceled", map[string]any{"run_id": runID})
+		})
 	}
 	outcome := q.takePendingLocked()
 	q.mu.Unlock()
 	flushPending(ctx, outcome)
-
-	// Commit the local terminal state unconditionally: Piper's cancel contract
-	// is "stop dispatch/retry and confirm locally," not "remote stop succeeded."
-	// The remote call below is best-effort observability, not a precondition.
-	now := time.Now()
-	if err := q.runRepo.UpdateStatus(ctx, projectID, runID, run.StatusCanceled, &now); err != nil {
-		return err
-	}
-	q.emit(projectID, "run.canceled", map[string]any{"run_id": runID})
 
 	if cb, ok := b.(pipelinedispatch.CancelableBackend); ok {
 		if err := cb.CancelRun(ctx, runID); err != nil {
@@ -756,17 +792,17 @@ func (q *Queue) promoteReady(ctx context.Context, r *runEntry) {
 			continue
 		}
 		if depsAllDone(entry.step.DependsOn, done) {
-			entry.status = taskReady
+			q.transitionTaskLocked(entry, taskReady)
 			q.emit(r.projectID, "step.ready", map[string]any{"run_id": r.runID, "step": entry.step.Name, "task_id": entry.task.ID})
 			q.dispatchIfNeeded(ctx, entry)
 		}
 	}
 }
 
-func (q *Queue) startTaskLocked(ctx context.Context, runID string, entry *taskEntry) {
+func (q *Queue) startTaskLocked(_ context.Context, runID string, entry *taskEntry) {
 	entry.attempts++
 	entry.task.Attempt = entry.attempts
-	entry.status = taskRunning
+	q.transitionTaskLocked(entry, taskRunning)
 	now := time.Now()
 	entry.startedAt = &now
 	entry.leaseAt = &now
@@ -915,7 +951,7 @@ func (q *Queue) RenewLeases(workerID string, taskIDs []string) {
 			// The owning worker reconnected and is still executing this task:
 			// stop waiting out the grace period and resume normal running state.
 			q.stopEntryTimerLocked(entry)
-			entry.status = taskRunning
+			q.transitionTaskLocked(entry, taskRunning)
 			q.emit(r.projectID, "step.recovered", map[string]any{"run_id": runID, "step": stepName})
 		}
 		entry.leaseAt = &now
@@ -1014,7 +1050,7 @@ func (q *Queue) requeueBusyLocked(runID, stepName string, reason error) {
 		entry.attempts = 0
 	}
 	entry.task.Attempt = entry.attempts
-	entry.status = taskReady
+	q.transitionTaskLocked(entry, taskReady)
 	entry.assignedWorkerID = ""
 	entry.startedAt = nil
 	entry.leaseAt = nil
@@ -1044,7 +1080,7 @@ func (q *Queue) requeuedDispatchFiredLocked(entry *taskEntry) pendingOutcome {
 
 func (q *Queue) scheduleRetryLocked(ctx context.Context, entry *taskEntry) {
 	if q.retryDelay <= 0 {
-		entry.status = taskReady
+		q.transitionTaskLocked(entry, taskReady)
 		entry.timer = nil
 		slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
 		q.dispatchIfNeeded(ctx, entry)
@@ -1066,10 +1102,35 @@ func (q *Queue) retryFiredLocked(entry *taskEntry) pendingOutcome {
 		return pendingOutcome{}
 	}
 	entry.timer = nil
-	entry.status = taskReady
+	q.transitionTaskLocked(entry, taskReady)
 	slog.Info("task retry ready", "task_id", entry.task.ID, "attempt", entry.attempts+1, "max_attempts", entry.maxAttempts)
 	q.dispatchIfNeeded(context.Background(), entry)
 	return q.takePendingLocked()
+}
+
+// transitionTaskLocked is the single point through which every task/step
+// status change happens — the mechanical replacement for what used to be 14
+// scattered `entry.status = X` assignments across this file. It refuses to
+// move a terminal entry (done/failed/skipped/canceled) to anything else:
+// every terminal-state idempotency check already scattered across
+// Complete/Cancel/Cleanup guards this before ever calling in, so this branch
+// should never actually trigger — it exists as a hard backstop against a
+// future call site that forgets to check first, rather than a real
+// transition table (cancel/expiry are deliberately reachable from almost
+// every non-terminal state, so a fully enumerated legal-edges list would
+// mostly just restate that). Returns the prior status. Must be called with
+// q.mu held.
+func (q *Queue) transitionTaskLocked(entry *taskEntry, to taskStatus) taskStatus {
+	from := entry.status
+	switch from {
+	case taskDone, taskFailed, taskSkipped, taskCanceled:
+		if from != to {
+			slog.Error("queue: refused to transition a terminal task entry", "task_id", entry.task.ID, "from", from, "to", to)
+		}
+		return from
+	}
+	entry.status = to
+	return from
 }
 
 func (q *Queue) stopEntryTimerLocked(entry *taskEntry) {
@@ -1094,7 +1155,7 @@ func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep stri
 		}
 		for _, dep := range entry.step.DependsOn {
 			if dep == failedStep {
-				entry.status = taskSkipped
+				q.transitionTaskLocked(entry, taskSkipped)
 				skippedStep := &run.Step{
 					ProjectID: r.projectID,
 					RunID:     r.runID,
@@ -1166,7 +1227,7 @@ func (q *Queue) cleanupLocked(ttl time.Duration) pendingOutcome {
 					continue
 				default:
 					q.stopEntryTimerLocked(entry)
-					entry.status = taskFailed
+					q.transitionTaskLocked(entry, taskFailed)
 					entry.startedAt = nil
 					entry.leaseAt = nil
 					expiredStep := &run.Step{
@@ -1183,17 +1244,7 @@ func (q *Queue) cleanupLocked(ttl time.Duration) pendingOutcome {
 					})
 				}
 			}
-			q.appendWrite("run expired "+runID, func(ctx context.Context) error {
-				return q.runRepo.UpdateStatus(ctx, r.projectID, runID, run.StatusFailed, &now)
-			})
-			projectID := r.projectID
-			q.appendEffect(func(context.Context) {
-				q.emit(projectID, "run.expired", map[string]any{"run_id": runID, "status": run.StatusFailed})
-			})
-			delete(q.runs, runID)
-			if owner, ok := q.backend.(pipelinedispatch.RunOwner); ok {
-				owner.ReleaseRun(runID)
-			}
+			q.finalizeRunLocked(r, run.StatusFailed, "run.expired")
 		}
 	}
 	return q.takePendingLocked()
@@ -1213,6 +1264,19 @@ func (q *Queue) runExpiredLocked(r *runEntry, cutoff time.Time) bool {
 		}
 	}
 	return false
+}
+
+// IsTracking reports whether runID is currently tracked in memory (added,
+// recovered, and not yet finalized/canceled/expired). Used by a periodic
+// DB-truth reconciler (see piper.go's recoverInterruptedRuns) to skip a run
+// this Queue instance is still actively processing, so it doesn't get
+// double-added — the reconciler only needs to act on rows the DB says are
+// non-terminal but that no longer show up here.
+func (q *Queue) IsTracking(runID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	_, ok := q.runs[runID]
+	return ok
 }
 
 type Stats struct {

@@ -31,6 +31,32 @@ func (r *stepRepo) Upsert(ctx context.Context, s *run.Step) error {
 	})
 }
 
+func (r *stepRepo) UpsertCAS(ctx context.Context, s *run.Step) (bool, error) {
+	var affected int64
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		normalized := *s
+		normalized.StartedAt = utcPtr(s.StartedAt)
+		normalized.EndedAt = utcPtr(s.EndedAt)
+		res, err := db.NamedExecContext(ctx, `
+			INSERT INTO steps (project_id, run_id, step_name, status, started_at, ended_at, error, attempts)
+			VALUES (:project_id, :run_id, :step_name, :status, :started_at, :ended_at, :error, :attempts)
+			ON CONFLICT(project_id, run_id, step_name) DO UPDATE SET
+				status=excluded.status, started_at=excluded.started_at,
+				ended_at=excluded.ended_at, error=excluded.error, attempts=excluded.attempts
+			WHERE excluded.attempts >= steps.attempts
+		`, &normalized)
+		if err != nil {
+			return err
+		}
+		affected, err = res.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
+}
+
 // utcPtr normalizes t to UTC. Timestamps that cross a process/network
 // boundary (e.g. a worker's JSON-encoded task result) can carry a numeric,
 // unnamed timezone offset; SQLite's default text-based time round-trip

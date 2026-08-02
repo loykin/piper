@@ -119,6 +119,9 @@ func (r stubRunRepo) Get(context.Context, string, string) (*run.Run, error) {
 func (r stubRunRepo) List(_ context.Context, _ string, _ run.RunFilter) ([]*run.Run, error) {
 	return []*run.Run{}, nil
 }
+func (r stubRunRepo) FinalizeStatusCAS(context.Context, string, string, string, *time.Time) (bool, error) {
+	return true, nil
+}
 func (r stubRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
 	return nil
 }

@@ -183,6 +183,52 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 		}
 	})
 
+	t.Run("FinalizeStatusCAS", func(t *testing.T) {
+		id := uuid.NewString()
+		if err := repo.Create(ctx, &run.Run{
+			ID:           id,
+			ProjectID:    projectID,
+			PipelineName: "finalize-cas-test",
+			Status:       run.StatusRunning,
+			StartedAt:    time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		applied, err := repo.FinalizeStatusCAS(ctx, projectID, id, run.StatusSuccess, &now)
+		if err != nil {
+			t.Fatalf("FinalizeStatusCAS: %v", err)
+		}
+		if !applied {
+			t.Fatal("FinalizeStatusCAS on a non-terminal row = false, want true")
+		}
+		got, err := repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after FinalizeStatusCAS: %v, got=%v", err, got)
+		}
+		if got.Status != run.StatusSuccess {
+			t.Errorf("status mismatch: got %q want %q", got.Status, run.StatusSuccess)
+		}
+
+		// A second finalize attempt (e.g. a delayed/duplicate write racing the
+		// first) must not clobber the already-terminal row.
+		later := now.Add(time.Minute)
+		applied, err = repo.FinalizeStatusCAS(ctx, projectID, id, run.StatusFailed, &later)
+		if err != nil {
+			t.Fatalf("FinalizeStatusCAS on already-terminal row: %v", err)
+		}
+		if applied {
+			t.Fatal("FinalizeStatusCAS on an already-terminal row = true, want false")
+		}
+		got, err = repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after second FinalizeStatusCAS: %v, got=%v", err, got)
+		}
+		if got.Status != run.StatusSuccess {
+			t.Errorf("status changed by a losing CAS: got %q want %q", got.Status, run.StatusSuccess)
+		}
+	})
+
 	t.Run("ListTerminalBefore", func(t *testing.T) {
 		pname := "terminal-before-" + uuid.NewString()
 		now := time.Now().UTC()
@@ -472,6 +518,49 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		}
 		if steps[0].Status != "done" {
 			t.Errorf("status mismatch: got %q want %q", steps[0].Status, "done")
+		}
+	})
+
+	t.Run("UpsertCAS", func(t *testing.T) {
+		runID := uuid.NewString()
+		step := &run.Step{ProjectID: projectID, RunID: runID, StepName: "cas", Status: "running", Attempts: 1}
+		applied, err := repo.UpsertCAS(ctx, step)
+		if err != nil {
+			t.Fatalf("UpsertCAS insert: %v", err)
+		}
+		if !applied {
+			t.Fatal("UpsertCAS insert = false, want true")
+		}
+
+		// A newer attempt's write must apply normally.
+		newer := &run.Step{ProjectID: projectID, RunID: runID, StepName: "cas", Status: "done", Attempts: 2}
+		applied, err = repo.UpsertCAS(ctx, newer)
+		if err != nil {
+			t.Fatalf("UpsertCAS newer attempt: %v", err)
+		}
+		if !applied {
+			t.Fatal("UpsertCAS newer attempt = false, want true")
+		}
+
+		// A stale write for an earlier attempt (e.g. delayed by a retry, racing
+		// behind a newer attempt's result) must not clobber the newer row.
+		stale := &run.Step{ProjectID: projectID, RunID: runID, StepName: "cas", Status: "failed", Attempts: 1}
+		applied, err = repo.UpsertCAS(ctx, stale)
+		if err != nil {
+			t.Fatalf("UpsertCAS stale attempt: %v", err)
+		}
+		if applied {
+			t.Fatal("UpsertCAS stale attempt = true, want false")
+		}
+		steps, err := repo.List(ctx, projectID, runID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(steps) != 1 {
+			t.Fatalf("expected 1 step, got %d", len(steps))
+		}
+		if steps[0].Status != "done" || steps[0].Attempts != 2 {
+			t.Errorf("stale UpsertCAS clobbered the newer row: got status=%q attempts=%d, want status=done attempts=2", steps[0].Status, steps[0].Attempts)
 		}
 	})
 

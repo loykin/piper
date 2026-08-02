@@ -44,6 +44,9 @@ func (r *capturingRunRepo) List(_ context.Context, _ string, filter RunFilter) (
 func (r *capturingRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
 	return nil
 }
+func (r *capturingRunRepo) FinalizeStatusCAS(context.Context, string, string, string, *time.Time) (bool, error) {
+	return true, nil
+}
 func (r *capturingRunRepo) MarkRunning(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -63,7 +66,8 @@ func (r *capturingRunRepo) ExistingIDs(context.Context, []string) (map[string]bo
 
 type emptyStepRepo struct{}
 
-func (r emptyStepRepo) Upsert(context.Context, *Step) error { return nil }
+func (r emptyStepRepo) Upsert(context.Context, *Step) error            { return nil }
+func (r emptyStepRepo) UpsertCAS(context.Context, *Step) (bool, error) { return true, nil }
 func (r emptyStepRepo) List(context.Context, string, string) ([]*Step, error) {
 	return []*Step{}, nil
 }
@@ -77,7 +81,8 @@ type capturingStepRepo struct {
 	steps []*Step
 }
 
-func (r *capturingStepRepo) Upsert(context.Context, *Step) error { return nil }
+func (r *capturingStepRepo) Upsert(context.Context, *Step) error            { return nil }
+func (r *capturingStepRepo) UpsertCAS(context.Context, *Step) (bool, error) { return true, nil }
 func (r *capturingStepRepo) List(context.Context, string, string) ([]*Step, error) {
 	r.calls++
 	return r.steps, nil

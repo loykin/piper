@@ -339,19 +339,37 @@ func (p *Piper) handleRunSuccess(ctx context.Context, runID string, pl *pipeline
 	}
 }
 
+// recoveryReconcileEvery bounds how often runCleanup's periodic pass re-runs
+// recoverInterruptedRuns as a DB-truth reconciler (in addition to its one
+// mandatory call at startup) — every recoveryReconcileEvery'th 15s tick, i.e.
+// every 5 minutes. This is what closes the durability gap a permanently
+// failed run-finalizing write would otherwise leave open indefinitely: a run
+// whose terminal DB write exhausted all of persistWithRetry's attempts is
+// gone from Queue.runs (so Cleanup's TTL sweep never sees it again) and
+// would otherwise stay stuck non-terminal in the DB until the next process
+// restart. recoverInterruptedRuns's IsTracking guard makes it safe to call
+// repeatedly — it only acts on rows the DB says are still running but that
+// this Queue instance is no longer actively tracking.
+const recoveryReconcileEvery = 20
+
 // runCleanup periodically reconciles workers and removes stuck queue entries.
 func (p *Piper) runCleanup(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+	var tick int
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			tick++
 			p.reconcileBackend(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.cleanupRetention(ctx)
 			p.cleanupOrphanArtifacts(ctx)
+			if tick%recoveryReconcileEvery == 0 {
+				p.recoverInterruptedRuns(ctx)
+			}
 		}
 	}
 }
@@ -405,6 +423,13 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 	}
 	now := time.Now().UTC()
 	for _, r := range runs {
+		if p.queue.IsTracking(r.ID) {
+			// Still actively being processed by this queue instance — leave
+			// it alone. Without this guard, calling this function again
+			// after startup (see runCleanup's periodic reconciler pass)
+			// would re-add a live run and corrupt its in-memory state.
+			continue
+		}
 		if r.PipelineYAML == "" {
 			// No YAML — can't reconstruct DAG, mark failed.
 			if err := p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now); err != nil {

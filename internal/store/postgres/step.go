@@ -27,6 +27,29 @@ func (r *stepRepo) Upsert(ctx context.Context, s *run.Step) error {
 	})
 }
 
+func (r *stepRepo) UpsertCAS(ctx context.Context, s *run.Step) (bool, error) {
+	var affected int64
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		res, err := db.NamedExecContext(ctx, `
+			INSERT INTO steps (project_id, run_id, step_name, status, started_at, ended_at, error, attempts)
+			VALUES (:project_id, :run_id, :step_name, :status, :started_at, :ended_at, :error, :attempts)
+			ON CONFLICT(project_id, run_id, step_name) DO UPDATE SET
+				status=EXCLUDED.status, started_at=EXCLUDED.started_at,
+				ended_at=EXCLUDED.ended_at, error=EXCLUDED.error, attempts=EXCLUDED.attempts
+			WHERE EXCLUDED.attempts >= steps.attempts
+		`, s)
+		if err != nil {
+			return err
+		}
+		affected, err = res.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
+}
+
 func (r *stepRepo) List(ctx context.Context, projectID, runID string) ([]*run.Step, error) {
 	var steps []*run.Step
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {

@@ -201,6 +201,24 @@ func (r *runRepo) UpdateStatus(ctx context.Context, projectID, id, status string
 	})
 }
 
+func (r *runRepo) FinalizeStatusCAS(ctx context.Context, projectID, id, to string, endedAt *time.Time) (bool, error) {
+	var affected int64
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		res, err := db.ExecContext(ctx,
+			`UPDATE runs SET status=?, ended_at=? WHERE project_id=? AND id=? AND status NOT IN ('success', 'failed', 'canceled')`,
+			to, endedAt, projectID, id)
+		if err != nil {
+			return err
+		}
+		affected, err = res.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
+}
+
 func (r *runRepo) MarkRunning(ctx context.Context, projectID, id string, startedAt time.Time) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,

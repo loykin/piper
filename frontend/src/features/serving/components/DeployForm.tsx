@@ -60,9 +60,6 @@ const deployFormSchema = z.object({
   k8sGPU: z.string(),
   k8sImagePullPolicy: z.string(),
 }).superRefine((values, context) => {
-  if (!values.worker.trim()) {
-    context.addIssue({ code: 'custom', path: ['worker'], message: 'Worker is required.' })
-  }
   if (values.runtimeMode !== 'k8s') return
   if (!values.k8sImage.trim()) {
     context.addIssue({ code: 'custom', path: ['k8sImage'], message: 'Container image is required for Kubernetes.' })
@@ -171,6 +168,7 @@ interface RuntimeSectionProps {
   setYaml: (yaml: string) => void
   hasCompatibleWorkers: boolean
   ambiguousLocalInfra: boolean
+  workerRequired: boolean
   localInfraTypes: string[]
   compatibleWorkers: ServingWorkerInfo[]
   isDockerLocal: boolean
@@ -178,7 +176,7 @@ interface RuntimeSectionProps {
 
 function RuntimeSection({
   form, errors, setField, setValue, setYaml,
-  hasCompatibleWorkers, ambiguousLocalInfra, localInfraTypes, compatibleWorkers, isDockerLocal,
+  hasCompatibleWorkers, ambiguousLocalInfra, workerRequired, localInfraTypes, compatibleWorkers, isDockerLocal,
 }: RuntimeSectionProps) {
   return (
     <DataBodyTemplate.Group layout="stacked" title="Runtime">
@@ -256,13 +254,15 @@ function RuntimeSection({
           <p className="text-xs text-muted-foreground">
             {localInfraTypes.length > 1
               ? 'Multiple infrastructure types are registered — pick the worker to run on.'
-              : 'Pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'}
+              : workerRequired
+                ? 'Multiple workers are registered — pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'
+                : 'Optional. Only one compatible worker is registered, so it will be used automatically.'}
           </p>
           <Select
             value={form.worker}
             onValueChange={v => setField('worker', v ?? '')}
           >
-            <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={!!errors.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
+            <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={workerRequired && !form.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
             <SelectContent>
               {compatibleWorkers.map(w => (
                 <SelectItem key={w.id} value={w.id}>
@@ -276,7 +276,7 @@ function RuntimeSection({
               ))}
             </SelectContent>
           </Select>
-          {errors.worker && <p className="text-xs text-destructive">{errors.worker.message}</p>}
+          {workerRequired && !form.worker && <p className="text-xs text-destructive">Worker is required.</p>}
         </div>
       )}
 
@@ -296,19 +296,23 @@ function RuntimeSection({
         <>
           <div className="space-y-1.5">
             <Label className="text-xs">Worker</Label>
-            <p className="text-xs text-muted-foreground">Pick the Kubernetes cluster to deploy to. Separately managed clusters are never chosen automatically.</p>
+            <p className="text-xs text-muted-foreground">
+              {workerRequired
+                ? 'Multiple Kubernetes clusters are registered — pick the cluster to deploy to. Separately managed clusters are never chosen automatically.'
+                : 'Optional. Only one compatible cluster is registered, so it will be used automatically.'}
+            </p>
             <Select
               value={form.worker}
               onValueChange={v => setField('worker', v ?? '')}
             >
-              <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={!!errors.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
+              <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={workerRequired && !form.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
               <SelectContent>
                 {compatibleWorkers.map(w => (
                   <SelectItem key={w.id} value={w.id}>{w.hostname || w.id}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {errors.worker && <p className="text-xs text-destructive">{errors.worker.message}</p>}
+            {workerRequired && !form.worker && <p className="text-xs text-destructive">Worker is required.</p>}
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Container Image</Label>
@@ -434,6 +438,11 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const hasCompatibleWorkers = compatibleWorkers.length > 0
   const localInfraTypes = [...new Set(compatibleWorkers.map(w => w.infrastructure))]
   const ambiguousLocalInfra = form.runtimeMode === 'local' && localInfraTypes.length > 1 && !form.worker
+  // Mirrors the router's actual rule (internal/agent/router.go): a worker
+  // must be named only when more than one candidate could otherwise match.
+  // A single compatible worker is not ambiguous, so the backend resolves it
+  // without an explicit ID — the form shouldn't demand one either.
+  const workerRequired = compatibleWorkers.length > 1
   const selectedWorkerInfra = form.worker
     ? compatibleWorkers.find(w => w.id === form.worker)?.infrastructure
     : (localInfraTypes.length === 1 ? localInfraTypes[0] : undefined)
@@ -505,6 +514,10 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
       setError(`Multiple worker infrastructure types are registered (${localInfraTypes.join(', ')}) — choose a Worker before deploying.`)
       return
     }
+    if (workerRequired && !values.worker.trim()) {
+      setError('Multiple compatible workers are registered — choose a Worker before deploying.')
+      return
+    }
     if (isDockerLocal && !values.dockerImage.trim()) {
       setError('Container image is required for the selected Docker worker.')
       return
@@ -569,6 +582,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
               setYaml={setYaml}
               hasCompatibleWorkers={hasCompatibleWorkers}
               ambiguousLocalInfra={ambiguousLocalInfra}
+              workerRequired={workerRequired}
               localInfraTypes={localInfraTypes}
               compatibleWorkers={compatibleWorkers}
               isDockerLocal={isDockerLocal}
@@ -599,7 +613,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
           <Button
             type="submit"
             size="sm"
-            disabled={deploying || (tab === 'form' && (!hasCompatibleWorkers || ambiguousLocalInfra || !form.worker))}
+            disabled={deploying || (tab === 'form' && (!hasCompatibleWorkers || ambiguousLocalInfra || (workerRequired && !form.worker)))}
           >
             {deploying ? 'Deploying…' : 'Deploy'}
           </Button>

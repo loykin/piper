@@ -729,8 +729,9 @@ export default function PipelineEditorPage() {
       setError(`Multiple worker infrastructure types are registered (${pipelineInfraTypes.join(', ')}) — choose a Runtime before submitting.`)
       return
     }
-    if (pipelineWorkers.length > 0 && !draft.defaults.placementWorker.trim() && !draft.defaults.placementLabel.trim()) {
-      setError('Choose a Worker (or set an advanced Worker Label) before submitting — the router no longer picks one automatically.')
+    const draftCompatibleWorkers = pipelineWorkers.filter(w => !draft.defaults.placementRuntime || w.infrastructure === draft.defaults.placementRuntime)
+    if (draftCompatibleWorkers.length > 1 && !draft.defaults.placementWorker.trim() && !draft.defaults.placementLabel.trim()) {
+      setError('Multiple compatible workers are registered — choose a Worker (or set an advanced Worker Label) before submitting.')
       return
     }
     const messages = validatePipelineDraft({ name: draft.name, steps: draft.steps, defaults: draft.defaults })
@@ -1029,7 +1030,7 @@ export default function PipelineEditorPage() {
                     value={defaults.placementWorker}
                     onValueChange={value => updateDefaults({ placementWorker: value ?? '' })}
                   >
-                    <SelectTrigger size="sm" className="w-full" aria-invalid={pipelineWorkers.length > 0 && !defaults.placementWorker}>
+                    <SelectTrigger size="sm" className="w-full" aria-invalid={defaultsCompatibleWorkers.length > 1 && !defaults.placementWorker}>
                       <SelectValue placeholder="— select worker —" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1043,7 +1044,11 @@ export default function PipelineEditorPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="mt-1 text-xs text-muted-foreground">Pick the worker to run on. Separately managed workers of the same type are never chosen automatically.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {defaultsCompatibleWorkers.length > 1
+                      ? 'Multiple workers are registered — pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'
+                      : 'Optional. Only one compatible worker is registered, so it will be used automatically.'}
+                  </p>
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker Label</label>

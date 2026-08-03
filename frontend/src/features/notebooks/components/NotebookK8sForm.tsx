@@ -68,11 +68,12 @@ function VolumeField({ volumeId, releasedVolumes, onChange }: VolumeFieldProps) 
 interface WorkerSelectSectionProps {
   workers: NotebookWorkerInfo[]
   notebookInfraTypes: string[]
+  workerRequired: boolean
   selectedWorkerID: string
   onWorkerChange: (id: string | null) => void
 }
 
-function WorkerSelectSection({ workers, notebookInfraTypes, selectedWorkerID, onWorkerChange }: WorkerSelectSectionProps) {
+function WorkerSelectSection({ workers, notebookInfraTypes, workerRequired, selectedWorkerID, onWorkerChange }: WorkerSelectSectionProps) {
   return (
     <DataBodyTemplate.Group layout="stacked" title="Worker">
       <div className="space-y-1.5">
@@ -80,10 +81,12 @@ function WorkerSelectSection({ workers, notebookInfraTypes, selectedWorkerID, on
         <p className="text-xs text-muted-foreground">
           {notebookInfraTypes.length > 1
             ? 'Multiple infrastructure types are registered — pick the worker to run on.'
-            : 'Pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'}
+            : workerRequired
+              ? 'Multiple workers are registered — pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'
+              : 'Optional. Only one compatible worker is registered, so it will be used automatically.'}
         </p>
         <Select value={selectedWorkerID} onValueChange={onWorkerChange}>
-          <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={!selectedWorkerID}><SelectValue placeholder="— select worker —" /></SelectTrigger>
+          <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={workerRequired && !selectedWorkerID}><SelectValue placeholder="— select worker —" /></SelectTrigger>
           <SelectContent>
             {workers.map(w => (
               <SelectItem key={w.id} value={w.id}>
@@ -282,6 +285,12 @@ export function NotebookK8sForm({
     [workers],
   )
   const ambiguousInfra = notebookInfraTypes.length > 1 && !selectedWorkerID
+  // Mirrors the router's actual rule (internal/agent/router.go): a worker
+  // must be named only when more than one candidate could otherwise match.
+  // With a single registered worker there is nothing ambiguous to resolve,
+  // so requiring a manual pick here would just be friction the backend
+  // doesn't need.
+  const workerRequired = workers.length > 1
 
   const runtime = useMemo<'k8s' | 'docker' | 'baremetal'>(() => {
 		if (selectedWorker) return selectedWorker.infrastructure
@@ -373,7 +382,7 @@ export function NotebookK8sForm({
   }
 
   function handleSubmit() {
-    if (!hasWorkers || !selectedWorkerID) return
+    if (!hasWorkers || (workerRequired && !selectedWorkerID)) return
     const isK8s = runtime === 'k8s'
     const name = isK8s ? k8sForm.name : workerForm.name
     const resolvedK8s = resolveK8sForm(k8sForm)
@@ -390,7 +399,7 @@ export function NotebookK8sForm({
     onSubmit(payload.trim(), volumeId || undefined)
   }
 
-  const submitDisabled = submitting || !hasWorkers || ambiguousInfra || !selectedWorkerID || (tab === 'form' && (
+  const submitDisabled = submitting || !hasWorkers || ambiguousInfra || (workerRequired && !selectedWorkerID) || (tab === 'form' && (
     runtime === 'k8s'
       ? !k8sForm.name.trim() || !k8sForm.image.trim() || !resolveK8sForm(k8sForm).namespace.trim() || !k8sForm.storageSize.trim()
       : !workerForm.name.trim() || (runtime === 'docker' && !workerForm.dockerImage.trim())
@@ -425,6 +434,7 @@ export function NotebookK8sForm({
           <WorkerSelectSection
             workers={workers}
             notebookInfraTypes={notebookInfraTypes}
+            workerRequired={workerRequired}
             selectedWorkerID={selectedWorkerID}
             onWorkerChange={onWorkerChange}
           />

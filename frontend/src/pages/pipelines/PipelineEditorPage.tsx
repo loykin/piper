@@ -541,7 +541,7 @@ export default function PipelineEditorPage() {
     }
     fetchFiles()
     return () => { if (retryTimer != null) clearTimeout(retryTimer) }
-  }, [editorSourceKind, editorVolumeId])
+  }, [editorSourceKind, editorVolumeId, projectId])
 
   useEffect(() => {
     setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults }))
@@ -998,7 +998,8 @@ export default function PipelineEditorPage() {
               <Input value={pipelineName} onChange={e => setPipelineName(e.target.value)} />
             </div>
             <div className="space-y-4 overflow-y-auto p-4">
-              <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime Defaults">
+              <div>
+               <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Runtime Defaults</h2>
                <div className="space-y-3">
                 {pipelineWorkers.length === 0 && (
                   <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -1074,7 +1075,7 @@ export default function PipelineEditorPage() {
                   </div>
                 )}
                </div>
-              </DataBodyTemplate.Group>
+              </div>
               <div>
                 <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Task Palette</h2>
                 <div className="space-y-2">
@@ -1134,7 +1135,7 @@ export default function PipelineEditorPage() {
               </TabsList>
 
               <TabsContent value="design" className="relative min-h-0 flex-1 overflow-hidden p-3">
-                <div className="absolute right-5 top-2 z-10">
+                <div className="absolute right-5 top-5 z-10">
                   <Button variant="outline" size="sm" onClick={resetLayout}>Reset layout</Button>
                 </div>
                 <PipelineCanvas
@@ -1355,7 +1356,8 @@ export default function PipelineEditorPage() {
                 onBrowseSelect={(i, f) => { updateArtifactField(editingIndex, 'outputs', i, { path: f }); setArtifactBrowseKey(null) }}
               />
 
-              <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime Override">
+              <div>
+               <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Runtime Override</h2>
                <div className="space-y-3">
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Runtime</label>
@@ -1435,7 +1437,7 @@ export default function PipelineEditorPage() {
                   </div>
                 )}
                </div>
-              </DataBodyTemplate.Group>
+              </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>

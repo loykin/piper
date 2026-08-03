@@ -6,16 +6,19 @@ import {
   Tabs, TabsList, TabsTrigger,
 } from '@loykin/designkit'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useForm, useWatch } from 'react-hook-form'
+import { useForm, useWatch, type FieldErrors, type UseFormSetValue } from 'react-hook-form'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 import { useRuns } from '@/features/runs/hooks'
+import type { Run } from '@/features/runs/api'
 import { listArtifacts, type StepArtifacts } from '@/features/runs/api'
 import { useCreateService, useServingWorkers } from '../hooks'
+import type { ServingWorkerInfo } from '../types'
 import { useProjectId } from '@/lib/projectContext'
 import { buildYAML, DEFAULT_FORM, RUNTIME_TEMPLATES, type FormState } from '../editor'
 
@@ -57,6 +60,9 @@ const deployFormSchema = z.object({
   k8sGPU: z.string(),
   k8sImagePullPolicy: z.string(),
 }).superRefine((values, context) => {
+  if (!values.worker.trim()) {
+    context.addIssue({ code: 'custom', path: ['worker'], message: 'Worker is required.' })
+  }
   if (values.runtimeMode !== 'k8s') return
   if (!values.k8sImage.trim()) {
     context.addIssue({ code: 'custom', path: ['k8sImage'], message: 'Container image is required for Kubernetes.' })
@@ -65,6 +71,334 @@ const deployFormSchema = z.object({
     context.addIssue({ code: 'custom', path: ['k8sReplicas'], message: 'Replicas must be at least 1.' })
   }
 })
+
+// ─── ServiceSection ─────────────────────────────────────────────────────────
+
+interface ServiceSectionProps {
+  name: string
+  error?: string
+  onChange: (value: string) => void
+}
+
+function ServiceSection({ name, error, onChange }: ServiceSectionProps) {
+  return (
+    <DataBodyTemplate.Group layout="stacked" title="Service">
+      <div className="space-y-1.5">
+        <Label className="text-xs">Service Name</Label>
+        <Input
+          className="h-8 text-sm"
+          value={name}
+          onChange={e => onChange(e.target.value)}
+          placeholder="my-model"
+          aria-invalid={!!error}
+        />
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
+    </DataBodyTemplate.Group>
+  )
+}
+
+// ─── ModelSourceSection ─────────────────────────────────────────────────────
+
+interface ModelSourceSectionProps {
+  form: FormState
+  pipelines: string[]
+  pipelineRuns: Run[]
+  steps: string[]
+  artifactNames: string[]
+  setField: <K extends keyof FormState>(key: K, value: FormState[K]) => void
+}
+
+function ModelSourceSection({ form, pipelines, pipelineRuns, steps, artifactNames, setField }: ModelSourceSectionProps) {
+  return (
+    <DataBodyTemplate.Group layout="stacked" title="Model Source">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Pipeline</Label>
+          <Select value={form.pipeline} onValueChange={v => setField('pipeline', v ?? '')}>
+            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue placeholder="— select pipeline —" /></SelectTrigger>
+            <SelectContent>
+              {pipelines.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Run</Label>
+          <Select value={form.run} onValueChange={v => setField('run', v ?? '')} disabled={!form.pipeline}>
+            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="latest">latest</SelectItem>
+              {pipelineRuns.map(r => (
+                <SelectItem key={r.id} value={r.id}>
+                  {r.id.slice(0, 20)}… {r.started_at ? new Date(r.started_at).toLocaleDateString() : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Step</Label>
+          <Select value={form.step} onValueChange={v => setField('step', v ?? '')} disabled={steps.length === 0}>
+            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue placeholder="— select step —" /></SelectTrigger>
+            <SelectContent>
+              {steps.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Artifact</Label>
+          <Select value={form.artifact} onValueChange={v => setField('artifact', v ?? '')} disabled={artifactNames.length === 0}>
+            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue placeholder="— select artifact —" /></SelectTrigger>
+            <SelectContent>
+              {artifactNames.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </DataBodyTemplate.Group>
+  )
+}
+
+// ─── RuntimeSection ─────────────────────────────────────────────────────────
+
+interface RuntimeSectionProps {
+  form: FormState
+  errors: FieldErrors<FormState>
+  setField: <K extends keyof FormState>(key: K, value: FormState[K]) => void
+  setValue: UseFormSetValue<FormState>
+  setYaml: (yaml: string) => void
+  hasCompatibleWorkers: boolean
+  ambiguousLocalInfra: boolean
+  localInfraTypes: string[]
+  compatibleWorkers: ServingWorkerInfo[]
+  isDockerLocal: boolean
+}
+
+function RuntimeSection({
+  form, errors, setField, setValue, setYaml,
+  hasCompatibleWorkers, ambiguousLocalInfra, localInfraTypes, compatibleWorkers, isDockerLocal,
+}: RuntimeSectionProps) {
+  return (
+    <DataBodyTemplate.Group layout="stacked" title="Runtime">
+      <div className="flex flex-wrap gap-1.5">
+        {Object.entries(RUNTIME_TEMPLATES).map(([key, tpl]) => (
+          <Button
+            key={key}
+            type="button"
+            size="sm"
+            variant={form.templateKey === key ? 'default' : 'outline'}
+            title={tpl.description}
+            onClick={() => {
+              const next = {
+                ...form,
+                templateKey: key,
+                runtimeMode: tpl.runtimeMode,
+                k8sImage: tpl.image,
+                command: tpl.command,
+                port: tpl.port,
+                healthPath: tpl.healthPath,
+              }
+              for (const [field, fieldValue] of Object.entries(next) as [keyof FormState, FormState[keyof FormState]][]) {
+                setValue(field, fieldValue, { shouldDirty: true })
+              }
+              setYaml(buildYAML(next))
+            }}
+            className="rounded-full"
+          >
+            {tpl.label}
+          </Button>
+        ))}
+      </div>
+
+      {!hasCompatibleWorkers && (
+        <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          No {form.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected. Deploying would fail immediately — register one first, or switch Mode.
+        </p>
+      )}
+      {ambiguousLocalInfra && (
+        <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {localInfraTypes.length} worker infrastructure types are registered ({localInfraTypes.join(', ')}) — choose a Worker so this service always runs where you expect.
+        </p>
+      )}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Mode</Label>
+          <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')}>
+            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="local">local</SelectItem>
+              <SelectItem value="k8s">k8s</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Port</Label>
+          <Input
+            className="h-8 text-sm"
+            value={form.port}
+            onChange={e => setField('port', e.target.value)}
+            placeholder="8000"
+            aria-invalid={!!errors.port}
+          />
+          {errors.port && <p className="text-xs text-destructive">{errors.port.message}</p>}
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Health Path</Label>
+          <Input className="h-8 text-sm" value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
+        </div>
+      </div>
+
+      {form.runtimeMode === 'local' && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Worker</Label>
+          <p className="text-xs text-muted-foreground">
+            {localInfraTypes.length > 1
+              ? 'Multiple infrastructure types are registered — pick the worker to run on.'
+              : 'Pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'}
+          </p>
+          <Select
+            value={form.worker}
+            onValueChange={v => setField('worker', v ?? '')}
+          >
+            <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={!!errors.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
+            <SelectContent>
+              {compatibleWorkers.map(w => (
+                <SelectItem key={w.id} value={w.id}>
+                  <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${
+                    w.infrastructure === 'docker' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-orange-500/15 text-orange-400'
+                  }`}>
+                    {w.infrastructure === 'docker' ? 'Docker' : 'BM'}
+                  </span>
+                  {w.hostname || w.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {errors.worker && <p className="text-xs text-destructive">{errors.worker.message}</p>}
+        </div>
+      )}
+
+      {isDockerLocal && (
+        <div className="space-y-1.5">
+          <Label className="text-xs">Container Image</Label>
+          <Input
+            className="h-8 text-sm"
+            value={form.dockerImage}
+            onChange={e => setField('dockerImage', e.target.value)}
+            placeholder="registry/image:tag"
+          />
+        </div>
+      )}
+
+      {form.runtimeMode === 'k8s' && (
+        <>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Worker</Label>
+            <p className="text-xs text-muted-foreground">Pick the Kubernetes cluster to deploy to. Separately managed clusters are never chosen automatically.</p>
+            <Select
+              value={form.worker}
+              onValueChange={v => setField('worker', v ?? '')}
+            >
+              <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={!!errors.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
+              <SelectContent>
+                {compatibleWorkers.map(w => (
+                  <SelectItem key={w.id} value={w.id}>{w.hostname || w.id}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.worker && <p className="text-xs text-destructive">{errors.worker.message}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Container Image</Label>
+            <Input
+              className="h-8 text-sm"
+              value={form.k8sImage}
+              onChange={e => setField('k8sImage', e.target.value)}
+              placeholder="registry/image:tag"
+              aria-invalid={!!errors.k8sImage}
+            />
+            {errors.k8sImage && <p className="text-xs text-destructive">{errors.k8sImage.message}</p>}
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Namespace</Label>
+              <Input className="h-8 text-sm" value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Replicas</Label>
+              <Input
+                className="h-8 text-sm"
+                type="number"
+                min="1"
+                value={form.k8sReplicas}
+                onChange={e => setField('k8sReplicas', e.target.value)}
+                aria-invalid={!!errors.k8sReplicas}
+              />
+              {errors.k8sReplicas && <p className="text-xs text-destructive">{errors.k8sReplicas.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Image Pull Policy</Label>
+              <Select value={form.k8sImagePullPolicy} onValueChange={v => setField('k8sImagePullPolicy', v ?? '')}>
+                <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Always">Always</SelectItem>
+                  <SelectItem value="IfNotPresent">IfNotPresent</SelectItem>
+                  <SelectItem value="Never">Never</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">CPU</Label>
+              <Input className="h-8 text-sm" value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Memory</Label>
+              <Input className="h-8 text-sm" value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">GPU</Label>
+              <Input className="h-8 text-sm" value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" />
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="space-y-1.5">
+        <Label className="text-xs">Command</Label>
+        <p className="text-xs text-muted-foreground">One argument per line. $PIPER_MODEL_DIR points to the artifact directory.</p>
+        <YamlMirror
+          className="bg-background"
+          rows={4}
+          value={form.command}
+          onChange={e => setField('command', e.target.value)}
+        />
+      </div>
+    </DataBodyTemplate.Group>
+  )
+}
+
+// ─── EnvironmentSection ─────────────────────────────────────────────────────
+
+interface EnvironmentSectionProps {
+  items: EnvVarDraft[]
+  onAdd: () => void
+  onRemove: (rowIndex: number) => void
+  onUpdate: (rowIndex: number, patch: Partial<EnvVarDraft>) => void
+}
+
+function EnvironmentSection({ items, onAdd, onRemove, onUpdate }: EnvironmentSectionProps) {
+  return (
+    <DataBodyTemplate.Group layout="stacked" title="Environment">
+      <EnvVarEditor items={items} onAdd={onAdd} onRemove={onRemove} onUpdate={onUpdate} />
+    </DataBodyTemplate.Group>
+  )
+}
+
+// ─── DeployForm ─────────────────────────────────────────────────────────────
 
 export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const projectId = useProjectId()
@@ -184,284 +518,93 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   }
 
   return (
-    <DataBodyTemplate.Group
-      layout="stacked"
-      variant="bordered"
-      title="Deploy ModelService"
-      description="Deploy a pipeline artifact as a managed model serving endpoint."
-    >
+    <>
+      <Tabs
+        value={tab}
+        onValueChange={value => {
+          const nextTab = value as 'form' | 'yaml'
+          if (nextTab === 'yaml') setYaml(buildYAML(form))
+          setTab(nextTab)
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="form">Form</TabsTrigger>
+          <TabsTrigger value="yaml">YAML</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       <form
+        className="contents"
         onSubmit={tab === 'form' ? handleSubmit(handleDeploy) : handleYamlSubmit}
-        className="space-y-4"
         noValidate
       >
-        <div className="flex items-center justify-between">
-          <Tabs
-            value={tab}
-            onValueChange={value => {
-              const nextTab = value as 'form' | 'yaml'
-              if (nextTab === 'yaml') setYaml(buildYAML(form))
-              setTab(nextTab)
-            }}
-          >
-            <TabsList>
-              <TabsTrigger value="form">Form</TabsTrigger>
-              <TabsTrigger value="yaml">YAML</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-        </div>
-
         {tab === 'form' ? (
-          <div className="space-y-4">
+          <>
             {!hasCompatibleWorkers && (
               <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 No compatible serving worker is connected for the selected runtime.
               </p>
             )}
-            <DataBodyTemplate.Field label="Service Name">
-              <Input
-                value={form.name}
-                onChange={e => setField('name', e.target.value)}
-                placeholder="my-model"
-                aria-invalid={!!errors.name}
-              />
-              {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name.message}</p>}
-            </DataBodyTemplate.Field>
 
-            <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Model Source">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <DataBodyTemplate.Field label="Pipeline">
-                  <Select value={form.pipeline} onValueChange={v => setField('pipeline', v ?? '')}>
-                    <SelectTrigger size="sm"><SelectValue placeholder="— select pipeline —" /></SelectTrigger>
-                    <SelectContent>
-                      {pipelines.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </DataBodyTemplate.Field>
-                <DataBodyTemplate.Field label="Run">
-                  <Select value={form.run} onValueChange={v => setField('run', v ?? '')} disabled={!form.pipeline}>
-                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="latest">latest</SelectItem>
-                      {pipelineRuns.map(r => (
-                        <SelectItem key={r.id} value={r.id}>
-                          {r.id.slice(0, 20)}… {r.started_at ? new Date(r.started_at).toLocaleDateString() : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </DataBodyTemplate.Field>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <DataBodyTemplate.Field label="Step">
-                  <Select value={form.step} onValueChange={v => setField('step', v ?? '')} disabled={steps.length === 0}>
-                    <SelectTrigger size="sm"><SelectValue placeholder="— select step —" /></SelectTrigger>
-                    <SelectContent>
-                      {steps.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </DataBodyTemplate.Field>
-                <DataBodyTemplate.Field label="Artifact">
-                  <Select value={form.artifact} onValueChange={v => setField('artifact', v ?? '')} disabled={artifactNames.length === 0}>
-                    <SelectTrigger size="sm"><SelectValue placeholder="— select artifact —" /></SelectTrigger>
-                    <SelectContent>
-                      {artifactNames.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </DataBodyTemplate.Field>
-              </div>
-            </DataBodyTemplate.Group>
+            <ServiceSection
+              name={form.name}
+              error={errors.name?.message}
+              onChange={value => setField('name', value)}
+            />
 
-            <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Runtime">
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(RUNTIME_TEMPLATES).map(([key, tpl]) => (
-                  <Button
-                    key={key}
-                    type="button"
-                    size="sm"
-                    variant={form.templateKey === key ? 'default' : 'outline'}
-                    title={tpl.description}
-                    onClick={() => {
-                      const next = {
-                      ...form,
-                      templateKey: key,
-                      runtimeMode: tpl.runtimeMode,
-                      k8sImage: tpl.image,
-                      command: tpl.command,
-                      port: tpl.port,
-                      healthPath: tpl.healthPath,
-                      }
-                      for (const [field, fieldValue] of Object.entries(next) as [keyof FormState, FormState[keyof FormState]][]) {
-                        setValue(field, fieldValue, { shouldDirty: true })
-                      }
-                      setYaml(buildYAML(next))
-                    }}
-                    className="rounded-full"
-                  >
-                    {tpl.label}
-                  </Button>
-                ))}
-              </div>
+            <ModelSourceSection
+              form={form}
+              pipelines={pipelines}
+              pipelineRuns={pipelineRuns}
+              steps={steps}
+              artifactNames={artifactNames}
+              setField={setField}
+            />
 
-              {!hasCompatibleWorkers && (
-                <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  No {form.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected. Deploying would fail immediately — register one first, or switch Mode.
-                </p>
-              )}
-              {ambiguousLocalInfra && (
-                <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  {localInfraTypes.length} worker infrastructure types are registered ({localInfraTypes.join(', ')}) — choose a Worker so this service always runs where you expect.
-                </p>
-              )}
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <DataBodyTemplate.Field label="Mode">
-                  <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')}>
-                    <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="local">local</SelectItem>
-                      <SelectItem value="k8s">k8s</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </DataBodyTemplate.Field>
-                <DataBodyTemplate.Field label="Port">
-                  <Input
-                    value={form.port}
-                    onChange={e => setField('port', e.target.value)}
-                    placeholder="8000"
-                    aria-invalid={!!errors.port}
-                  />
-                  {errors.port && <p className="mt-1 text-xs text-destructive">{errors.port.message}</p>}
-                </DataBodyTemplate.Field>
-                <DataBodyTemplate.Field label="Health Path">
-                  <Input value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
-                </DataBodyTemplate.Field>
-              </div>
+            <RuntimeSection
+              form={form}
+              errors={errors}
+              setField={setField}
+              setValue={setValue}
+              setYaml={setYaml}
+              hasCompatibleWorkers={hasCompatibleWorkers}
+              ambiguousLocalInfra={ambiguousLocalInfra}
+              localInfraTypes={localInfraTypes}
+              compatibleWorkers={compatibleWorkers}
+              isDockerLocal={isDockerLocal}
+            />
 
-              {form.runtimeMode === 'local' && (
-                <DataBodyTemplate.Field
-                  label="Worker"
-                  description={
-                    localInfraTypes.length > 1
-                      ? 'Multiple infrastructure types are registered — pick the worker to run on.'
-                      : 'Optional. Leave unassigned to load-balance across matching workers.'
-                  }
-                >
-                  <Select
-                    value={form.worker || (localInfraTypes.length <= 1 ? '__auto__' : '')}
-                    onValueChange={v => setField('worker', v === '__auto__' ? '' : (v ?? ''))}
-                  >
-                    <SelectTrigger size="sm"><SelectValue placeholder="— select worker —" /></SelectTrigger>
-                    <SelectContent>
-                      {localInfraTypes.length <= 1 && <SelectItem value="__auto__">auto assign</SelectItem>}
-                      {compatibleWorkers.map(w => (
-                        <SelectItem key={w.id} value={w.id}>
-                          <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${
-                            w.infrastructure === 'docker' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-orange-500/15 text-orange-400'
-                          }`}>
-                            {w.infrastructure === 'docker' ? 'Docker' : 'BM'}
-                          </span>
-                          {w.hostname || w.id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </DataBodyTemplate.Field>
-              )}
-
-              {isDockerLocal && (
-                <DataBodyTemplate.Field label="Container Image">
-                  <Input
-                    value={form.dockerImage}
-                    onChange={e => setField('dockerImage', e.target.value)}
-                    placeholder="registry/image:tag"
-                  />
-                </DataBodyTemplate.Field>
-              )}
-
-              {form.runtimeMode === 'k8s' && (
-                <>
-                  <DataBodyTemplate.Field label="Container Image">
-                    <Input
-                      value={form.k8sImage}
-                      onChange={e => setField('k8sImage', e.target.value)}
-                      placeholder="registry/image:tag"
-                      aria-invalid={!!errors.k8sImage}
-                    />
-                    {errors.k8sImage && <p className="mt-1 text-xs text-destructive">{errors.k8sImage.message}</p>}
-                  </DataBodyTemplate.Field>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <DataBodyTemplate.Field label="Namespace">
-                      <Input value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
-                    </DataBodyTemplate.Field>
-                    <DataBodyTemplate.Field label="Replicas">
-                      <Input
-                        type="number"
-                        min="1"
-                        value={form.k8sReplicas}
-                        onChange={e => setField('k8sReplicas', e.target.value)}
-                        aria-invalid={!!errors.k8sReplicas}
-                      />
-                      {errors.k8sReplicas && <p className="mt-1 text-xs text-destructive">{errors.k8sReplicas.message}</p>}
-                    </DataBodyTemplate.Field>
-                    <DataBodyTemplate.Field label="Image Pull Policy">
-                      <Select value={form.k8sImagePullPolicy} onValueChange={v => setField('k8sImagePullPolicy', v ?? '')}>
-                        <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Always">Always</SelectItem>
-                          <SelectItem value="IfNotPresent">IfNotPresent</SelectItem>
-                          <SelectItem value="Never">Never</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </DataBodyTemplate.Field>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <DataBodyTemplate.Field label="CPU"><Input value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" /></DataBodyTemplate.Field>
-                    <DataBodyTemplate.Field label="Memory"><Input value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" /></DataBodyTemplate.Field>
-                    <DataBodyTemplate.Field label="GPU"><Input value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" /></DataBodyTemplate.Field>
-                  </div>
-                </>
-              )}
-
-              <DataBodyTemplate.Field label="Command" description="One argument per line. $PIPER_MODEL_DIR points to the artifact directory.">
-                <YamlMirror
-                  className="bg-background"
-                  rows={4}
-                  value={form.command}
-                  onChange={e => setField('command', e.target.value)}
-                />
-              </DataBodyTemplate.Field>
-
-              <EnvVarEditor
-                items={form.env}
-                onAdd={addEnv}
-                onRemove={removeEnv}
-                onUpdate={updateEnv}
-              />
-            </DataBodyTemplate.Group>
-          </div>
+            <EnvironmentSection
+              items={form.env}
+              onAdd={addEnv}
+              onRemove={removeEnv}
+              onUpdate={updateEnv}
+            />
+          </>
         ) : (
-          <YamlMirror
-            className="bg-background"
-            rows={20}
-            value={yaml}
-            onChange={e => setYaml(e.target.value)}
-          />
+          <DataBodyTemplate.Group layout="stacked" title="YAML">
+            <YamlMirror
+              className="bg-background"
+              rows={20}
+              value={yaml}
+              onChange={e => setYaml(e.target.value)}
+            />
+          </DataBodyTemplate.Group>
         )}
 
         {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
 
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
           <Button type="button" variant="outline" size="sm" onClick={onClose}>Cancel</Button>
           <Button
             type="submit"
             size="sm"
-            disabled={deploying || (tab === 'form' && (!hasCompatibleWorkers || ambiguousLocalInfra))}
+            disabled={deploying || (tab === 'form' && (!hasCompatibleWorkers || ambiguousLocalInfra || !form.worker))}
           >
             {deploying ? 'Deploying…' : 'Deploy'}
           </Button>
         </div>
       </form>
-    </DataBodyTemplate.Group>
+    </>
   )
 }

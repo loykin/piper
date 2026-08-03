@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "@loykin/designkit/styles";
 @import "@loykin/side-panel/styles";
+@import "@loykin/cron-input/styles";
 @import "tw-animate-css";
 
 @import "shadcn/tailwind.css";

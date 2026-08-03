@@ -26,24 +26,30 @@ func (r *Router) SetDefault(kind WorkloadKind, placement Placement) {
 	r.defaults[kind] = placement
 }
 
-// AmbiguousInfrastructureError is returned by Select/Reserve when candidates
-// span more than one infrastructure type and the caller did not set
-// placement.Infrastructure (driver.placement.runtime in the workload spec)
-// to disambiguate. Baremetal, Docker, and Kubernetes workers have materially
-// different execution semantics — an image-less pipeline step, for example,
-// only runs on baremetal, but nothing in an unset placement says so.
-// Silently load-balancing across infrastructure types would route a task to
-// an environment it was never configured for, non-deterministically (which
-// candidate happens to be least loaded at that moment). This is a
-// configuration problem, not a transient capacity issue: callers should
-// treat it as non-retryable, unlike a plain "no capacity" refusal.
+// AmbiguousInfrastructureError is returned by Select/Reserve when more than
+// one candidate agent matches a placement and the caller did not name a
+// specific placement.WorkerID to disambiguate. This covers two cases: (1)
+// candidates span more than one infrastructure type — baremetal, Docker, and
+// Kubernetes workers have materially different execution semantics, and an
+// image-less pipeline step, for example, only runs on baremetal; (2)
+// candidates share the same infrastructure type but are otherwise distinct
+// workers (e.g. two separately managed Kubernetes clusters both tagged
+// "k8s") — silently load-balancing across them would deploy to whichever
+// happens to be least loaded at that moment, non-deterministically landing
+// on a cluster the caller never chose. Either way this is a configuration
+// problem, not a transient capacity issue: callers should treat it as
+// non-retryable, unlike a plain "no capacity" refusal.
 type AmbiguousInfrastructureError struct {
 	Kind  WorkloadKind
 	Types []string
+	Count int
 }
 
 func (e *AmbiguousInfrastructureError) Error() string {
-	return fmt.Sprintf("ambiguous placement for %s: %d infrastructure types registered (%v) and none was requested; set placement.runtime to disambiguate", e.Kind, len(e.Types), e.Types)
+	if len(e.Types) > 1 {
+		return fmt.Sprintf("ambiguous placement for %s: %d infrastructure types registered (%v) and none was requested; set placement.runtime to disambiguate", e.Kind, len(e.Types), e.Types)
+	}
+	return fmt.Sprintf("ambiguous placement for %s: %d candidate workers match and none was named; set placement.worker to disambiguate", e.Kind, e.Count)
 }
 
 // distinctInfrastructures returns the set of distinct Info.Infrastructure
@@ -60,10 +66,11 @@ func distinctInfrastructures(candidates []Info) []string {
 	return out
 }
 
-// Select returns the best agent for the given placement.
-// When multiple candidates match it selects the one with the lowest load
-// (reserved/capacity ratio). Unlimited-capacity agents (Capacity==0) are
-// always considered available and preferred last over bounded workers.
+// Select returns the agent for the given placement. An explicit
+// placement.WorkerID always wins. Without one, placement must narrow the
+// registry down to exactly one candidate (via Infrastructure, Namespace,
+// ClusterName, or Labels); if more than one candidate remains, Select
+// returns an *AmbiguousInfrastructureError instead of guessing.
 func (r *Router) Select(kind WorkloadKind, placement Placement) (*Info, error) {
 	if r == nil || r.registry == nil {
 		return nil, fmt.Errorf("agent router is not configured")
@@ -99,20 +106,12 @@ func (r *Router) Select(kind WorkloadKind, placement Placement) (*Info, error) {
 	case 1:
 		return &candidates[0], nil
 	default:
-		if placement.Infrastructure == "" {
-			if types := distinctInfrastructures(candidates); len(types) > 1 {
-				return nil, &AmbiguousInfrastructureError{Kind: kind, Types: types}
-			}
-		}
-		// Multiple candidates, all the same infrastructure type: pick the
-		// least-loaded one.
-		r.loadMu.Lock()
-		best := selectLeastLoaded(candidates, r.reserved)
-		r.loadMu.Unlock()
-		if best == nil {
-			return nil, fmt.Errorf("no %s agent has available capacity", kind)
-		}
-		return best, nil
+		// More than one candidate remains even after Infrastructure/Namespace/
+		// Labels narrowing. Picking one automatically (e.g. least-loaded)
+		// would silently deploy to whichever worker happens to be idle,
+		// which is exactly the "random cluster" outcome placement.WorkerID
+		// exists to prevent. Require the caller to name one explicitly.
+		return nil, &AmbiguousInfrastructureError{Kind: kind, Types: distinctInfrastructures(candidates), Count: len(candidates)}
 	}
 }
 
@@ -151,10 +150,11 @@ func (r *Router) Reserve(kind WorkloadKind, placement Placement) (*Info, error) 
 		candidates = []Info{*agentInfo}
 	} else {
 		candidates = r.registry.Candidates(kind, placement)
-		if placement.Infrastructure == "" {
-			if types := distinctInfrastructures(candidates); len(types) > 1 {
-				return nil, &AmbiguousInfrastructureError{Kind: kind, Types: types}
-			}
+		if len(candidates) > 1 {
+			// See the comment on Select's default case: more than one
+			// candidate must never be resolved automatically, regardless of
+			// whether they share an infrastructure type.
+			return nil, &AmbiguousInfrastructureError{Kind: kind, Types: distinctInfrastructures(candidates), Count: len(candidates)}
 		}
 	}
 
@@ -204,7 +204,11 @@ func (r *Router) Release(agentID string) {
 
 // selectLeastLoaded picks the candidate with the lowest load ratio.
 // Candidates with Capacity==0 (unlimited, e.g. K8s) are fallback candidates.
-// Returns nil if all bounded candidates are full.
+// Returns nil if all bounded candidates are full. Reserve is its only
+// caller, and only ever with 0 or 1 candidates now that ambiguous matches
+// are rejected before reaching this point — the multi-candidate ranking
+// below only matters if a future caller reintroduces automatic selection
+// among several agents.
 func selectLeastLoaded(candidates []Info, reserved map[string]int) *Info {
 	var bestBounded *Info
 	var bestUnlimited *Info

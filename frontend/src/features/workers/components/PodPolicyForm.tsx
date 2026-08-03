@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { DataBodyTemplate } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useSetWorkerPodPolicy } from '@/features/workers/hooks'
 
@@ -94,26 +94,29 @@ export function PodPolicyForm({ workerId: initialWorkerId, initialYaml, onSaved,
   }
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="space-y-3">
 
       {/* Worker ID */}
       {!isEdit && (
-        <DataBodyTemplate.Field
-          label="Worker ID"
-          description="The stable UUID assigned to the worker on first connection. Find it on the Workers page when the worker is online, or in the worker's state-dir file."
-        >
+        <div className="space-y-1.5">
+          <Label htmlFor="pod-policy-worker-id" className="text-xs">Worker ID</Label>
+          <p className="text-xs text-muted-foreground">
+            The stable UUID assigned to the worker on first connection. Find it on the Workers page when the worker is online, or in the worker's state-dir file.
+          </p>
           <Input
+            id="pod-policy-worker-id"
             value={workerId}
             onChange={e => setWorkerId(e.target.value)}
             placeholder="e.g. 7f3a1b2c-4d5e-6f7a-8b9c-0d1e2f3a4b5c"
-            className="font-mono"
+            className="h-8 font-mono text-sm"
           />
-        </DataBodyTemplate.Field>
+        </div>
       )}
 
       {/* Examples */}
-      <DataBodyTemplate.Group layout="stacked" variant="bordered" title="Templates">
-        <p className="mb-2 text-xs text-muted-foreground">
+      <div className="space-y-1.5 rounded-(--radius) border border-border p-3">
+        <Label className="text-xs">Templates</Label>
+        <p className="text-xs text-muted-foreground">
           Start from a common pattern. Clicking a template overwrites the editor below.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -130,30 +133,29 @@ export function PodPolicyForm({ workerId: initialWorkerId, initialYaml, onSaved,
             </Button>
           ))}
         </div>
-      </DataBodyTemplate.Group>
+      </div>
 
       {/* Pod template YAML */}
-      <DataBodyTemplate.Field
-        label="Pod Template"
-        description="A partial PodTemplateSpec applied to every notebook dispatched to this worker. Manifest pod_template fields override conflicts; Piper controls container name, image, ports, and PVC mounts."
-      >
+      <div className="space-y-1.5">
+        <Label className="text-xs">Pod Template</Label>
+        <p className="text-xs text-muted-foreground">
+          A partial PodTemplateSpec applied to every notebook dispatched to this worker. Manifest pod_template fields override conflicts; Piper controls container name, image, ports, and PVC mounts.
+        </p>
         <YamlMirror
           value={yaml}
           onChange={e => setYaml(e.target.value)}
           className="min-h-[22rem]"
         />
-      </DataBodyTemplate.Field>
+      </div>
 
-      {error && (
-        <p className="text-sm text-destructive">{error}</p>
-      )}
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
 
-      <div className="flex gap-3">
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : 'Save policy'}
-        </Button>
-        <Button variant="ghost" onClick={onCancel} disabled={saving}>
+      <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
+        <Button variant="outline" size="sm" className="h-8 text-xs" onClick={onCancel} disabled={saving}>
           Cancel
+        </Button>
+        <Button size="sm" className="h-8 text-xs" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : 'Save policy'}
         </Button>
       </div>
     </div>

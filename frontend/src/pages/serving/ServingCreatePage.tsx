@@ -13,12 +13,11 @@ export default function ServingCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Serving" />}
+      topBar={<PageTopBar left="Serving / Deploy" />}
       title="New Service"
+      description="Deploy a pipeline artifact as a managed model serving endpoint."
     >
-      <DataBodyTemplate.Body>
-        <DeployForm onClose={goToList} onDeployed={goToList} />
-      </DataBodyTemplate.Body>
+      <DeployForm onClose={goToList} onDeployed={goToList} />
     </DataBodyTemplate>
   )
 }

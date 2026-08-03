@@ -113,7 +113,7 @@ export default function UserCreatePage() {
           />
 
           {submitError && <p className="text-sm text-destructive" role="alert">{submitError}</p>}
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
             <Button
               type="button"
               variant="outline"

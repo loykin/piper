@@ -1,10 +1,14 @@
 // schedules feature — Schedule creation form component
 import { useMemo, useState } from 'react'
+import { CronInput, toCronExpression, validateCronExpression, type CronValue } from '@loykin/cron-input'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useCreateSchedule } from '../hooks'
 import { parseMaxRuns } from '../maxRuns'
+
+const DEFAULT_CRON_VALUE: CronValue = { type: 'interval', every: 1, unit: 'hour' }
 
 type ScheduleType = 'immediate' | 'once' | 'cron'
 
@@ -56,7 +60,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
   const [yaml, setYaml] = useState(initialYaml ?? EXAMPLE_YAML)
   const [scheduleType, setScheduleType] = useState<ScheduleType>('immediate')
   const [runAt, setRunAt] = useState('')
-  const [cronExpr, setCronExpr] = useState('0 * * * *')
+  const [cronValue, setCronValue] = useState<CronValue>(DEFAULT_CRON_VALUE)
   const [maxRuns, setMaxRuns] = useState('')
   const [error, setError] = useState('')
 
@@ -66,6 +70,9 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
     return Number.isNaN(d.getTime()) ? '' : d.toISOString()
   }, [runAt])
 
+  const cronExpr = useMemo(() => toCronExpression(cronValue), [cronValue])
+  const cronValid = cronValue.type !== 'custom' || validateCronExpression(cronValue.expression)
+
   async function handleSubmit() {
     setError('')
     const trimmedName = name.trim()
@@ -74,7 +81,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
     if (!trimmedName) { setError('Pipeline name is required.'); return }
     if (!trimmedYaml) { setError('Pipeline YAML is required.'); return }
     if (scheduleType === 'once' && !runAtISO) { setError('Run time is required for once type.'); return }
-    if (scheduleType === 'cron' && !cronExpr.trim()) { setError('Cron expression is required.'); return }
+    if (scheduleType === 'cron' && !cronValid) { setError('Cron expression is invalid.'); return }
     const parsedMaxRuns = parseMaxRuns(maxRuns)
     if (parsedMaxRuns == null) {
       setError('Max runs must be a non-negative integer.')
@@ -87,7 +94,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
         name: trimmedName,
         yaml: normalizedYaml,
         type: scheduleType,
-        cron: scheduleType === 'cron' ? cronExpr.trim() : undefined,
+        cron: scheduleType === 'cron' ? cronExpr : undefined,
         run_at: scheduleType === 'once' ? runAtISO : undefined,
         max_runs: parsedMaxRuns,
       })
@@ -98,18 +105,20 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
   }
 
   return (
-    <div className="space-y-5 p-6">
-      <div>
-        <label className="mb-2 block text-sm font-medium">Pipeline Name</label>
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="schedule-pipeline-name" className="text-xs">Pipeline Name</Label>
         <Input
+          id="schedule-pipeline-name"
+          className="h-8 text-sm"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="my-pipeline"
         />
       </div>
 
-      <div>
-        <p className="mb-2 block text-sm font-medium">Trigger Type</p>
+      <div className="space-y-1.5">
+        <Label className="text-xs">Trigger Type</Label>
         <div className="grid gap-2 sm:grid-cols-3">
           {TYPE_OPTIONS.map(({ type, label, desc }) => (
             <Button
@@ -127,10 +136,12 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
       </div>
 
       {scheduleType === 'once' && (
-        <div>
-          <label className="mb-2 block text-sm font-medium">Run At</label>
+        <div className="space-y-1.5">
+          <Label htmlFor="schedule-run-at" className="text-xs">Run At</Label>
           <Input
+            id="schedule-run-at"
             type="datetime-local"
+            className="h-8 text-sm"
             value={runAt}
             onChange={(e) => setRunAt(e.target.value)}
           />
@@ -138,33 +149,30 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
       )}
 
       {scheduleType === 'cron' && (
-        <div>
-          <label className="mb-2 block text-sm font-medium">Cron Expression</label>
-          <Input
-            value={cronExpr}
-            onChange={(e) => setCronExpr(e.target.value)}
-            className="font-mono"
-            placeholder="0 * * * *"
-          />
-          <p className="mt-1 text-xs text-muted-foreground">minute hour day month weekday — e.g. <code>*/15 * * * *</code></p>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Cron Schedule</Label>
+          <CronInput value={cronValue} onChange={setCronValue} />
+          {!cronValid && <p className="text-xs text-destructive">Cron expression is invalid.</p>}
         </div>
       )}
 
-      <div>
-        <label className="mb-2 block text-sm font-medium">Max Runs</label>
+      <div className="space-y-1.5">
+        <Label htmlFor="schedule-max-runs" className="text-xs">Max Runs</Label>
         <Input
+          id="schedule-max-runs"
           type="number"
           min={0}
           step={1}
+          className="h-8 text-sm"
           value={maxRuns}
           onChange={(e) => setMaxRuns(e.target.value)}
           placeholder="0"
         />
-        <p className="mt-1 text-xs text-muted-foreground">0 keeps all completed runs.</p>
+        <p className="text-xs text-muted-foreground">0 keeps all completed runs.</p>
       </div>
 
-      <div>
-        <label className="mb-2 block text-sm font-medium">Pipeline YAML</label>
+      <div className="space-y-1.5">
+        <Label className="text-xs">Pipeline YAML</Label>
         <YamlMirror
           className="bg-background"
           rows={14}
@@ -173,18 +181,20 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
         />
       </div>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
 
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
         {onCancel && (
-          <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
+          <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={onCancel}>Cancel</Button>
         )}
         <Button
           type="button"
+          size="sm"
+          className="h-8 text-xs"
           onClick={() => void handleSubmit()}
           disabled={submitting}
         >
-          {submitting ? 'Submitting...' : 'Create Schedule'}
+          {submitting ? 'Submitting…' : 'Create Schedule'}
         </Button>
       </div>
     </div>

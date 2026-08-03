@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { ScheduleForm } from '@/features/schedules/components/ScheduleForm'
 
 export default function WorkflowCreatePage() {
@@ -16,18 +16,17 @@ export default function WorkflowCreatePage() {
 
   return (
     <DataBodyTemplate
+      topBar={<PageTopBar left="Schedules / Create Schedule" />}
       title="Create Schedule"
       description="Register a pipeline and choose how it should be triggered."
     >
-      <DataBodyTemplate.Body>
-        <div className="max-w-2xl">
-          <ScheduleForm
-            initialYaml={draftYaml}
-            onCreated={(scheduleId) => navigate(`/projects/${projectId}/schedules/${scheduleId}`)}
-            onCancel={() => navigate(`/projects/${projectId}/schedules`)}
-          />
-        </div>
-      </DataBodyTemplate.Body>
+      <DataBodyTemplate.Group layout="stacked" title="Schedule" description="Pipeline source and trigger settings.">
+        <ScheduleForm
+          initialYaml={draftYaml}
+          onCreated={(scheduleId) => navigate(`/projects/${projectId}/schedules/${scheduleId}`)}
+          onCancel={() => navigate(`/projects/${projectId}/schedules`)}
+        />
+      </DataBodyTemplate.Group>
     </DataBodyTemplate>
   )
 }

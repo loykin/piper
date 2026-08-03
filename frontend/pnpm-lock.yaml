@@ -38,6 +38,9 @@ importers:
       '@hookform/resolvers':
         specifier: ^5.5.7
         version: 5.5.7(ajv@8.20.0)(react-hook-form@7.83.0(react@19.2.7))(zod@4.4.3)
+      '@loykin/cron-input':
+        specifier: 0.0.1-dev.3
+        version: 0.0.1-dev.3(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@loykin/designkit':
         specifier: 0.0.1
         version: 0.0.1(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))
@@ -601,6 +604,12 @@ packages:
 
   '@lezer/yaml@1.0.4':
     resolution: {integrity: sha512-2lrrHqxalACEbxIbsjhqGpSW8kWpUKuY6RHgnSAFZa6qK62wvnPxA8hGOwOoDbwHcOFs5M4o27mjGu+P7TvBmw==}
+
+  '@loykin/cron-input@0.0.1-dev.3':
+    resolution: {integrity: sha512-55o2wx9+Wumfz4cEM3YqRGxP3dC31aHXhZoXblWxEWS1vqnMpe2pHpDyRHSD4G8pcjFAKmlprVZzedqGcdyp/Q==}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
 
   '@loykin/designkit@0.0.1':
     resolution: {integrity: sha512-khh50RGAUA4ZSoCFBIhZMdHykHds3MsbACezNh3BhbjbUC3Z8ZYWVCH7X+hCA4xk4cLWD5qP9Nox8LLkn9UowQ==}
@@ -2021,6 +2030,11 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
+  lucide-react@0.546.0:
+    resolution: {integrity: sha512-Z94u6fKT43lKeYHiVyvyR8fT7pwCzDu7RyMPpTvh054+xahSgj4HFQ+NmflvzdXsoAjYGdCguGaFKYuvq0ThCQ==}
+    peerDependencies:
+      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   lucide-react@1.17.0:
     resolution: {integrity: sha512-9FA9evdox/JQL5PT57fdA1x/yg8T7knJ98+zjTL3UfKza6pflQUUh3XtaQIHKvnsJw1lmsEyHVlt5jchYxOQ5w==}
     peerDependencies:
@@ -3246,6 +3260,18 @@ snapshots:
       '@lezer/common': 1.5.2
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
+
+  '@loykin/cron-input@0.0.1-dev.3(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@base-ui/react': 1.5.0(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      clsx: 2.1.1
+      lucide-react: 0.546.0(react@19.2.7)
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+    transitivePeerDependencies:
+      - '@date-fns/tz'
+      - '@types/react'
+      - date-fns
 
   '@loykin/designkit@0.0.1(@types/react@19.2.16)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.0)(use-sync-external-store@1.6.0(react@19.2.7))':
     dependencies:
@@ -4579,6 +4605,10 @@ snapshots:
   lru-cache@5.1.1:
     dependencies:
       yallist: 3.1.1
+
+  lucide-react@0.546.0(react@19.2.7):
+    dependencies:
+      react: 19.2.7
 
   lucide-react@1.17.0(react@19.2.7):
     dependencies:

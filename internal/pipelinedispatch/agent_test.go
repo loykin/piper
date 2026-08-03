@@ -248,7 +248,14 @@ func TestAgentBackendPinsAllRunStepsToOneAgent(t *testing.T) {
 	reg.Register(iagent.Info{ID: "agent-2", Capabilities: []string{iagent.CapabilityPipeline}, Capacity: 4})
 	rpc := &recordingPipelineAgentRPC{}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
-	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{})
+	// Two identically-capable agents are registered; the pipeline must name
+	// one explicitly (driver.placement.worker) since the router now refuses
+	// to guess between them.
+	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{Spec: pipeline.PipelineSpec{
+		Defaults: &pipeline.PipelineDefaults{
+			Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Worker: "agent-1"}},
+		},
+	}})
 
 	tasks := []*proto.Task{
 		{ID: "run-1:first", RunID: "run-1", Pipeline: pipelineJSON},
@@ -275,7 +282,13 @@ func TestAgentBackendPinsConcurrentRunStepsToOneAgent(t *testing.T) {
 	reg.Register(iagent.Info{ID: "agent-2", Capabilities: []string{iagent.CapabilityPipeline}, Capacity: 4})
 	rpc := &recordingPipelineAgentRPC{}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
-	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{})
+	// See TestAgentBackendPinsAllRunStepsToOneAgent: an explicit worker is
+	// required now that the router refuses to guess among same-type peers.
+	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{Spec: pipeline.PipelineSpec{
+		Defaults: &pipeline.PipelineDefaults{
+			Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Worker: "agent-1"}},
+		},
+	}})
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
@@ -307,6 +320,14 @@ func TestAgentBackendPinsConcurrentRunStepsToOneAgent(t *testing.T) {
 	}
 }
 
+// TestAgentBackendReleasesUncommittedRunBindingAfterBusy confirms that a
+// busy dispatch releases its uncommitted run binding so a retry against the
+// *same, explicitly named* worker can succeed once it frees up. It does
+// NOT retry on a different worker automatically — even when a same-type
+// sibling is registered, redirecting there without being asked would be
+// exactly the silent "landed on an unintended worker" outcome placement.worker
+// exists to prevent. If the named worker becomes unavailable, the retry
+// must fail rather than being redirected.
 func TestAgentBackendReleasesUncommittedRunBindingAfterBusy(t *testing.T) {
 	reg := iagent.NewRegistry()
 	reg.Register(iagent.Info{
@@ -323,7 +344,11 @@ func TestAgentBackendReleasesUncommittedRunBindingAfterBusy(t *testing.T) {
 	})
 	rpc := &recordingPipelineAgentRPC{sendErr: &iagent.BusyError{Reason: "actual worker state is full"}}
 	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
-	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{})
+	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{Spec: pipeline.PipelineSpec{
+		Defaults: &pipeline.PipelineDefaults{
+			Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Worker: "agent-1"}},
+		},
+	}})
 	task := &proto.Task{ID: "run-1:first", RunID: "run-1", Pipeline: pipelineJSON}
 
 	if err := backend.Dispatch(context.Background(), task); err == nil {
@@ -336,15 +361,49 @@ func TestAgentBackendReleasesUncommittedRunBindingAfterBusy(t *testing.T) {
 		t.Fatal("run remained bound after every initial dispatch was rejected")
 	}
 
-	reg.Remove("agent-1")
 	rpc.mu.Lock()
 	rpc.sendErr = nil
 	rpc.mu.Unlock()
 	if err := backend.Dispatch(context.Background(), task); err != nil {
-		t.Fatalf("retry on alternate worker failed: %v", err)
+		t.Fatalf("retry on the same named worker failed: %v", err)
 	}
-	if got := rpc.snapshot()[1].AgentID; got != "agent-2" {
-		t.Fatalf("retry worker = %q, want agent-2", got)
+	if got := rpc.snapshot()[1].AgentID; got != "agent-1" {
+		t.Fatalf("retry worker = %q, want agent-1 (no silent failover to a sibling)", got)
+	}
+}
+
+// TestAgentBackendDoesNotFailoverWhenNamedWorkerIsRemoved confirms that if
+// the explicitly named worker disappears entirely, a retry fails outright
+// instead of silently landing on a same-type sibling.
+func TestAgentBackendDoesNotFailoverWhenNamedWorkerIsRemoved(t *testing.T) {
+	reg := iagent.NewRegistry()
+	reg.Register(iagent.Info{
+		ID:             "agent-1",
+		Infrastructure: iagent.InfrastructureDocker,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+		Capacity:       1,
+	})
+	reg.Register(iagent.Info{
+		ID:             "agent-2",
+		Infrastructure: iagent.InfrastructureDocker,
+		Capabilities:   []string{iagent.CapabilityPipeline},
+		Capacity:       1,
+	})
+	rpc := &recordingPipelineAgentRPC{}
+	backend := NewAgentBackend(iagent.NewRouter(reg), rpc)
+	pipelineJSON, _ := json.Marshal(pipeline.Pipeline{Spec: pipeline.PipelineSpec{
+		Defaults: &pipeline.PipelineDefaults{
+			Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Worker: "agent-1"}},
+		},
+	}})
+	task := &proto.Task{ID: "run-1:first", RunID: "run-1", Pipeline: pipelineJSON}
+
+	reg.Remove("agent-1")
+	if err := backend.Dispatch(context.Background(), task); err == nil {
+		t.Fatal("expected dispatch to fail when the named worker is gone, not redirect to agent-2")
+	}
+	if len(rpc.snapshot()) != 0 {
+		t.Fatalf("dispatch calls = %d, want 0 (must not have silently used agent-2)", len(rpc.snapshot()))
 	}
 }
 

@@ -79,37 +79,31 @@ export default function CredentialCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Credentials" />}
+      topBar={<PageTopBar left="Credentials / New Credential" />}
       title="New Credential"
       description="Create a write-only credential. Stored values are never returned by the API."
-      actions={
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => void navigate({ to: `/projects/${projectId}/credentials` })}>
-            Cancel
-          </Button>
-          <Button onClick={() => void submit()} disabled={!canSubmit || createCredential.isPending}>
-            {createCredential.isPending ? 'Creating...' : 'Create Credential'}
-          </Button>
-        </div>
-      }
     >
-      <DataBodyTemplate.Body>
-        <div className="max-w-xl space-y-6">
+      <DataBodyTemplate.Group
+        layout="stacked"
+        title="Credential"
+        description="Stored values are write-only — the API never returns them again."
+      >
+        <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label htmlFor="credential-name">Name</Label>
+            <Label htmlFor="credential-name" className="text-xs">Name</Label>
             <Input
               id="credential-name"
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={kind === 'git' ? 'github-acme' : 'wandb'}
-              className="font-mono"
+              className="h-8 font-mono text-sm"
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label>Kind</Label>
+            <Label className="text-xs">Kind</Label>
             <Select value={kind} onValueChange={value => handleKindChange((value ?? 'generic') as CredentialKind)}>
-              <SelectTrigger className="w-44">
+              <SelectTrigger className="h-8 w-44 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -121,7 +115,7 @@ export default function CredentialCreatePage() {
 
           {kind === 'git' && (
             <div className="space-y-1.5">
-              <Label htmlFor="credential-endpoint">
+              <Label htmlFor="credential-endpoint" className="text-xs">
                 Endpoint URL prefix
                 <span className="ml-1 text-xs text-muted-foreground">(optional)</span>
               </Label>
@@ -130,13 +124,13 @@ export default function CredentialCreatePage() {
                 value={endpoint}
                 onChange={e => setEndpoint(e.target.value)}
                 placeholder="https://github.com/myorg/"
-                className="font-mono text-sm"
+                className="h-8 font-mono text-sm"
               />
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label>{kind === 'generic' ? 'Data' : 'Credentials'}</Label>
+          <div className="space-y-1.5">
+            <Label className="text-xs">{kind === 'generic' ? 'Data' : 'Credentials'}</Label>
             <div className="grid grid-cols-[1fr_1fr_auto] gap-x-2 pb-1">
               <span className="text-xs text-muted-foreground">Key</span>
               <span className="text-xs text-muted-foreground">Value</span>
@@ -148,14 +142,14 @@ export default function CredentialCreatePage() {
                   value={entry.key}
                   onChange={e => updateEntry(idx, 'key', e.target.value)}
                   placeholder={kind === 'git' ? 'token' : 'api_key'}
-                  className="font-mono text-sm"
+                  className="h-8 font-mono text-sm"
                 />
                 <Input
                   type="password"
                   value={entry.value}
                   onChange={e => updateEntry(idx, 'value', e.target.value)}
                   placeholder="secret value"
-                  className="font-mono text-sm"
+                  className="h-8 font-mono text-sm"
                 />
                 <IconButton
                   icon={<Trash2 />}
@@ -171,9 +165,29 @@ export default function CredentialCreatePage() {
             </Button>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+
+          <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => void navigate({ to: `/projects/${projectId}/credentials` })}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => void submit()}
+              disabled={!canSubmit || createCredential.isPending}
+            >
+              {createCredential.isPending ? 'Creating…' : 'Create Credential'}
+            </Button>
+          </div>
         </div>
-      </DataBodyTemplate.Body>
+      </DataBodyTemplate.Group>
     </DataBodyTemplate>
   )
 }

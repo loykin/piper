@@ -5,11 +5,12 @@ import {
   Code2, FileCode2, FolderOpen, HardDrive, Plus, BookOpen, Trash2, Upload, X,
 } from 'lucide-react'
 import {
-  DataBodyTemplate, WorkbenchBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  DataBodyTemplate, PageTopBar, WorkbenchBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { ShellMirror } from '@/components/ui/shell-mirror'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { IconButton } from '@/components/ui/icon-button'
@@ -50,6 +51,22 @@ const SOURCE_LABELS: Record<PipelineTaskType, string> = {
   notebook: 'Notebook file',
   python: 'Script file',
   command: 'Working path',
+}
+
+function workerInfraBadgeClass(infrastructure: string): string {
+  if (infrastructure === 'k8s') return 'bg-blue-500/15 text-blue-400'
+  if (infrastructure === 'docker') return 'bg-cyan-500/15 text-cyan-400'
+  return 'bg-orange-500/15 text-orange-400'
+}
+
+function workerInfraBadgeLabel(infrastructure: string): string {
+  if (infrastructure === 'k8s') return 'K8s'
+  if (infrastructure === 'docker') return 'Docker'
+  return 'BM'
+}
+
+function pipelineWorkerLabel(w: { infrastructure: string; hostname?: string; cluster_name?: string; id: string }): string {
+  return w.infrastructure === 'k8s' ? (w.cluster_name || w.hostname || w.id) : (w.hostname || w.id)
 }
 
 function buildPositions(tasks: PipelineStepDraft[]): Record<string, { x: number; y: number }> {
@@ -416,6 +433,14 @@ export default function PipelineEditorPage() {
       setDefaults(prev => (prev.placementRuntime ? prev : { ...prev, placementRuntime: pipelineInfraTypes[0] }))
     }
   }, [pipelineWorkers.length, pipelineInfraTypes, defaults.placementRuntime])
+  // Same rationale as Notebook/Serving's Worker field: the router refuses to
+  // guess between separately managed workers of the same infrastructure
+  // type, so the defaults panel must offer an explicit, required choice
+  // instead of a free-text worker ID.
+  const defaultsCompatibleWorkers = useMemo(
+    () => pipelineWorkers.filter(w => !defaults.placementRuntime || w.infrastructure === defaults.placementRuntime),
+    [pipelineWorkers, defaults.placementRuntime],
+  )
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => buildPositions(initialDraft.steps))
   const [selectedId, setSelectedId] = useState<string>(initialDraft.steps[0]?.id ?? '')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -543,6 +568,10 @@ export default function PipelineEditorPage() {
   const editingTask = editingIndex >= 0 ? tasks[editingIndex] : null
   const selectedVolume = useMemo(() => volumes.find(v => v.id === editorVolumeId) ?? null, [editorVolumeId, volumes])
   const canBrowse = editorSourceKind === 'notebook-volume'
+  const taskOverrideCompatibleWorkers = useMemo(() => {
+    const effectiveRuntime = editingTask?.driver.placementRuntime || defaults.placementRuntime
+    return pipelineWorkers.filter(w => !effectiveRuntime || w.infrastructure === effectiveRuntime)
+  }, [pipelineWorkers, editingTask?.driver.placementRuntime, defaults.placementRuntime])
 
   function updateTask(index: number, patch: Partial<PipelineStepDraft>) {
     setTasks(current => {
@@ -700,6 +729,10 @@ export default function PipelineEditorPage() {
       setError(`Multiple worker infrastructure types are registered (${pipelineInfraTypes.join(', ')}) — choose a Runtime before submitting.`)
       return
     }
+    if (pipelineWorkers.length > 0 && !draft.defaults.placementWorker.trim() && !draft.defaults.placementLabel.trim()) {
+      setError('Choose a Worker (or set an advanced Worker Label) before submitting — the router no longer picks one automatically.')
+      return
+    }
     const messages = validatePipelineDraft({ name: draft.name, steps: draft.steps, defaults: draft.defaults })
     if (messages.length > 0) { setError(messages[0]); return }
     setError('')
@@ -840,19 +873,20 @@ export default function PipelineEditorPage() {
   if (!setupDone) {
     return (
       <DataBodyTemplate
+        topBar={<PageTopBar left="Pipeline Templates / New Pipeline" />}
         title="New Pipeline"
         description="A pipeline uses exactly one source workspace. Lock it in before you start editing."
       >
-        <DataBodyTemplate.Body>
-          <div className="mx-auto max-w-md space-y-5 py-16">
-            <div>
-              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Pipeline Name</label>
-              <Input value={formName} onChange={e => setFormName(e.target.value)} />
+        <DataBodyTemplate.Group layout="stacked">
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="pipeline-name" className="text-xs">Pipeline Name</Label>
+              <Input id="pipeline-name" value={formName} onChange={e => setFormName(e.target.value)} />
             </div>
-            <div>
-              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Type</label>
+            <div className="space-y-1.5">
+              <Label htmlFor="pipeline-source-type" className="text-xs">Source Type</Label>
               <Select value={formSourceKind} onValueChange={v => setFormSourceKind(v as SourceKind)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="pipeline-source-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="notebook-volume">Notebook Volume</SelectItem>
                   <SelectItem value="git">Git Repository</SelectItem>
@@ -862,10 +896,10 @@ export default function PipelineEditorPage() {
               </Select>
             </div>
             {formSourceKind === 'notebook-volume' ? (
-              <div>
-                <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Notebook Volume</label>
+              <div className="space-y-1.5">
+                <Label htmlFor="pipeline-volume" className="text-xs">Notebook Volume</Label>
                 <Select value={formVolumeId} onValueChange={v => setFormVolumeId(v ?? '')}>
-                  <SelectTrigger><SelectValue placeholder="— select a volume —" /></SelectTrigger>
+                  <SelectTrigger id="pipeline-volume"><SelectValue placeholder="— select a volume —" /></SelectTrigger>
                   <SelectContent>
                     {volumes.length === 0 ? (
                       <SelectItem value="__none__" disabled>No released volumes</SelectItem>
@@ -877,13 +911,13 @@ export default function PipelineEditorPage() {
               </div>
             ) : formSourceKind === 'git' ? (
               <div className="space-y-3">
-                <div>
-                  <label className="mb-1 flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+                <div className="space-y-1.5">
+                  <Label htmlFor="pipeline-git-credential" className="flex items-center gap-1 text-xs">
                     Git Credential
-                    <span className="normal-case tracking-normal text-muted-foreground/70">(optional)</span>
-                  </label>
+                    <span className="font-normal text-muted-foreground/70">(optional)</span>
+                  </Label>
                   <Select value={formCredential || undefined} onValueChange={v => handleGitCredentialChange(v ?? '')}>
-                    <SelectTrigger><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
+                    <SelectTrigger id="pipeline-git-credential"><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
                     <SelectContent>
                       {gitCredentials.length === 0 ? (
                         <SelectItem value="__none__" disabled>No active git credentials</SelectItem>
@@ -892,7 +926,7 @@ export default function PipelineEditorPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {formCredential
                       ? 'Using the selected credential.'
                       : autoMatchedCredential
@@ -900,26 +934,36 @@ export default function PipelineEditorPage() {
                         : 'Leave empty to auto-match a registered credential, or clone unauthenticated.'}
                   </p>
                 </div>
-                <div>
-                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Repository URL</label>
-                  <Input value={formRepo} onChange={e => setFormRepo(e.target.value)} placeholder="https://github.com/org/repo.git" />
+                <div className="space-y-1.5">
+                  <Label htmlFor="pipeline-git-repo" className="text-xs">Repository URL</Label>
+                  <Input id="pipeline-git-repo" value={formRepo} onChange={e => setFormRepo(e.target.value)} placeholder="https://github.com/org/repo.git" />
                 </div>
-                <div>
-                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Branch</label>
-                  <Input value={formBranch} onChange={e => setFormBranch(e.target.value)} placeholder="main" />
+                <div className="space-y-1.5">
+                  <Label htmlFor="pipeline-git-branch" className="text-xs">Branch</Label>
+                  <Input id="pipeline-git-branch" value={formBranch} onChange={e => setFormBranch(e.target.value)} placeholder="main" />
                 </div>
               </div>
             ) : (
-              <div>
-                <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Source Root</label>
-                <Input value={formRoot} onChange={e => setFormRoot(e.target.value)} placeholder="/workspaces/project" />
+              <div className="space-y-1.5">
+                <Label htmlFor="pipeline-source-root" className="text-xs">Source Root</Label>
+                <Input id="pipeline-source-root" value={formRoot} onChange={e => setFormRoot(e.target.value)} placeholder="/workspaces/project" />
               </div>
             )}
-            <Button className="w-full" disabled={!canProceed} onClick={handleStartEditing}>
-              Start Editing →
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/projects/${projectId}/pipelines`)}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" disabled={!canProceed} onClick={handleStartEditing}>
+              Start Editing
             </Button>
           </div>
-        </DataBodyTemplate.Body>
+        </DataBodyTemplate.Group>
       </DataBodyTemplate>
     )
   }
@@ -927,6 +971,7 @@ export default function PipelineEditorPage() {
   return (
     <>
       <WorkbenchBodyTemplate
+        topBar={<PageTopBar left={`Pipeline Templates / ${editorFromVersion ? 'New Version' : 'Pipeline Editor'}`} />}
         title={editorFromVersion ? 'New Version' : 'Pipeline Editor'}
         description="Build a Piper Pipeline YAML from a source workspace, a task canvas, and a separate YAML tab."
         actions={
@@ -979,13 +1024,31 @@ export default function PipelineEditorPage() {
                   </Select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker</label>
-                  <Input value={defaults.placementWorker} onChange={e => updateDefaults({ placementWorker: e.target.value })} />
-                  <p className="mt-1 text-xs text-muted-foreground">Optional exact worker ID.</p>
+                  <Label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker</Label>
+                  <Select
+                    value={defaults.placementWorker}
+                    onValueChange={value => updateDefaults({ placementWorker: value ?? '' })}
+                  >
+                    <SelectTrigger size="sm" className="w-full" aria-invalid={pipelineWorkers.length > 0 && !defaults.placementWorker}>
+                      <SelectValue placeholder="— select worker —" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {defaultsCompatibleWorkers.map(w => (
+                        <SelectItem key={w.id} value={w.id}>
+                          <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${workerInfraBadgeClass(w.infrastructure)}`}>
+                            {workerInfraBadgeLabel(w.infrastructure)}
+                          </span>
+                          {pipelineWorkerLabel(w)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">Pick the worker to run on. Separately managed workers of the same type are never chosen automatically.</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker Label</label>
                   <Input value={defaults.placementLabel} onChange={e => updateDefaults({ placementLabel: e.target.value })} />
+                  <p className="mt-1 text-xs text-muted-foreground">Advanced: route by label instead. Must resolve to exactly one worker.</p>
                 </div>
                 {defaults.placementRuntime === 'k8s' && (
                   <>
@@ -1310,10 +1373,26 @@ export default function PipelineEditorPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker</label>
-                    <Input
-                      value={editingTask.driver.placementWorker}
-                      onChange={e => updateTaskDriver(editingIndex, { placementWorker: e.target.value })}
-                    />
+                    <Select
+                      value={editingTask.driver.placementWorker || '__inherit__'}
+                      onValueChange={value => updateTaskDriver(editingIndex, {
+                        placementWorker: value === '__inherit__' ? '' : (value ?? ''),
+                      })}
+                    >
+                      <SelectTrigger size="sm" className="w-full"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__inherit__">Inherit</SelectItem>
+                        {taskOverrideCompatibleWorkers.map(w => (
+                          <SelectItem key={w.id} value={w.id}>
+                            <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${workerInfraBadgeClass(w.infrastructure)}`}>
+                              {workerInfraBadgeLabel(w.infrastructure)}
+                            </span>
+                            {pipelineWorkerLabel(w)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="mt-1 text-xs text-muted-foreground">Leave as Inherit to use the pipeline default worker.</p>
                   </div>
                   <div>
                     <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker Label</label>

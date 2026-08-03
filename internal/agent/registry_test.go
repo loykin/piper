@@ -122,47 +122,60 @@ func TestRouterSelectRejectsExplicitWorkerWithMismatchedRuntime(t *testing.T) {
 	}
 }
 
-func TestRouterSelectsOneFromMultipleCandidates(t *testing.T) {
+// TestRouterSelectRejectsAmbiguousWithoutInfrastructureSet covers the
+// default-infrastructure case (no Infrastructure given at registration, so
+// both agents default to baremetal): multiple matching candidates must
+// still require an explicit placement.worker, not a silent pick.
+func TestRouterSelectRejectsAmbiguousWithoutInfrastructureSet(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(Info{ID: "a1", Capabilities: []string{CapabilityPipeline}, Capacity: 4})
 	reg.Register(Info{ID: "a2", Capabilities: []string{CapabilityPipeline}, Capacity: 4})
 	router := NewRouter(reg)
 
-	// With multiple matching agents, router should pick one (not error).
-	got, err := router.Select(WorkloadPipeline, Placement{})
-	if err != nil {
-		t.Fatalf("Select returned error: %v", err)
+	_, err := router.Select(WorkloadPipeline, Placement{})
+	var ambiguous *AmbiguousInfrastructureError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %v (%T), want *AmbiguousInfrastructureError", err, err)
 	}
-	if got.ID != "a1" && got.ID != "a2" {
-		t.Fatalf("unexpected worker ID %q", got.ID)
+
+	got, err := router.Select(WorkloadPipeline, Placement{WorkerID: "a2"})
+	if err != nil {
+		t.Fatalf("Select with explicit worker failed: %v", err)
+	}
+	if got.ID != "a2" {
+		t.Fatalf("selected worker = %q, want a2", got.ID)
 	}
 }
 
-func TestRouterReserveUsesLeastLoadedAgent(t *testing.T) {
+// TestRouterReserveTracksCapacityPerExplicitWorker confirms per-agent
+// reserved-slot accounting (increment on Reserve, decrement on Release,
+// reuse once freed) still works now that every Reserve call names its
+// worker explicitly — cross-agent auto load-balancing is gone, but the
+// underlying capacity bookkeeping for a named agent must not regress.
+func TestRouterReserveTracksCapacityPerExplicitWorker(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(Info{ID: "a1", Capabilities: []string{CapabilityPipeline}, Capacity: 2})
-	reg.Register(Info{ID: "a2", Capabilities: []string{CapabilityPipeline}, Capacity: 2})
+	reg.Register(Info{ID: "a1", Capabilities: []string{CapabilityPipeline}, Capacity: 1})
 	router := NewRouter(reg)
 
-	first, err := router.Reserve(WorkloadPipeline, Placement{})
+	first, err := router.Reserve(WorkloadPipeline, Placement{WorkerID: "a1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := router.Reserve(WorkloadPipeline, Placement{})
-	if err != nil {
-		t.Fatal(err)
+	if first.ID != "a1" {
+		t.Fatalf("selected worker = %q, want a1", first.ID)
 	}
-	if first.ID == second.ID {
-		t.Fatalf("two reservations used the same agent %q while another agent was idle", first.ID)
+
+	if _, err := router.Reserve(WorkloadPipeline, Placement{WorkerID: "a1"}); err == nil {
+		t.Fatal("expected an error reserving a1 while its single slot is already held")
 	}
 
 	router.Release(first.ID)
-	third, err := router.Reserve(WorkloadPipeline, Placement{})
+	third, err := router.Reserve(WorkloadPipeline, Placement{WorkerID: "a1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if third.ID != first.ID {
-		t.Fatalf("released agent = %q, next reservation = %q", first.ID, third.ID)
+	if third.ID != "a1" {
+		t.Fatalf("released agent = %q, next reservation = %q", "a1", third.ID)
 	}
 }
 
@@ -335,23 +348,82 @@ func TestRouterReserveRejectsAmbiguousMixedInfrastructure(t *testing.T) {
 	}
 }
 
-// TestRouterSelectAllowsMultipleWorkersOfSameInfrastructure ensures the
-// ambiguity check is scoped to *different* infrastructure types, not just
-// "more than one candidate" — N interchangeable workers of the same type
-// must keep load-balancing exactly as before.
-func TestRouterSelectAllowsMultipleWorkersOfSameInfrastructure(t *testing.T) {
+// TestRouterReserveRejectsAmbiguousSameInfrastructure is the Reserve()
+// counterpart of TestRouterSelectRejectsAmbiguousSameInfrastructure.
+func TestRouterReserveRejectsAmbiguousSameInfrastructure(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "bm1", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}, Capacity: 4})
+	reg.Register(Info{ID: "bm2", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}, Capacity: 4})
+	router := NewRouter(reg)
+
+	_, err := router.Reserve(WorkloadPipeline, Placement{})
+	var ambiguous *AmbiguousInfrastructureError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %v (%T), want *AmbiguousInfrastructureError", err, err)
+	}
+	if ambiguous.Count != 2 {
+		t.Fatalf("ambiguous.Count = %d, want 2", ambiguous.Count)
+	}
+
+	got, err := router.Reserve(WorkloadPipeline, Placement{WorkerID: "bm1"})
+	if err != nil {
+		t.Fatalf("Reserve with explicit worker failed: %v", err)
+	}
+	if got.ID != "bm1" {
+		t.Fatalf("selected worker = %q, want bm1", got.ID)
+	}
+}
+
+// TestRouterSelectRejectsAmbiguousSameInfrastructure covers separately
+// managed clusters that happen to share one infrastructure tag (e.g. two
+// Kubernetes clusters both registered as "k8s"). Select must not silently
+// load-balance between them — that would deploy to whichever cluster is
+// least loaded at that moment, not the one the caller meant. An explicit
+// placement.worker is required even though there's no infrastructure
+// mismatch to report.
+func TestRouterSelectRejectsAmbiguousSameInfrastructure(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(Info{ID: "bm1", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
 	reg.Register(Info{ID: "bm2", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
 	reg.Register(Info{ID: "bm3", Infrastructure: InfrastructureBaremetal, Capabilities: []string{CapabilityPipeline}})
 	router := NewRouter(reg)
 
-	got, err := router.Select(WorkloadPipeline, Placement{})
-	if err != nil {
-		t.Fatalf("Select returned error for same-infrastructure candidates: %v", err)
+	_, err := router.Select(WorkloadPipeline, Placement{})
+	var ambiguous *AmbiguousInfrastructureError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %v (%T), want *AmbiguousInfrastructureError", err, err)
 	}
-	if got.ID != "bm1" && got.ID != "bm2" && got.ID != "bm3" {
-		t.Fatalf("unexpected worker ID %q", got.ID)
+	if ambiguous.Count != 3 {
+		t.Fatalf("ambiguous.Count = %d, want 3", ambiguous.Count)
+	}
+}
+
+// TestRouterSelectRejectsAmbiguousEvenWithExplicitInfrastructure confirms
+// that naming placement.Infrastructure alone no longer bypasses the
+// ambiguity check when it still leaves more than one candidate (e.g. two
+// separately managed k8s clusters, both explicitly requested as "k8s").
+// Only an explicit placement.worker resolves this now.
+func TestRouterSelectRejectsAmbiguousEvenWithExplicitInfrastructure(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(Info{ID: "k8s-a", Infrastructure: InfrastructureK8s, Capabilities: []string{CapabilityPipeline}})
+	reg.Register(Info{ID: "k8s-b", Infrastructure: InfrastructureK8s, Capabilities: []string{CapabilityPipeline}})
+	router := NewRouter(reg)
+
+	_, err := router.Select(WorkloadPipeline, Placement{Infrastructure: InfrastructureK8s})
+	var ambiguous *AmbiguousInfrastructureError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("error = %v (%T), want *AmbiguousInfrastructureError", err, err)
+	}
+	if ambiguous.Count != 2 {
+		t.Fatalf("ambiguous.Count = %d, want 2", ambiguous.Count)
+	}
+
+	got, err := router.Select(WorkloadPipeline, Placement{WorkerID: "k8s-b"})
+	if err != nil {
+		t.Fatalf("Select with explicit worker failed: %v", err)
+	}
+	if got.ID != "k8s-b" {
+		t.Fatalf("selected worker = %q, want k8s-b", got.ID)
 	}
 }
 

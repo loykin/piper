@@ -9,6 +9,7 @@ import { useServices, useStopService, useRestartService } from '@/features/servi
 import { ServingDetailPanel } from '@/features/serving/components/ServingDetailPanel'
 import { serviceColumns } from '@/features/serving/columns'
 import { RowActions } from '@/shared/components/RowActions'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useProjectId } from '@/lib/projectContext'
 import type { Service } from '@/features/serving/api'
 
@@ -16,7 +17,8 @@ function ServingPageInner() {
   const { open } = useSidePanel()
   const projectId = useProjectId()
   const navigate = useNavigate()
-  const { data: services = [] } = useServices()
+  const servicesQuery = useServices()
+  const services = servicesQuery.data ?? []
   const { mutate: stopService } = useStopService()
   const { mutate: restartService } = useRestartService()
 
@@ -57,6 +59,13 @@ function ServingPageInner() {
       }
     >
       <DataBodyTemplate.Body>
+        {servicesQuery.isError && servicesQuery.data === undefined && (
+          <QueryErrorNotice
+            message="Failed to load services"
+            error={servicesQuery.error}
+            onRetry={() => void servicesQuery.refetch()}
+          />
+        )}
         <DataGrid
           data={services}
           columns={columns}

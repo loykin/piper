@@ -7,6 +7,7 @@ import { DataBodyTemplate } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { getNotebookColumns } from '@/features/notebooks/columns'
 import { NotebookDetailPanel } from '@/features/notebooks/components/NotebookDetailPanel'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import {
   useNotebooks, useNotebookVolumes,
   useStopNotebook, useStartNotebook, useDeleteNotebook,
@@ -16,7 +17,8 @@ function NotebooksPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
   const { open } = useSidePanel()
-  const { data: notebooks = [] } = useNotebooks()
+  const notebooksQuery = useNotebooks()
+  const notebooks = notebooksQuery.data ?? []
   const { data: allVolumes = [] } = useNotebookVolumes()
   const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
 
@@ -50,6 +52,13 @@ function NotebooksPageInner() {
       }
     >
       <DataBodyTemplate.Body>
+        {notebooksQuery.isError && notebooksQuery.data === undefined && (
+          <QueryErrorNotice
+            message="Failed to load notebooks"
+            error={notebooksQuery.error}
+            onRetry={() => void notebooksQuery.refetch()}
+          />
+        )}
         <DataGrid
           data={notebooks}
           columns={columns}

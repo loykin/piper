@@ -11,12 +11,12 @@ export default function PodPoliciesCreatePage() {
       title="New Pod Policy"
       description="Configure a per-worker pod template baseline. Applied at notebook dispatch time, before the manifest's own pod_template settings."
     >
-      <DataBodyTemplate.Body>
+      <DataBodyTemplate.Group layout="stacked" title="Pod Policy" description="Baseline PodTemplateSpec for this worker.">
         <PodPolicyForm
           onSaved={() => navigate('/kubernetes/pod-policies')}
           onCancel={() => navigate('/kubernetes/pod-policies')}
         />
-      </DataBodyTemplate.Body>
+      </DataBodyTemplate.Group>
     </DataBodyTemplate>
   )
 }

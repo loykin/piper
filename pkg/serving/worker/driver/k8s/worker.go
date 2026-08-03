@@ -17,13 +17,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/grpcagent"
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/internal/process"
-	"github.com/piper/piper/pkg/manifest"
-	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
-	"github.com/piper/piper/pkg/serving"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/grpcagent"
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/internal/process"
+	"github.com/loykin/piper/pkg/manifest"
+	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
+	"github.com/loykin/piper/pkg/serving"
 	"k8s.io/client-go/kubernetes"
 )
 

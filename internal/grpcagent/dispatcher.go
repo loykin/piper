@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/piper/piper/internal/agentpb"
+	"github.com/loykin/piper/internal/agentpb"
 )
 
 // Handler is the function signature for RPC method handlers on the worker side.

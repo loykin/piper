@@ -1,8 +1,8 @@
 package notebookworker
 
 import (
-	iagent "github.com/piper/piper/internal/agent"
-	notebookdocker "github.com/piper/piper/pkg/notebook/worker/driver/docker"
+	iagent "github.com/loykin/piper/internal/agent"
+	notebookdocker "github.com/loykin/piper/pkg/notebook/worker/driver/docker"
 )
 
 const (

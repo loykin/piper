@@ -1,6 +1,6 @@
 package internal
 
-import "github.com/piper/piper/pkg/notebook"
+import "github.com/loykin/piper/pkg/notebook"
 
 // PrepareStepsForBackend resolves prepare steps for a concrete driver backend.
 func PrepareStepsForBackend(spec *notebook.NotebookPrepareSpec, backend string) ([]notebook.NotebookPrepareStep, error) {

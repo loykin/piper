@@ -71,7 +71,7 @@ uses the same queue, tunnel, and execution path as a deployed server.
 ### Install with Go
 
 ```bash
-go install github.com/piper/piper/cmd/piper@latest
+go install github.com/loykin/piper/cmd/piper@latest
 ```
 
 `piper run` works without a configuration file:
@@ -223,6 +223,31 @@ Rules:
 - workload images, namespaces, resources, and Pod templates belong to submitted
   Pipeline, Notebook, or ModelService manifests
 - `worker.k8s.namespaces` is an allowlist, not a workload default
+
+A Docker worker runs each pipeline step by bind-mounting its own running
+binary (`os.Executable()`) into the step's container and executing it there
+as `piper agent exec`. That only works if the worker process itself is a
+Linux binary — on a non-Linux host (macOS, Windows) run the worker inside a
+Linux container, using the cross-compiled `bin/piper-arm64` /
+`bin/piper-amd64` from `make build-linux-arm64` / `make build-linux-amd64`,
+not the host-native `piper` binary. For example, on Apple Silicon:
+
+```bash
+make build-linux-arm64
+docker run -d --name piper-docker-worker \
+  --add-host host.docker.internal:host-gateway \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/bin/piper-arm64:$PWD/bin/piper-arm64:ro" \
+  -v "$PWD/config:$PWD/config" \
+  --entrypoint "$PWD/bin/piper-arm64" \
+  alpine:3.20 --config "$PWD/config/pipeline-worker.yaml" worker
+```
+
+Running the host-native binary directly still registers with the master, but
+every dispatched step fails immediately (the container exits without ever
+writing a result file, since the mounted binary can't execute inside the
+step's Linux container) — the error and exit code depend on the step image's
+init/shell, but none of them produce a working step.
 
 Checked-in examples:
 
@@ -608,7 +633,7 @@ package main
 import (
     "context"
 
-    piper "github.com/piper/piper"
+    piper "github.com/loykin/piper"
 )
 
 func main() {
@@ -639,7 +664,7 @@ service, err := p.DeployService(ctx, "default", modelServiceYAML)
 err = p.StopService(ctx, "default", service.Name)
 ```
 
-The UI can be mounted separately with `github.com/piper/piper/pkg/ui`.
+The UI can be mounted separately with `github.com/loykin/piper/pkg/ui`.
 
 ## Development
 

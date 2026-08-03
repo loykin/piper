@@ -9,9 +9,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 func TestPipelineDispatchCreatesJob(t *testing.T) {

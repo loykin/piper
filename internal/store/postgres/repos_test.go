@@ -11,9 +11,9 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/piper/piper/internal/store"
-	"github.com/piper/piper/internal/store/repotest"
-	"github.com/piper/piper/pkg/project"
+	"github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/internal/store/repotest"
+	"github.com/loykin/piper/pkg/project"
 )
 
 func openPostgresRepos(t *testing.T, ctx context.Context) *store.Repos {

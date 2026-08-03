@@ -26,11 +26,11 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
 )
 
 // Config is the Kubernetes Job primitive configuration.

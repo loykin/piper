@@ -13,13 +13,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
-	"github.com/piper/piper/pkg/pipeline"
-	agentpkg "github.com/piper/piper/pkg/pipeline/worker/agent"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
-	"github.com/piper/piper/pkg/pipeline/worker/driver/drivertest"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
+	"github.com/loykin/piper/pkg/pipeline"
+	agentpkg "github.com/loykin/piper/pkg/pipeline/worker/agent"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/pkg/pipeline/worker/driver/drivertest"
 )
 
 var _ pdriver.Driver = (*Driver)(nil)

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/internal/scheduler"
-	"github.com/piper/piper/pkg/schedule"
+	"github.com/loykin/piper/internal/scheduler"
+	"github.com/loykin/piper/pkg/schedule"
 )
 
 func newTestScheduler(t *testing.T, fire schedule.FireFunc) *scheduler.Scheduler {

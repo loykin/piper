@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"syscall"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
-	storemod "github.com/piper/piper/internal/store"
-	"github.com/piper/piper/internal/store/postgres"
-	sqlitestore "github.com/piper/piper/internal/store/sqlite"
-	"github.com/piper/piper/pkg/auth"
-	"github.com/piper/piper/pkg/security"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	storemod "github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/internal/store/postgres"
+	sqlitestore "github.com/loykin/piper/internal/store/sqlite"
+	"github.com/loykin/piper/pkg/auth"
+	"github.com/loykin/piper/pkg/security"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

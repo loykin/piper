@@ -3,7 +3,7 @@ package html
 import (
 	"context"
 
-	"github.com/piper/piper/pkg/viewer"
+	"github.com/loykin/piper/pkg/viewer"
 )
 
 // Driver serves HTML artifacts directly from the local filesystem.

@@ -41,7 +41,8 @@ const deployFormSchema = z.object({
   artifact: z.string().min(1, 'Artifact is required.'),
   templateKey: z.string(),
   runtimeMode: z.string(),
-  image: z.string(),
+  k8sImage: z.string(),
+  dockerImage: z.string(),
   command: z.string().trim().min(1, 'Command is required.'),
   port: z.string().regex(/^\d+$/, 'Port must be a number.').refine(value => {
     const port = Number(value)
@@ -57,8 +58,8 @@ const deployFormSchema = z.object({
   k8sImagePullPolicy: z.string(),
 }).superRefine((values, context) => {
   if (values.runtimeMode !== 'k8s') return
-  if (!values.image.trim()) {
-    context.addIssue({ code: 'custom', path: ['image'], message: 'Container image is required for Kubernetes.' })
+  if (!values.k8sImage.trim()) {
+    context.addIssue({ code: 'custom', path: ['k8sImage'], message: 'Container image is required for Kubernetes.' })
   }
   if (!/^[1-9]\d*$/.test(values.k8sReplicas)) {
     context.addIssue({ code: 'custom', path: ['k8sReplicas'], message: 'Replicas must be at least 1.' })
@@ -99,6 +100,10 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const hasCompatibleWorkers = compatibleWorkers.length > 0
   const localInfraTypes = [...new Set(compatibleWorkers.map(w => w.infrastructure))]
   const ambiguousLocalInfra = form.runtimeMode === 'local' && localInfraTypes.length > 1 && !form.worker
+  const selectedWorkerInfra = form.worker
+    ? compatibleWorkers.find(w => w.id === form.worker)?.infrastructure
+    : (localInfraTypes.length === 1 ? localInfraTypes[0] : undefined)
+  const isDockerLocal = form.runtimeMode === 'local' && selectedWorkerInfra === 'docker'
 
   useEffect(() => {
     let canceled = false
@@ -164,6 +169,10 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
     }
     if (ambiguousLocalInfra) {
       setError(`Multiple worker infrastructure types are registered (${localInfraTypes.join(', ')}) — choose a Worker before deploying.`)
+      return
+    }
+    if (isDockerLocal && !values.dockerImage.trim()) {
+      setError('Container image is required for the selected Docker worker.')
       return
     }
     await deployPayload(buildYAML(values))
@@ -278,7 +287,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                       ...form,
                       templateKey: key,
                       runtimeMode: tpl.runtimeMode,
-                      image: tpl.image,
+                      k8sImage: tpl.image,
                       command: tpl.command,
                       port: tpl.port,
                       healthPath: tpl.healthPath,
@@ -347,6 +356,11 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                       {localInfraTypes.length <= 1 && <SelectItem value="__auto__">auto assign</SelectItem>}
                       {compatibleWorkers.map(w => (
                         <SelectItem key={w.id} value={w.id}>
+                          <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${
+                            w.infrastructure === 'docker' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-orange-500/15 text-orange-400'
+                          }`}>
+                            {w.infrastructure === 'docker' ? 'Docker' : 'BM'}
+                          </span>
                           {w.hostname || w.id}
                         </SelectItem>
                       ))}
@@ -355,16 +369,26 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
                 </DataBodyTemplate.Field>
               )}
 
+              {isDockerLocal && (
+                <DataBodyTemplate.Field label="Container Image">
+                  <Input
+                    value={form.dockerImage}
+                    onChange={e => setField('dockerImage', e.target.value)}
+                    placeholder="registry/image:tag"
+                  />
+                </DataBodyTemplate.Field>
+              )}
+
               {form.runtimeMode === 'k8s' && (
                 <>
                   <DataBodyTemplate.Field label="Container Image">
                     <Input
-                      value={form.image}
-                      onChange={e => setField('image', e.target.value)}
+                      value={form.k8sImage}
+                      onChange={e => setField('k8sImage', e.target.value)}
                       placeholder="registry/image:tag"
-                      aria-invalid={!!errors.image}
+                      aria-invalid={!!errors.k8sImage}
                     />
-                    {errors.image && <p className="mt-1 text-xs text-destructive">{errors.image.message}</p>}
+                    {errors.k8sImage && <p className="mt-1 text-xs text-destructive">{errors.k8sImage.message}</p>}
                   </DataBodyTemplate.Field>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <DataBodyTemplate.Field label="Namespace">

@@ -1,6 +1,6 @@
 package piper
 
-import "github.com/piper/piper/internal/event"
+import "github.com/loykin/piper/internal/event"
 
 func (p *Piper) emitEvent(projectID, eventType string, fields map[string]any) {
 	if p.events == nil {

@@ -11,10 +11,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/tunnelproxy"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/security"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/tunnelproxy"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/security"
 	"gopkg.in/yaml.v3"
 )
 

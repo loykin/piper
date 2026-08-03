@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/internal/proto"
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/internal/proto"
 )
 
 // Handle identifies a running runtime resource (subprocess, container, or K8s Job).

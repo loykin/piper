@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/piper/piper/pkg/project"
+	"github.com/loykin/piper/pkg/project"
 )
 
 func TestProjectStorageKey(t *testing.T) {

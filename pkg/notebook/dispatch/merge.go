@@ -3,8 +3,8 @@ package notebookdispatch
 import (
 	corev1 "k8s.io/api/core/v1"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/pkg/notebook"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/pkg/notebook"
 )
 
 // applyPodPolicy merges workerPolicy (base) into the notebook YAML's pod_template.

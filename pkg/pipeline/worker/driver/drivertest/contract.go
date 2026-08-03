@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	pipelinedriver "github.com/piper/piper/pkg/pipeline/worker/driver"
+	pipelinedriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
 
 // RunContract verifies the core behavioral contract every pipeline driver.Driver must satisfy.

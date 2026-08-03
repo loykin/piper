@@ -1,8 +1,8 @@
 // Package commands provides piper's cobra commands as a library.
 // External apps can add piper commands to their own CLI.
 //
-//	import pipercmd "github.com/piper/piper/cmd/piper/commands"
-//	import cliconfig "github.com/piper/piper/cmd/piper/config"
+//	import pipercmd "github.com/loykin/piper/cmd/piper/commands"
+//	import cliconfig "github.com/loykin/piper/cmd/piper/config"
 //
 //	loader := cliconfig.NewLoader()
 //
@@ -21,8 +21,8 @@ import (
 	"log/slog"
 	"os"
 
-	piper "github.com/piper/piper"
-	cliconfig "github.com/piper/piper/cmd/piper/config"
+	piper "github.com/loykin/piper"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
 )
 

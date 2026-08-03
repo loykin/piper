@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/serving"
-	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/serving"
+	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 type captureDriver struct {

@@ -34,7 +34,7 @@ import (
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
-	"github.com/piper/piper/internal/testutil"
+	"github.com/loykin/piper/internal/testutil"
 )
 
 // requireBinary returns the absolute path of the piper binary and skips the

@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/internal/logstore"
-	"github.com/piper/piper/internal/store"
-	"github.com/piper/piper/pkg/pipeline/run"
-	"github.com/piper/piper/pkg/project"
+	"github.com/loykin/piper/internal/logstore"
+	"github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/pkg/project"
 )
 
 // seedRun inserts a run with the given experiment and returns its ID.

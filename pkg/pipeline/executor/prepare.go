@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 // resolveCommandPath looks up name in dirs (e.g. cfg.EnvPathPrepend) before

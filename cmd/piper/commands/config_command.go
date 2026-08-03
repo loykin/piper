@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/internal/proto"
+	"github.com/loykin/piper/internal/proto"
 )
 
 func TestBuildAgentExecRequiresLocalResultFile(t *testing.T) {

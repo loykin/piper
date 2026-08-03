@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/pkg/security"
+	"github.com/loykin/piper/pkg/security"
 )
 
 type memoryRepo struct {

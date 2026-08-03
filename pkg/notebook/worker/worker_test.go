@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/pkg/notebook"
-	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
+	"github.com/loykin/piper/pkg/notebook"
+	notebookdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
 )
 
 type conformanceRuntime struct {

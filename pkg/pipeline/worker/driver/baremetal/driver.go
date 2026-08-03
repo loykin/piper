@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/pkg/pipeline/worker/driver"
 	"github.com/loykin/provisr/core"
 	"github.com/loykin/provisr/core/history"
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
-	"github.com/piper/piper/pkg/pipeline/worker/driver"
 )
 
 const metadataVersion = 1

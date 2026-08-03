@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 type HTTPFetcher struct{}

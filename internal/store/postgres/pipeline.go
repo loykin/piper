@@ -8,7 +8,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/pkg/template"
+	"github.com/loykin/piper/pkg/template"
 )
 
 type pipelineRepo struct{ dbstore.BaseRepo }

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/piper/piper/internal/redact"
+	"github.com/loykin/piper/internal/redact"
 )
 
 type redactingSink struct {

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/internal/pipelinedispatch"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/internal/pipelinedispatch"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/run"
 )
 
 func (q *Queue) takeReadyTask(workerID, label string) *proto.Task {

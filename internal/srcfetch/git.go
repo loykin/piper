@@ -9,7 +9,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 type GitFetcher struct {

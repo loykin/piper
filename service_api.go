@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/piper/piper/internal/artifact"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/internal/artifact"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/serving"
+	"github.com/loykin/piper/pkg/storage"
 	"gopkg.in/yaml.v3"
 )
 

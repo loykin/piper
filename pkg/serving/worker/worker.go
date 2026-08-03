@@ -15,16 +15,16 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/grpcagent"
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/internal/process"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/serving"
-	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
-	servingdocker "github.com/piper/piper/pkg/serving/worker/driver/docker"
-	servingprocess "github.com/piper/piper/pkg/serving/worker/driver/process"
-	"github.com/piper/piper/pkg/storage"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/grpcagent"
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/internal/process"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/serving"
+	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
+	servingdocker "github.com/loykin/piper/pkg/serving/worker/driver/docker"
+	servingprocess "github.com/loykin/piper/pkg/serving/worker/driver/process"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 // Config holds configuration for a serving worker agent.

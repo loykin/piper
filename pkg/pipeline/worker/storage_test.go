@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/internal/proto"
+	"github.com/loykin/piper/internal/proto"
 )
 
 func TestTaskStorageForWorkerUsesTaskStorage(t *testing.T) {

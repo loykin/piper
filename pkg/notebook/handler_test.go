@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/piper/piper/internal/tunnelproxy"
+	"github.com/loykin/piper/internal/tunnelproxy"
 )
 
 func TestNotebookProxyPolicyRewriteRequest(t *testing.T) {

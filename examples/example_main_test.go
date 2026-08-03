@@ -8,7 +8,7 @@ import (
 	"os"
 	"testing"
 
-	agentpkg "github.com/piper/piper/pkg/pipeline/worker/agent"
+	agentpkg "github.com/loykin/piper/pkg/pipeline/worker/agent"
 )
 
 // TestMain intercepts subprocess invocations from the baremetal driver.

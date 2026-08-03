@@ -3,7 +3,7 @@ package notebook
 import (
 	"net/http"
 
-	"github.com/piper/piper/internal/tunnelproxy"
+	"github.com/loykin/piper/internal/tunnelproxy"
 )
 
 func init() {

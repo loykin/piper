@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/proto"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/proto"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
 
 func TestDispatchReservesCapacityAtomicallyUnderConcurrency(t *testing.T) {

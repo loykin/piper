@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 func TestModelServiceValidateDriverRuntimeBranches(t *testing.T) {

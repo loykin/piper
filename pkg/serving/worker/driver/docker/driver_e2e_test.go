@@ -16,9 +16,9 @@ import (
 
 	dockerclient "github.com/moby/moby/client"
 
-	dockerinfra "github.com/piper/piper/internal/docker"
-	"github.com/piper/piper/pkg/serving"
-	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
+	dockerinfra "github.com/loykin/piper/internal/docker"
+	"github.com/loykin/piper/pkg/serving"
+	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
 )
 
 // TestServingDockerE2E_CrashHelper deploys a serving container via the Docker

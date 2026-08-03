@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw, Square } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { Button } from '@/components/ui/button'
@@ -6,18 +6,19 @@ import { IconButton } from '@/components/ui/icon-button'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { useServices, useStopService, useRestartService } from '@/features/serving/hooks'
-import { DeployForm } from '@/features/serving/components/DeployForm'
 import { ServingDetailPanel } from '@/features/serving/components/ServingDetailPanel'
 import { serviceColumns } from '@/features/serving/columns'
 import { RowActions } from '@/shared/components/RowActions'
+import { useProjectId } from '@/lib/projectContext'
 import type { Service } from '@/features/serving/api'
 
 function ServingPageInner() {
   const { open } = useSidePanel()
+  const projectId = useProjectId()
+  const navigate = useNavigate()
   const { data: services = [] } = useServices()
   const { mutate: stopService } = useStopService()
   const { mutate: restartService } = useRestartService()
-  const [showDeploy, setShowDeploy] = useState(false)
 
   const actionColumn: DataGridColumnDef<Service> = {
     id: 'actions',
@@ -52,16 +53,10 @@ function ServingPageInner() {
       title="Serving"
       description="Model serving endpoints deployed from pipeline artifacts."
       actions={
-        !showDeploy ? (
-          <Button size="sm" onClick={() => setShowDeploy(true)}>Deploy</Button>
-        ) : undefined
+        <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/serving/new` })}>Deploy</Button>
       }
     >
       <DataBodyTemplate.Body>
-        {showDeploy && (
-          <DeployForm onClose={() => setShowDeploy(false)} onDeployed={() => setShowDeploy(false)} />
-        )}
-
         <DataGrid
           data={services}
           columns={columns}

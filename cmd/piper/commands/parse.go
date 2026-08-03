@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/spf13/cobra"
 )
 

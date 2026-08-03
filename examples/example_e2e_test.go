@@ -23,13 +23,13 @@ import (
 	"testing"
 	"time"
 
-	piper "github.com/piper/piper"
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/store"
-	"github.com/piper/piper/pkg/notebook"
-	notebookworker "github.com/piper/piper/pkg/notebook/worker"
-	"github.com/piper/piper/pkg/pipeline"
-	worker "github.com/piper/piper/pkg/pipeline/worker"
+	piper "github.com/loykin/piper"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/pkg/notebook"
+	notebookworker "github.com/loykin/piper/pkg/notebook/worker"
+	"github.com/loykin/piper/pkg/pipeline"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
 	"gopkg.in/yaml.v3"
 )
 

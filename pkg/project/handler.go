@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/pkg/security"
+	"github.com/loykin/piper/pkg/security"
 )
 
 var validProjectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)

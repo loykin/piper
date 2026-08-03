@@ -12,7 +12,7 @@ import (
 	"log"
 	"os"
 
-	piper "github.com/piper/piper"
+	piper "github.com/loykin/piper"
 )
 
 const pipelineYAML = `

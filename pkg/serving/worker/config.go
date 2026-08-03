@@ -1,8 +1,8 @@
 package servingworker
 
 import (
-	iagent "github.com/piper/piper/internal/agent"
-	servingdocker "github.com/piper/piper/pkg/serving/worker/driver/docker"
+	iagent "github.com/loykin/piper/internal/agent"
+	servingdocker "github.com/loykin/piper/pkg/serving/worker/driver/docker"
 )
 
 const (

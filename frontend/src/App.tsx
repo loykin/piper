@@ -51,6 +51,7 @@ const WorkflowsPage          = lazyRouteComponent(() => import('@/pages/schedule
 const WorkflowCreatePage     = lazyRouteComponent(() => import('@/pages/schedules/WorkflowCreatePage'))
 const ScheduleDetailPage     = lazyRouteComponent(() => import('@/pages/schedules/ScheduleDetailPage'))
 const ServingPage            = lazyRouteComponent(() => import('@/pages/serving/ServingPage'))
+const ServingCreatePage      = lazyRouteComponent(() => import('@/pages/serving/ServingCreatePage'))
 const ServingHistoryPage     = lazyRouteComponent(() => import('@/pages/serving/ServingHistoryPage'))
 const CredentialsPage        = lazyRouteComponent(() => import('@/pages/credentials/CredentialsPage'))
 const CredentialCreatePage   = lazyRouteComponent(() => import('@/pages/credentials/CredentialCreatePage'))
@@ -466,6 +467,7 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'credentials', component: CredentialsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'credentials/new', component: CredentialCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'serving', component: ServingPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'serving/new', component: ServingCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'serving/history', component: ServingHistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks', component: NotebooksPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/create', component: NotebookCreatePage }),

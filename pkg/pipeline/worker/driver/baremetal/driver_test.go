@@ -3,8 +3,8 @@ package baremetaldriver
 import (
 	"testing"
 
-	pipelinedriver "github.com/piper/piper/pkg/pipeline/worker/driver"
-	"github.com/piper/piper/pkg/pipeline/worker/driver/drivertest"
+	pipelinedriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/pkg/pipeline/worker/driver/drivertest"
 )
 
 var _ pipelinedriver.Driver = (*Driver)(nil)

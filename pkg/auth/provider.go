@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/piper/piper/pkg/security"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // Config holds configuration for the built-in auth provider.

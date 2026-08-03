@@ -4,7 +4,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/piper/piper/internal/agentpb"
+	"github.com/loykin/piper/internal/agentpb"
 )
 
 // fakeWorkerStream is an in-memory workerStream for testing Client.serve

@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
+	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
 )
 
 const testNS = "notebooks"

@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
-	servingworker "github.com/piper/piper/pkg/serving/worker"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	servingworker "github.com/loykin/piper/pkg/serving/worker"
 )
 
 func runServingWorker(root cliconfig.RootConfig) error {

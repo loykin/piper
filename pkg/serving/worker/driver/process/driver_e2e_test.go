@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/pkg/serving"
-	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
+	"github.com/loykin/piper/pkg/serving"
+	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
 )
 
 // TestServingProcessE2EHttpHelper runs as a subprocess acting as the model

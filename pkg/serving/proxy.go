@@ -5,8 +5,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/piper/piper/internal/tunnelproxy"
-	"github.com/piper/piper/pkg/project"
+	"github.com/loykin/piper/internal/tunnelproxy"
+	"github.com/loykin/piper/pkg/project"
 )
 
 func init() {

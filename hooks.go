@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 // Hooks contains lifecycle callbacks. HTTP authentication is configured through

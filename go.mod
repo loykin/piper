@@ -1,4 +1,4 @@
-module github.com/piper/piper
+module github.com/loykin/piper
 
 go 1.26.4
 

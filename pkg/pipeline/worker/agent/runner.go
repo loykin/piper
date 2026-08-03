@@ -20,11 +20,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/internal/srcfetch"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/executor"
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/internal/srcfetch"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/executor"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 // Config holds Runner configuration.

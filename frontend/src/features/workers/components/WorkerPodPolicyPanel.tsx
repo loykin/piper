@@ -80,6 +80,18 @@ export function WorkerPodPolicyPanel({ worker }: { worker: Worker }) {
             <dt className="text-xs text-muted-foreground">Runtime</dt>
 			<dd className="mt-0.5 text-xs">{worker.infrastructure === 'k8s' ? 'Kubernetes' : worker.infrastructure === 'docker' ? 'Docker' : 'Bare-metal'}</dd>
           </div>
+          {worker.infrastructure === 'docker' && worker.capacity !== undefined && (
+            <div>
+              <dt className="text-xs text-muted-foreground">Load</dt>
+              <dd className="mt-0.5 font-mono text-xs">{worker.capacity}</dd>
+            </div>
+          )}
+          {isK8s && worker.namespaces && worker.namespaces.length > 0 && (
+            <div className="col-span-2">
+              <dt className="text-xs text-muted-foreground">Namespaces</dt>
+              <dd className="mt-0.5 font-mono text-xs">{worker.namespaces.join(', ')}</dd>
+            </div>
+          )}
         </dl>
       </PanelTemplate.Section>
 

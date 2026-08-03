@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/internal/logstore"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/notebook"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
-	"github.com/piper/piper/pkg/serving"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/internal/logstore"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/notebook"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/pkg/serving"
 )
 
 type pipelineStatusQueue interface {

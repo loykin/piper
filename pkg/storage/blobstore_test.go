@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 // runStoreTests runs the common Store contract tests against any implementation.

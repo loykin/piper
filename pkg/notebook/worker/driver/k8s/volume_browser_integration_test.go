@@ -14,8 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
-	"github.com/piper/piper/pkg/notebook"
+	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
+	"github.com/loykin/piper/pkg/notebook"
 )
 
 // makeReadyViewerPod creates a viewer pod already in Ready state, with its

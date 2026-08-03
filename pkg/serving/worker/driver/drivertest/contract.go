@@ -7,8 +7,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/piper/piper/pkg/serving"
-	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
+	"github.com/loykin/piper/pkg/serving"
+	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
 )
 
 // RunContract verifies the core behavioral contract every servingdriver.Driver must satisfy.

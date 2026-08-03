@@ -7,7 +7,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/moby/moby/api/types/container"
 
-	"github.com/piper/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 type ResourceSpec struct {

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/internal/logstore"
-	"github.com/piper/piper/internal/store"
+	"github.com/loykin/piper/internal/logstore"
+	"github.com/loykin/piper/internal/store"
 )
 
 func openTestStore(t *testing.T) *logstore.SQLiteLogStore {

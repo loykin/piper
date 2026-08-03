@@ -4,6 +4,7 @@ import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { runColumns } from '@/features/runs/columns'
 import { RunDetailPanel } from '@/features/runs/components/RunDetailPanel'
 import { useRunsPaged, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
@@ -16,7 +17,8 @@ const PAGE_SIZE = 20
 function HistoryPageInner() {
   const { open } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
-  const { data } = useRunsPaged({ include_steps: true, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE })
+  const runsQuery = useRunsPaged({ include_steps: true, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE })
+  const { data } = runsQuery
   const runs = data?.runs ?? []
   const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
@@ -102,6 +104,13 @@ function HistoryPageInner() {
       description="All pipeline run records. Each square in Steps represents one step's status."
     >
       <DataBodyTemplate.Body>
+        {runsQuery.isError && runsQuery.data === undefined && (
+          <QueryErrorNotice
+            message="Failed to load runs"
+            error={runsQuery.error}
+            onRetry={() => void runsQuery.refetch()}
+          />
+        )}
         <DataGrid
           data={runs}
           columns={columns}

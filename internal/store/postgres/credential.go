@@ -9,7 +9,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/credential"
 )
 
 type credentialRepo struct{ dbstore.BaseRepo }

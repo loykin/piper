@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/internal/redact"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/run"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/security"
+	"github.com/loykin/piper/internal/redact"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // HandlerDeps holds all dependencies required by the schedule handler.

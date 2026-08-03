@@ -12,9 +12,9 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline"
-	taskruntime "github.com/piper/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline"
+	taskruntime "github.com/loykin/piper/pkg/pipeline/worker/agent"
 )
 
 const testKubeconfig = "/Users/loykin/.kube/config"

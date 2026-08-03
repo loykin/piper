@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	"github.com/piper/piper/internal/agentpb"
+	"github.com/loykin/piper/internal/agentpb"
 )
 
 // fakeServerStream is a minimal agentpb.AgentService_ConnectServer for

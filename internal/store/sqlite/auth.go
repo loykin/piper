@@ -6,8 +6,8 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/pkg/auth"
-	"github.com/piper/piper/pkg/security"
+	"github.com/loykin/piper/pkg/auth"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // ── UserRepository ───────────────────────────────────────────────────────────

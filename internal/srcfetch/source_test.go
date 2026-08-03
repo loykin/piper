@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/internal/testutil"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/internal/testutil"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 // ─── New factory ─────────────────────────────────────────────────────────────

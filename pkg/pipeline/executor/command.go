@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/piper/piper/internal/redact"
-	"github.com/piper/piper/internal/srcfetch"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/internal/redact"
+	"github.com/loykin/piper/internal/srcfetch"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 type CommandExecutor struct{}

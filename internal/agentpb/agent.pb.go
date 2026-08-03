@@ -759,7 +759,7 @@ const file_agent_proto_rawDesc = "" +
 	"channel_id\x18\x01 \x01(\tR\tchannelId\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error2[\n" +
 	"\fAgentService\x12K\n" +
-	"\aConnect\x12\x1d.piper.agent.v1.WorkerMessage\x1a\x1d.piper.agent.v1.MasterMessage(\x010\x01B)Z'github.com/piper/piper/internal/agentpbb\x06proto3"
+	"\aConnect\x12\x1d.piper.agent.v1.WorkerMessage\x1a\x1d.piper.agent.v1.MasterMessage(\x010\x01B*Z(github.com/loykin/piper/internal/agentpbb\x06proto3"
 
 var (
 	file_agent_proto_rawDescOnce sync.Once

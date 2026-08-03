@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/piper/piper/internal/proto"
+	"github.com/loykin/piper/internal/proto"
 )
 
 // EncodeTask serializes a task for one-shot agents.

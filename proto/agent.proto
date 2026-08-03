@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package piper.agent.v1;
 
-option go_package = "github.com/piper/piper/internal/agentpb";
+option go_package = "github.com/loykin/piper/internal/agentpb";
 
 // AgentService is the single internal RPC surface between the piper master and
 // all worker agents (bare-metal and k8s alike).

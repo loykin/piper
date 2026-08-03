@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	piper "github.com/piper/piper"
-	pipercmd "github.com/piper/piper/cmd/piper/commands"
-	cliconfig "github.com/piper/piper/cmd/piper/config"
+	piper "github.com/loykin/piper"
+	pipercmd "github.com/loykin/piper/cmd/piper/commands"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
 	"github.com/spf13/cobra"
 )
 

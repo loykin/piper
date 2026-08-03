@@ -5,10 +5,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	iagent "github.com/piper/piper/internal/agent"
-	authpkg "github.com/piper/piper/pkg/auth"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/security"
+	iagent "github.com/loykin/piper/internal/agent"
+	authpkg "github.com/loykin/piper/pkg/auth"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/security"
 )
 
 func (p *Piper) registerAuthRoutes(r *gin.Engine, userAPI *gin.RouterGroup) {

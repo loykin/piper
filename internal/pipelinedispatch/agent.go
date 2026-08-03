@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 type AgentRPC interface {

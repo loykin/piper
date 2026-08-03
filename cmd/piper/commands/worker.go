@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
-	worker "github.com/piper/piper/pkg/pipeline/worker"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
 	"github.com/spf13/cobra"
 )
 

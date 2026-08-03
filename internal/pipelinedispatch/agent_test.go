@@ -9,10 +9,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 // stubPipelinePolicyRepo is a minimal WorkerPodPolicyRepository for pipeline tests.

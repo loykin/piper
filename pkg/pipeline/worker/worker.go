@@ -15,14 +15,14 @@ import (
 	"sync"
 	"time"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/grpcagent"
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
-	baremetaldriver "github.com/piper/piper/pkg/pipeline/worker/driver/baremetal"
-	dockerdriver "github.com/piper/piper/pkg/pipeline/worker/driver/docker"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/grpcagent"
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	baremetaldriver "github.com/loykin/piper/pkg/pipeline/worker/driver/baremetal"
+	dockerdriver "github.com/loykin/piper/pkg/pipeline/worker/driver/docker"
 )
 
 // RuntimeType selects how pipeline steps are executed.

@@ -9,9 +9,9 @@ import (
 	"sort"
 	"syscall"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 	"github.com/spf13/cobra"
 )
 

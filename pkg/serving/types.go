@@ -2,7 +2,7 @@ package serving
 
 import (
 	"fmt"
-	"github.com/piper/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 // ModelService is the top-level structure for a piper ModelService YAML definition.

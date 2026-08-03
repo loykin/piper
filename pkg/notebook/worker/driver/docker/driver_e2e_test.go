@@ -15,10 +15,10 @@ import (
 
 	dockerclient "github.com/moby/moby/client"
 
-	dockerinfra "github.com/piper/piper/internal/docker"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/notebook/worker/driver"
+	dockerinfra "github.com/loykin/piper/internal/docker"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/notebook/worker/driver"
 )
 
 func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
 )
 
 func TestRedactURL(t *testing.T) {

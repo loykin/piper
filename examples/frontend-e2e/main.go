@@ -23,12 +23,12 @@ import (
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 
-	piper "github.com/piper/piper"
-	"github.com/piper/piper/internal/store"
-	"github.com/piper/piper/pkg/notebook"
-	worker "github.com/piper/piper/pkg/pipeline/worker"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
-	"github.com/piper/piper/pkg/project"
+	piper "github.com/loykin/piper"
+	"github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/pkg/notebook"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/pkg/project"
 )
 
 const (

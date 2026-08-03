@@ -8,7 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/pkg/viewer"
+	"github.com/loykin/piper/pkg/viewer"
 )
 
 type viewerRepo struct{ dbstore.BaseRepo }

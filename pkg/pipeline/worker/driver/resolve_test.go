@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 func TestResolveImagePriority(t *testing.T) {

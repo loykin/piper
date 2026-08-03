@@ -3,7 +3,7 @@ package docker
 import (
 	"testing"
 
-	"github.com/piper/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 func TestResourcesFromDriverDocker(t *testing.T) {

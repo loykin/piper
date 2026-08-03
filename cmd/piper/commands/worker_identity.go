@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	worker "github.com/piper/piper/pkg/pipeline/worker"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
 )
 
 type persistedWorkerMeta struct {

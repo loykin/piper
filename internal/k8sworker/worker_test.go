@@ -7,8 +7,8 @@ import (
 
 	"k8s.io/client-go/kubernetes/fake"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/grpcagent"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/grpcagent"
 )
 
 // nopHandler is a do-nothing handler used to probe whether a method is registered.

@@ -14,11 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/internal/testutil"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/internal/testutil"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 func mustReader(s string) *strings.Reader { return strings.NewReader(s) }

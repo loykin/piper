@@ -36,30 +36,11 @@ export const workerColumns: DataGridColumnDef<Worker>[] = [
     ),
   },
   {
-    id: 'load',
-    header: 'Load',
-    size: 90,
-    meta: { minWidth: 90, align: 'right' },
-    cell: ({ row }) => (
-      <span className="font-mono text-xs text-muted-foreground">
-        {row.original.capacity ?? '—'}
-      </span>
-    ),
-  },
-  {
     accessorKey: 'capabilities',
     header: 'Capabilities',
     meta: { minWidth: 160, flex: 1 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">{row.original.capabilities.join(', ') || '—'}</span>
-    ),
-  },
-  {
-    accessorKey: 'cluster_name',
-    header: 'Cluster',
-    meta: { minWidth: 100 },
-    cell: ({ row }) => (
-      <span className="font-mono text-xs text-muted-foreground">{row.original.cluster_name || '—'}</span>
     ),
   },
   {

@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
 	"gopkg.in/yaml.v3"
 )
 

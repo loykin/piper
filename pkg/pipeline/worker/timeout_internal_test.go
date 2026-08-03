@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/internal/proto"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/internal/proto"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
 
 func newTestWorker(driver pdriver.Driver) *Worker {

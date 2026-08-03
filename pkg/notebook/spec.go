@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/piper/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 func (n Notebook) Validate() error {

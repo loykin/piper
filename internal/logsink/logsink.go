@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	iagent "github.com/piper/piper/internal/agent"
+	iagent "github.com/loykin/piper/internal/agent"
 )
 
 // LogSink receives log lines collected from a running process and forwards them

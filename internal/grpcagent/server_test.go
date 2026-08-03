@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/piper/piper/internal/agentpb"
+	"github.com/loykin/piper/internal/agentpb"
 )
 
 func TestValidateRegistrationRequiresCurrentInfrastructure(t *testing.T) {

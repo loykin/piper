@@ -14,14 +14,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/schedule"
-	"github.com/piper/piper/pkg/security"
-	"github.com/piper/piper/pkg/storage"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/schedule"
+	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/storage"
 	"gopkg.in/yaml.v3"
 )
 

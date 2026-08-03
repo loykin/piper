@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/notebook/worker/driver"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/notebook/worker/driver"
 )
 
 func TestProcessRuntimeE2E_WorkerCrashRecoverRestart(t *testing.T) {

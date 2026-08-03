@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/piper/piper/internal/artifact"
-	"github.com/piper/piper/pkg/project"
+	"github.com/loykin/piper/internal/artifact"
+	"github.com/loykin/piper/pkg/project"
 )
 
 type stateTestRepo struct {

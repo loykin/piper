@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/internal/store"
-	"github.com/piper/piper/internal/store/repotest"
-	sqliterepo "github.com/piper/piper/internal/store/sqlite"
-	"github.com/piper/piper/pkg/auth"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/schedule"
+	"github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/internal/store/repotest"
+	sqliterepo "github.com/loykin/piper/internal/store/sqlite"
+	"github.com/loykin/piper/pkg/auth"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/schedule"
 )
 
 func TestUserRepoUsernameRoundTrip(t *testing.T) {

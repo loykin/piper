@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/piper/piper/internal/proto"
+	"github.com/loykin/piper/internal/proto"
 )
 
 // AgentExecConfig holds the parameters needed to build a piper agent exec

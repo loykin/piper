@@ -8,9 +8,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/artifact"
-	"github.com/piper/piper/pkg/serving"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/artifact"
+	"github.com/loykin/piper/pkg/serving"
 )
 
 // stubServingPolicyRepo is a minimal WorkerPodPolicyRepository for serving tests.

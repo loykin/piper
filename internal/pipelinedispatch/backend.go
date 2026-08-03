@@ -5,8 +5,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
 )
 
 // ExecutionBackend sends a runnable task to an execution environment.

@@ -1,7 +1,7 @@
 package piper
 
 // This file wires agent exec interception into any binary that imports
-// "github.com/piper/piper". The baremetal driver calls os.Executable()
+// "github.com/loykin/piper". The baremetal driver calls os.Executable()
 // to find the current binary, then runs it with "agent exec --task-file=..."
 // as a subprocess. Without this init(), binaries that embed piper as a
 // library would re-enter main() instead of executing the step.
@@ -15,8 +15,8 @@ import (
 	"log/slog"
 	"os"
 
-	agentpkg "github.com/piper/piper/pkg/pipeline/worker/agent"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
+	agentpkg "github.com/loykin/piper/pkg/pipeline/worker/agent"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
 
 func init() {

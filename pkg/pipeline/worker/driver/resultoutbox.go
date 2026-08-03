@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piper/piper/internal/proto"
+	"github.com/loykin/piper/internal/proto"
 )
 
 // ResultAck identifies a result durably accepted by the master.

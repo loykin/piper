@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"strings"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/artifact"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/serving"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/artifact"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/serving"
 )
 
 type AgentRPC interface {
@@ -97,13 +97,18 @@ func (d *AgentDriver) Deploy(ctx context.Context, spec serving.ModelService, art
 	}, &result); err != nil {
 		return nil, fmt.Errorf("serving agent deploy: %w", err)
 	}
+	namespace := ""
+	if spec.Spec.Driver.K8s != nil {
+		namespace = spec.Spec.Driver.K8s.Namespace
+	}
 	return &serving.Service{
-		Name:     spec.Metadata.Name,
-		Artifact: artifactLabel(spec),
-		Status:   serving.StatusStarting,
-		Endpoint: result.Endpoint,
-		WorkerID: agentInfo.ID,
-		YAML:     yamlStr,
+		Name:      spec.Metadata.Name,
+		Artifact:  artifactLabel(spec),
+		Status:    serving.StatusStarting,
+		Endpoint:  result.Endpoint,
+		WorkerID:  agentInfo.ID,
+		YAML:      yamlStr,
+		Namespace: namespace,
 	}, nil
 }
 

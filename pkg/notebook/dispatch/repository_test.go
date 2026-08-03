@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/piper/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/notebook"
 )
 
 type fakeRepo struct {

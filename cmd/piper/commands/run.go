@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
-	"github.com/piper/piper/pkg/pipeline"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/spf13/cobra"
 )
 

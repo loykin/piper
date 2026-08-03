@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"log/slog"
 
-	piper "github.com/piper/piper"
-	cliconfig "github.com/piper/piper/cmd/piper/config"
-	storemod "github.com/piper/piper/internal/store"
-	"github.com/piper/piper/internal/store/postgres"
-	sqlitestore "github.com/piper/piper/internal/store/sqlite"
-	"github.com/piper/piper/pkg/auth"
-	"github.com/piper/piper/pkg/security"
+	piper "github.com/loykin/piper"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	storemod "github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/internal/store/postgres"
+	sqlitestore "github.com/loykin/piper/internal/store/sqlite"
+	"github.com/loykin/piper/pkg/auth"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // NewPiper builds the library-facing server config from the canonical CLI config.

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
 )
 
 func makeTask(t *testing.T, step pipeline.Step) *proto.Task {

@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/internal/tunnelproxy"
-	"github.com/piper/piper/pkg/project"
+	"github.com/loykin/piper/internal/tunnelproxy"
+	"github.com/loykin/piper/pkg/project"
 )
 
 type Handler struct {

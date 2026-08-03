@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piper/piper/pkg/schedule"
+	"github.com/loykin/piper/pkg/schedule"
 	"github.com/robfig/cron/v3"
 )
 

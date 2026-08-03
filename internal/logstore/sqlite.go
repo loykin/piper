@@ -5,7 +5,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/internal/redact"
+	"github.com/loykin/piper/internal/redact"
 )
 
 // SQLiteLogStore implements LogStore and MetricStore using SQLite via dbstore.Executor.
@@ -33,7 +33,7 @@ func (s *SQLiteLogStore) Append(ctx context.Context, lines []*Line) error {
 		defer func() { _ = stmt.Close() }()
 		for _, l := range lines {
 			line := redact.String(l.Line)
-			if _, err := stmt.ExecContext(ctx, l.ProjectID, l.RunID, l.StepName, l.Ts, l.Stream, line); err != nil {
+			if _, err := stmt.ExecContext(ctx, l.ProjectID, l.RunID, l.StepName, l.Ts.UTC(), l.Stream, line); err != nil {
 				return err
 			}
 		}
@@ -78,7 +78,7 @@ func (s *SQLiteLogStore) AppendMetrics(ctx context.Context, metrics []*Metric) e
 		defer func() { _ = stmt.Close() }()
 		for _, m := range metrics {
 			key := redact.String(m.Key)
-			if _, err := stmt.ExecContext(ctx, m.ProjectID, m.RunID, m.StepName, key, m.Value, m.Ts); err != nil {
+			if _, err := stmt.ExecContext(ctx, m.ProjectID, m.RunID, m.StepName, key, m.Value, m.Ts.UTC()); err != nil {
 				return err
 			}
 		}

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/piper/piper/internal/agentpb"
+	"github.com/loykin/piper/internal/agentpb"
 )
 
 // Lane classifies a frame (RPC response, push, or proxy data) by how it

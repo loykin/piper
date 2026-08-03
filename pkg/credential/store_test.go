@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/security"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/security"
 )
 
 const testProjectID = "project-1"

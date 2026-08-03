@@ -3,7 +3,7 @@ package pipeline
 import (
 	"testing"
 
-	"github.com/piper/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 func TestApplyDefaultsMergesRuntimeImageWithStepOptions(t *testing.T) {

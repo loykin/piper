@@ -20,8 +20,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	worker "github.com/piper/piper/pkg/pipeline/worker"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
 )
 
 func main() {

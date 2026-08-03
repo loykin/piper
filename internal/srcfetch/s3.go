@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 type S3Fetcher struct {

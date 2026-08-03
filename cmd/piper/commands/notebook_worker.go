@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
-	notebookworker "github.com/piper/piper/pkg/notebook/worker"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	notebookworker "github.com/loykin/piper/pkg/notebook/worker"
 )
 
 func runNotebookWorker(root cliconfig.RootConfig) error {

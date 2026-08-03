@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/loykin/dbstore"
-	storemod "github.com/piper/piper/internal/store"
-	"github.com/piper/piper/pkg/security"
+	storemod "github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // Config is the global piper configuration. Accepts a struct and can be embedded.

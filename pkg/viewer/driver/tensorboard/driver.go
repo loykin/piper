@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/piper/piper/pkg/viewer"
+	"github.com/loykin/piper/pkg/viewer"
 )
 
 type Driver struct{}

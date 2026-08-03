@@ -3,8 +3,8 @@ package proto_test
 import (
 	"testing"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline/run"
 )
 
 // TestStatusConsistency verifies that status string literals are aligned across

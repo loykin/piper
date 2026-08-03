@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 func TestRunPrepareRunsSequentiallyInStepWorkDir(t *testing.T) {

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"syscall"
 
-	piper "github.com/piper/piper"
-	cliconfig "github.com/piper/piper/cmd/piper/config"
-	notebookworker "github.com/piper/piper/pkg/notebook/worker"
-	worker "github.com/piper/piper/pkg/pipeline/worker"
-	servingworker "github.com/piper/piper/pkg/serving/worker"
+	piper "github.com/loykin/piper"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	notebookworker "github.com/loykin/piper/pkg/notebook/worker"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
+	servingworker "github.com/loykin/piper/pkg/serving/worker"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 )

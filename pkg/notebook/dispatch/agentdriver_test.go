@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/notebook"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/notebook"
 )
 
 type recordingAgentRPC struct {

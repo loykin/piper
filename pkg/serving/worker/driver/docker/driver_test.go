@@ -7,11 +7,11 @@ import (
 	"github.com/moby/moby/api/types/container"
 	dockerclient "github.com/moby/moby/client"
 
-	dockerinfra "github.com/piper/piper/internal/docker"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/serving"
-	servingdriver "github.com/piper/piper/pkg/serving/worker/driver"
-	"github.com/piper/piper/pkg/serving/worker/driver/drivertest"
+	dockerinfra "github.com/loykin/piper/internal/docker"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/serving"
+	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
+	"github.com/loykin/piper/pkg/serving/worker/driver/drivertest"
 )
 
 func TestDockerDriverContract(t *testing.T) {

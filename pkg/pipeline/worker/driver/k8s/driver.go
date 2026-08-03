@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/piper/piper/internal/proto"
-	k8smanifest "github.com/piper/piper/pkg/manifest/k8s"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
-	"github.com/piper/piper/pkg/pipeline/worker/driver"
-	k8slauncher "github.com/piper/piper/pkg/pipeline/worker/driver/k8slauncher"
+	"github.com/loykin/piper/internal/proto"
+	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/pkg/pipeline/worker/driver"
+	k8slauncher "github.com/loykin/piper/pkg/pipeline/worker/driver/k8slauncher"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )

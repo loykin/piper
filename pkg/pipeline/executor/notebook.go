@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/piper/piper/internal/srcfetch"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/internal/srcfetch"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 type NotebookExecutor struct{}

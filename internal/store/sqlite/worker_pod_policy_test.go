@@ -7,8 +7,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/store"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/store"
 )
 
 func TestWorkerPodPolicyRepo_CRUD(t *testing.T) {

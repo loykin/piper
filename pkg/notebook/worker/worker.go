@@ -19,15 +19,15 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/grpcagent"
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/notebook"
-	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
-	notebookdocker "github.com/piper/piper/pkg/notebook/worker/driver/docker"
-	notebookprocess "github.com/piper/piper/pkg/notebook/worker/driver/process"
-	"github.com/piper/piper/pkg/storage"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/grpcagent"
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/notebook"
+	notebookdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
+	notebookdocker "github.com/loykin/piper/pkg/notebook/worker/driver/docker"
+	notebookprocess "github.com/loykin/piper/pkg/notebook/worker/driver/process"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 // Config holds configuration for a notebook worker agent.

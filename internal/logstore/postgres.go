@@ -5,7 +5,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/internal/redact"
+	"github.com/loykin/piper/internal/redact"
 )
 
 // PgStore implements LogStore and MetricStore using PostgreSQL via dbstore.Executor.

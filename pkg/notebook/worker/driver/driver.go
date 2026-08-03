@@ -4,8 +4,8 @@ package driver
 import (
 	"context"
 
-	"github.com/piper/piper/internal/logsink"
-	"github.com/piper/piper/pkg/notebook"
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/pkg/notebook"
 )
 
 const (

@@ -7,8 +7,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/piper/piper/pkg/notebook"
-	notebookdriver "github.com/piper/piper/pkg/notebook/worker/driver"
+	"github.com/loykin/piper/pkg/notebook"
+	notebookdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
 )
 
 // RunContract verifies the core behavioral contract every notebookdriver.Driver must satisfy.

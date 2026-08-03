@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 type artifactFile struct {

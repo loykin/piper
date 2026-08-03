@@ -6,7 +6,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/pkg/serving"
+	"github.com/loykin/piper/pkg/serving"
 )
 
 type servingRepo struct{ dbstore.BaseRepo }

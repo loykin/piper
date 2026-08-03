@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	processinfra "github.com/piper/piper/internal/process"
-	"github.com/piper/piper/internal/processlog"
-	"github.com/piper/piper/pkg/serving"
-	"github.com/piper/piper/pkg/serving/worker/driver"
+	processinfra "github.com/loykin/piper/internal/process"
+	"github.com/loykin/piper/internal/processlog"
+	"github.com/loykin/piper/pkg/serving"
+	"github.com/loykin/piper/pkg/serving/worker/driver"
 )
 
 type Config struct {

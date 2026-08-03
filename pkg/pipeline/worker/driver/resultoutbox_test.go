@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/piper/piper/internal/proto"
+	"github.com/loykin/piper/internal/proto"
 )
 
 func TestResultOutboxKeepsResultUntilAck(t *testing.T) {

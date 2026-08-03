@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
-	"github.com/piper/piper/internal/event"
-	"github.com/piper/piper/pkg/security"
+	"github.com/loykin/piper/internal/event"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // Manager handles the lifecycle of NotebookServer instances.

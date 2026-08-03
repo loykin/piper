@@ -5,7 +5,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/pkg/pipeline/run"
 )
 
 type stepRepo struct{ dbstore.BaseRepo }

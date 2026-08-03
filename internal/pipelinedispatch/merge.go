@@ -3,8 +3,8 @@ package pipelinedispatch
 import (
 	corev1 "k8s.io/api/core/v1"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/pkg/pipeline"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 // applyPodPolicyToPipeline merges workerPolicy (base) into all K8s driver

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/internal/srcfetch"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/internal/srcfetch"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
 )
 
 type ExecConfig struct {

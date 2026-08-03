@@ -3,7 +3,7 @@ package schedule
 import (
 	"time"
 
-	"github.com/piper/piper/internal/redact"
+	"github.com/loykin/piper/internal/redact"
 )
 
 type Schedule struct {

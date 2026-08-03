@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/piper/piper/pkg/credential"
-	"github.com/piper/piper/pkg/pipeline/run"
-	"github.com/piper/piper/pkg/project"
+	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/pkg/project"
 )
 
 func ProjectRepoSuite(t *testing.T, repo project.Repository) {

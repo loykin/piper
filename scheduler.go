@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/schedule"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/schedule"
 	"github.com/robfig/cron/v3"
 )
 

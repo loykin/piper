@@ -122,7 +122,8 @@ export interface FormState {
   artifact: string
   templateKey: string
   runtimeMode: string
-  image: string
+  k8sImage: string
+  dockerImage: string
   command: string
   port: string
   healthPath: string
@@ -144,7 +145,8 @@ export const DEFAULT_FORM: FormState = {
   artifact: '',
   templateKey: 'custom',
   runtimeMode: 'local',
-  image: '',
+  k8sImage: '',
+  dockerImage: '',
   command: 'python\nserve.py',
   port: '8000',
   healthPath: '/',
@@ -178,7 +180,7 @@ export function buildYAML(f: FormState): string {
   if (isK8s) {
     driverLines.push(
       `    k8s:`,
-      `      image: ${JSON.stringify(f.image)}`,
+      `      image: ${JSON.stringify(f.k8sImage)}`,
       `      namespace: ${JSON.stringify(f.k8sNamespace || 'default')}`,
       `      replicas: ${f.k8sReplicas || '1'}`,
       `      image_pull_policy: ${JSON.stringify(f.k8sImagePullPolicy || 'Always')}`,
@@ -189,6 +191,8 @@ export function buildYAML(f: FormState): string {
       if (f.k8sMemory) driverLines.push(`        memory: ${JSON.stringify(f.k8sMemory)}`)
       if (f.k8sGPU)    driverLines.push(`        gpu: ${JSON.stringify(f.k8sGPU)}`)
     }
+  } else if (f.dockerImage.trim()) {
+    driverLines.push(`    docker:`, `      image: ${JSON.stringify(f.dockerImage)}`)
   }
 
   return `apiVersion: piper/v1

@@ -24,9 +24,9 @@ import (
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 
-	"github.com/piper/piper/internal/testutil"
-	worker "github.com/piper/piper/pkg/pipeline/worker"
-	servingworker "github.com/piper/piper/pkg/serving/worker"
+	"github.com/loykin/piper/internal/testutil"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
+	servingworker "github.com/loykin/piper/pkg/serving/worker"
 )
 
 const e2eBucket = "piper-e2e"

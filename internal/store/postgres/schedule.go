@@ -6,7 +6,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
-	"github.com/piper/piper/pkg/schedule"
+	"github.com/loykin/piper/pkg/schedule"
 )
 
 type scheduleRepo struct{ dbstore.BaseRepo }

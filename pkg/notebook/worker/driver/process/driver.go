@@ -12,11 +12,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/piper/piper/internal/process"
-	"github.com/piper/piper/internal/processlog"
-	"github.com/piper/piper/pkg/notebook"
-	"github.com/piper/piper/pkg/notebook/worker/driver"
-	driverinternal "github.com/piper/piper/pkg/notebook/worker/driver/internal"
+	"github.com/loykin/piper/internal/process"
+	"github.com/loykin/piper/internal/processlog"
+	"github.com/loykin/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/notebook/worker/driver"
+	driverinternal "github.com/loykin/piper/pkg/notebook/worker/driver/internal"
 )
 
 // processMeta stores the workload identity alongside the PID file so that a

@@ -8,7 +8,7 @@ import (
 
 	"github.com/loykin/freader"
 
-	"github.com/piper/piper/internal/logsink"
+	"github.com/loykin/piper/internal/logsink"
 )
 
 // StartCollector watches logFile and forwards lines to sink. The returned stop

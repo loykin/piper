@@ -21,8 +21,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	piper "github.com/piper/piper"
-	"github.com/piper/piper/pkg/ui"
+	piper "github.com/loykin/piper"
+	"github.com/loykin/piper/pkg/ui"
 )
 
 func main() {

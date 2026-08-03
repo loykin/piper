@@ -17,11 +17,11 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	dockerclient "github.com/moby/moby/client"
 
-	dockerinfra "github.com/piper/piper/internal/docker"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/pipeline"
-	"github.com/piper/piper/pkg/pipeline/worker/agent"
-	"github.com/piper/piper/pkg/pipeline/worker/driver" //nolint:depguard
+	dockerinfra "github.com/loykin/piper/internal/docker"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/piper/pkg/pipeline/worker/driver" //nolint:depguard
 )
 
 const (

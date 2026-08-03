@@ -3,7 +3,7 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/piper/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 // Pipeline is the top-level structure of a piper Pipeline YAML definition.

@@ -11,11 +11,11 @@ import (
 	"github.com/moby/moby/api/types/container"
 	dockerclient "github.com/moby/moby/client"
 
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/manifest"
-	"github.com/piper/piper/pkg/pipeline"
-	pipelinedriver "github.com/piper/piper/pkg/pipeline/worker/driver"
-	"github.com/piper/piper/pkg/pipeline/worker/driver/drivertest"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/manifest"
+	"github.com/loykin/piper/pkg/pipeline"
+	pipelinedriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/pkg/pipeline/worker/driver/drivertest"
 )
 
 var _ pipelinedriver.Driver = (*Driver)(nil)

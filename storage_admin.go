@@ -14,8 +14,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/piper/piper/pkg/project"
-	"github.com/piper/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 // StorageSettingsView exposes the editable storage configuration together with

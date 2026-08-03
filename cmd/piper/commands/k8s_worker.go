@@ -7,12 +7,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	cliconfig "github.com/piper/piper/cmd/piper/config"
+	cliconfig "github.com/loykin/piper/cmd/piper/config"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	k8sworker "github.com/piper/piper/internal/k8sworker"
+	k8sworker "github.com/loykin/piper/internal/k8sworker"
 )
 
 func runK8sWorker(root cliconfig.RootConfig) error {

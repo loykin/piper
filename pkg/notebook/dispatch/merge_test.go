@@ -6,7 +6,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	iagent "github.com/piper/piper/internal/agent"
+	iagent "github.com/loykin/piper/internal/agent"
 )
 
 // --- mergePodTemplate ---

@@ -3,7 +3,7 @@ package serving
 import (
 	"context"
 
-	"github.com/piper/piper/internal/artifact"
+	"github.com/loykin/piper/internal/artifact"
 )
 
 // Driver abstracts the backend that actually runs serving processes.

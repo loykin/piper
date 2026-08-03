@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	worker "github.com/piper/piper/pkg/pipeline/worker"
+	worker "github.com/loykin/piper/pkg/pipeline/worker"
 )
 
 func TestNewWorker_defaultsApplied(t *testing.T) {

@@ -9,15 +9,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
-	iagent "github.com/piper/piper/internal/agent"
-	"github.com/piper/piper/internal/grpcagent"
-	k8spipeline "github.com/piper/piper/internal/k8sworker/pipeline"
-	"github.com/piper/piper/internal/proto"
-	"github.com/piper/piper/pkg/notebook"
-	k8snotebook "github.com/piper/piper/pkg/notebook/worker/driver/k8s"
-	pdriver "github.com/piper/piper/pkg/pipeline/worker/driver"
-	"github.com/piper/piper/pkg/serving"
-	k8sserving "github.com/piper/piper/pkg/serving/worker/driver/k8s"
+	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/grpcagent"
+	k8spipeline "github.com/loykin/piper/internal/k8sworker/pipeline"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/notebook"
+	k8snotebook "github.com/loykin/piper/pkg/notebook/worker/driver/k8s"
+	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/pkg/serving"
+	k8sserving "github.com/loykin/piper/pkg/serving/worker/driver/k8s"
 )
 
 // AgentConfig configures the gRPC connection to the master agent server

@@ -10,7 +10,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	dockerclient "github.com/moby/moby/client"
 
-	"github.com/piper/piper/internal/logsink"
+	"github.com/loykin/piper/internal/logsink"
 )
 
 // StreamLogs demultiplexes a Docker log stream and forwards complete lines to

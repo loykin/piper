@@ -1211,17 +1211,22 @@ export default function PipelineEditorPage() {
                 </div>
               </div>
 
-              {(editingTask.type === 'notebook' || editingTask.type === 'python') && (
+              {(editingTask.type === 'notebook' || editingTask.type === 'python' || editingTask.type === 'command') && (
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">
                     {SOURCE_LABELS[editingTask.type]}
                   </label>
+                  {editingTask.type === 'command' && (
+                    <p className="mb-1 text-xs text-muted-foreground">
+                      Required when the pipeline source is Git. Path within the repo to fetch — a directory is fine; the command runs with $PIPER_SCRIPT_PATH pointing here.
+                    </p>
+                  )}
                   <div ref={fileBrowserRef} className="relative">
                     <div className="flex gap-1.5">
                       <Input
                         value={editingTask.sourcePath}
                         onChange={e => updateTask(editingIndex, { sourcePath: e.target.value })}
-                        placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : 'scripts/train.py'}
+                        placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : editingTask.type === 'python' ? 'scripts/train.py' : 'scripts'}
                       />
                       {canBrowse && (
                         <IconButton

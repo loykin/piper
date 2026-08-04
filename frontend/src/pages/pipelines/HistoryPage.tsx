@@ -18,7 +18,7 @@ function HistoryPageInner() {
   const { open } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const runsQuery = useRunsPaged({ include_steps: true, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE })
-  const { data } = runsQuery
+  const { data, isPending: runsPending } = runsQuery
   const runs = data?.runs ?? []
   const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
@@ -114,6 +114,7 @@ function HistoryPageInner() {
         <DataGrid
           data={runs}
           columns={columns}
+          isLoading={runsPending}
           emptyMessage="No runs yet."
           tableWidthMode="fill-last"
           rowHeight={44}

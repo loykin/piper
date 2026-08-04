@@ -191,9 +191,15 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
     const run = (step.run ?? {}) as Record<string, unknown>
     const rawType = String(run.type ?? (run.notebook ? 'notebook' : 'command'))
     const type: PipelineTaskType = rawType === 'python' || rawType === 'notebook' ? rawType : 'command'
+    const stepLabel = String(step.name ?? nextStepName(index))
     const artifacts = (key: 'inputs' | 'outputs'): PipelineArtifactDraft[] => {
       const values = Array.isArray(step[key]) ? step[key] : []
-      return values.map(value => {
+      return values.map((value, artifactIndex) => {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+          throw new Error(
+            `Step "${stepLabel}": ${key}[${artifactIndex}] must be an artifact object ({ name, path, from }), not a bare value like ${JSON.stringify(value)}.`,
+          )
+        }
         const artifact = value as Record<string, unknown>
         return {
           name: String(artifact.name ?? ''),

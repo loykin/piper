@@ -1,10 +1,20 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { Power, Plus, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { scheduleColumns } from '@/features/schedules/columns'
@@ -23,8 +33,9 @@ function WorkflowsPageInner() {
   const schedulesQuery = useSchedules()
   const schedules = schedulesQuery.data ?? []
   const { data: pipelines = [] } = usePipelines()
-  const { mutate: deleteSchedule } = useDeleteSchedule()
+  const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
+  const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null)
 
   const pipelineByVersionId = useMemo(
     () => new Map(pipelines.map(p => [p.id, p])),
@@ -66,14 +77,13 @@ function WorkflowsPageInner() {
           <IconButton icon={<Trash2 />} label="Delete"
             onClick={(e) => {
               e.stopPropagation()
-              if (!confirm(`Delete schedule "${s.name}"?`)) return
-              deleteSchedule(s.id)
+              setDeleteTarget(s)
             }}
             className="text-destructive hover:bg-destructive/10" />
         </RowActions>
       )
     },
-  }), [toggleSchedule, deleteSchedule])
+  }), [toggleSchedule])
 
   // Replace base name column with name+version combined column
   const columns = useMemo(
@@ -82,6 +92,7 @@ function WorkflowsPageInner() {
   )
 
   return (
+    <>
     <DataBodyTemplate
       title="Schedules"
       description="Manage cron and one-time pipeline schedules."
@@ -102,7 +113,6 @@ function WorkflowsPageInner() {
         <DataGrid
           data={schedules}
           columns={columns}
-          isLoading={schedulesQuery.isLoading}
           emptyMessage="No schedules yet. Create one to start."
           tableWidthMode="fill-last"
           rowHeight={44}
@@ -118,6 +128,32 @@ function WorkflowsPageInner() {
         />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+
+    <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{deleteTarget?.name}" will be permanently deleted.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={() => {
+              if (!deleteTarget) return
+              deleteSchedule(deleteTarget.id)
+              setDeleteTarget(null)
+            }}
+          >
+            {deleting ? 'Deleting…' : 'Delete schedule'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
 

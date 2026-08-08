@@ -3,6 +3,16 @@ import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { runColumns } from '@/features/runs/columns'
@@ -18,12 +28,13 @@ function HistoryPageInner() {
   const { open } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const runsQuery = useRunsPaged({ include_steps: true, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE })
-  const { data, isPending: runsPending } = runsQuery
+  const { data } = runsQuery
   const runs = data?.runs ?? []
   const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
+  const [deleteTarget, setDeleteTarget] = useState<Run | null>(null)
 
   // Deleting the last row of the last page shrinks `total` below what
   // pageIndex needs, leaving the grid showing an empty page. This
@@ -46,15 +57,20 @@ function HistoryPageInner() {
 
   const handleDelete = (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
-    if (!confirm(`Delete run ${run.id}?\nArtifacts will also be removed.`)) return
-    deleteRun(run.id)
+    setDeleteTarget(run)
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return
+    deleteRun(deleteTarget.id)
+    setDeleteTarget(null)
   }
 
   const handleRerun = async (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
     try {
       const result = await rerunRun(run.id)
-      open(<RunDetailPanel id={result.run_id} />, { size: 720 })
+      open(<RunDetailPanel id={result.run_id} />, { size: 480 })
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err))
     }
@@ -99,6 +115,7 @@ function HistoryPageInner() {
   )
 
   return (
+    <>
     <DataBodyTemplate
       title="History"
       description="All pipeline run records. Each square in Steps represents one step's status."
@@ -114,12 +131,11 @@ function HistoryPageInner() {
         <DataGrid
           data={runs}
           columns={columns}
-          isLoading={runsPending}
           emptyMessage="No runs yet."
           tableWidthMode="fill-last"
           rowHeight={44}
           rowCursor
-          onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 720 })}
+          onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 480 })}
           initialSorting={[{ id: 'started_at', desc: true }]}
           classNames={{ footer: 'pt-3' }}
           pagination={{
@@ -132,12 +148,34 @@ function HistoryPageInner() {
         />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+
+    <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this run?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Run {deleteTarget?.id} and its artifacts will be permanently removed.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={confirmDelete}
+          >
+            {deleting ? 'Deleting…' : 'Delete run'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
 
 export default function HistoryPage() {
   return (
-    <SidePanelProvider defaultSize={720} defaultMinSize={520} defaultMaxSize={1200}>
+    <SidePanelProvider defaultSize={480} defaultMinSize={380} defaultMaxSize={900}>
       <HistoryPageInner />
     </SidePanelProvider>
   )

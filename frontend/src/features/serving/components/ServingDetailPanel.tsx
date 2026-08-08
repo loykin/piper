@@ -1,7 +1,18 @@
+import { useState } from 'react'
 import { Link } from '@/lib/router'
 import { RefreshCw, Square, Trash2, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -12,8 +23,9 @@ export function ServingDetailPanel({ name }: { name: string }) {
   const { close } = useSidePanel()
   const projectId = useProjectId()
   const { data: service, isLoading } = useService(name)
-  const { mutateAsync: stopService } = useStopService()
+  const { mutateAsync: stopService, isPending: stopping } = useStopService()
   const { mutateAsync: restartService } = useRestartService()
+  const [confirmAction, setConfirmAction] = useState<'stop' | 'delete' | null>(null)
 
   const closeBtn = (
     <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
@@ -41,21 +53,21 @@ export function ServingDetailPanel({ name }: { name: string }) {
     )
   }
 
-  async function handleStop() {
-    if (!confirm(`Stop service "${name}"?`)) return
-    try { await stopService(name) } catch { /* no-op */ }
-  }
-
   async function handleRestart() {
     try { await restartService(name) } catch { /* no-op */ }
   }
 
-  async function handleDelete() {
-    if (!confirm(`Delete service "${name}"?`)) return
-    try { await stopService(name); void close() } catch { /* no-op */ }
+  async function handleConfirm() {
+    try {
+      await stopService(name)
+      if (confirmAction === 'delete') void close()
+    } catch { /* no-op */ } finally {
+      setConfirmAction(null)
+    }
   }
 
   return (
+    <>
     <PanelTemplate
       eyebrow="Service"
       title={service.name}
@@ -66,11 +78,11 @@ export function ServingDetailPanel({ name }: { name: string }) {
             <IconButton icon={<RefreshCw />} label="Restart" onClick={handleRestart} />
           )}
           {service.status !== 'stopped' && (
-            <IconButton icon={<Square />} label="Stop" onClick={handleStop}
+            <IconButton icon={<Square />} label="Stop" onClick={() => setConfirmAction('stop')}
               className="text-destructive hover:bg-destructive/10" />
           )}
           {service.status === 'stopped' && (
-            <IconButton icon={<Trash2 />} label="Delete" onClick={handleDelete}
+            <IconButton icon={<Trash2 />} label="Delete" onClick={() => setConfirmAction('delete')}
               className="text-destructive hover:bg-destructive/10" />
           )}
           {closeBtn}
@@ -132,5 +144,29 @@ export function ServingDetailPanel({ name }: { name: string }) {
         </pre>
       </PanelTemplate.Section>
     </PanelTemplate>
+
+    <AlertDialog open={confirmAction != null} onOpenChange={open => { if (!open) setConfirmAction(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {confirmAction === 'stop' ? 'Stop this service?' : 'Delete this service?'}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            "{name}" will stop serving requests immediately.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={stopping}
+            onClick={() => void handleConfirm()}
+          >
+            {stopping ? 'Working…' : confirmAction === 'stop' ? 'Stop service' : 'Delete service'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }

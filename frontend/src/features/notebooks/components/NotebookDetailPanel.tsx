@@ -1,6 +1,17 @@
+import { useState } from 'react'
 import { ExternalLink, RefreshCw, Square, Trash2, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -12,7 +23,8 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
   const { data: notebook, isLoading } = useNotebook(name)
   const { mutateAsync: stop, isPending: stopping } = useStopNotebook()
   const { mutateAsync: start, isPending: starting } = useStartNotebook()
-  const { mutateAsync: del } = useDeleteNotebook()
+  const { mutateAsync: del, isPending: deleting } = useDeleteNotebook()
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const busy = stopping || starting
 
@@ -45,6 +57,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
   const proxyURL = `/api/projects/${projectId}/notebooks/${notebook.name}/proxy/`
 
   return (
+    <>
     <PanelTemplate
       eyebrow="Notebook Server"
       title={notebook.name}
@@ -67,10 +80,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
               onClick={() => void start(name)} />
           )}
           <IconButton icon={<Trash2 />} label="Delete" disabled={busy}
-            onClick={() => {
-              if (!confirm(`Delete notebook "${name}"?\nThe volume and work directory are preserved.`)) return
-              void del(name).then(() => void close())
-            }}
+            onClick={() => setConfirmDelete(true)}
             className="text-muted-foreground hover:text-destructive" />
           {closeBtn}
         </div>
@@ -109,5 +119,27 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
         <YamlMirror value={notebook.yaml || ''} readOnly className="min-h-[14rem]" />
       </PanelTemplate.Section>
     </PanelTemplate>
+
+    <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this notebook?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{name}" will be deleted. The volume and work directory are preserved.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={() => void del(name).then(() => void close())}
+          >
+            {deleting ? 'Deleting…' : 'Delete notebook'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }

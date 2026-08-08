@@ -6,6 +6,16 @@ import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { DataGrid } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { usePipelines, useDeletePipeline, useRunPipeline } from '@/features/pipelines/hooks'
 import { usePipelineColumns } from '@/features/pipelines/columns'
@@ -51,6 +61,8 @@ function PipelinesListPageInner() {
   const [deployCron, setDeployCron] = useState('0 2 * * *')
   const [deployEnabled, setDeployEnabled] = useState(true)
   const [actionError, setActionError] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<PipelineTemplate | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   async function handleRun(t: PipelineTemplate) {
     setActionError('')
@@ -62,13 +74,17 @@ function PipelinesListPageInner() {
     }
   }
 
-  async function handleDelete(t: PipelineTemplate) {
-    if (!confirm(`Delete "${t.name}" v${t.version} (${t.id.slice(0, 8)}…)? This also deletes the snapshot for this version.`)) return
+  async function confirmDelete() {
+    if (!deleteTarget) return
     setActionError('')
+    setDeleting(true)
     try {
-      await deletePipeline(t.id)
+      await deletePipeline(deleteTarget.id)
+      setDeleteTarget(null)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -97,7 +113,7 @@ function PipelinesListPageInner() {
         onRun={(x) => void handleRun(x)}
         onDeploy={openDeploy}
         onNewVersion={openNewVersionFrom}
-        onDelete={(x) => void handleDelete(x)}
+        onDelete={setDeleteTarget}
       />,
       { size: 520 },
     )
@@ -107,7 +123,7 @@ function PipelinesListPageInner() {
     onRun: (t) => void handleRun(t),
     onDeploy: openDeploy,
     onNewVersion: openNewVersionFrom,
-    onDelete: (t) => void handleDelete(t),
+    onDelete: setDeleteTarget,
   })
 
   return (
@@ -159,6 +175,27 @@ function PipelinesListPageInner() {
         onDeployed={(scheduleId) => navigate(`/projects/${projectId}/schedules/${scheduleId}`)}
         error={actionError}
       />
+
+      <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this pipeline template?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{deleteTarget?.name}" v{deleteTarget?.version} ({deleteTarget?.id.slice(0, 8)}…) and its snapshot will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? 'Deleting…' : 'Delete template'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

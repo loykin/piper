@@ -17,6 +17,7 @@ function WorkersTable() {
         emptyMessage="No workers connected."
         tableWidthMode="fill-last"
         rowHeight={44}
+        rowCursor
         pagination={{ pageSize: 20 }}
         onRowClick={(row) =>
           open(<WorkerPodPolicyPanel worker={row as Worker} />, { size: 520 })

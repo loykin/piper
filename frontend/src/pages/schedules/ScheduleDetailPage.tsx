@@ -1,9 +1,19 @@
 import { Link, useNavigate, useParams } from '@/lib/router'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useProjectId } from '@/lib/projectContext'
 import { Power, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { DetailBodyTemplate } from '@loykin/designkit'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
 import RunDAG from '@/shared/components/RunDAG'
@@ -60,9 +70,10 @@ export default function ScheduleDetailPage() {
   const projectId = useProjectId()
   const { data: schedule, isLoading: scheduleLoading } = useSchedule(id!)
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id!)
-  const { mutate: deleteSchedule } = useDeleteSchedule()
+  const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
   const runColumns = useMemo(() => makeRunColumns(projectId), [projectId])
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   if (!scheduleLoading && !schedule) {
     return (
@@ -77,6 +88,7 @@ export default function ScheduleDetailPage() {
   const isCron = schedule?.schedule_type === 'cron'
 
   return (
+    <>
     <DetailBodyTemplate
       eyebrow={<Link to={`/projects/${projectId}/schedules`} className="hover:text-foreground transition-colors">← Schedules</Link>}
       title={schedule?.name ?? '…'}
@@ -90,10 +102,7 @@ export default function ScheduleDetailPage() {
           )}
           <Badge variant="outline">{TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}</Badge>
           <IconButton icon={<Trash2 />} label="Delete"
-            onClick={() => {
-              if (!confirm(`Delete schedule "${schedule.name}"?`)) return
-              deleteSchedule(schedule.id, { onSuccess: () => navigate(`/projects/${projectId}/schedules`) })
-            }}
+            onClick={() => setConfirmDelete(true)}
             className="text-destructive hover:bg-destructive/10" />
         </div>
       )}
@@ -182,5 +191,31 @@ export default function ScheduleDetailPage() {
         <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">{schedule?.pipeline_yaml || '(empty)'}</pre>
       </DetailBodyTemplate.Section>
     </DetailBodyTemplate>
+
+    <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{schedule?.name}" will be permanently deleted.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={() => {
+              if (!schedule) return
+              deleteSchedule(schedule.id, { onSuccess: () => navigate(`/projects/${projectId}/schedules`) })
+              setConfirmDelete(false)
+            }}
+          >
+            {deleting ? 'Deleting…' : 'Delete schedule'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }

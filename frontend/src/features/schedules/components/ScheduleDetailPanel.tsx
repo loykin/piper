@@ -1,8 +1,19 @@
+import { useState } from 'react'
 import { Link, useNavigate } from '@/lib/router'
 import { Power, Trash2, X } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -52,8 +63,9 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
   const { data: schedule, isLoading: scheduleLoading } = useSchedule(id)
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id)
   const { data: templateVersion } = usePipeline(schedule?.template_version_id ?? '')
-  const { mutate: deleteSchedule } = useDeleteSchedule()
+  const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const closeBtn = (
     <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
@@ -84,6 +96,7 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
   const isCron = schedule.schedule_type === 'cron'
 
   return (
+    <>
     <PanelTemplate
       eyebrow={TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}
       title={schedule.name}
@@ -98,10 +111,7 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
             {TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}
           </Badge>
           <IconButton icon={<Trash2 />} label="Delete"
-            onClick={() => {
-              if (!confirm(`Delete schedule "${schedule.name}"?`)) return
-              deleteSchedule(schedule.id, { onSuccess: () => void close() })
-            }}
+            onClick={() => setConfirmDelete(true)}
             className="text-destructive hover:bg-destructive/10" />
           {closeBtn}
         </div>
@@ -210,5 +220,27 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
         </pre>
       </PanelTemplate.Section>
     </PanelTemplate>
+
+    <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{schedule.name}" will be permanently deleted.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={() => deleteSchedule(schedule.id, { onSuccess: () => void close() })}
+          >
+            {deleting ? 'Deleting…' : 'Delete schedule'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }

@@ -1,6 +1,17 @@
+import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw, Square } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
@@ -19,8 +30,9 @@ function ServingPageInner() {
   const navigate = useNavigate()
   const servicesQuery = useServices()
   const services = servicesQuery.data ?? []
-  const { mutate: stopService } = useStopService()
+  const { mutate: stopService, isPending: stopping } = useStopService()
   const { mutate: restartService } = useRestartService()
+  const [stopTarget, setStopTarget] = useState<Service | null>(null)
 
   const actionColumn: DataGridColumnDef<Service> = {
     id: 'actions',
@@ -38,8 +50,7 @@ function ServingPageInner() {
             <IconButton icon={<Square />} label="Stop"
               onClick={e => {
                 e.stopPropagation()
-                if (!confirm(`Stop service "${svc.name}"?`)) return
-                stopService(svc.name)
+                setStopTarget(svc)
               }}
               className="text-destructive hover:bg-destructive/10" />
           )}
@@ -51,6 +62,7 @@ function ServingPageInner() {
   const columns = [...serviceColumns, actionColumn]
 
   return (
+    <>
     <DataBodyTemplate
       title="Serving"
       description="Model serving endpoints deployed from pipeline artifacts."
@@ -91,6 +103,32 @@ function ServingPageInner() {
         />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+
+    <AlertDialog open={stopTarget != null} onOpenChange={open => { if (!open) setStopTarget(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Stop this service?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{stopTarget?.name}" will stop serving requests immediately.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={stopping}
+            onClick={() => {
+              if (!stopTarget) return
+              stopService(stopTarget.name)
+              setStopTarget(null)
+            }}
+          >
+            {stopping ? 'Stopping…' : 'Stop service'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
 

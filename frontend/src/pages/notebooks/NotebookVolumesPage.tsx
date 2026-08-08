@@ -1,7 +1,17 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { getNotebookVolumeColumns } from '@/features/notebooks/columns'
 import { useNotebookVolumes, usePurgeVolume } from '@/features/notebooks/hooks'
 import type { NotebookVolume } from '@/features/notebooks/api'
@@ -10,13 +20,11 @@ export default function NotebookVolumesPage() {
   const navigate = useNavigate()
   const { data: volumes = [] } = useNotebookVolumes()
   const { mutate: purgeVolume, isPending: purging, variables: purgingId } = usePurgeVolume()
+  const [purgeTarget, setPurgeTarget] = useState<NotebookVolume | null>(null)
 
   const busy = purging ? (purgingId ?? null) : null
 
-  const handlePurge = (vol: NotebookVolume) => {
-    if (!confirm(`Purge volume "${vol.label}"?\nThis will permanently delete ${vol.work_dir} and all its files. This cannot be undone.`)) return
-    purgeVolume(vol.id)
-  }
+  const handlePurge = (vol: NotebookVolume) => setPurgeTarget(vol)
 
   const handleAttach = (volId: string) => navigate(`/notebooks/create?volume=${volId}`)
 
@@ -26,6 +34,7 @@ export default function NotebookVolumesPage() {
   )
 
   return (
+    <>
     <DataBodyTemplate
       title="Notebook Volumes"
       description="Persistent storage for notebook servers. Volumes survive server deletion."
@@ -54,5 +63,31 @@ export default function NotebookVolumesPage() {
         />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+
+    <AlertDialog open={purgeTarget != null} onOpenChange={open => { if (!open) setPurgeTarget(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Purge this volume?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{purgeTarget?.label}" will permanently delete {purgeTarget?.work_dir} and all its files. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={purging}
+            onClick={() => {
+              if (!purgeTarget) return
+              purgeVolume(purgeTarget.id)
+              setPurgeTarget(null)
+            }}
+          >
+            {purging ? 'Purging…' : 'Purge volume'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }

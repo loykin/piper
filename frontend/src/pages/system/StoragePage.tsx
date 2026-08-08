@@ -3,6 +3,16 @@ import { useProjectId } from '@/lib/projectContext'
 import { Download, FolderOpen, RefreshCw, Save, Trash2 } from 'lucide-react'
 import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -15,15 +25,13 @@ import {
   useDeleteSystemCredential,
 } from '@/features/credentials/hooks'
 import {
-  deleteStorageObject,
-  getStorageSettings,
-  listStorageObjects,
-  saveStorageSettings,
-  uploadStorageObject,
-  storageObjectURL,
-  type StorageObjectInfo,
-  type StorageSettingsView,
-} from '@/features/storage/api'
+  useStorageSettings,
+  useStorageObjects,
+  useSaveStorageSettings,
+  useDeleteObject,
+  useUploadObject,
+} from '@/features/storage/hooks'
+import { storageObjectURL, type StorageObjectInfo, type StorageSettingsView } from '@/features/storage/api'
 
 function statusVariant(status: StorageSettingsView['effective']['status']): 'default' | 'secondary' | 'destructive' {
   switch (status) {
@@ -56,18 +64,23 @@ function fmtDate(value: string): string {
 
 export default function StoragePage() {
   const projectId = useProjectId()
-  const [storage, setStorage] = useState<StorageSettingsView | null>(null)
-  const [objects, setObjects] = useState<StorageObjectInfo[]>([])
+  const settingsQuery = useStorageSettings()
+  const storage = settingsQuery.data ?? null
   const [prefix, setPrefix] = useState('')
+  const [appliedPrefix, setAppliedPrefix] = useState('')
+  const objectsQuery = useStorageObjects(appliedPrefix)
+  const objects = objectsQuery.data ?? []
+  const saveSettings = useSaveStorageSettings()
+  const deleteObject = useDeleteObject()
+  const uploadObject = useUploadObject()
+
   const [uploadKey, setUploadKey] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
   const [form, setForm] = useState({ disabled: false, url: '', token: '', credentialRef: '' })
+  const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
+  const [deleteCredentialTarget, setDeleteCredentialTarget] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const formInitialized = useRef(false)
 
   const { data: systemCredentials = [] } = useSystemCredentials()
   const s3Credentials = systemCredentials.filter(c => c.kind === 's3' && !c.disabled)
@@ -77,6 +90,13 @@ export default function StoragePage() {
   const [s3Error, setS3Error] = useState('')
 
   const canCreateS3 = s3Form.name.trim() && s3Form.accessKeyId.trim() && s3Form.secretAccessKey.trim()
+
+  useEffect(() => {
+    if (storage?.config && !formInitialized.current) {
+      formInitialized.current = true
+      setForm({ ...storage.config, credentialRef: storage.config.credentialRef ?? '' })
+    }
+  }, [storage])
 
   async function handleCreateS3Credential() {
     setS3Error('')
@@ -95,10 +115,11 @@ export default function StoragePage() {
     }
   }
 
-  async function handleDeleteS3Credential(name: string) {
-    if (!confirm(`Delete system credential "${name}"?`)) return
-    await deleteSystemCredential.mutateAsync(name)
-    if (form.credentialRef === name) setForm(prev => ({ ...prev, credentialRef: '' }))
+  async function confirmDeleteS3Credential() {
+    if (!deleteCredentialTarget) return
+    await deleteSystemCredential.mutateAsync(deleteCredentialTarget)
+    if (form.credentialRef === deleteCredentialTarget) setForm(prev => ({ ...prev, credentialRef: '' }))
+    setDeleteCredentialTarget(null)
   }
 
   const enabled = storage?.effective.status === 'enabled'
@@ -106,73 +127,32 @@ export default function StoragePage() {
   const backend  = storage?.effective.backend || '—'
   const restartRequired = storage?.restart_required ?? false
 
-  async function loadStorage() {
-    const st = await getStorageSettings().catch(() => null)
-    setStorage(st)
-    if (st) {
-      if (st.config) setForm({ ...st.config, credentialRef: st.config.credentialRef ?? '' })
-      if (st.effective.status === 'enabled') {
-        const objs = await listStorageObjects(projectId, prefix).catch(() => [])
-        setObjects(objs)
-      } else {
-        setObjects([])
-      }
-    }
-    setLoading(false)
-  }
-
-  useEffect(() => { void loadStorage() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleRefresh() {
-    setRefreshing(true)
-    try {
-      setObjects(await listStorageObjects(projectId, prefix))
-    } catch {
-      setObjects([])
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  async function handleSave() {
-    setSaving(true)
-    try {
-      const next = await saveStorageSettings({
+  function handleSave() {
+    saveSettings.mutate(
+      {
         disabled: form.disabled,
         url: form.url.trim(),
         token: form.token,
         credentialRef: form.credentialRef.trim() || undefined,
-      })
-      setStorage(next)
-      setForm({ ...next.config, credentialRef: next.config.credentialRef ?? '' })
-    } finally {
-      setSaving(false)
-    }
+      },
+      {
+        onSuccess: (next) => setForm({ ...next.config, credentialRef: next.config.credentialRef ?? '' }),
+      },
+    )
   }
 
-  async function handleDelete(key: string) {
-    if (!confirm(`Delete stored object "${key}"?`)) return
-    setBusyKey(key)
-    try {
-      await deleteStorageObject(projectId, key)
-      await handleRefresh()
-    } finally {
-      setBusyKey(null)
-    }
+  function confirmDeleteObject() {
+    if (!deleteObjectTarget) return
+    deleteObject.mutate(deleteObjectTarget)
+    setDeleteObjectTarget(null)
   }
 
   async function handleUpload() {
     if (!uploadFile) return
-    setUploading(true)
-    try {
-      await uploadStorageObject(projectId, uploadFile, uploadKey.trim() || uploadFile.name)
-      await handleRefresh()
-      setUploadFile(null)
-      setUploadKey('')
-      if (fileInputRef.current) fileInputRef.current.value = ''
-    } finally {
-      setUploading(false)
-    }
+    await uploadObject.mutateAsync({ file: uploadFile, key: uploadKey.trim() || uploadFile.name })
+    setUploadFile(null)
+    setUploadKey('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const objectColumns: DataGridColumnDef<StorageObjectInfo>[] = [
@@ -221,8 +201,8 @@ export default function StoragePage() {
           <IconButton
             icon={<Trash2 />}
             label="Delete"
-            disabled={busyKey === row.original.key}
-            onClick={e => { e.stopPropagation(); void handleDelete(row.original.key) }}
+            disabled={deleteObject.isPending && deleteObject.variables === row.original.key}
+            onClick={e => { e.stopPropagation(); setDeleteObjectTarget(row.original.key) }}
             className="text-destructive hover:bg-destructive/10"
           />
         </div>
@@ -230,7 +210,7 @@ export default function StoragePage() {
     },
   ]
 
-  if (loading) {
+  if (settingsQuery.isPending) {
     return (
       <DataBodyTemplate title="Storage">
         <DataBodyTemplate.Body>
@@ -241,6 +221,7 @@ export default function StoragePage() {
   }
 
   return (
+    <>
     <DataBodyTemplate
       title="Storage"
       description="Manage artifact storage configuration and browse stored objects."
@@ -251,9 +232,9 @@ export default function StoragePage() {
         </>
       }
       actions={
-        <Button size="sm" onClick={() => void handleSave()} disabled={saving || !storage}>
+        <Button size="sm" onClick={handleSave} disabled={saveSettings.isPending || !storage}>
           <Save className="mr-2 size-4" />
-          {saving ? 'Saving…' : 'Save'}
+          {saveSettings.isPending ? 'Saving…' : 'Save'}
         </Button>
       }
     >
@@ -334,7 +315,7 @@ export default function StoragePage() {
                     <IconButton
                       icon={<Trash2 />}
                       label="Delete"
-                      onClick={() => void handleDeleteS3Credential(c.name)}
+                      onClick={() => setDeleteCredentialTarget(c.name)}
                       className="text-muted-foreground hover:text-destructive"
                     />
                   </div>
@@ -427,10 +408,10 @@ export default function StoragePage() {
             <Button
               size="sm"
               onClick={() => void handleUpload()}
-              disabled={!enabled || !uploadFile || uploading}
+              disabled={!enabled || !uploadFile || uploadObject.isPending}
             >
               <Save className="mr-2 size-4" />
-              {uploading ? 'Uploading…' : 'Upload'}
+              {uploadObject.isPending ? 'Uploading…' : 'Upload'}
             </Button>
           </DataBodyTemplate.Field>
         </DataBodyTemplate.Group>
@@ -447,16 +428,16 @@ export default function StoragePage() {
                 placeholder="prefix filter"
                 className="w-52"
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); void handleRefresh() }
+                  if (e.key === 'Enter') { e.preventDefault(); setAppliedPrefix(prefix) }
                 }}
               />
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void handleRefresh()}
-                disabled={refreshing || !enabled}
+                onClick={() => (appliedPrefix === prefix ? void objectsQuery.refetch() : setAppliedPrefix(prefix))}
+                disabled={objectsQuery.isFetching || !enabled}
               >
-                <RefreshCw className={refreshing ? 'size-4 animate-spin' : 'size-4'} />
+                <RefreshCw className={objectsQuery.isFetching ? 'size-4 animate-spin' : 'size-4'} />
               </Button>
             </div>
           }
@@ -476,5 +457,45 @@ export default function StoragePage() {
 
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+
+    <AlertDialog open={deleteObjectTarget != null} onOpenChange={open => { if (!open) setDeleteObjectTarget(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this object?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{deleteObjectTarget}" will be permanently deleted from the object store.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={confirmDeleteObject}>
+            Delete object
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog open={deleteCredentialTarget != null} onOpenChange={open => { if (!open) setDeleteCredentialTarget(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this system credential?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{deleteCredentialTarget}" will be permanently deleted.
+            {form.credentialRef === deleteCredentialTarget && ' It is currently referenced by storage.credentialRef.'}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleteSystemCredential.isPending}
+            onClick={() => void confirmDeleteS3Credential()}
+          >
+            {deleteSystemCredential.isPending ? 'Deleting…' : 'Delete credential'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }

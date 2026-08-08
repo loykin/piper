@@ -42,8 +42,8 @@ importers:
         specifier: 0.0.1-dev.3
         version: 0.0.1-dev.3(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@loykin/designkit':
-        specifier: 0.0.4
-        version: 0.0.4(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)(use-sync-external-store@1.6.0(react@19.2.8))
+        specifier: 0.0.5
+        version: 0.0.5(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)(use-sync-external-store@1.6.0(react@19.2.8))
       '@loykin/gridkit':
         specifier: ^0.2.2
         version: 0.2.2(@tanstack/react-table@8.21.3(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@tanstack/react-virtual@3.14.9(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
@@ -573,8 +573,8 @@ packages:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@loykin/designkit@0.0.4':
-    resolution: {integrity: sha512-HMxE0zozhqpOMEDxqcWIjEqXC+SLSc8ikT1/yY/vEWBNOIYUE4KlgtJJ4OXkyeuWKo4V71PHfokADwol6yC43g==}
+  '@loykin/designkit@0.0.5':
+    resolution: {integrity: sha512-zSIav85G2GBPDQdcRLBoMH/IxMmmtQkXvzqsmlBx7RwyhfiJxv+3OidBRAHYLHZ04qFiMnrjwDxdoTU8S61dvw==}
     hasBin: true
     peerDependencies:
       react: ^19.0.0
@@ -3179,7 +3179,7 @@ snapshots:
       - '@types/react'
       - date-fns
 
-  '@loykin/designkit@0.0.4(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)(use-sync-external-store@1.6.0(react@19.2.8))':
+  '@loykin/designkit@0.0.5(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)(use-sync-external-store@1.6.0(react@19.2.8))':
     dependencies:
       '@base-ui/react': 1.6.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       class-variance-authority: 0.7.1

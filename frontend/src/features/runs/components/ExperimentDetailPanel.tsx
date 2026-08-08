@@ -139,7 +139,7 @@ export function ExperimentDetailPanel({ experiment }: { experiment: string }) {
           tableWidthMode="fill-last"
           rowHeight={44}
           rowCursor
-          onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 720 })}
+          onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 480 })}
         />
       </PanelTemplate.Section>
     </PanelTemplate>

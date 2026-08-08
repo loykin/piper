@@ -1,9 +1,19 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { getNotebookColumns } from '@/features/notebooks/columns'
 import { NotebookDetailPanel } from '@/features/notebooks/components/NotebookDetailPanel'
@@ -25,6 +35,7 @@ function NotebooksPageInner() {
   const { mutate: stop, isPending: stopping, variables: stoppingName } = useStopNotebook()
   const { mutate: start, isPending: starting, variables: startingName } = useStartNotebook()
   const { mutate: del, isPending: deleting, variables: deletingName } = useDeleteNotebook()
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   const busy = stopping ? (stoppingName ?? null)
     : starting ? (startingName ?? null)
@@ -33,10 +44,7 @@ function NotebooksPageInner() {
 
   const handleStop   = (name: string) => stop(name)
   const handleStart  = (name: string) => start(name)
-  const handleDelete = (name: string) => {
-    if (!confirm(`Delete notebook "${name}"?\nThe volume and work directory are preserved. You can recover them from the Volumes page.`)) return
-    del(name)
-  }
+  const handleDelete = (name: string) => setDeleteTarget(name)
 
   const columns = useMemo(
     () => getNotebookColumns(busy, handleStop, handleStart, handleDelete, projectId),
@@ -44,6 +52,7 @@ function NotebooksPageInner() {
   )
 
   return (
+    <>
     <DataBodyTemplate
       title="Notebooks"
       description="Jupyter notebook servers. Click a row to view details or Open to launch in a new tab."
@@ -97,6 +106,32 @@ function NotebooksPageInner() {
         />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
+
+    <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this notebook?</AlertDialogTitle>
+          <AlertDialogDescription>
+            "{deleteTarget}" will be deleted. The volume and work directory are preserved — you can recover them from the Volumes page.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={() => {
+              if (!deleteTarget) return
+              del(deleteTarget)
+              setDeleteTarget(null)
+            }}
+          >
+            {deleting ? 'Deleting…' : 'Delete notebook'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
 

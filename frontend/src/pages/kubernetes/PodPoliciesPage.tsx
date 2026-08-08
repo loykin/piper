@@ -1,10 +1,20 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { stringify as yamlStringify } from 'yaml'
 import { DataBodyTemplate, PageTopBar, PanelTemplate } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { X } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { PodPolicyForm } from '@/features/workers/components/PodPolicyForm'
@@ -25,6 +35,7 @@ function relativeTime(ts: string): string {
 function EditPolicyPanel({ policy }: { policy: WorkerPodPolicy }) {
   const { close } = useSidePanel()
   const { mutateAsync: del, isPending: deleting } = useDeleteWorkerPodPolicy()
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   const initialYaml = useMemo(
     () => policy.pod_template && Object.keys(policy.pod_template).length > 0
@@ -35,6 +46,7 @@ function EditPolicyPanel({ policy }: { policy: WorkerPodPolicy }) {
   )
 
   return (
+    <>
     <PanelTemplate
       eyebrow="Pod Policy"
       title={<span className="break-all font-mono text-sm">{policy.worker_id}</span>}
@@ -57,16 +69,38 @@ function EditPolicyPanel({ policy }: { policy: WorkerPodPolicy }) {
           variant="destructive"
           size="sm"
           disabled={deleting}
-          onClick={async () => {
-            if (!confirm(`Remove pod policy for ${policy.worker_id}?`)) return
-            await del(policy.worker_id)
-            void close()
-          }}
+          onClick={() => setConfirmRemove(true)}
         >
           {deleting ? 'Removing…' : 'Remove policy'}
         </Button>
       </PanelTemplate.Section>
     </PanelTemplate>
+
+    <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove this pod policy?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The pod policy for {policy.worker_id} will be permanently removed.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={deleting}
+            onClick={async () => {
+              await del(policy.worker_id)
+              setConfirmRemove(false)
+              void close()
+            }}
+          >
+            {deleting ? 'Removing…' : 'Remove policy'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   )
 }
 
@@ -133,6 +167,7 @@ function PodPoliciesContent() {
           emptyMessage="No pod policies configured. Click 'Add policy' to create one."
           tableWidthMode="fill-last"
           rowHeight={44}
+          rowCursor
           onRowClick={(row) => open(<EditPolicyPanel policy={row} />, { size: 560 })}
           pagination={{ pageSize: 20 }}
           footer={(table) => (

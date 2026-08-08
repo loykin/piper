@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useEffect } from 'react'
 import {
   ReactFlow,
   Background,
@@ -222,8 +222,20 @@ export default function RunDAG({ pipelineYaml, steps, selected, onSelectStep }: 
     [stepDefs, stepMap],
   )
 
-  const [nodes, , onNodesChange] = useNodesState(initialNodes)
-  const [edges, , onEdgesChange] = useEdgesState(initialEdges)
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+
+  // useNodesState/useEdgesState only seed from their initial value on mount.
+  // Re-sync when the parsed pipeline YAML changes (e.g. it arrives after this
+  // component was first mounted with an empty/loading value) so the DAG
+  // doesn't stay permanently empty once real data shows up.
+  useEffect(() => {
+    setNodes(initialNodes)
+  }, [initialNodes, setNodes])
+
+  useEffect(() => {
+    setEdges(initialEdges)
+  }, [initialEdges, setEdges])
 
   // Sync nodes when status/selection changes
   const syncedNodes = useMemo(() =>

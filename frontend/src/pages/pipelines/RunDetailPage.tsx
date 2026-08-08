@@ -28,7 +28,7 @@ export default function RunDetailPage() {
   const [selectedStep, setSelectedStep] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<'cancel' | 'delete' | null>(null)
 
-  const { data: run = null, isLoading } = useRun(id!)
+  const { data: run = null, isLoading, isError } = useRun(id!)
   const { data: steps = [] } = useRunSteps(id!)
 
   const { data: allArtifacts = [] } = useStepArtifacts(id!, selectedStep)
@@ -43,6 +43,21 @@ export default function RunDetailPage() {
       setSelectedStep(steps[0].step_name)
     }
   }, [steps, selectedStep])
+
+  if (isError || (!isLoading && !run)) {
+    return (
+      <DetailBodyTemplate
+        eyebrow={<Link to={`/projects/${projectId}/history`} className="hover:text-foreground transition-colors">← History</Link>}
+        title="Run not found"
+      >
+        <DetailBodyTemplate.Section>
+          <p className="text-sm text-muted-foreground">
+            Run <span className="font-mono">{id}</span> doesn't exist or may have been deleted.
+          </p>
+        </DetailBodyTemplate.Section>
+      </DetailBodyTemplate>
+    )
+  }
 
   if (isLoading || !run) {
     return (

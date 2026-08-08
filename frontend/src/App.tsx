@@ -10,7 +10,8 @@ import {
   RouterProvider,
   useRouter,
 } from '@tanstack/react-router'
-import { useLocation, useNavigate } from '@/lib/router'
+import { Link, useLocation, useNavigate } from '@/lib/router'
+import { buttonVariants } from '@/components/ui/button'
 import {
   SidebarProvider,
   Sidebar,
@@ -418,12 +419,30 @@ function RootRedirect() {
 
 function ProjectScopedFallback() {
   const { projectId } = useProjectContext()
-  return <RedirectTo to={projectId ? `/projects/${projectId}/schedules` : '/'} />
+  return <NotFoundPage homeTo={projectId ? `/projects/${projectId}/schedules` : '/'} />
+}
+
+function NotFoundPage({ homeTo }: { homeTo: string }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <p className="text-sm font-medium text-muted-foreground">404</p>
+      <h1 className="text-lg font-semibold">Page not found</h1>
+      <p className="max-w-sm text-sm text-muted-foreground">
+        The page you requested doesn't exist or may have been moved.
+      </p>
+      <Link to={homeTo} className={buttonVariants({ size: 'sm', className: 'mt-2' })}>Go back</Link>
+    </div>
+  )
 }
 
 function LegacyProjectRedirect({ to }: { to: string }) {
   const { projectId } = useProjectContext()
   return <RedirectTo to={projectId ? `/projects/${projectId}/${to}` : '/'} />
+}
+
+function AppNotFoundFallback() {
+  const { projectId } = useProjectContext()
+  return <NotFoundPage homeTo={projectId ? `/projects/${projectId}/schedules` : '/'} />
 }
 
 function RedirectTo({ to }: { to: string }) {
@@ -499,7 +518,7 @@ const routeTree = rootRoute.addChildren([
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies', component: PodPoliciesPage }),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies/new', component: PodPoliciesCreatePage }),
     ...legacyProjectRoutes,
-    createRoute({ getParentRoute: () => appLayoutRoute, path: '$', component: () => <RedirectTo to="/" /> }),
+    createRoute({ getParentRoute: () => appLayoutRoute, path: '$', component: AppNotFoundFallback }),
   ]),
 ])
 

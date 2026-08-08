@@ -116,6 +116,30 @@ present, this is very likely a test-environment artifact, not a real defect.
 Confirm with `document.hidden`/`document.hasFocus()` via the browser tool's
 JS-eval action before concluding either way.
 
+### 3c. A click on a Base UI Select/Tabs/etc. that "does nothing": retry, then try keyboard
+
+This app's interactive primitives (`Select`, `Tabs`, and others from
+`@loykin/designkit`, wrapping `@base-ui/react`) rely on pointer-capture-based
+interaction handling. Both this browser tool's click action and a raw JS
+`dispatchEvent` of `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`
+intermittently fail to register against them — a Select option can appear to
+render and be "clicked" with no effect, or a `TabsTrigger` click can silently
+no-op on the first attempt and work on an identical second attempt. Two live
+examples from a real pass: a Select's `onValueChange` never fired despite three
+different click strategies, but `ArrowDown`+`Enter` (keyboard) worked first try;
+a `TabsTrigger` click did nothing on attempt 1 and switched tabs correctly on
+an immediate, identical attempt 2.
+
+Before filing a "click does nothing" bug against one of these components:
+1. Retry the exact same click once — a silent first-attempt failure followed by
+   a working retry means the interaction itself is fine.
+2. For a Select specifically, if retry doesn't resolve it, drive it with real
+   keyboard input instead (`ArrowDown`/`ArrowUp` then `Enter`) through the same
+   tool's key-press action. Keyboard succeeding means this is very likely the
+   automation gap, not an app defect — note it as such rather than as a
+   confirmed finding, and recommend one manual real-mouse click-through to
+   fully rule it out.
+
 ### 4. Don't trust a success response — check the log too
 
 A `200`/`201` or "success" API response only tells you the request was

@@ -418,8 +418,8 @@ export default function StoragePage() {
 
         <DataBodyTemplate.Group
           layout="stacked"
-          title="Stored Objects"
-          description="Browse and download stored artifacts from the active object store."
+          title="Uploaded Objects"
+          description="Files uploaded directly through this page, under this project's uploads/ prefix. Pipeline run artifacts are stored separately — browse and download them from that run's detail page."
           actions={
             <div className="flex items-center gap-2">
               <Input
@@ -448,7 +448,7 @@ export default function StoragePage() {
             emptyMessage={
               !enabled
                 ? 'Object storage is disabled or unavailable.'
-                : 'No stored objects found for this prefix.'
+                : 'No uploaded objects found for this prefix.'
             }
             tableWidthMode="fill-last"
             rowHeight={44}

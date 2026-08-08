@@ -102,6 +102,20 @@ These are the states an implementer is least likely to have manually
 tried, because by the time a feature is being built, the "happy path"
 inputs are already the ones in front of them.
 
+### 3b. If testing via an automated browser tool, verify polling separately
+
+Automated browser tabs (e.g. an MCP-driven browser pane) frequently report
+`document.visibilityState: "hidden"` and `document.hasFocus(): false` even
+when they're the only/active tab — because they never receive real OS/browser
+focus. React Query's `refetchInterval` pauses by default while the document
+is hidden (`refetchIntervalInBackground` defaults to `false`), so a page that
+polls correctly for a real user can look completely frozen in this kind of
+automated session. Before filing "no live update" as a bug, check the source
+for `backgroundPolling()`/`refetchInterval` on the relevant hook — if it's
+present, this is very likely a test-environment artifact, not a real defect.
+Confirm with `document.hidden`/`document.hasFocus()` via the browser tool's
+JS-eval action before concluding either way.
+
 ### 4. Don't trust a success response — check the log too
 
 A `200`/`201` or "success" API response only tells you the request was

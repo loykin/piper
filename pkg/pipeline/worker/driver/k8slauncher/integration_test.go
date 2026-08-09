@@ -75,6 +75,7 @@ func TestIntegration_SimpleJob(t *testing.T) {
 		&proto.Task{RunID: runID, StepName: "hello"},
 		"registry:2",
 		nil,
+		"", "", "",
 	)
 	if err != nil {
 		t.Fatalf("build job: %v", err)
@@ -150,7 +151,7 @@ func TestIntegration_DispatchJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build agent args: %v", err)
 	}
-	if _, err := l.CreateJob(ctx, task, "", "alpine:3.20", args, nil); err != nil {
+	if _, err := l.CreateJob(ctx, task, "", "alpine:3.20", args, nil, "", ""); err != nil {
 		t.Fatalf("CreateJob failed: %v", err)
 	}
 	jobID := jobName(task)

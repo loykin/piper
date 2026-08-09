@@ -91,18 +91,16 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 		return driver.Handle{}, fmt.Errorf("k8s driver: spec.Namespace is required")
 	}
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
-		StorageToken: spec.StorageToken,
-		StorageURL:   spec.StorageURL,
-		OutputDir:    "/piper-outputs",
-		InputDir:     "/piper-inputs",
-		TaskFile:     "/piper-task/task.json",
-		ResultFile:   "/dev/termination-log",
+		OutputDir:  "/piper-outputs",
+		InputDir:   "/piper-inputs",
+		TaskFile:   "/piper-task/task.json",
+		ResultFile: "/dev/termination-log",
 	})
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("k8s driver: build agent args: %w", err)
 	}
 	launcher := d.launcher(namespace)
-	runtimeKey, err := launcher.CreateJob(ctx, task, spec.RuntimeKey, image, agentArgs, nil)
+	runtimeKey, err := launcher.CreateJob(ctx, task, spec.RuntimeKey, image, agentArgs, nil, spec.StorageURL, spec.StorageToken)
 	if err != nil {
 		return driver.Handle{}, fmt.Errorf("k8s dispatch: %w", err)
 	}

@@ -15,6 +15,11 @@ import (
 // argument list. It is environment-agnostic; each RuntimeDriver supplies
 // the paths it mounts or creates.
 type AgentExecConfig struct {
+	// StorageToken and StorageURL are never placed on the command line (visible
+	// via ps/docker inspect/kubectl describe). Drivers must deliver them through
+	// StorageEnv() instead — a process env var (baremetal/docker) or a
+	// secretKeyRef-backed env var (k8s). See docs/backend/develop.md's
+	// "Storage Ownership Invariant".
 	StorageToken string
 	StorageURL   string
 	OutputDir    string
@@ -29,7 +34,8 @@ type AgentExecConfig struct {
 
 // BuildAgentExec returns the argv slice for `piper agent exec`, not including
 // the binary itself. When TaskFile is set, the task is read from that path;
-// otherwise it falls back to the legacy --task payload.
+// otherwise it falls back to the legacy --task payload. Storage credentials
+// are never included — see StorageEnv.
 func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 	if cfg.ResultFile == "" {
 		return nil, fmt.Errorf("taskruntime.BuildAgentExec: ResultFile is required")
@@ -48,12 +54,6 @@ func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 		}
 		args = append(args, "--task="+taskB64)
 	}
-	if cfg.StorageToken != "" {
-		args = append(args, "--storage-token="+cfg.StorageToken)
-	}
-	if cfg.StorageURL != "" {
-		args = append(args, "--storage-url="+cfg.StorageURL)
-	}
 	if cfg.OutputDir != "" {
 		args = append(args, "--output-dir="+cfg.OutputDir)
 	}
@@ -61,6 +61,21 @@ func BuildAgentExec(task *proto.Task, cfg AgentExecConfig) ([]string, error) {
 		args = append(args, "--input-dir="+cfg.InputDir)
 	}
 	return args, nil
+}
+
+// StorageEnv returns "KEY=VALUE" process-environment entries carrying storage
+// credentials for `piper agent exec`. Drivers pass these through the
+// execution environment's own env facility (core.Spec.Env for baremetal,
+// container.Config.Env for docker) instead of CLI args.
+func (cfg AgentExecConfig) StorageEnv() []string {
+	var env []string
+	if cfg.StorageURL != "" {
+		env = append(env, "PIPER_STORAGE_URL="+cfg.StorageURL)
+	}
+	if cfg.StorageToken != "" {
+		env = append(env, "PIPER_STORAGE_TOKEN="+cfg.StorageToken)
+	}
+	return env
 }
 
 // WriteTaskFile writes a proto.Task JSON payload for piper agent exec.

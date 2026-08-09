@@ -20,6 +20,13 @@ const (
 	MethodPipelineTaskResult = "pipeline.task_result"
 	MethodPipelineResultAck  = "pipeline.task_result_ack"
 
+	// Worker-initiated (RPCRequest, not RPCCommand) — the DB access
+	// interface a worker uses to persist state through master's DB rather
+	// than the master deciding and pushing it down. See docs/backend/develop.md.
+	MethodPipelineStepUpsert          = "pipeline.step_upsert"
+	MethodPipelineRunFinalize         = "pipeline.run_finalize"
+	MethodPipelineWorkerRecoveryQuery = "pipeline.worker_recovery_query"
+
 	MethodFSListFiles      = "fs.list_files"
 	MethodFSUploadSnapshot = "fs.upload_snapshot"
 

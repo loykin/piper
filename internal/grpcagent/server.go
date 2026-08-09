@@ -23,6 +23,26 @@ import (
 // agentID identifies the sending agent so callers can validate ownership.
 type PushHandler func(ctx context.Context, agentID, method string, payload []byte)
 
+type contextKey int
+
+const agentIDContextKey contextKey = iota
+
+// RequestAgentID returns the authenticated agent ID for a worker-initiated
+// RPCRequest, as recorded by Server.Connect from the tunnel connection the
+// request arrived on — never from anything the worker's payload claims.
+// Handlers registered via Server.Dispatcher() for worker-initiated methods
+// (pipeline.step_upsert, pipeline.worker_recovery_query, etc.) must resolve
+// the acting worker's identity through this, the same way worker_push.go
+// overwrites result.WorkerID from the authenticated connection instead of
+// trusting the pushed payload for the existing StatusPush path. Returns ""
+// if ctx did not come from a worker-initiated request (e.g. a unit test
+// calling a handler directly) — treat that as "no authenticated identity,"
+// not as license to fall back to a payload-supplied worker_id.
+func RequestAgentID(ctx context.Context) string {
+	id, _ := ctx.Value(agentIDContextKey).(string)
+	return id
+}
+
 // Server implements AgentServiceServer. It maintains one stream per connected
 // worker and exposes SendRPC for master-initiated commands.
 type Server struct {
@@ -36,6 +56,11 @@ type Server struct {
 	onLost         func(agentID string)       // called when a worker disconnects
 	pushHandler    PushHandler
 	connectHandler func(agentID string) // called after onReg completes
+
+	// dispatcher routes worker-initiated RPCRequest frames (the DB access
+	// interface) to registered handlers — the master-side mirror of Client's
+	// Dispatcher, which routes master-initiated RPCCommand frames.
+	dispatcher *Dispatcher
 }
 
 // Registration carries the metadata a worker sends on first connect.
@@ -55,15 +80,20 @@ type Registration struct {
 // onLost is called (in a goroutine) whenever a worker disconnects.
 func NewServer(onReg func(Registration), onLost func(agentID string)) *Server {
 	return &Server{
-		conns:  make(map[string]*workerConn),
-		subs:   make(map[string][]chan struct{}),
-		onReg:  onReg,
-		onLost: onLost,
+		conns:      make(map[string]*workerConn),
+		subs:       make(map[string][]chan struct{}),
+		onReg:      onReg,
+		onLost:     onLost,
+		dispatcher: NewDispatcher(),
 	}
 }
 
 // SetPushHandler registers the handler for worker-initiated StatusPush messages.
 func (s *Server) SetPushHandler(h PushHandler) { s.pushHandler = h }
+
+// Dispatcher returns the router for worker-initiated RPCRequest frames.
+// Register handlers on it (e.g. via RegisterJSON) before workers connect.
+func (s *Server) Dispatcher() *Dispatcher { return s.dispatcher }
 
 // SetConnectHandler registers a callback invoked (in a goroutine) after each
 // agent registration completes. Use it to trigger state reconciliation on connect
@@ -135,6 +165,30 @@ func (s *Server) Connect(stream agentpb.AgentService_ConnectServer) error {
 			conn.deliverProxyData(p.ProxyData.ChannelId, p.ProxyData.Data)
 		case *agentpb.WorkerMessage_ProxyClose:
 			conn.deliverProxyClose(p.ProxyClose.ChannelId, p.ProxyClose.Error)
+		case *agentpb.WorkerMessage_Request:
+			// Run off the recv loop, mirroring how the client handles RpcCmd:
+			// a slow handler (a DB write) must not block reading of other
+			// frames — status pushes, proxy data — sharing this worker's tunnel.
+			req := p.Request
+			// Bind the authenticated agent ID from this tunnel connection
+			// onto the handler's context — never from anything the request
+			// payload claims — so a handler for a worker-initiated method
+			// (e.g. pipeline.step_upsert) can't be spoofed into acting on
+			// another worker's identity. Mirrors worker_push.go's existing
+			// overwrite of result.WorkerID for the StatusPush path. See
+			// RequestAgentID.
+			baseCtx := context.WithValue(stream.Context(), agentIDContextKey, conn.agentID)
+			conn.exec.runBounded(baseCtx, 0, func(reqCtx context.Context) {
+				resp := s.dispatcher.handleRequest(reqCtx, req)
+				conn.writeMu.Lock()
+				sendErr := conn.stream.Send(&agentpb.MasterMessage{
+					Payload: &agentpb.MasterMessage_RpcResponse{RpcResponse: resp},
+				})
+				conn.writeMu.Unlock()
+				if sendErr != nil {
+					slog.Warn("grpc master: send rpc response failed", "method", req.Method, "err", sendErr)
+				}
+			})
 		}
 	}
 }
@@ -297,6 +351,9 @@ type workerConn struct {
 	pushDone  chan struct{}
 	closed    chan struct{}
 	once      sync.Once
+	// exec runs worker-initiated RPCRequest handlers off this connection's
+	// recv loop — see the WorkerMessage_Request case in Connect.
+	exec *commandExecutor
 }
 
 // proxyChannel holds the buffered incoming channel and the pipe write end for
@@ -314,6 +371,7 @@ func newWorkerConn(agentID string, stream agentpb.AgentService_ConnectServer) *w
 		pushQueue: newBoundedLaneQueue(),
 		pushDone:  make(chan struct{}),
 		closed:    make(chan struct{}),
+		exec:      newCommandExecutor(0),
 	}
 }
 

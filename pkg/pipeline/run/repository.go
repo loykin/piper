@@ -24,6 +24,17 @@ type Repository interface {
 	// error) instead of clobbering whichever terminal status won first.
 	FinalizeStatusCAS(ctx context.Context, projectID, id, to string, endedAt *time.Time) (applied bool, err error)
 	MarkRunning(ctx context.Context, projectID, id string, startedAt time.Time) error
+	// SetWorkerID records the worker this run is bound to (see AGENTS.md's
+	// "Worker Assignment": one run always executes on one worker), but only
+	// if the row doesn't already have one — a CAS on "worker_id = ''", not a
+	// blind overwrite, so a second, differently-raced call can't reassign a
+	// run to another worker after the fact. applied=false means the row
+	// already had a different worker_id (or the row itself is missing) —
+	// callers must check this rather than assuming success, since a caller
+	// that treats this binding as an authorization root (see
+	// pipelinedispatch.AgentBackend.Dispatch) would otherwise let a workload
+	// go out to a worker the DB never actually confirmed as owner.
+	SetWorkerID(ctx context.Context, projectID, id, workerID string) (applied bool, err error)
 	Delete(ctx context.Context, projectID, id string) error
 	GetLatestSuccessful(ctx context.Context, projectID, pipelineName string) (*Run, error)
 	// ListTerminalBefore returns terminal (non-running, non-scheduled) runs
@@ -41,14 +52,26 @@ type Repository interface {
 // StepRepository is the persistence interface for Step records.
 type StepRepository interface {
 	Upsert(ctx context.Context, s *Step) error
-	// UpsertCAS behaves like Upsert but only overwrites an existing row when
-	// s.Attempts is at least the row's current attempts — a lower attempts
-	// value means this write is a stale/delayed report for an earlier
-	// attempt that a newer attempt has since superseded, so it's silently
-	// dropped instead of clobbering the newer result. Returns applied=false
-	// (not an error) in that case.
+	// UpsertCAS behaves like Upsert but guards against two kinds of stale
+	// write: a lower s.Attempts than the row's current attempts (a
+	// delayed report for an earlier attempt that a newer attempt has since
+	// superseded), and — at the *same* attempt — a write that would move a
+	// terminal row (done/failed/skipped/canceled) to a non-terminal status
+	// (a delayed "running" report arriving after "done" already landed for
+	// that attempt, e.g. from worker restart/retransmission). Both cases
+	// are silently dropped instead of clobbering the newer/terminal result;
+	// applied=false (not an error) reports that back to the caller.
 	UpsertCAS(ctx context.Context, s *Step) (applied bool, err error)
 	List(ctx context.Context, projectID, runID string) ([]*Step, error)
 	ListByRuns(ctx context.Context, projectID string, runIDs []string) (map[string][]*Step, error)
 	DeleteByRun(ctx context.Context, projectID, runID string) error
+	// ListNonTerminalByWorker returns every step assigned to workerID (across
+	// all projects/runs) whose status is not yet terminal
+	// (done/failed/skipped/canceled). A worker calls this on its own restart
+	// to rebuild local scheduling state from the DB, rather than trusting any
+	// state it held in memory before the restart — the DB row is the source
+	// of truth for "what is this worker still responsible for," the same way
+	// FinalizeStatusCAS's row check is the source of truth for "is this run
+	// done."
+	ListNonTerminalByWorker(ctx context.Context, workerID string) ([]*Step, error)
 }

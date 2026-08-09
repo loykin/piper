@@ -89,6 +89,9 @@ func (r *memoryRunRepo) statusOf(id string) string {
 	defer r.mu.Unlock()
 	return r.status[id]
 }
+func (r *memoryRunRepo) SetWorkerID(context.Context, string, string, string) (bool, error) {
+	return true, nil
+}
 func (r *memoryRunRepo) MarkRunning(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -141,6 +144,9 @@ func (r *memoryStepRepo) ListByRuns(context.Context, string, []string) (map[stri
 	return map[string][]*run.Step{}, nil
 }
 func (r *memoryStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
+func (r *memoryStepRepo) ListNonTerminalByWorker(context.Context, string) ([]*run.Step, error) {
+	return nil, nil
+}
 
 // stepOf reads a step under the same lock Upsert uses, so tests can inspect
 // it from the main goroutine while the queue's background persist writer
@@ -902,7 +908,7 @@ func TestRecoverMarksInFlightStepRecoveringNotPending(t *testing.T) {
 	ctx := context.Background()
 	pl, dag := recoverySinglePipeline("recover-inflight")
 	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
-	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	entry := q.runs["run-recover"].tasks["first"]
@@ -920,7 +926,7 @@ func TestRecoverLeaseRenewalPromotesRecoveringToRunning(t *testing.T) {
 	runRepo := &memoryRunRepo{}
 	q := NewQueue(context.Background(), runRepo, &memoryStepRepo{})
 	q.SetRecoveryGracePeriod(200 * time.Millisecond)
-	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-lease", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-lease", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	taskID := MakeTaskID("run-recover-lease", "first")
@@ -939,6 +945,48 @@ func TestRecoverLeaseRenewalPromotesRecoveringToRunning(t *testing.T) {
 	}
 }
 
+// TestRecoverRestoresWorkerBindingRejectsWrongWorkerLease reproduces the gap
+// where a recovered "running" step's owner was never restored: before this,
+// entry.task.WorkerID/entry.assignedWorkerID stayed "" after recovery for an
+// auto-assigned run (no explicit placement.worker in the manifest), so
+// RenewLeases' ownership check (`entry.task.WorkerID != "" && ... != nil`)
+// was trivially satisfied by *any* worker's lease claim — not just the one
+// that was actually running the step before the crash.
+func TestRecoverRestoresWorkerBindingRejectsWrongWorkerLease(t *testing.T) {
+	ctx := context.Background()
+	pl, dag := recoverySinglePipeline("recover-binding")
+	runRepo := &memoryRunRepo{}
+	q := NewQueue(context.Background(), runRepo, &memoryStepRepo{})
+	q.SetRecoveryGracePeriod(2 * time.Second)
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-binding", "worker-a", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
+
+	taskID := MakeTaskID("run-recover-binding", "first")
+	entry := q.runs["run-recover-binding"].tasks["first"]
+	if entry.task.WorkerID != "worker-a" {
+		t.Fatalf("recovered task.WorkerID = %q, want %q", entry.task.WorkerID, "worker-a")
+	}
+	if entry.assignedWorkerID != "worker-a" {
+		t.Fatalf("recovered assignedWorkerID = %q, want %q", entry.assignedWorkerID, "worker-a")
+	}
+
+	// A different worker's lease claim must be rejected outright, not
+	// silently accepted as the owner.
+	q.RenewLeases("worker-b", []string{taskID})
+	if entry.status != taskRecovering {
+		t.Fatalf("status after a wrong-worker lease renewal = %q, want still %q", entry.status, taskRecovering)
+	}
+	if entry.assignedWorkerID != "worker-a" {
+		t.Fatalf("assignedWorkerID changed to %q after a wrong-worker renewal, want unchanged %q", entry.assignedWorkerID, "worker-a")
+	}
+
+	// The actually-bound worker's lease claim must be accepted.
+	q.RenewLeases("worker-a", []string{taskID})
+	if entry.status != taskRunning {
+		t.Fatalf("status after the bound worker's lease renewal = %q, want %q", entry.status, taskRunning)
+	}
+}
+
 func TestRecoveryGraceExpiryFailsStepWithoutRetryPolicy(t *testing.T) {
 	ctx := context.Background()
 	pl, dag := recoverySinglePipeline("recover-grace-fail")
@@ -946,7 +994,7 @@ func TestRecoveryGraceExpiryFailsStepWithoutRetryPolicy(t *testing.T) {
 	stepRepo := &memoryStepRepo{}
 	q := NewQueue(context.Background(), runRepo, stepRepo)
 	q.SetRecoveryGracePeriod(100 * time.Millisecond)
-	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-fail", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-fail", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	if !waitUntil(2*time.Second, func() bool {
@@ -975,7 +1023,7 @@ func TestRecoveryGraceExpiryCommitsStatusAfterCallerContextCanceled(t *testing.T
 	stepRepo := &ctxCheckingStepRepo{&memoryStepRepo{}}
 	q := NewQueue(context.Background(), runRepo, stepRepo)
 	q.SetRecoveryGracePeriod(100 * time.Millisecond)
-	q.RecoverWithEnv(recoverCtx, "project-a", pl, dag, "run-recover-grace-canceled-caller", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(recoverCtx, "project-a", pl, dag, "run-recover-grace-canceled-caller", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	// Simulate the recovery-triggering context ending (e.g. server startup
@@ -1001,7 +1049,7 @@ func TestRecoveryGraceExpiryRetriesWhenRetryPolicyConfigured(t *testing.T) {
 	q.SetRecoveryGracePeriod(100 * time.Millisecond)
 	q.SetRetryPolicy(2, 0)
 	q.SetBackend(taskBackend)
-	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-retry", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-retry", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	if !waitUntil(2*time.Second, func() bool {
@@ -1030,7 +1078,7 @@ func TestRecoveryGraceExpiryReleasesRouterCapacity(t *testing.T) {
 	q := NewQueue(context.Background(), &memoryRunRepo{}, &memoryStepRepo{})
 	q.SetRecoveryGracePeriod(100 * time.Millisecond)
 	q.SetBackend(taskBackend)
-	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-grace-release", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-grace-release", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	wantTaskID := MakeTaskID("run-recover-grace-release", "first")
@@ -1048,7 +1096,7 @@ func TestLateResultAfterRecoveryGraceExpiryIsIgnored(t *testing.T) {
 	stepRepo := &memoryStepRepo{}
 	q := NewQueue(context.Background(), runRepo, stepRepo)
 	q.SetRecoveryGracePeriod(100 * time.Millisecond)
-	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-late", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-late", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	if !waitUntil(2*time.Second, func() bool {
@@ -1076,7 +1124,7 @@ func TestCleanupBackstopFailsOrphanedRecoveringStep(t *testing.T) {
 	// A long grace period so the timer itself would never fire during the test;
 	// this isolates the Cleanup TTL sweep as the thing that must catch it.
 	q.SetRecoveryGracePeriod(time.Hour)
-	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-backstop", ".", t.TempDir(), proto.BuiltinVars{}, nil,
+	q.RecoverWithEnv(ctx, "project-a", pl, dag, "run-recover-backstop", "", ".", t.TempDir(), proto.BuiltinVars{}, nil,
 		[]RecoveredStep{{Name: "first", StartedAt: time.Now().Add(-time.Minute), Attempts: 1}}, nil)
 
 	entry := q.runs["run-recover-backstop"].tasks["first"]

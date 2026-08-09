@@ -46,15 +46,30 @@ func RegisterJSON[T, R any](d *Dispatcher, method string, handler func(context.C
 	})
 }
 
-// handleCmd dispatches an RPCCommand and returns the RPCResponse to send back.
+// handleCmd dispatches an RPCCommand (master → worker) and returns the
+// RPCResponse to send back.
 func (d *Dispatcher) handleCmd(ctx context.Context, cmd *agentpb.RPCCommand) *agentpb.RPCResponse {
-	resp := &agentpb.RPCResponse{RequestId: cmd.RequestId}
-	h := d.handlers[cmd.Method]
+	return d.dispatch(ctx, cmd.RequestId, cmd.Method, cmd.Payload)
+}
+
+// handleRequest dispatches an RPCRequest (worker → master) and returns the
+// RPCResponse to send back. Mirrors handleCmd for the opposite direction —
+// used by Server for worker-initiated methods like pipeline.step_upsert.
+func (d *Dispatcher) handleRequest(ctx context.Context, req *agentpb.RPCRequest) *agentpb.RPCResponse {
+	return d.dispatch(ctx, req.RequestId, req.Method, req.Payload)
+}
+
+// dispatch is the direction-agnostic core shared by handleCmd/handleRequest:
+// look up the registered handler for method, invoke it, and shape the result
+// (or error) into an RPCResponse correlated by requestID.
+func (d *Dispatcher) dispatch(ctx context.Context, requestID, method string, payload []byte) *agentpb.RPCResponse {
+	resp := &agentpb.RPCResponse{RequestId: requestID}
+	h := d.handlers[method]
 	if h == nil {
-		resp.Error = fmt.Sprintf("method %q is not supported", cmd.Method)
+		resp.Error = fmt.Sprintf("method %q is not supported", method)
 		return resp
 	}
-	result, err := h(ctx, json.RawMessage(cmd.Payload))
+	result, err := h(ctx, json.RawMessage(payload))
 	if err != nil {
 		resp.Error = err.Error()
 		return resp

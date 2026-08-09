@@ -17,11 +17,12 @@ func NewStepRepo(exec *dbstore.Executor, source string) run.StepRepository {
 func (r *stepRepo) Upsert(ctx context.Context, s *run.Step) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.NamedExecContext(ctx, `
-			INSERT INTO steps (project_id, run_id, step_name, status, started_at, ended_at, error, attempts)
-			VALUES (:project_id, :run_id, :step_name, :status, :started_at, :ended_at, :error, :attempts)
+			INSERT INTO steps (project_id, run_id, step_name, status, started_at, ended_at, error, attempts, worker_id)
+			VALUES (:project_id, :run_id, :step_name, :status, :started_at, :ended_at, :error, :attempts, :worker_id)
 			ON CONFLICT(project_id, run_id, step_name) DO UPDATE SET
 				status=EXCLUDED.status, started_at=EXCLUDED.started_at,
-				ended_at=EXCLUDED.ended_at, error=EXCLUDED.error, attempts=EXCLUDED.attempts
+				ended_at=EXCLUDED.ended_at, error=EXCLUDED.error, attempts=EXCLUDED.attempts,
+				worker_id=EXCLUDED.worker_id
 		`, s)
 		return err
 	})
@@ -31,12 +32,15 @@ func (r *stepRepo) UpsertCAS(ctx context.Context, s *run.Step) (bool, error) {
 	var affected int64
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		res, err := db.NamedExecContext(ctx, `
-			INSERT INTO steps (project_id, run_id, step_name, status, started_at, ended_at, error, attempts)
-			VALUES (:project_id, :run_id, :step_name, :status, :started_at, :ended_at, :error, :attempts)
+			INSERT INTO steps (project_id, run_id, step_name, status, started_at, ended_at, error, attempts, worker_id)
+			VALUES (:project_id, :run_id, :step_name, :status, :started_at, :ended_at, :error, :attempts, :worker_id)
 			ON CONFLICT(project_id, run_id, step_name) DO UPDATE SET
 				status=EXCLUDED.status, started_at=EXCLUDED.started_at,
-				ended_at=EXCLUDED.ended_at, error=EXCLUDED.error, attempts=EXCLUDED.attempts
-			WHERE EXCLUDED.attempts >= steps.attempts
+				ended_at=EXCLUDED.ended_at, error=EXCLUDED.error, attempts=EXCLUDED.attempts,
+				worker_id=EXCLUDED.worker_id
+			WHERE EXCLUDED.attempts > steps.attempts
+			   OR (EXCLUDED.attempts = steps.attempts
+			       AND steps.status NOT IN ('done', 'failed', 'skipped', 'canceled'))
 		`, s)
 		if err != nil {
 			return err
@@ -53,7 +57,7 @@ func (r *stepRepo) UpsertCAS(ctx context.Context, s *run.Step) (bool, error) {
 func (r *stepRepo) List(ctx context.Context, projectID, runID string) ([]*run.Step, error) {
 	var steps []*run.Step
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT project_id, run_id, step_name, status, started_at, ended_at, error, attempts
+		q := db.Rebind(`SELECT project_id, run_id, step_name, status, started_at, ended_at, error, attempts, worker_id
 			FROM steps WHERE project_id=? AND run_id=?`)
 		return db.SelectContext(ctx, &steps, q, projectID, runID)
 	})
@@ -71,7 +75,7 @@ func (r *stepRepo) ListByRuns(ctx context.Context, projectID string, runIDs []st
 	var steps []*run.Step
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		query, args, err := sqlx.In(
-			`SELECT project_id, run_id, step_name, status, started_at, ended_at, error, attempts
+			`SELECT project_id, run_id, step_name, status, started_at, ended_at, error, attempts, worker_id
 			 FROM steps WHERE project_id=? AND run_id IN (?)`,
 			projectID, runIDs,
 		)
@@ -88,6 +92,23 @@ func (r *stepRepo) ListByRuns(ctx context.Context, projectID string, runIDs []st
 		out[step.RunID] = append(out[step.RunID], step)
 	}
 	return out, nil
+}
+
+// ListNonTerminalByWorker returns every step assigned to workerID whose
+// status is not yet terminal, across all projects/runs. See
+// run.StepRepository.ListNonTerminalByWorker.
+func (r *stepRepo) ListNonTerminalByWorker(ctx context.Context, workerID string) ([]*run.Step, error) {
+	var steps []*run.Step
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT project_id, run_id, step_name, status, started_at, ended_at, error, attempts, worker_id
+			FROM steps WHERE worker_id=? AND status NOT IN (?, ?, ?, ?)`)
+		return db.SelectContext(ctx, &steps, q,
+			workerID, run.StepStatusDone, run.StepStatusFailed, run.StepStatusSkipped, run.StepStatusCanceled)
+	})
+	if steps == nil {
+		steps = []*run.Step{}
+	}
+	return steps, err
 }
 
 func (r *stepRepo) DeleteByRun(ctx context.Context, projectID, runID string) error {

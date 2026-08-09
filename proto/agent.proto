@@ -25,7 +25,19 @@ message WorkerMessage {
     StatusPush   push        = 3;
     ProxyData    proxy_data  = 4; // raw bytes: target → master (notebook HTTP/WS)
     ProxyClose   proxy_close = 5; // target connection closed or errored
+    RPCRequest   request     = 6; // worker-initiated request/response (DB access interface)
   }
+}
+
+// RPCRequest is a worker-initiated request/response call — the mirror image
+// of RPCCommand, used by a worker to call into the master's DB access
+// interface (e.g. persisting step/run state) instead of the master deciding
+// and pushing state changes down. Answered by a MasterMessage.rpc_response
+// carrying the same request_id.
+message RPCRequest {
+  string request_id = 1; // correlated with MasterMessage.rpc_response.request_id
+  string method     = 2; // e.g. "pipeline.step_upsert"
+  bytes  payload    = 3; // JSON-encoded request struct
 }
 
 // Registration is the first message sent by a worker after connecting.
@@ -63,10 +75,11 @@ message StatusPush {
 
 message MasterMessage {
   oneof payload {
-    RPCCommand  rpc_cmd     = 1; // existing RPC dispatch
-    ProxyOpen   proxy_open  = 2; // open TCP channel to target (notebook pod)
-    ProxyData   proxy_data  = 3; // raw bytes: browser → target
-    ProxyClose  proxy_close = 4; // close channel
+    RPCCommand  rpc_cmd      = 1; // existing RPC dispatch
+    ProxyOpen   proxy_open   = 2; // open TCP channel to target (notebook pod)
+    ProxyData   proxy_data   = 3; // raw bytes: browser → target
+    ProxyClose  proxy_close  = 4; // close channel
+    RPCResponse rpc_response = 5; // response to a worker-initiated RPCRequest
   }
 }
 

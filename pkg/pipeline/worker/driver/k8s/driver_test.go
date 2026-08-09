@@ -68,13 +68,40 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	if got := job.Spec.Template.Spec.InitContainers[0].Image; got != "piper:test" {
 		t.Fatalf("agent image = %q", got)
 	}
-	if env := job.Spec.Template.Spec.Containers[0].Env; len(env) != 0 {
-		t.Fatalf("job env = %#v", env)
+	// Storage credentials must arrive via secretKeyRef env vars, never as a
+	// plain Value (visible through `kubectl describe pod`) and never as a
+	// CLI arg (visible through `kubectl describe pod`'s Args, or `ps`).
+	env := job.Spec.Template.Spec.Containers[0].Env
+	wantEnv := map[string]string{
+		"PIPER_STORAGE_URL":   "storage-url",
+		"PIPER_STORAGE_TOKEN": "storage-token",
+	}
+	for name, secretKey := range wantEnv {
+		var found *corev1.EnvVar
+		for i := range env {
+			if env[i].Name == name {
+				found = &env[i]
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("job env missing %q: %#v", name, env)
+		}
+		if found.Value != "" {
+			t.Fatalf("job env %q carries a plain Value (must be secretKeyRef only): %q", name, found.Value)
+		}
+		if found.ValueFrom == nil || found.ValueFrom.SecretKeyRef == nil {
+			t.Fatalf("job env %q is not backed by a secretKeyRef: %#v", name, found)
+		}
+		if got := found.ValueFrom.SecretKeyRef.Name; got != handle.RuntimeKey+"-task" {
+			t.Fatalf("job env %q secretKeyRef name = %q, want %q", name, got, handle.RuntimeKey+"-task")
+		}
+		if got := found.ValueFrom.SecretKeyRef.Key; got != secretKey {
+			t.Fatalf("job env %q secretKeyRef key = %q, want %q", name, got, secretKey)
+		}
 	}
 	args := job.Spec.Template.Spec.Containers[0].Args
 	for _, want := range []string{
-		"--storage-token=storage-token",
-		"--storage-url=s3://bucket",
 		"--task-file=/piper-task/task.json",
 		"--result-file=/dev/termination-log",
 	} {
@@ -82,10 +109,10 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 			t.Fatalf("job args missing %q: %v", want, args)
 		}
 	}
-	for _, notWant := range []string{"--git-user", "--git-token", "--task="} {
+	for _, notWant := range []string{"--git-user", "--git-token", "--task=", "--storage-token", "--storage-url"} {
 		for _, arg := range args {
 			if strings.HasPrefix(arg, notWant) {
-				t.Fatalf("job args must not expose git credentials as CLI flags: %v", args)
+				t.Fatalf("job args must not expose credentials as CLI flags: %v", args)
 			}
 		}
 	}
@@ -95,6 +122,12 @@ func TestDriverStartWaitUsesDriverResolvedExecution(t *testing.T) {
 	}
 	if !strings.Contains(string(secret.Data["task.json"]), "test-token") {
 		t.Fatal("task secret did not contain task env")
+	}
+	if got := string(secret.Data["storage-url"]); got != "s3://bucket" {
+		t.Fatalf("task secret storage-url = %q, want %q", got, "s3://bucket")
+	}
+	if got := string(secret.Data["storage-token"]); got != "storage-token" {
+		t.Fatalf("task secret storage-token = %q, want %q", got, "storage-token")
 	}
 
 	resultData, err := agentpkg.WriteAgentResult(proto.TaskResult{

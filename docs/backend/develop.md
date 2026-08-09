@@ -1,5 +1,38 @@
 # Piper — Backend Agent Guide
 
+## Single Agent-Exec Entry Point
+
+`agent_exec.go` (repo root, `package piper`) is the **only** implementation of
+`piper agent exec`. Its `init()` intercepts `os.Args == ["agent", "exec", ...]`
+before `main()` runs, in any binary that imports `github.com/loykin/piper` —
+including the real `piper` CLI (`cmd/piper/main.go` imports the root package).
+Because Go runs every `init()` before `main()`, **a cobra subcommand or a
+binary-local re-implementation of "agent exec" can never actually execute**
+once its binary imports this package — it is silently dead code, not a
+fallback.
+
+This bit us for real: a cobra `agent exec` subcommand
+(`cmd/piper/commands/agent.go`), `TestMain`-based copies in both the root e2e
+test binary and the `examples` package's e2e test binary, and a full local
+re-implementation in `examples/frontend-e2e/main.go` all existed side by side
+with `agent_exec.go`, none of them reachable. When
+storage-credential CLI args were removed in favor of env vars, the fix only
+landed in the dead copies at first — the actually-running one
+(`agent_exec.go`) kept the old flag-only behavior, and only a real e2e run
+against a fake S3 backend caught it. The same dead copies were also missing
+SIGTERM handling (baremetal cancel/timeout would orphan the step's child
+process) and Kubernetes termination-log truncation (`/dev/termination-log`'s
+4096-byte cap) that `agent_exec.go` needed but never had — both now live only
+in `agent_exec.go`.
+
+**Do not add another "agent exec" implementation.** If a binary needs to run
+steps via the baremetal/docker driver pattern without importing the root
+`piper` package (as `examples/bare-metal/worker/main.go` deliberately does,
+to demonstrate standalone embedding), that is the one legitimate exception —
+keep it, but don't let its logic drift from `agent_exec.go` without a reason
+to. Everywhere else, importing `github.com/loykin/piper` is what makes "agent
+exec" work at all; don't also hand-roll a second path for it.
+
 ## Worker Network Invariant
 
 - Workers establish one outbound tunnel to the Piper master using `worker.master_url`.
@@ -12,6 +45,46 @@
 - Pipeline subprocesses, containers, and Kubernetes Job pods must not call the master directly. They report locally to their parent worker, which forwards data through the tunnel.
 - Artifact storage is the only exception: workers and workload runtimes may connect directly to the configured `storage.url` such as S3.
 - Changes that create any additional worker-side outbound endpoint require an explicit architecture decision and documentation update.
+
+## Storage Ownership Invariant
+
+- **Location is master-authoritative**: where an artifact lives (which
+  backend, which URL/prefix) is resolved by the master
+  (`resolveStorageURL`/`injectStorageCredential` in `piper.go`) and handed to
+  the worker per-task over the existing tunnel. Workers do not decide where
+  to store or fetch artifacts on their own.
+- **Authentication is worker-local, delivered through the execution
+  environment's own credential mechanism — never as a CLI argument.**
+  Storage credentials (`--storage-token`/`--storage-url`) must never appear
+  in a subprocess or container's argv: they're visible to any host user via
+  `ps aux`, to `docker inspect`, and to `kubectl describe pod`. This mirrors
+  the existing rule for git/task credentials
+  (`pkg/pipeline/worker/agent/exec.go`'s `TaskFile` comment: "Prefer this
+  over --task so secret-bearing task env is not exposed in argv").
+  `AgentExecConfig.StorageEnv()` is the single place that turns storage
+  credentials into delivery-ready values; `BuildAgentExec` itself never puts
+  them on the command line.
+  - **baremetal**: process env var via `core.Spec.Env`
+    (`pkg/pipeline/worker/driver/baremetal/driver.go`) — narrower exposure
+    than argv (`/proc/PID/environ` needs same-uid access; argv is visible to
+    any local user).
+  - **docker**: container env via `container.Config.Env`
+    (`pkg/pipeline/worker/driver/docker/driver.go`) — still visible via
+    `docker inspect`, since standalone Docker (unlike k8s) has no per-task
+    secret-ref primitive to attach to a single container; this is a partial
+    mitigation, not parity with k8s.
+  - **k8s**: `secretKeyRef`-backed env vars, never a plain `Value`
+    (`pkg/pipeline/worker/driver/k8slauncher/launcher.go`'s
+    `buildEnvVars`/`createTaskSecret`) — the same per-job Secret that already
+    carries `task.json` also carries `storage-url`/`storage-token` keys, so
+    `kubectl describe pod` shows only the secret/key reference, never the
+    value. This mirrors Serving's already-correct pattern
+    (`pkg/serving/worker/driver/k8s/worker.go`'s `upsertArtifactSecret`/
+    `secretEnv`).
+- When adding a new driver or a new secret-bearing config value, follow the
+  same rule: extend `AgentExecConfig`/`StorageEnv()` (or the equivalent for
+  the new value) rather than adding a new CLI flag, and thread it through the
+  environment-native mechanism for that infrastructure type.
 
 ## State Ownership — Master Is Authoritative
 
@@ -39,6 +112,27 @@
   `piper.go`'s `reconcileBackend`) funnels through the exact same
   `Queue.Complete` validation path — there is no second, looser path to
   mutate state.
+
+**This is still exactly true today, including with the DB-access RPC
+interface below.** `pipeline_db_handlers.go` registers real,
+authorization-checked handlers for `pipeline.step_upsert`,
+`pipeline.run_finalize`, and `pipeline.worker_recovery_query` — but nothing
+in production *calls* them yet (`grpcagent.Client.SendRequest` for these
+methods has no caller outside tests). They exist as tested, working
+scaffolding for a future worker-owned scheduler (a design direction, not yet
+built), so that landing it later is "wire up a caller" rather than "invent
+the DB interface and its authorization model from scratch." Until a
+worker-side scheduler actually exists and calls them, `Queue` remains the
+only thing deciding retries, timeouts, DAG promotion, and run finalization —
+read the bullets above as the current, load-bearing contract, not as
+aspirational. When that changes, this section needs to be rewritten to
+match, not patched around.
+- One piece of that future interface's authorization model is already live
+  and worth knowing about regardless: `runs.worker_id` is now set by
+  `pipelinedispatch.AgentBackend.Dispatch`, *before* the dispatch RPC is
+  sent to the worker (see `confirmRunBinding`) — this exists specifically so
+  the DB-access handlers above can trust it as an authorization root without
+  a race where a fast run's workload starts before its binding is durable.
 
 ## Worker Assignment
 

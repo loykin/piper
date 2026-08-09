@@ -60,6 +60,19 @@ type taskEntry struct {
 	timer *time.Timer
 }
 
+// ownerWorkerID resolves the best-known worker identity for entry: the
+// lease-confirmed owner if one exists, else the dispatch-time target already
+// known on the task payload (set for explicit placement.worker; empty for
+// auto-selected placement until recordDispatchWorkerLocked confirms it).
+// Used to persist steps.worker_id so a restarted worker can rediscover its
+// own non-terminal work via StepRepository.ListNonTerminalByWorker.
+func (entry *taskEntry) ownerWorkerID() string {
+	if entry.assignedWorkerID != "" {
+		return entry.assignedWorkerID
+	}
+	return entry.task.WorkerID
+}
+
 type runEntry struct {
 	projectID string
 	runID     string
@@ -377,16 +390,29 @@ type RecoveredStep struct {
 
 // Recover re-adds an interrupted run from a previous server session.
 // recovered lists every step whose state was persisted; absent steps are treated as pending.
-func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep) {
-	q.RecoverWithEnv(ctx, projectID, pl, dag, runID, workDir, outputDir, vars, runParams, recovered, nil)
+func (q *Queue) Recover(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workerID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep) {
+	q.RecoverWithEnv(ctx, projectID, pl, dag, runID, workerID, workDir, outputDir, vars, runParams, recovered, nil)
 }
 
-func (q *Queue) RecoverWithEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep, envByStep map[string][]string) {
-	outcome := q.recoverWithEnvLocked(ctx, projectID, pl, dag, runID, workDir, outputDir, vars, runParams, recovered, envByStep)
+// RecoverWithEnv re-adds an interrupted run. workerID is the run's persisted
+// binding (Run.WorkerID) from before the crash — pass "" if the run was
+// never dispatched at all (no binding exists yet). This is distinct from
+// any explicit placement.worker the pipeline manifest declares: the
+// manifest value always takes priority (see the task-construction loop
+// below and taskPlacement), matching how a live run already prioritizes it.
+// workerID exists for the auto-assigned case, where the manifest itself
+// never named a worker but the run is nonetheless durably bound to one —
+// without restoring it here, a recovered run's remaining steps would run
+// router selection from scratch and could land on a different worker than
+// the one runs.worker_id (and any already-persisted step rows) says it's
+// bound to, which confirmRunBinding then correctly refuses as a conflict,
+// stalling the run instead of resuming it.
+func (q *Queue) RecoverWithEnv(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workerID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep, envByStep map[string][]string) {
+	outcome := q.recoverWithEnvLocked(ctx, projectID, pl, dag, runID, workerID, workDir, outputDir, vars, runParams, recovered, envByStep)
 	flushPending(ctx, outcome)
 }
 
-func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep, envByStep map[string][]string) pendingOutcome {
+func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *pipeline.Pipeline, dag *pipeline.DAG, runID, workerID, workDir, outputDir string, vars proto.BuiltinVars, runParams map[string]any, recovered []RecoveredStep, envByStep map[string][]string) pendingOutcome {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -394,6 +420,14 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 	recoveredByName := make(map[string]RecoveredStep, len(recovered))
 	for _, rs := range recovered {
 		recoveredByName[rs.Name] = rs
+	}
+
+	// Manifest-declared explicit placement always wins, exactly like a live
+	// (non-recovered) run's task construction below — workerID only fills
+	// in when the manifest itself never named one (auto-assigned case).
+	taskWorkerID := workerID
+	if pl.Spec.Defaults != nil && pl.Spec.Defaults.Driver.Placement.Worker != "" {
+		taskWorkerID = pl.Spec.Defaults.Driver.Placement.Worker
 	}
 
 	pipelineJSON, _ := json.Marshal(pl)
@@ -420,12 +454,7 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 			OutputDir: outputDir,
 			CreatedAt: time.Now(),
 			Label:     s.Driver.Placement.Label,
-			WorkerID: func() string {
-				if pl.Spec.Defaults != nil {
-					return pl.Spec.Defaults.Driver.Placement.Worker
-				}
-				return ""
-			}(),
+			WorkerID:  taskWorkerID,
 			Vars:      vars,
 			RunParams: runParams,
 			Env:       append([]string{}, envByStep[s.Name]...),
@@ -451,6 +480,14 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 				entry.startedAt = &startedAt
 				now := time.Now()
 				entry.leaseAt = &now
+				// Restore the lease-confirmed owner immediately: RenewLeases
+				// checks entry.assignedWorkerID (falling back to
+				// entry.task.WorkerID) to validate which worker's renewal to
+				// accept, and without this a step recovered as "running"
+				// would accept a lease renewal from *any* worker until one
+				// actually arrives, not just the one it was actually
+				// running on.
+				entry.assignedWorkerID = taskWorkerID
 				q.emit(projectID, "step.recovering", map[string]any{"run_id": runID, "step": s.Name})
 				q.scheduleRecoveryGraceLocked(runID, entry)
 			}
@@ -576,6 +613,7 @@ func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (er
 			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
 			Error:     result.Error,
+			WorkerID:  result.WorkerID,
 		}
 		q.appendWrite("step done "+result.TaskID, func(ctx context.Context) error {
 			return q.stepRepo.Upsert(ctx, step)
@@ -602,6 +640,11 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 	if entry.attempts < entry.maxAttempts {
 		q.stopEntryTimerLocked(entry)
 		q.transitionTaskLocked(entry, taskRetrying)
+		// Captured before the reset below: the run stays bound to one worker
+		// for its whole lifetime (see AGENTS.md's Worker Assignment
+		// invariant), so the retry will almost always redispatch to this same
+		// worker — worth persisting rather than clearing to "".
+		lastWorkerID := entry.assignedWorkerID
 		entry.assignedWorkerID = ""
 		entry.startedAt = nil
 		entry.leaseAt = nil
@@ -614,6 +657,7 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 			EndedAt:   &endedAt,
 			Attempts:  entry.attempts,
 			Error:     errMsg,
+			WorkerID:  lastWorkerID,
 		}
 		q.appendWrite("step retrying "+entry.task.ID, func(ctx context.Context) error {
 			return q.stepRepo.Upsert(ctx, retryingStep)
@@ -639,6 +683,7 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 		EndedAt:   &endedAt,
 		Attempts:  entry.attempts,
 		Error:     errMsg,
+		WorkerID:  entry.ownerWorkerID(),
 	}
 	q.appendWrite("step failed "+entry.task.ID, func(ctx context.Context) error {
 		return q.stepRepo.Upsert(ctx, failedStep)
@@ -739,6 +784,7 @@ func (q *Queue) Cancel(ctx context.Context, projectID, runID string) error {
 					StartedAt: startedAt,
 					EndedAt:   &now,
 					Attempts:  entry.attempts,
+					WorkerID:  entry.ownerWorkerID(),
 				}
 				q.appendWrite("step canceled "+entry.task.ID, func(ctx context.Context) error {
 					return q.stepRepo.Upsert(ctx, canceledStep)
@@ -819,6 +865,12 @@ func (q *Queue) startTaskLocked(_ context.Context, runID string, entry *taskEntr
 	// means the step is recovered as never-started on restart — safe, no
 	// duplicate-execution risk the way a lost step.done/step.failed would be.
 	q.emit(entry.task.ProjectID, "step.running", map[string]any{"run_id": runID, "step": entry.step.Name, "task_id": entry.task.ID, "attempt": entry.attempts})
+	// entry.ownerWorkerID() is usually still "" here for auto-selected
+	// placement: worker selection happens asynchronously inside
+	// ExecutionBackend.Dispatch, called by the caller of startTaskLocked
+	// after this function returns. recordDispatchWorkerLocked fills the row
+	// in once dispatch actually confirms a worker. Explicit placement.worker
+	// pipelines already have it on entry.task.WorkerID at this point.
 	runningStep := &run.Step{
 		ProjectID: entry.task.ProjectID,
 		RunID:     runID,
@@ -826,6 +878,7 @@ func (q *Queue) startTaskLocked(_ context.Context, runID string, entry *taskEntr
 		Status:    string(taskRunning),
 		StartedAt: &now,
 		Attempts:  entry.attempts,
+		WorkerID:  entry.ownerWorkerID(),
 	}
 	q.appendWrite("step running "+entry.task.ID, func(ctx context.Context) error {
 		return q.stepRepo.Upsert(ctx, runningStep)
@@ -1028,8 +1081,53 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 			}); completeErr != nil {
 				slog.Error("record dispatch failure", "task_id", task.ID, "err", completeErr)
 			}
+			return
+		}
+		// Dispatch succeeded: the backend has now chosen (or confirmed) a
+		// worker for this run. startTaskLocked wrote the "running" row before
+		// this was known — worker selection for auto-assigned placement
+		// happens inside Dispatch, above — so persist it now onto that row.
+		if owner, ok := b.(pipelinedispatch.TaskOwner); ok {
+			if workerID := owner.OwnerForTask(task.ID); workerID != "" {
+				q.mu.Lock()
+				outcome := q.recordDispatchWorkerLocked(entry, task.RunID, workerID)
+				q.mu.Unlock()
+				flushPending(dispatchCtx, outcome)
+			}
 		}
 	}()
+}
+
+// recordDispatchWorkerLocked persists workerID onto entry's step row once
+// dispatch has actually chosen a worker. It is a no-op if workerID is
+// already recorded, or if entry has already moved past taskRunning (a fast
+// retry/failure racing this call — that write already carries the correct
+// worker, see failOrRetryLocked/completeLocked). The run-level binding
+// (runs.worker_id) is handled earlier and separately, by
+// pipelinedispatch.AgentBackend.Dispatch itself before it ever sends the
+// dispatch RPC — by the time this function runs, that binding is already
+// durable, which is what lets step_upsert/run_finalize treat it as an
+// authorization root. Must be called with q.mu held; returns the pending
+// outcome for the caller to flush after unlocking.
+func (q *Queue) recordDispatchWorkerLocked(entry *taskEntry, runID, workerID string) pendingOutcome {
+	if workerID != "" && entry.assignedWorkerID != workerID {
+		entry.assignedWorkerID = workerID
+		if entry.status == taskRunning {
+			step := &run.Step{
+				ProjectID: entry.task.ProjectID,
+				RunID:     runID,
+				StepName:  entry.step.Name,
+				Status:    string(taskRunning),
+				StartedAt: entry.startedAt,
+				Attempts:  entry.attempts,
+				WorkerID:  workerID,
+			}
+			q.appendWrite("step worker confirmed "+entry.task.ID, func(ctx context.Context) error {
+				return q.stepRepo.Upsert(ctx, step)
+			})
+		}
+	}
+	return q.takePendingLocked()
 }
 
 // requeueBusyLocked undoes startTaskLocked and puts the task back to ready
@@ -1161,6 +1259,7 @@ func (q *Queue) skipDownstream(ctx context.Context, r *runEntry, failedStep stri
 					RunID:     r.runID,
 					StepName:  entry.step.Name,
 					Status:    "skipped",
+					WorkerID:  entry.ownerWorkerID(), // always "" — skipped steps never started
 				}
 				q.appendWrite("step skipped "+entry.task.ID, func(ctx context.Context) error {
 					return q.stepRepo.Upsert(ctx, skippedStep)
@@ -1237,6 +1336,7 @@ func (q *Queue) cleanupLocked(ttl time.Duration) pendingOutcome {
 						Status:    string(taskFailed),
 						EndedAt:   &now,
 						Attempts:  entry.attempts,
+						WorkerID:  entry.ownerWorkerID(),
 						Error:     "task lease expired",
 					}
 					q.appendWrite("step expired "+entry.task.ID, func(ctx context.Context) error {

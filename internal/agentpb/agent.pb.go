@@ -30,6 +30,7 @@ type WorkerMessage struct {
 	//	*WorkerMessage_Push
 	//	*WorkerMessage_ProxyData
 	//	*WorkerMessage_ProxyClose
+	//	*WorkerMessage_Request
 	Payload       isWorkerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -117,6 +118,15 @@ func (x *WorkerMessage) GetProxyClose() *ProxyClose {
 	return nil
 }
 
+func (x *WorkerMessage) GetRequest() *RPCRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*WorkerMessage_Request); ok {
+			return x.Request
+		}
+	}
+	return nil
+}
+
 type isWorkerMessage_Payload interface {
 	isWorkerMessage_Payload()
 }
@@ -141,6 +151,10 @@ type WorkerMessage_ProxyClose struct {
 	ProxyClose *ProxyClose `protobuf:"bytes,5,opt,name=proxy_close,json=proxyClose,proto3,oneof"` // target connection closed or errored
 }
 
+type WorkerMessage_Request struct {
+	Request *RPCRequest `protobuf:"bytes,6,opt,name=request,proto3,oneof"` // worker-initiated request/response (DB access interface)
+}
+
 func (*WorkerMessage_Register) isWorkerMessage_Payload() {}
 
 func (*WorkerMessage_Response) isWorkerMessage_Payload() {}
@@ -150,6 +164,73 @@ func (*WorkerMessage_Push) isWorkerMessage_Payload() {}
 func (*WorkerMessage_ProxyData) isWorkerMessage_Payload() {}
 
 func (*WorkerMessage_ProxyClose) isWorkerMessage_Payload() {}
+
+func (*WorkerMessage_Request) isWorkerMessage_Payload() {}
+
+// RPCRequest is a worker-initiated request/response call — the mirror image
+// of RPCCommand, used by a worker to call into the master's DB access
+// interface (e.g. persisting step/run state) instead of the master deciding
+// and pushing state changes down. Answered by a MasterMessage.rpc_response
+// carrying the same request_id.
+type RPCRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // correlated with MasterMessage.rpc_response.request_id
+	Method        string                 `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`                        // e.g. "pipeline.step_upsert"
+	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`                      // JSON-encoded request struct
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RPCRequest) Reset() {
+	*x = RPCRequest{}
+	mi := &file_agent_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RPCRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RPCRequest) ProtoMessage() {}
+
+func (x *RPCRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RPCRequest.ProtoReflect.Descriptor instead.
+func (*RPCRequest) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *RPCRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *RPCRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *RPCRequest) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
 
 // Registration is the first message sent by a worker after connecting.
 type Registration struct {
@@ -167,7 +248,7 @@ type Registration struct {
 
 func (x *Registration) Reset() {
 	*x = Registration{}
-	mi := &file_agent_proto_msgTypes[1]
+	mi := &file_agent_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -179,7 +260,7 @@ func (x *Registration) String() string {
 func (*Registration) ProtoMessage() {}
 
 func (x *Registration) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[1]
+	mi := &file_agent_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -192,7 +273,7 @@ func (x *Registration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Registration.ProtoReflect.Descriptor instead.
 func (*Registration) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{1}
+	return file_agent_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Registration) GetId() string {
@@ -256,7 +337,7 @@ type RPCResponse struct {
 
 func (x *RPCResponse) Reset() {
 	*x = RPCResponse{}
-	mi := &file_agent_proto_msgTypes[2]
+	mi := &file_agent_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -268,7 +349,7 @@ func (x *RPCResponse) String() string {
 func (*RPCResponse) ProtoMessage() {}
 
 func (x *RPCResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[2]
+	mi := &file_agent_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -281,7 +362,7 @@ func (x *RPCResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RPCResponse.ProtoReflect.Descriptor instead.
 func (*RPCResponse) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{2}
+	return file_agent_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RPCResponse) GetRequestId() string {
@@ -317,7 +398,7 @@ type StatusPush struct {
 
 func (x *StatusPush) Reset() {
 	*x = StatusPush{}
-	mi := &file_agent_proto_msgTypes[3]
+	mi := &file_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -329,7 +410,7 @@ func (x *StatusPush) String() string {
 func (*StatusPush) ProtoMessage() {}
 
 func (x *StatusPush) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[3]
+	mi := &file_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -342,7 +423,7 @@ func (x *StatusPush) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusPush.ProtoReflect.Descriptor instead.
 func (*StatusPush) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{3}
+	return file_agent_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *StatusPush) GetMethod() string {
@@ -367,6 +448,7 @@ type MasterMessage struct {
 	//	*MasterMessage_ProxyOpen
 	//	*MasterMessage_ProxyData
 	//	*MasterMessage_ProxyClose
+	//	*MasterMessage_RpcResponse
 	Payload       isMasterMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -374,7 +456,7 @@ type MasterMessage struct {
 
 func (x *MasterMessage) Reset() {
 	*x = MasterMessage{}
-	mi := &file_agent_proto_msgTypes[4]
+	mi := &file_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -386,7 +468,7 @@ func (x *MasterMessage) String() string {
 func (*MasterMessage) ProtoMessage() {}
 
 func (x *MasterMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[4]
+	mi := &file_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -399,7 +481,7 @@ func (x *MasterMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MasterMessage.ProtoReflect.Descriptor instead.
 func (*MasterMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{4}
+	return file_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MasterMessage) GetPayload() isMasterMessage_Payload {
@@ -445,6 +527,15 @@ func (x *MasterMessage) GetProxyClose() *ProxyClose {
 	return nil
 }
 
+func (x *MasterMessage) GetRpcResponse() *RPCResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*MasterMessage_RpcResponse); ok {
+			return x.RpcResponse
+		}
+	}
+	return nil
+}
+
 type isMasterMessage_Payload interface {
 	isMasterMessage_Payload()
 }
@@ -465,6 +556,10 @@ type MasterMessage_ProxyClose struct {
 	ProxyClose *ProxyClose `protobuf:"bytes,4,opt,name=proxy_close,json=proxyClose,proto3,oneof"` // close channel
 }
 
+type MasterMessage_RpcResponse struct {
+	RpcResponse *RPCResponse `protobuf:"bytes,5,opt,name=rpc_response,json=rpcResponse,proto3,oneof"` // response to a worker-initiated RPCRequest
+}
+
 func (*MasterMessage_RpcCmd) isMasterMessage_Payload() {}
 
 func (*MasterMessage_ProxyOpen) isMasterMessage_Payload() {}
@@ -472,6 +567,8 @@ func (*MasterMessage_ProxyOpen) isMasterMessage_Payload() {}
 func (*MasterMessage_ProxyData) isMasterMessage_Payload() {}
 
 func (*MasterMessage_ProxyClose) isMasterMessage_Payload() {}
+
+func (*MasterMessage_RpcResponse) isMasterMessage_Payload() {}
 
 // RPCCommand dispatches a single RPC call to the worker.
 type RPCCommand struct {
@@ -485,7 +582,7 @@ type RPCCommand struct {
 
 func (x *RPCCommand) Reset() {
 	*x = RPCCommand{}
-	mi := &file_agent_proto_msgTypes[5]
+	mi := &file_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -497,7 +594,7 @@ func (x *RPCCommand) String() string {
 func (*RPCCommand) ProtoMessage() {}
 
 func (x *RPCCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[5]
+	mi := &file_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +607,7 @@ func (x *RPCCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RPCCommand.ProtoReflect.Descriptor instead.
 func (*RPCCommand) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{5}
+	return file_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RPCCommand) GetRequestId() string {
@@ -545,7 +642,7 @@ type ProxyOpen struct {
 
 func (x *ProxyOpen) Reset() {
 	*x = ProxyOpen{}
-	mi := &file_agent_proto_msgTypes[6]
+	mi := &file_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +654,7 @@ func (x *ProxyOpen) String() string {
 func (*ProxyOpen) ProtoMessage() {}
 
 func (x *ProxyOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[6]
+	mi := &file_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +667,7 @@ func (x *ProxyOpen) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyOpen.ProtoReflect.Descriptor instead.
 func (*ProxyOpen) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{6}
+	return file_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ProxyOpen) GetChannelId() string {
@@ -598,7 +695,7 @@ type ProxyData struct {
 
 func (x *ProxyData) Reset() {
 	*x = ProxyData{}
-	mi := &file_agent_proto_msgTypes[7]
+	mi := &file_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -610,7 +707,7 @@ func (x *ProxyData) String() string {
 func (*ProxyData) ProtoMessage() {}
 
 func (x *ProxyData) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[7]
+	mi := &file_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -623,7 +720,7 @@ func (x *ProxyData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyData.ProtoReflect.Descriptor instead.
 func (*ProxyData) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{7}
+	return file_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ProxyData) GetChannelId() string {
@@ -651,7 +748,7 @@ type ProxyClose struct {
 
 func (x *ProxyClose) Reset() {
 	*x = ProxyClose{}
-	mi := &file_agent_proto_msgTypes[8]
+	mi := &file_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +760,7 @@ func (x *ProxyClose) String() string {
 func (*ProxyClose) ProtoMessage() {}
 
 func (x *ProxyClose) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[8]
+	mi := &file_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +773,7 @@ func (x *ProxyClose) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyClose.ProtoReflect.Descriptor instead.
 func (*ProxyClose) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{8}
+	return file_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProxyClose) GetChannelId() string {
@@ -697,7 +794,7 @@ var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\x0epiper.agent.v1\"\xbe\x02\n" +
+	"\vagent.proto\x12\x0epiper.agent.v1\"\xf6\x02\n" +
 	"\rWorkerMessage\x12:\n" +
 	"\bregister\x18\x01 \x01(\v2\x1c.piper.agent.v1.RegistrationH\x00R\bregister\x129\n" +
 	"\bresponse\x18\x02 \x01(\v2\x1b.piper.agent.v1.RPCResponseH\x00R\bresponse\x120\n" +
@@ -705,8 +802,15 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"proxy_data\x18\x04 \x01(\v2\x19.piper.agent.v1.ProxyDataH\x00R\tproxyData\x12=\n" +
 	"\vproxy_close\x18\x05 \x01(\v2\x1a.piper.agent.v1.ProxyCloseH\x00R\n" +
-	"proxyCloseB\t\n" +
-	"\apayload\"\xea\x02\n" +
+	"proxyClose\x126\n" +
+	"\arequest\x18\x06 \x01(\v2\x1a.piper.agent.v1.RPCRequestH\x00R\arequestB\t\n" +
+	"\apayload\"]\n" +
+	"\n" +
+	"RPCRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x18\n" +
+	"\apayload\x18\x03 \x01(\fR\apayload\"\xea\x02\n" +
 	"\fRegistration\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bhostname\x18\x03 \x01(\tR\bhostname\x12\"\n" +
@@ -729,7 +833,7 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"StatusPush\x12\x16\n" +
 	"\x06method\x18\x01 \x01(\tR\x06method\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\fR\apayload\"\x88\x02\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\"\xca\x02\n" +
 	"\rMasterMessage\x125\n" +
 	"\arpc_cmd\x18\x01 \x01(\v2\x1a.piper.agent.v1.RPCCommandH\x00R\x06rpcCmd\x12:\n" +
 	"\n" +
@@ -737,7 +841,8 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"proxy_data\x18\x03 \x01(\v2\x19.piper.agent.v1.ProxyDataH\x00R\tproxyData\x12=\n" +
 	"\vproxy_close\x18\x04 \x01(\v2\x1a.piper.agent.v1.ProxyCloseH\x00R\n" +
-	"proxyCloseB\t\n" +
+	"proxyClose\x12@\n" +
+	"\frpc_response\x18\x05 \x01(\v2\x1b.piper.agent.v1.RPCResponseH\x00R\vrpcResponseB\t\n" +
 	"\apayload\"]\n" +
 	"\n" +
 	"RPCCommand\x12\x1d\n" +
@@ -773,37 +878,40 @@ func file_agent_proto_rawDescGZIP() []byte {
 	return file_agent_proto_rawDescData
 }
 
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_agent_proto_goTypes = []any{
 	(*WorkerMessage)(nil), // 0: piper.agent.v1.WorkerMessage
-	(*Registration)(nil),  // 1: piper.agent.v1.Registration
-	(*RPCResponse)(nil),   // 2: piper.agent.v1.RPCResponse
-	(*StatusPush)(nil),    // 3: piper.agent.v1.StatusPush
-	(*MasterMessage)(nil), // 4: piper.agent.v1.MasterMessage
-	(*RPCCommand)(nil),    // 5: piper.agent.v1.RPCCommand
-	(*ProxyOpen)(nil),     // 6: piper.agent.v1.ProxyOpen
-	(*ProxyData)(nil),     // 7: piper.agent.v1.ProxyData
-	(*ProxyClose)(nil),    // 8: piper.agent.v1.ProxyClose
-	nil,                   // 9: piper.agent.v1.Registration.LabelsEntry
+	(*RPCRequest)(nil),    // 1: piper.agent.v1.RPCRequest
+	(*Registration)(nil),  // 2: piper.agent.v1.Registration
+	(*RPCResponse)(nil),   // 3: piper.agent.v1.RPCResponse
+	(*StatusPush)(nil),    // 4: piper.agent.v1.StatusPush
+	(*MasterMessage)(nil), // 5: piper.agent.v1.MasterMessage
+	(*RPCCommand)(nil),    // 6: piper.agent.v1.RPCCommand
+	(*ProxyOpen)(nil),     // 7: piper.agent.v1.ProxyOpen
+	(*ProxyData)(nil),     // 8: piper.agent.v1.ProxyData
+	(*ProxyClose)(nil),    // 9: piper.agent.v1.ProxyClose
+	nil,                   // 10: piper.agent.v1.Registration.LabelsEntry
 }
 var file_agent_proto_depIdxs = []int32{
-	1,  // 0: piper.agent.v1.WorkerMessage.register:type_name -> piper.agent.v1.Registration
-	2,  // 1: piper.agent.v1.WorkerMessage.response:type_name -> piper.agent.v1.RPCResponse
-	3,  // 2: piper.agent.v1.WorkerMessage.push:type_name -> piper.agent.v1.StatusPush
-	7,  // 3: piper.agent.v1.WorkerMessage.proxy_data:type_name -> piper.agent.v1.ProxyData
-	8,  // 4: piper.agent.v1.WorkerMessage.proxy_close:type_name -> piper.agent.v1.ProxyClose
-	9,  // 5: piper.agent.v1.Registration.labels:type_name -> piper.agent.v1.Registration.LabelsEntry
-	5,  // 6: piper.agent.v1.MasterMessage.rpc_cmd:type_name -> piper.agent.v1.RPCCommand
-	6,  // 7: piper.agent.v1.MasterMessage.proxy_open:type_name -> piper.agent.v1.ProxyOpen
-	7,  // 8: piper.agent.v1.MasterMessage.proxy_data:type_name -> piper.agent.v1.ProxyData
-	8,  // 9: piper.agent.v1.MasterMessage.proxy_close:type_name -> piper.agent.v1.ProxyClose
-	0,  // 10: piper.agent.v1.AgentService.Connect:input_type -> piper.agent.v1.WorkerMessage
-	4,  // 11: piper.agent.v1.AgentService.Connect:output_type -> piper.agent.v1.MasterMessage
-	11, // [11:12] is the sub-list for method output_type
-	10, // [10:11] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	2,  // 0: piper.agent.v1.WorkerMessage.register:type_name -> piper.agent.v1.Registration
+	3,  // 1: piper.agent.v1.WorkerMessage.response:type_name -> piper.agent.v1.RPCResponse
+	4,  // 2: piper.agent.v1.WorkerMessage.push:type_name -> piper.agent.v1.StatusPush
+	8,  // 3: piper.agent.v1.WorkerMessage.proxy_data:type_name -> piper.agent.v1.ProxyData
+	9,  // 4: piper.agent.v1.WorkerMessage.proxy_close:type_name -> piper.agent.v1.ProxyClose
+	1,  // 5: piper.agent.v1.WorkerMessage.request:type_name -> piper.agent.v1.RPCRequest
+	10, // 6: piper.agent.v1.Registration.labels:type_name -> piper.agent.v1.Registration.LabelsEntry
+	6,  // 7: piper.agent.v1.MasterMessage.rpc_cmd:type_name -> piper.agent.v1.RPCCommand
+	7,  // 8: piper.agent.v1.MasterMessage.proxy_open:type_name -> piper.agent.v1.ProxyOpen
+	8,  // 9: piper.agent.v1.MasterMessage.proxy_data:type_name -> piper.agent.v1.ProxyData
+	9,  // 10: piper.agent.v1.MasterMessage.proxy_close:type_name -> piper.agent.v1.ProxyClose
+	3,  // 11: piper.agent.v1.MasterMessage.rpc_response:type_name -> piper.agent.v1.RPCResponse
+	0,  // 12: piper.agent.v1.AgentService.Connect:input_type -> piper.agent.v1.WorkerMessage
+	5,  // 13: piper.agent.v1.AgentService.Connect:output_type -> piper.agent.v1.MasterMessage
+	13, // [13:14] is the sub-list for method output_type
+	12, // [12:13] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -817,12 +925,14 @@ func file_agent_proto_init() {
 		(*WorkerMessage_Push)(nil),
 		(*WorkerMessage_ProxyData)(nil),
 		(*WorkerMessage_ProxyClose)(nil),
+		(*WorkerMessage_Request)(nil),
 	}
-	file_agent_proto_msgTypes[4].OneofWrappers = []any{
+	file_agent_proto_msgTypes[5].OneofWrappers = []any{
 		(*MasterMessage_RpcCmd)(nil),
 		(*MasterMessage_ProxyOpen)(nil),
 		(*MasterMessage_ProxyData)(nil),
 		(*MasterMessage_ProxyClose)(nil),
+		(*MasterMessage_RpcResponse)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -830,7 +940,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

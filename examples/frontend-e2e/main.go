@@ -27,7 +27,6 @@ import (
 	"github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/notebook"
 	worker "github.com/loykin/piper/pkg/pipeline/worker"
-	"github.com/loykin/piper/pkg/pipeline/worker/agent"
 	"github.com/loykin/piper/pkg/project"
 )
 
@@ -37,10 +36,9 @@ const (
 )
 
 func main() {
-	if len(os.Args) >= 3 && os.Args[1] == "agent" && os.Args[2] == "exec" {
-		os.Exit(runAgentExec(os.Args[3:]))
-	}
-
+	// "agent exec" subprocess invocations from the baremetal driver are
+	// intercepted by agent_exec.go's init() (this binary imports the root
+	// piper package), before main() ever runs.
 	addr := flag.String("addr", "127.0.0.1:18080", "HTTP listen address")
 	flag.Parse()
 
@@ -251,63 +249,4 @@ func waitHTTP(ctx context.Context, url string) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-}
-
-func runAgentExec(args []string) int {
-	var (
-		taskB64      string
-		taskFile     string
-		storageToken string
-		outputDir    string
-		inputDir     string
-		storageURL   string
-		resultFile   string
-	)
-	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
-	fs.StringVar(&taskB64, "task", "", "")
-	fs.StringVar(&taskFile, "task-file", "", "")
-	fs.StringVar(&storageToken, "storage-token", "", "")
-	fs.StringVar(&outputDir, "output-dir", "./piper-outputs", "")
-	fs.StringVar(&inputDir, "input-dir", "", "")
-	fs.StringVar(&storageURL, "storage-url", "", "")
-	fs.StringVar(&resultFile, "result-file", "", "")
-	if err := fs.Parse(args); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "agent exec parse flags: %v\n", err)
-		return 1
-	}
-
-	if len(fs.Args()) != 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "agent exec unexpected args: %v\n", fs.Args())
-		return 1
-	}
-	task, err := agent.DecodeTask(taskB64)
-	if taskFile != "" {
-		task, err = agent.DecodeTaskFile(taskFile)
-	}
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "agent exec decode task: %v\n", err)
-		return 1
-	}
-	runner, err := agent.New(agent.Config{
-		StorageToken: storageToken,
-		OutputDir:    outputDir,
-		InputDir:     inputDir,
-		StorageURL:   storageURL,
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "agent exec runner init: %v\n", err)
-		return 1
-	}
-	// See cmd/piper/commands/agent.go for why this needs a SIGTERM handler:
-	// without it, the baremetal driver's Stop()/cancelRun/timeout signal
-	// kills this process before its child (its own process group) can be
-	// cleaned up by pkg/pipeline/executor/command.go's ctx.Done() branch.
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	result := runner.Run(ctx, task)
-	if err := agent.DeliverResult(result, resultFile); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "agent exec deliver result: %v\n", err)
-		return 1
-	}
-	return 0
 }

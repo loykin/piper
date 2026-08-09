@@ -17,7 +17,7 @@ func NewRunRepo(exec *dbstore.Executor, source string) run.Repository {
 	return &runRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
-const runSelectCols = `project_id, id, schedule_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json, created_by`
+const runSelectCols = `project_id, id, schedule_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json, created_by, worker_id`
 
 func (r *runRepo) Create(ctx context.Context, row *run.Run) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
@@ -51,7 +51,7 @@ func (r *runRepo) List(ctx context.Context, projectID string, filter run.RunFilt
 	var where []string
 
 	if metricSort {
-		query = `SELECT r.project_id, r.id, r.schedule_id, r.experiment, r.pipeline_name, r.status, r.started_at, r.ended_at, r.scheduled_at, r.pipeline_yaml, r.params_json, r.created_by
+		query = `SELECT r.project_id, r.id, r.schedule_id, r.experiment, r.pipeline_name, r.status, r.started_at, r.ended_at, r.scheduled_at, r.pipeline_yaml, r.params_json, r.created_by, r.worker_id
 FROM runs r
 LEFT JOIN (SELECT project_id, run_id, MAX(value) AS mv FROM run_metrics WHERE project_id=? AND step_name=? AND key=? GROUP BY project_id, run_id) m
 	ON m.project_id=r.project_id AND m.run_id=r.id`
@@ -225,6 +225,23 @@ func (r *runRepo) MarkRunning(ctx context.Context, projectID, id string, started
 			`UPDATE runs SET status='running', started_at=? WHERE project_id=? AND id=?`, startedAt, projectID, id)
 		return err
 	})
+}
+
+func (r *runRepo) SetWorkerID(ctx context.Context, projectID, id, workerID string) (bool, error) {
+	var affected int64
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		res, err := db.ExecContext(ctx,
+			`UPDATE runs SET worker_id=? WHERE project_id=? AND id=? AND worker_id=''`, workerID, projectID, id)
+		if err != nil {
+			return err
+		}
+		affected, err = res.RowsAffected()
+		return err
+	})
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
 }
 
 func (r *runRepo) Delete(ctx context.Context, projectID, id string) error {

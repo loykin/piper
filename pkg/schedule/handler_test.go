@@ -125,6 +125,9 @@ func (r stubRunRepo) FinalizeStatusCAS(context.Context, string, string, string, 
 func (r stubRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
 	return nil
 }
+func (r stubRunRepo) SetWorkerID(context.Context, string, string, string) (bool, error) {
+	return true, nil
+}
 func (r stubRunRepo) MarkRunning(context.Context, string, string, time.Time) error { return nil }
 func (r stubRunRepo) Delete(context.Context, string, string) error                 { return nil }
 func (r stubRunRepo) GetLatestSuccessful(context.Context, string, string) (*run.Run, error) {

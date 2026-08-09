@@ -229,6 +229,51 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 		}
 	})
 
+	t.Run("SetWorkerID", func(t *testing.T) {
+		id := uuid.NewString()
+		if err := repo.Create(ctx, &run.Run{
+			ID:           id,
+			ProjectID:    projectID,
+			PipelineName: "set-worker-id-test",
+			Status:       run.StatusRunning,
+			StartedAt:    time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		applied, err := repo.SetWorkerID(ctx, projectID, id, "worker-a")
+		if err != nil {
+			t.Fatalf("SetWorkerID: %v", err)
+		}
+		if !applied {
+			t.Fatal("SetWorkerID on an unbound run applied = false, want true")
+		}
+		got, err := repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after SetWorkerID: %v, got=%v", err, got)
+		}
+		if got.WorkerID != "worker-a" {
+			t.Errorf("WorkerID = %q, want %q", got.WorkerID, "worker-a")
+		}
+
+		// A second call must not reassign an already-bound run to a
+		// different worker (CAS on worker_id='', not a blind overwrite) —
+		// and must report that it didn't, not merely leave the row alone.
+		applied, err = repo.SetWorkerID(ctx, projectID, id, "worker-b")
+		if err != nil {
+			t.Fatalf("SetWorkerID (second call): %v", err)
+		}
+		if applied {
+			t.Fatal("SetWorkerID on an already-bound run applied = true, want false")
+		}
+		got, err = repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after second SetWorkerID: %v, got=%v", err, got)
+		}
+		if got.WorkerID != "worker-a" {
+			t.Errorf("WorkerID changed by a second SetWorkerID call: got %q, want %q (unchanged)", got.WorkerID, "worker-a")
+		}
+	})
+
 	t.Run("ListTerminalBefore", func(t *testing.T) {
 		pname := "terminal-before-" + uuid.NewString()
 		now := time.Now().UTC()
@@ -564,6 +609,40 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		}
 	})
 
+	t.Run("UpsertCAS_same_attempt_terminal_status_cannot_regress", func(t *testing.T) {
+		// Reproduces a worker restart/outbox-retransmission race: a step
+		// finishes (attempt=1, done), then a delayed re-send of its own
+		// earlier "running" report for the *same* attempt arrives after.
+		// attempts >= alone would let this through (1 >= 1) and silently
+		// move the row back from done to running — UpsertCAS must reject it
+		// instead, the same way it already rejects a strictly-lower attempt.
+		runID := uuid.NewString()
+		done := &run.Step{ProjectID: projectID, RunID: runID, StepName: "cas-regress", Status: "done", Attempts: 1}
+		applied, err := repo.UpsertCAS(ctx, done)
+		if err != nil {
+			t.Fatalf("UpsertCAS done: %v", err)
+		}
+		if !applied {
+			t.Fatal("UpsertCAS done = false, want true")
+		}
+
+		lateRunning := &run.Step{ProjectID: projectID, RunID: runID, StepName: "cas-regress", Status: "running", Attempts: 1}
+		applied, err = repo.UpsertCAS(ctx, lateRunning)
+		if err != nil {
+			t.Fatalf("UpsertCAS late same-attempt running: %v", err)
+		}
+		if applied {
+			t.Fatal("UpsertCAS late same-attempt running = true, want false (must not regress a terminal row)")
+		}
+		steps, err := repo.List(ctx, projectID, runID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(steps) != 1 || steps[0].Status != "done" {
+			t.Errorf("terminal row regressed: got %#v, want status=done", steps)
+		}
+	})
+
 	t.Run("ListByRuns", func(t *testing.T) {
 		runA := uuid.NewString()
 		runB := uuid.NewString()
@@ -585,6 +664,37 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		}
 		if len(grouped[runB]) != 1 {
 			t.Fatalf("runB steps = %d, want 1", len(grouped[runB]))
+		}
+	})
+
+	t.Run("ListNonTerminalByWorker", func(t *testing.T) {
+		workerID := uuid.NewString()
+		otherWorkerID := uuid.NewString()
+		runID := uuid.NewString()
+		for _, step := range []*run.Step{
+			{ProjectID: projectID, RunID: runID, StepName: "running", Status: run.StepStatusRunning, WorkerID: workerID},
+			{ProjectID: projectID, RunID: runID, StepName: "done", Status: run.StepStatusDone, WorkerID: workerID},
+			{ProjectID: projectID, RunID: runID, StepName: "failed", Status: run.StepStatusFailed, WorkerID: workerID},
+			{ProjectID: projectID, RunID: runID, StepName: "skipped", Status: run.StepStatusSkipped, WorkerID: workerID},
+			{ProjectID: projectID, RunID: runID, StepName: "canceled", Status: run.StepStatusCanceled, WorkerID: workerID},
+			{ProjectID: projectID, RunID: runID, StepName: "other-worker-running", Status: run.StepStatusRunning, WorkerID: otherWorkerID},
+		} {
+			if err := repo.Upsert(ctx, step); err != nil {
+				t.Fatalf("Upsert %q: %v", step.StepName, err)
+			}
+		}
+		steps, err := repo.ListNonTerminalByWorker(ctx, workerID)
+		if err != nil {
+			t.Fatalf("ListNonTerminalByWorker: %v", err)
+		}
+		if len(steps) != 1 {
+			t.Fatalf("expected 1 non-terminal step for workerID, got %d: %#v", len(steps), steps)
+		}
+		if steps[0].StepName != "running" {
+			t.Errorf("StepName = %q, want %q", steps[0].StepName, "running")
+		}
+		if steps[0].WorkerID != workerID {
+			t.Errorf("WorkerID = %q, want %q", steps[0].WorkerID, workerID)
 		}
 	})
 

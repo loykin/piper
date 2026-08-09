@@ -47,6 +47,9 @@ func (r *capturingRunRepo) UpdateStatus(context.Context, string, string, string,
 func (r *capturingRunRepo) FinalizeStatusCAS(context.Context, string, string, string, *time.Time) (bool, error) {
 	return true, nil
 }
+func (r *capturingRunRepo) SetWorkerID(context.Context, string, string, string) (bool, error) {
+	return true, nil
+}
 func (r *capturingRunRepo) MarkRunning(context.Context, string, string, time.Time) error {
 	return nil
 }
@@ -75,6 +78,9 @@ func (r emptyStepRepo) ListByRuns(context.Context, string, []string) (map[string
 	return map[string][]*Step{}, nil
 }
 func (r emptyStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
+func (r emptyStepRepo) ListNonTerminalByWorker(context.Context, string) ([]*Step, error) {
+	return []*Step{}, nil
+}
 
 type capturingStepRepo struct {
 	calls int
@@ -96,6 +102,9 @@ func (r *capturingStepRepo) ListByRuns(context.Context, string, []string) (map[s
 	return out, nil
 }
 func (r *capturingStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
+func (r *capturingStepRepo) ListNonTerminalByWorker(context.Context, string) ([]*Step, error) {
+	return []*Step{}, nil
+}
 
 // ── metric filter ─────────────────────────────────────────────────────────────
 

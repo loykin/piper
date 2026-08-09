@@ -208,6 +208,7 @@ func New(cfg Config) (*Piper, error) {
 		nbMgr.SyncAgent(context.Background(), agentID)
 		servingMgr.SyncAgent(context.Background(), agentID)
 	})
+	registerPipelineDBHandlers(grpcSrv, repos.Run, repos.Step)
 
 	p := &Piper{
 		cfg:         cfg,
@@ -254,7 +255,7 @@ func New(cfg Config) (*Piper, error) {
 		storageURL: p.storageURL,
 	}
 	// Pipeline tasks are delivered only through gRPC-connected agents.
-	p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.WorkerPodPolicy))
+	p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.Run, repos.WorkerPodPolicy))
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)
@@ -474,7 +475,7 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
 			continue
 		}
-		p.queue.RecoverWithEnv(ctx, r.ProjectID, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered, envByStep)
+		p.queue.RecoverWithEnv(ctx, r.ProjectID, pl, dag, r.ID, r.WorkerID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered, envByStep)
 	}
 }
 

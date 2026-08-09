@@ -98,9 +98,23 @@ type Client struct {
 	dispatcher *Dispatcher
 	exec       *commandExecutor
 
-	// current active stream, guarded by streamMu. nil when disconnected.
-	streamMu sync.RWMutex
-	curSend  func(*agentpb.WorkerMessage) error
+	// current active stream, guarded by streamMu. curSend is nil when
+	// disconnected; curClosed is closed exactly when that connection ends
+	// (set fresh on every (re)connect, alongside curSend, so a stale value
+	// from a previous connection is never observed after a reconnect) —
+	// SendRequest selects on it, the worker-side mirror of
+	// Server.SendRPC's workerConn.closed.
+	streamMu  sync.RWMutex
+	curSend   func(*agentpb.WorkerMessage) error
+	curClosed chan struct{}
+
+	// pending tracks in-flight SendRequest calls: requestID → chan
+	// *agentpb.RPCResponse, the worker-side mirror of workerConn.pending on
+	// the master. Keyed across reconnects (request IDs are timestamp-derived
+	// and effectively unique), so a request outstanding at the moment the
+	// tunnel drops simply has no response delivered through this map — it
+	// unblocks via curClosed instead (see SendRequest).
+	pending sync.Map
 }
 
 // NewClient creates a new worker-side gRPC client.
@@ -154,6 +168,67 @@ func (c *Client) SendPush(method string, payload any) error {
 			Push: &agentpb.StatusPush{Method: method, Payload: data},
 		},
 	})
+}
+
+// SendRequest sends a worker-initiated request to master and waits for the
+// correlated response — the worker-side counterpart to Server.SendRPC, and
+// the DB access interface a worker uses to persist state (e.g.
+// agent.MethodPipelineStepUpsert) through master's DB instead of the master
+// deciding and pushing state changes down. Returns an error if not currently
+// connected, if the tunnel disconnects before a response arrives (even with
+// an unbounded ctx, this does not hang until reconnect), if ctx is done
+// first, or if the master-side handler itself returned an error.
+func (c *Client) SendRequest(ctx context.Context, method string, payload, result any) error {
+	c.streamMu.RLock()
+	send := c.curSend
+	closed := c.curClosed
+	c.streamMu.RUnlock()
+	if send == nil {
+		return fmt.Errorf("not connected to master")
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request payload: %w", err)
+	}
+	reqID := fmt.Sprintf("%d", time.Now().UnixNano())
+	ch := make(chan *agentpb.RPCResponse, 1)
+	c.pending.Store(reqID, ch)
+	defer c.pending.Delete(reqID)
+
+	if err := send(&agentpb.WorkerMessage{
+		Payload: &agentpb.WorkerMessage_Request{
+			Request: &agentpb.RPCRequest{RequestId: reqID, Method: method, Payload: data},
+		},
+	}); err != nil {
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-closed:
+		return fmt.Errorf("grpc client: disconnected from master before %s response arrived", method)
+	case resp := <-ch:
+		if resp.Error != "" {
+			return fmt.Errorf("master rpc %s: %s", method, resp.Error)
+		}
+		if result != nil && len(resp.Payload) > 0 {
+			return json.Unmarshal(resp.Payload, result)
+		}
+		return nil
+	}
+}
+
+// deliver routes an RPCResponse to the SendRequest call waiting on its
+// request ID. The worker-side mirror of workerConn.deliver on the master.
+func (c *Client) deliver(resp *agentpb.RPCResponse) {
+	if chAny, ok := c.pending.Load(resp.RequestId); ok {
+		ch := chAny.(chan *agentpb.RPCResponse)
+		select {
+		case ch <- resp:
+		default:
+		}
+	}
 }
 
 func (c *Client) connectAndServe(ctx context.Context) error {
@@ -232,14 +307,17 @@ func (c *Client) serve(ctx context.Context, stream workerStream) error {
 		return sendQueue.enqueueMsgWait(classifyFrameLane(msg), msg)
 	}
 
-	// Register the current send function so SendPush can use it.
+	// Register the current send function so SendPush/SendRequest can use it.
+	closed := make(chan struct{})
 	c.streamMu.Lock()
 	c.curSend = send
+	c.curClosed = closed
 	c.streamMu.Unlock()
 	defer func() {
 		c.streamMu.Lock()
 		c.curSend = nil
 		c.streamMu.Unlock()
+		close(closed)
 	}()
 
 	// proxySessions maps channelID to a proxy session. Sessions are registered
@@ -292,6 +370,9 @@ func (c *Client) serve(ctx context.Context, stream workerStream) error {
 		}
 
 		switch p := msg.Payload.(type) {
+		case *agentpb.MasterMessage_RpcResponse:
+			c.deliver(p.RpcResponse)
+
 		case *agentpb.MasterMessage_RpcCmd:
 			// Run off the recv loop: a slow handler (e.g. pipeline.dispatch
 			// starting a container) must not block reading of other frames —

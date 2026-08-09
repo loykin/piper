@@ -65,7 +65,6 @@ func Commands(loader *cliconfig.Loader, factory PiperFactory) []*cobra.Command {
 		newParseCmd(),
 		newServerCmd(loader, factory),
 		newWorkerCmd(loader),
-		newAgentCmd(),
 		newInternalCmd(),
 		newUserCmd(loader),
 		newConfigCmd(loader),

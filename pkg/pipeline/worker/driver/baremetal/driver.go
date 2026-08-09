@@ -119,14 +119,15 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 		return driver.Handle{}, fmt.Errorf("write task file: %w", err)
 	}
 
-	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
+	agentCfg := agent.AgentExecConfig{
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    spec.OutputDir,
 		InputDir:     spec.OutputDir,
 		TaskFile:     taskPath,
 		ResultFile:   resultPath,
-	})
+	}
+	agentArgs, err := agent.BuildAgentExec(task, agentCfg)
 	if err != nil {
 		_ = os.Remove(taskPath)
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)
@@ -171,6 +172,7 @@ func (d *Driver) Start(_ context.Context, task *proto.Task, spec driver.ExecSpec
 	if regErr := d.manager.Register(core.Spec{
 		Name:        spec.RuntimeKey, // exact name = runtimeKey, exitSink matches this
 		Args:        args,
+		Env:         agentCfg.StorageEnv(),
 		AutoRestart: false,
 		PIDFile:     pidFile,
 		Log:         logConfig,

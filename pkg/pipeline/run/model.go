@@ -15,6 +15,17 @@ const (
 	StatusCanceled  = "canceled"
 )
 
+// Step-level terminal statuses, as written by internal/queue/queue.go.
+// A step not in this set (in practice: StepStatusRunning, or no row yet) is
+// still "owned" work — see StepRepository.ListNonTerminalByWorker.
+const (
+	StepStatusRunning  = "running"
+	StepStatusDone     = "done"
+	StepStatusFailed   = "failed"
+	StepStatusSkipped  = "skipped"
+	StepStatusCanceled = "canceled"
+)
+
 type Run struct {
 	ID              string     `json:"id"                        db:"id"`
 	ProjectID       string     `json:"project_id"                db:"project_id"`
@@ -29,6 +40,11 @@ type Run struct {
 	PipelineYAML    string     `json:"pipeline_yaml,omitempty"   db:"pipeline_yaml"`
 	ParamsJSON      string     `json:"params_json,omitempty"     db:"params_json"`
 	CreatedBy       string     `json:"created_by,omitempty"      db:"created_by"`
+	// WorkerID is the agent this run is bound to (see AGENTS.md's "Worker
+	// Assignment": one run always executes on one worker). Not yet written by
+	// any repository method in this package — reserved for the worker-side
+	// scheduler's DB-access interface.
+	WorkerID string `json:"worker_id,omitempty" db:"worker_id"`
 }
 
 // VersionFromYAML extracts metadata.version from the stored pipeline YAML.
@@ -54,6 +70,9 @@ type Step struct {
 	EndedAt   *time.Time `json:"ended_at,omitempty"   db:"ended_at"`
 	Error     string     `json:"error,omitempty"      db:"error"`
 	Attempts  int        `json:"attempts"             db:"attempts"`
+	// WorkerID is the agent this step is assigned to. See
+	// StepRepository.ListNonTerminalByWorker.
+	WorkerID string `json:"worker_id,omitempty" db:"worker_id"`
 }
 
 // Redact returns a copy of the Run with sensitive fields masked.

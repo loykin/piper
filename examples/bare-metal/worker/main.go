@@ -96,11 +96,23 @@ func runAgentExec(args []string) {
 		os.Exit(1)
 	}
 
+	// Storage credentials arrive as process env vars, not CLI flags — the
+	// baremetal driver no longer passes --storage-url/--storage-token on the
+	// command line (see agent.AgentExecConfig.StorageEnv).
+	resolvedStorageURL := *storageURL
+	if resolvedStorageURL == "" {
+		resolvedStorageURL = os.Getenv("PIPER_STORAGE_URL")
+	}
+	resolvedStorageToken := *storageToken
+	if resolvedStorageToken == "" {
+		resolvedStorageToken = os.Getenv("PIPER_STORAGE_TOKEN")
+	}
+
 	r, err := agent.New(agent.Config{
-		StorageToken: *storageToken,
+		StorageToken: resolvedStorageToken,
 		OutputDir:    *outputDir,
 		InputDir:     *inputDir,
-		StorageURL:   *storageURL,
+		StorageURL:   resolvedStorageURL,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent exec: init runner: %v\n", err)

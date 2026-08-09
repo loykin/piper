@@ -70,6 +70,13 @@ const (
 	agentExecSubcmd = "exec"
 	taskSecretKey   = "task.json"
 	taskMountPath   = "/piper-task"
+
+	// storageURLSecretKey/storageTokenSecretKey are keys in the same per-job
+	// Secret as taskSecretKey. Storage credentials are injected into the step
+	// container via secretKeyRef env vars (never plain args or plain env
+	// values), mirroring pkg/serving/worker/driver/k8s's upsertArtifactSecret.
+	storageURLSecretKey   = "storage-url"
+	storageTokenSecretKey = "storage-token"
 )
 
 // Launcher owns Kubernetes API operations for prepared Jobs.
@@ -155,21 +162,27 @@ func (l *Launcher) pullPolicy() corev1.PullPolicy {
 }
 
 // CreateJob creates a Job from execution inputs already resolved by a runtime Driver.
-func (l *Launcher) CreateJob(ctx context.Context, task *proto.Task, runtimeKey, image string, agentArgs, env []string) (string, error) {
+// storageURL/storageToken, when non-empty, are delivered to the step container
+// as secretKeyRef env vars backed by the same per-job Secret as the task
+// payload — never as plain args or plain env values.
+func (l *Launcher) CreateJob(ctx context.Context, task *proto.Task, runtimeKey, image string, agentArgs, env []string, storageURL, storageToken string) (string, error) {
 	if task == nil {
 		return "", fmt.Errorf("task is required")
 	}
 	if image == "" {
 		return "", fmt.Errorf("container image is required")
 	}
-	job, err := l.buildJob(task, image, agentArgs, env)
+	name := jobName(task)
+	if runtimeKey != "" {
+		name = sanitizeName(runtimeKey)
+	}
+	secretName := taskSecretName(name)
+	job, err := l.buildJob(task, image, agentArgs, secretName, storageURL, storageToken, env)
 	if err != nil {
 		return "", err
 	}
-	if runtimeKey != "" {
-		job.Name = sanitizeName(runtimeKey)
-	}
-	taskSecret, err := l.createTaskSecret(ctx, job.Name, task)
+	job.Name = name
+	taskSecret, err := l.createTaskSecret(ctx, job.Name, task, storageURL, storageToken)
 	if err != nil {
 		return "", err
 	}
@@ -465,10 +478,17 @@ func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
 	return errors.Join(errs...)
 }
 
-func (l *Launcher) createTaskSecret(ctx context.Context, jobName string, task *proto.Task) (*corev1.Secret, error) {
+func (l *Launcher) createTaskSecret(ctx context.Context, jobName string, task *proto.Task, storageURL, storageToken string) (*corev1.Secret, error) {
 	data, err := json.Marshal(task)
 	if err != nil {
 		return nil, fmt.Errorf("marshal task secret: %w", err)
+	}
+	secretData := map[string][]byte{taskSecretKey: data}
+	if storageURL != "" {
+		secretData[storageURLSecretKey] = []byte(storageURL)
+	}
+	if storageToken != "" {
+		secretData[storageTokenSecretKey] = []byte(storageToken)
 	}
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -477,7 +497,7 @@ func (l *Launcher) createTaskSecret(ctx context.Context, jobName string, task *p
 			Labels:    l.jobLabels(task),
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{taskSecretKey: data},
+		Data: secretData,
 	}
 	created, err := l.clientset.CoreV1().Secrets(l.cfg.Namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
@@ -539,14 +559,14 @@ func (l *Launcher) jobLabels(task *proto.Task) map[string]string {
 	return labels
 }
 
-func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, extraEnv ...[]string) (*batchv1.Job, error) {
+func (l *Launcher) buildJob(task *proto.Task, image string, agentArgs []string, secretName, storageURL, storageToken string, extraEnv ...[]string) (*batchv1.Job, error) {
 	backoffLimit := int32(0) // piper queue manages retries
 	var ttl *int32
 	if l.cfg.TTLAfterFinished != nil && *l.cfg.TTLAfterFinished > 0 {
 		ttl = l.cfg.TTLAfterFinished
 	}
 	step := decodeTaskStep(task)
-	podTemplate, err := l.buildStepPodTemplate(step, image, agentArgs, extraEnv...)
+	podTemplate, err := l.buildStepPodTemplate(step, image, agentArgs, secretName, storageURL, storageToken, extraEnv...)
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +614,10 @@ func decodeTaskStep(task *proto.Task) pipeline.Step {
 	return step
 }
 
-func buildEnvVars(env []manifest.EnvVar, extra ...[]string) []corev1.EnvVar {
+// buildEnvVars merges step-declared plain env with extra "K=V" overrides,
+// then appends secretKeyRef-backed storage credential entries when present —
+// those never carry a plain Value, only a reference into secretName.
+func buildEnvVars(env []manifest.EnvVar, secretName, storageURL, storageToken string, extra ...[]string) []corev1.EnvVar {
 	merged := make(map[string]string, len(env))
 	for _, e := range env {
 		merged[e.Name] = e.Value
@@ -607,19 +630,34 @@ func buildEnvVars(env []manifest.EnvVar, extra ...[]string) []corev1.EnvVar {
 			}
 		}
 	}
-	if len(merged) == 0 {
-		return nil
+	var out []corev1.EnvVar
+	if len(merged) > 0 {
+		keys := make([]string, 0, len(merged))
+		for k := range merged {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out = make([]corev1.EnvVar, 0, len(keys)+2)
+		for _, k := range keys {
+			out = append(out, corev1.EnvVar{Name: k, Value: merged[k]})
+		}
 	}
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
-		keys = append(keys, k)
+	if storageURL != "" {
+		out = append(out, corev1.EnvVar{Name: "PIPER_STORAGE_URL", ValueFrom: secretEnvSource(secretName, storageURLSecretKey)})
 	}
-	sort.Strings(keys)
-	out := make([]corev1.EnvVar, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, corev1.EnvVar{Name: k, Value: merged[k]})
+	if storageToken != "" {
+		out = append(out, corev1.EnvVar{Name: "PIPER_STORAGE_TOKEN", ValueFrom: secretEnvSource(secretName, storageTokenSecretKey)})
 	}
 	return out
+}
+
+func secretEnvSource(name, key string) *corev1.EnvVarSource {
+	return &corev1.EnvVarSource{
+		SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: name},
+			Key:                  key,
+		},
+	}
 }
 
 func k8sResources(d manifest.DriverSpec) manifest.ResourceSpec {
@@ -664,7 +702,7 @@ func buildResourceRequirements(resources manifest.ResourceSpec) (corev1.Resource
 // It starts from step.Driver.K8s.PodTemplate (if set) so all user-defined pod
 // fields (nodeSelector, tolerations, labels, schedulerName, etc.) are preserved,
 // then overlays piper-required init container, step container, and volumes.
-func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentArgs []string, extraEnv ...[]string) (corev1.PodTemplateSpec, error) {
+func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentArgs []string, secretName, storageURL, storageToken string, extraEnv ...[]string) (corev1.PodTemplateSpec, error) {
 	// Stage 1: start from the user-provided pod template (may be zero-value).
 	var tpl corev1.PodTemplateSpec
 	if step.Driver.K8s != nil {
@@ -695,7 +733,7 @@ func (l *Launcher) buildStepPodTemplate(step pipeline.Step, image string, agentA
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Command:         []string{agentBinaryDst},
 			Args:            agentArgs,
-			Env:             buildEnvVars(step.Options.Env, extraEnv...),
+			Env:             buildEnvVars(step.Options.Env, secretName, storageURL, storageToken, extraEnv...),
 			Resources:       resources,
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "piper-tools", MountPath: "/piper-tools"},

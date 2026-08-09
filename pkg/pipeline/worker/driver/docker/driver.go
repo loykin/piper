@@ -112,14 +112,15 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 		return driver.Handle{}, fmt.Errorf("write task file: %w", err)
 	}
 
-	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
+	agentCfg := agent.AgentExecConfig{
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    driver.ContainerOutputDir,
 		InputDir:     driver.ContainerInputDir,
 		TaskFile:     containerTaskFile,
 		ResultFile:   containerResultFile,
-	})
+	}
+	agentArgs, err := agent.BuildAgentExec(task, agentCfg)
 	if err != nil {
 		_ = os.Remove(hostTaskPath)
 		return driver.Handle{}, fmt.Errorf("build agent args: %w", err)
@@ -141,7 +142,10 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec driver.ExecSp
 
 	// Do not pass resolved task env here: Docker exposes container env through
 	// inspect. piper agent exec reads task env from the mounted task file.
-	env := []string(nil)
+	// Storage credentials are the one exception — they still go through env
+	// rather than CLI args (ps/docker inspect vs. only docker inspect), since
+	// Docker has no per-container secret-ref mechanism equivalent to k8s.
+	env := agentCfg.StorageEnv()
 
 	mounts := []mount.Mount{
 		// piper binary (read-only)

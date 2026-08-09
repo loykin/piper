@@ -31,7 +31,7 @@ func makeTask(runID, stepName string, step pipeline.Step, pl pipeline.Pipeline) 
 
 func mustBuildJob(t *testing.T, l *Launcher, task *proto.Task, image string, agentArgs []string, extraEnv ...[]string) *batchv1.Job {
 	t.Helper()
-	job, err := l.buildJob(task, image, agentArgs, extraEnv...)
+	job, err := l.buildJob(task, image, agentArgs, "", "", "", extraEnv...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestBuildJob_invalidResourcesReturnsError(t *testing.T) {
 	}
 	task := makeTask("run-1", "train", step, pipeline.Pipeline{})
 
-	if _, err := l.buildJob(task, "python:3.11", nil); err == nil {
+	if _, err := l.buildJob(task, "python:3.11", nil, "", "", ""); err == nil {
 		t.Fatal("buildJob returned nil error for invalid k8s resources")
 	}
 }
@@ -450,7 +450,7 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 		"--task-file=/piper-task/task.json",
 		"--result-file=/dev/termination-log",
 	}
-	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", preparedArgs, nil); err != nil {
+	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", preparedArgs, nil, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -508,7 +508,7 @@ func TestCreateJobOwnerReferenceFailureRollsBackSecretAndJob(t *testing.T) {
 	}
 	task := makeTask("run-1", "train", pipeline.Step{Name: "train"}, pipeline.Pipeline{})
 
-	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", []string{"agent", "exec", "--task-file=/piper-task/task.json"}, nil); err == nil {
+	if _, err := l.CreateJob(context.Background(), task, "", "python:3.11", []string{"agent", "exec", "--task-file=/piper-task/task.json"}, nil, "", ""); err == nil {
 		t.Fatal("CreateJob returned nil error")
 	}
 	jobs, err := client.BatchV1().Jobs("default").List(context.Background(), metav1.ListOptions{})

@@ -20,6 +20,14 @@ const (
 	MethodPipelineTaskResult = "pipeline.task_result"
 	MethodPipelineResultAck  = "pipeline.task_result_ack"
 
+	// MethodPipelineRunDispatch sends an entire run's DAG (pipeline manifest,
+	// params, per-step env) to the bound worker in a single message, rather
+	// than one MethodPipelineDispatch per step. The worker's local scheduler
+	// (pkg/pipeline/worker/scheduler) owns DAG promotion/retry/timeout for
+	// everything sent this way. Not yet called in production — see
+	// docs/backend/develop.md's State Ownership section.
+	MethodPipelineRunDispatch = "pipeline.run_dispatch"
+
 	// Worker-initiated (RPCRequest, not RPCCommand) — the DB access
 	// interface a worker uses to persist state through master's DB rather
 	// than the master deciding and pushing it down. See docs/backend/develop.md.

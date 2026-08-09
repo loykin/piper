@@ -35,6 +35,24 @@ type Repository interface {
 	// pipelinedispatch.AgentBackend.Dispatch) would otherwise let a workload
 	// go out to a worker the DB never actually confirmed as owner.
 	SetWorkerID(ctx context.Context, projectID, id, workerID string) (applied bool, err error)
+	// TouchWorkerLastSeen updates worker_last_seen_at for every run in
+	// runIDs that is still bound to workerID — a run already rebound to a
+	// different worker (or finalized) is silently skipped rather than
+	// erroring, since the caller pushes its whole currently-owned run set on
+	// a fixed cadence (see pipeline.lease_renew) and has no per-ID
+	// success/failure to react to. This is the run-level equivalent of the
+	// old step-level lease renewal, used by the master's staleness sweep to
+	// tell "worker briefly slow to report" apart from "worker truly gone."
+	TouchWorkerLastSeen(ctx context.Context, workerID string, runIDs []string) error
+	// SetCancelRequested durably records that a cancel was requested for a
+	// run whose bound worker couldn't be reached immediately (tunnel down),
+	// so the intent survives until it can be delivered on reconnect/worker
+	// restart, or acted on directly by the staleness sweep if the worker
+	// never comes back. CAS on cancel_requested_at IS NULL, so a
+	// duplicate/retried cancel call doesn't reset an already-pending
+	// request's timestamp. applied=false means the run doesn't exist or a
+	// cancel was already requested — both are fine to ignore, not errors.
+	SetCancelRequested(ctx context.Context, projectID, id string) (applied bool, err error)
 	Delete(ctx context.Context, projectID, id string) error
 	GetLatestSuccessful(ctx context.Context, projectID, pipelineName string) (*Run, error)
 	// ListTerminalBefore returns terminal (non-running, non-scheduled) runs

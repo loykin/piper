@@ -78,6 +78,34 @@ type Task struct {
 	Deadline *time.Time `json:"deadline,omitempty"`
 }
 
+// RunDispatch is the unit of work the server delivers to a worker for the
+// pipeline.run_dispatch RPC: an entire run's DAG in one message, instead of
+// one Task per step (see MethodPipelineRunDispatch). The receiving worker's
+// local scheduler (pkg/pipeline/worker/scheduler) owns DAG promotion, retry,
+// and timeout for every step from here on — it never receives a separate
+// MethodPipelineDispatch per step for runs delivered this way.
+type RunDispatch struct {
+	ProjectID    string         `json:"project_id"`
+	RunID        string         `json:"run_id"`
+	PipelineYAML string         `json:"pipeline_yaml"`
+	RunParams    map[string]any `json:"run_params,omitempty"` // run-level params; override step-level YAML params
+	WorkDir      string         `json:"work_dir"`
+	OutputDir    string         `json:"output_dir"`
+	CreatedAt    time.Time      `json:"created_at"`
+	Vars         BuiltinVars    `json:"vars,omitempty"`
+
+	// Env holds master-resolved execution env per step name (may contain
+	// secrets) — one Task carried a single flat Env for its one step; a
+	// RunDispatch covers every step, so it's keyed by step name instead.
+	Env map[string][]string `json:"env,omitempty"`
+
+	// Storage settings are master-owned and attached when the run is
+	// dispatched. Workers must not independently choose artifact/source
+	// storage.
+	StorageURL   string `json:"storage_url,omitempty"`
+	StorageToken string `json:"storage_token,omitempty"`
+}
+
 // TaskResult is the result a worker reports back to the server
 type TaskResult struct {
 	ProjectID string             `json:"project_id,omitempty"`

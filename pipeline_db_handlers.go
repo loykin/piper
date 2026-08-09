@@ -122,21 +122,72 @@ func registerPipelineDBHandlers(srv *grpcagent.Server, runRepo run.Repository, s
 		// Always the caller's own authenticated identity — never a
 		// caller-supplied worker_id — so a worker can only ever discover its
 		// own non-terminal work, not another worker's.
-		//
-		// NOTE: this response is intentionally minimal — []run.Step rows
-		// only (status/attempts/timestamps), not enough on its own to
-		// rebuild a full scheduler: no pipeline YAML/DAG, run params, or
-		// storage location, and the run each step belongs to isn't even
-		// deduplicated for the caller. That's fine for what exists today
-		// (nothing calls this endpoint in production yet — see
-		// registerPipelineDBHandlers), but a real worker-side scheduler
-		// will need this enriched, most plausibly by grouping results by
-		// RunID and joining runRepo.Get for each distinct run to attach its
-		// pipeline_yaml/params_json. Do this when that scheduler is
-		// actually designed, against its real requirements — not
-		// speculatively now.
-		return stepRepo.ListNonTerminalByWorker(ctx, agentID)
+		steps, err := stepRepo.ListNonTerminalByWorker(ctx, agentID)
+		if err != nil {
+			return nil, err
+		}
+		// Group by (ProjectID, RunID) and attach each distinct run's own row
+		// (pipeline_yaml/params_json/cancel_requested_at) — a restarting
+		// worker's scheduler needs the full DAG and params to resume, not
+		// just bare step rows, and needs to know about a cancel that arrived
+		// while it was down. Preserves first-seen run order for determinism.
+		type key struct{ projectID, runID string }
+		byRun := make(map[key][]*run.Step, len(steps))
+		var order []key
+		for _, s := range steps {
+			k := key{s.ProjectID, s.RunID}
+			if _, seen := byRun[k]; !seen {
+				order = append(order, k)
+			}
+			byRun[k] = append(byRun[k], s)
+		}
+		resp := WorkerRecoveryResponse{Runs: make([]RecoveredRun, 0, len(order))}
+		for _, k := range order {
+			r, err := runRepo.Get(ctx, k.projectID, k.runID)
+			if err != nil {
+				return nil, err
+			}
+			if r == nil {
+				// Step rows outlived their run row (shouldn't normally
+				// happen — DeleteByRun/Delete are meant to go together) —
+				// skip rather than hand the worker steps it can't attach a
+				// DAG to.
+				continue
+			}
+			switch r.Status {
+			case run.StatusSuccess, run.StatusFailed, run.StatusCanceled:
+				// The run finished (e.g. another path finalized it) between
+				// ListNonTerminalByWorker's read and this Get — its step
+				// rows are stale reads of a run that's no longer this
+				// worker's responsibility to resume.
+				continue
+			}
+			resp.Runs = append(resp.Runs, RecoveredRun{
+				Run:             r,
+				Steps:           byRun[k],
+				CancelRequested: r.CancelRequestedAt != nil,
+			})
+		}
+		return resp, nil
 	})
+}
+
+// WorkerRecoveryResponse is the pipeline.worker_recovery_query response: every
+// non-terminal run currently bound to the calling worker, enriched enough for
+// its local scheduler to reconstruct a full RunScheduler on restart.
+type WorkerRecoveryResponse struct {
+	Runs []RecoveredRun `json:"runs"`
+}
+
+// RecoveredRun pairs a run's durable row (pipeline_yaml, params_json, and
+// cancel intent) with its non-terminal step rows.
+type RecoveredRun struct {
+	Run   *run.Run    `json:"run"`
+	Steps []*run.Step `json:"steps"`
+	// CancelRequested mirrors Run.CancelRequestedAt != nil — a cancel that
+	// arrived while this worker was unreachable and must be applied
+	// immediately during recovery instead of resuming the run normally.
+	CancelRequested bool `json:"cancel_requested"`
 }
 
 type stepUpsertResponse struct {

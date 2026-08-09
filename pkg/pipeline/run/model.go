@@ -45,6 +45,14 @@ type Run struct {
 	// any repository method in this package — reserved for the worker-side
 	// scheduler's DB-access interface.
 	WorkerID string `json:"worker_id,omitempty" db:"worker_id"`
+	// WorkerLastSeenAt is the last time the bound worker reported this run as
+	// still owned (see Repository.TouchWorkerLastSeen). Nil until the first
+	// heartbeat lands. Used to detect a permanently-lost worker.
+	WorkerLastSeenAt *time.Time `json:"worker_last_seen_at,omitempty" db:"worker_last_seen_at"`
+	// CancelRequestedAt is set when a cancel was requested but couldn't be
+	// relayed to the bound worker immediately (see
+	// Repository.SetCancelRequested). Nil means no cancel is pending.
+	CancelRequestedAt *time.Time `json:"cancel_requested_at,omitempty" db:"cancel_requested_at"`
 }
 
 // VersionFromYAML extracts metadata.version from the stored pipeline YAML.

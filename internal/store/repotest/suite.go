@@ -274,6 +274,100 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 		}
 	})
 
+	t.Run("TouchWorkerLastSeen", func(t *testing.T) {
+		id := uuid.NewString()
+		if err := repo.Create(ctx, &run.Run{
+			ID:           id,
+			ProjectID:    projectID,
+			PipelineName: "touch-worker-last-seen-test",
+			Status:       run.StatusRunning,
+			StartedAt:    time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get before binding: %v, got=%v", err, got)
+		}
+		if got.WorkerLastSeenAt != nil {
+			t.Fatalf("WorkerLastSeenAt = %v on a fresh run, want nil", got.WorkerLastSeenAt)
+		}
+		if applied, err := repo.SetWorkerID(ctx, projectID, id, "worker-a"); err != nil || !applied {
+			t.Fatalf("SetWorkerID: applied=%v err=%v", applied, err)
+		}
+
+		if err := repo.TouchWorkerLastSeen(ctx, "worker-a", []string{id, "nonexistent-run-id"}); err != nil {
+			t.Fatalf("TouchWorkerLastSeen: %v", err)
+		}
+		got, err = repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after TouchWorkerLastSeen: %v, got=%v", err, got)
+		}
+		if got.WorkerLastSeenAt == nil {
+			t.Fatal("WorkerLastSeenAt still nil after TouchWorkerLastSeen")
+		}
+		first := *got.WorkerLastSeenAt
+
+		// A heartbeat from a worker that isn't the run's bound owner must not
+		// touch the row — otherwise a stale/mismatched worker could keep a
+		// run's liveness timestamp fresh after it was rebound elsewhere.
+		if err := repo.TouchWorkerLastSeen(ctx, "worker-b", []string{id}); err != nil {
+			t.Fatalf("TouchWorkerLastSeen (wrong worker): %v", err)
+		}
+		got, err = repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after mismatched TouchWorkerLastSeen: %v, got=%v", err, got)
+		}
+		if got.WorkerLastSeenAt == nil || !got.WorkerLastSeenAt.Equal(first) {
+			t.Errorf("WorkerLastSeenAt changed by a non-owning worker's heartbeat: got %v, want unchanged %v", got.WorkerLastSeenAt, first)
+		}
+	})
+
+	t.Run("SetCancelRequested", func(t *testing.T) {
+		id := uuid.NewString()
+		if err := repo.Create(ctx, &run.Run{
+			ID:           id,
+			ProjectID:    projectID,
+			PipelineName: "set-cancel-requested-test",
+			Status:       run.StatusRunning,
+			StartedAt:    time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		applied, err := repo.SetCancelRequested(ctx, projectID, id)
+		if err != nil {
+			t.Fatalf("SetCancelRequested: %v", err)
+		}
+		if !applied {
+			t.Fatal("SetCancelRequested on a fresh run applied = false, want true")
+		}
+		got, err := repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after SetCancelRequested: %v, got=%v", err, got)
+		}
+		if got.CancelRequestedAt == nil {
+			t.Fatal("CancelRequestedAt still nil after SetCancelRequested")
+		}
+		first := *got.CancelRequestedAt
+
+		// A second call must not reset an already-pending request's
+		// timestamp (CAS on IS NULL, not a blind overwrite).
+		applied, err = repo.SetCancelRequested(ctx, projectID, id)
+		if err != nil {
+			t.Fatalf("SetCancelRequested (second call): %v", err)
+		}
+		if applied {
+			t.Fatal("SetCancelRequested on an already-pending run applied = true, want false")
+		}
+		got, err = repo.Get(ctx, projectID, id)
+		if err != nil || got == nil {
+			t.Fatalf("Get after second SetCancelRequested: %v, got=%v", err, got)
+		}
+		if got.CancelRequestedAt == nil || !got.CancelRequestedAt.Equal(first) {
+			t.Errorf("CancelRequestedAt changed by a second call: got %v, want unchanged %v", got.CancelRequestedAt, first)
+		}
+	})
+
 	t.Run("ListTerminalBefore", func(t *testing.T) {
 		pname := "terminal-before-" + uuid.NewString()
 		now := time.Now().UTC()

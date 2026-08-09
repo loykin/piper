@@ -774,6 +774,12 @@ func (r *stubRunRepoForBinding) FinalizeStatusCAS(context.Context, string, strin
 func (r *stubRunRepoForBinding) MarkRunning(context.Context, string, string, time.Time) error {
 	return nil
 }
+func (r *stubRunRepoForBinding) TouchWorkerLastSeen(context.Context, string, []string) error {
+	return nil
+}
+func (r *stubRunRepoForBinding) SetCancelRequested(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 func (r *stubRunRepoForBinding) Delete(context.Context, string, string) error { return nil }
 func (r *stubRunRepoForBinding) GetLatestSuccessful(context.Context, string, string) (*run.Run, error) {
 	return nil, nil

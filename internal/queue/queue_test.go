@@ -95,6 +95,10 @@ func (r *memoryRunRepo) SetWorkerID(context.Context, string, string, string) (bo
 func (r *memoryRunRepo) MarkRunning(context.Context, string, string, time.Time) error {
 	return nil
 }
+func (r *memoryRunRepo) TouchWorkerLastSeen(context.Context, string, []string) error { return nil }
+func (r *memoryRunRepo) SetCancelRequested(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 func (r *memoryRunRepo) Delete(context.Context, string, string) error { return nil }
 func (r *memoryRunRepo) GetLatestSuccessful(context.Context, string, string) (*run.Run, error) {
 	return nil, nil

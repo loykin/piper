@@ -53,6 +53,10 @@ func (r *capturingRunRepo) SetWorkerID(context.Context, string, string, string) 
 func (r *capturingRunRepo) MarkRunning(context.Context, string, string, time.Time) error {
 	return nil
 }
+func (r *capturingRunRepo) TouchWorkerLastSeen(context.Context, string, []string) error { return nil }
+func (r *capturingRunRepo) SetCancelRequested(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 func (r *capturingRunRepo) Delete(context.Context, string, string) error { return nil }
 func (r *capturingRunRepo) GetLatestSuccessful(context.Context, string, string) (*Run, error) {
 	return nil, nil

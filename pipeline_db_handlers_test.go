@@ -338,6 +338,7 @@ func TestRegisterPipelineDBHandlers_RunFinalizeRejectsInvalidStatus(t *testing.T
 
 func TestRegisterPipelineDBHandlers_WorkerRecoveryQueryScopesToCaller(t *testing.T) {
 	rig := newTestHandlerRig(t, "worker-1")
+	mustCreateRunningRun(t, rig, "run-1", "worker-1")
 	if err := rig.repos.Step.Upsert(context.Background(), &run.Step{
 		ProjectID: "proj-1", RunID: "run-1", StepName: "mine", Status: "running", WorkerID: "worker-1",
 	}); err != nil {
@@ -349,12 +350,113 @@ func TestRegisterPipelineDBHandlers_WorkerRecoveryQueryScopesToCaller(t *testing
 		t.Fatal(err)
 	}
 
-	var resp []run.Step
+	var resp WorkerRecoveryResponse
 	err := rig.client.SendRequest(context.Background(), iagent.MethodPipelineWorkerRecoveryQuery, workerRecoveryQueryRequest{}, &resp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp) != 1 || resp[0].StepName != "mine" {
-		t.Fatalf("recovery query for worker-1 = %#v, want exactly its own step %q", resp, "mine")
+	if len(resp.Runs) != 1 || resp.Runs[0].Run.ID != "run-1" {
+		t.Fatalf("recovery query for worker-1 = %#v, want exactly its own run %q", resp.Runs, "run-1")
+	}
+	if steps := resp.Runs[0].Steps; len(steps) != 1 || steps[0].StepName != "mine" {
+		t.Fatalf("recovery query steps = %#v, want exactly worker-1's own step %q", steps, "mine")
+	}
+}
+
+// TestRegisterPipelineDBHandlers_WorkerRecoveryQueryGroupsByRunAndEnriches
+// covers the enrichment pipeline_db_handlers.go's worker_recovery_query
+// handler now performs: grouping non-terminal step rows by run and attaching
+// each distinct run's own row (pipeline_yaml/cancel intent) — a restarting
+// worker's scheduler needs the DAG, not just bare step rows, to resume.
+func TestRegisterPipelineDBHandlers_WorkerRecoveryQueryGroupsByRunAndEnriches(t *testing.T) {
+	rig := newTestHandlerRig(t, "worker-1")
+	mustCreateRunningRun(t, rig, "run-a", "worker-1")
+	mustCreateRunningRun(t, rig, "run-b", "worker-1")
+	for _, s := range []*run.Step{
+		{ProjectID: "proj-1", RunID: "run-a", StepName: "step1", Status: "running", WorkerID: "worker-1"},
+		{ProjectID: "proj-1", RunID: "run-a", StepName: "step2", Status: "running", WorkerID: "worker-1"},
+		{ProjectID: "proj-1", RunID: "run-b", StepName: "step1", Status: "running", WorkerID: "worker-1"},
+	} {
+		if err := rig.repos.Step.Upsert(context.Background(), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if applied, err := rig.repos.Run.SetCancelRequested(context.Background(), "proj-1", "run-b"); err != nil || !applied {
+		t.Fatalf("SetCancelRequested: applied=%v err=%v", applied, err)
+	}
+
+	var resp WorkerRecoveryResponse
+	if err := rig.client.SendRequest(context.Background(), iagent.MethodPipelineWorkerRecoveryQuery, workerRecoveryQueryRequest{}, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Runs) != 2 {
+		t.Fatalf("got %d recovered runs, want 2: %#v", len(resp.Runs), resp.Runs)
+	}
+	byID := make(map[string]RecoveredRun, len(resp.Runs))
+	for _, rr := range resp.Runs {
+		byID[rr.Run.ID] = rr
+	}
+	runA, ok := byID["run-a"]
+	if !ok {
+		t.Fatalf("run-a missing from response: %#v", resp.Runs)
+	}
+	if len(runA.Steps) != 2 {
+		t.Errorf("run-a steps = %d, want 2: %#v", len(runA.Steps), runA.Steps)
+	}
+	if runA.Run.PipelineYAML == "" {
+		t.Error("run-a's PipelineYAML is empty — enrichment didn't attach the run row's content")
+	}
+	if runA.CancelRequested {
+		t.Error("run-a.CancelRequested = true, want false (no cancel was requested)")
+	}
+	runB, ok := byID["run-b"]
+	if !ok {
+		t.Fatalf("run-b missing from response: %#v", resp.Runs)
+	}
+	if !runB.CancelRequested {
+		t.Error("run-b.CancelRequested = false, want true (SetCancelRequested was called)")
+	}
+}
+
+// TestRegisterPipelineDBHandlers_WorkerRecoveryQuerySkipsTerminalRun covers
+// the race guard between ListNonTerminalByWorker's read and the per-run
+// Get: a run that finished between the two must not come back as
+// "still needs recovery."
+func TestRegisterPipelineDBHandlers_WorkerRecoveryQuerySkipsTerminalRun(t *testing.T) {
+	rig := newTestHandlerRig(t, "worker-1")
+	mustCreateRunningRun(t, rig, "run-done", "worker-1")
+	if err := rig.repos.Step.Upsert(context.Background(), &run.Step{
+		ProjectID: "proj-1", RunID: "run-done", StepName: "step1", Status: "running", WorkerID: "worker-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := rig.repos.Run.FinalizeStatusCAS(context.Background(), "proj-1", "run-done", run.StatusSuccess, nil); err != nil || !applied {
+		t.Fatalf("FinalizeStatusCAS: applied=%v err=%v", applied, err)
+	}
+
+	var resp WorkerRecoveryResponse
+	if err := rig.client.SendRequest(context.Background(), iagent.MethodPipelineWorkerRecoveryQuery, workerRecoveryQueryRequest{}, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Runs) != 0 {
+		t.Fatalf("recovery query returned a run that already finalized: %#v", resp.Runs)
+	}
+}
+
+// mustCreateRunningRun creates a StatusRunning run row bound to workerID
+// with non-empty PipelineYAML, in project "proj-1" (created by
+// newTestReposForHandlers). Needed because the worker_recovery_query
+// handler now joins the run row for enrichment and skips step rows whose
+// run doesn't exist or is already terminal.
+func mustCreateRunningRun(t *testing.T, rig *testHandlerRig, runID, workerID string) {
+	t.Helper()
+	if err := rig.repos.Run.Create(context.Background(), &run.Run{
+		ID: runID, ProjectID: "proj-1", PipelineName: "p", Status: run.StatusRunning,
+		StartedAt: time.Now().UTC(), PipelineYAML: "apiVersion: piper/v1\nkind: Pipeline\n",
+	}); err != nil {
+		t.Fatalf("create run %s: %v", runID, err)
+	}
+	if applied, err := rig.repos.Run.SetWorkerID(context.Background(), "proj-1", runID, workerID); err != nil || !applied {
+		t.Fatalf("bind run %s to %s: applied=%v err=%v", runID, workerID, applied, err)
 	}
 }

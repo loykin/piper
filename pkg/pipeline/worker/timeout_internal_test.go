@@ -8,6 +8,7 @@ import (
 
 	"github.com/loykin/piper/internal/proto"
 	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/pkg/pipeline/worker/scheduler"
 )
 
 func newTestWorker(driver pdriver.Driver) *Worker {
@@ -17,6 +18,11 @@ func newTestWorker(driver pdriver.Driver) *Worker {
 		},
 		driver: driver,
 		active: make(map[string]*trackedTask),
+		registry: scheduler.NewRegistry(scheduler.RegistryOptions{
+			Driver:        driver,
+			BuildExecSpec: func(*proto.Task) (pdriver.ExecSpec, error) { return pdriver.ExecSpec{}, nil },
+			BuildReporter: func(string, string) scheduler.StepReporter { return noopReporter{} },
+		}),
 	}
 }
 

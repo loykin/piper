@@ -6,25 +6,33 @@ import (
 	"time"
 
 	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/grpcagent"
+	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/pkg/project"
 )
 
 // registerPipelineDBHandlers wires the worker-initiated DB access interface
-// described in docs/backend/develop.md's State Ownership section: a worker
-// calls these through grpcagent.Client.SendRequest instead of the master
-// deciding and pushing state changes down. Nothing in production calls these
-// yet (see the Phase 2 worker-side scheduler design) — this registers real,
-// tested endpoints for when that lands, rather than leaving the transport
-// wired to "method ... is not supported."
+// described in docs/backend/develop.md's State Ownership section: each
+// worker's own scheduler (pkg/pipeline/worker/scheduler) calls these through
+// grpcagent.Client.SendRequest to report step/run state as it owns DAG
+// promotion, retry, and timeout locally — the master no longer decides or
+// pushes those state changes down itself.
 //
 // Each handler is deliberately thin: resolve the acting worker's identity
 // from the authenticated tunnel connection (never from the payload), then
 // hand off straight to the existing DB-level CAS methods — no additional
-// Go-level scheduling judgment here, matching how worker_push.go's existing
-// task-result path already treats the DB row, not in-memory state, as the
-// source of truth.
-func registerPipelineDBHandlers(srv *grpcagent.Server, runRepo run.Repository, stepRepo run.StepRepository) {
+// Go-level scheduling judgment here.
+//
+// events and onRunSuccess replicate what the old in-memory Queue used to do
+// on every finalize: without them, nothing publishes "run.completed"
+// (waitForRunCompleted blocks forever) or invokes the on_success.deploy
+// auto-redeploy hook. backend (optional; a pipelinedispatch.RunOwner such as
+// AgentBackend) is released via ReleaseRun when a run reaches a terminal
+// status, so the backend's own in-memory run binding doesn't leak for runs
+// that finish normally instead of being explicitly canceled.
+func registerPipelineDBHandlers(srv *grpcagent.Server, runRepo run.Repository, stepRepo run.StepRepository, events event.Publisher, onRunSuccess func(ctx context.Context, runID string, pl *pipeline.Pipeline), backend runReleaser) {
 	_ = grpcagent.RegisterJSON(srv.Dispatcher(), iagent.MethodPipelineStepUpsert, func(ctx context.Context, req run.Step) (any, error) {
 		agentID := grpcagent.RequestAgentID(ctx)
 		if agentID == "" {
@@ -76,6 +84,13 @@ func registerPipelineDBHandlers(srv *grpcagent.Server, runRepo run.Repository, s
 		if err != nil {
 			return nil, err
 		}
+		if applied && events != nil {
+			fields := map[string]any{"run_id": req.RunID, "step": req.StepName, "attempts": req.Attempts}
+			if req.Error != "" {
+				fields["error"] = req.Error
+			}
+			events.Publish(event.New(req.ProjectID, "step."+req.Status, fields))
+		}
 		return stepUpsertResponse{Applied: applied}, nil
 	})
 
@@ -110,6 +125,25 @@ func registerPipelineDBHandlers(srv *grpcagent.Server, runRepo run.Repository, s
 		applied, err := runRepo.FinalizeStatusCAS(ctx, req.ProjectID, req.ID, req.Status, req.EndedAt)
 		if err != nil {
 			return nil, err
+		}
+		if applied {
+			if backend != nil {
+				backend.ReleaseRun(req.ID)
+			}
+			if events != nil {
+				eventType := "run.completed"
+				if req.Status == run.StatusCanceled {
+					eventType = "run.canceled"
+				}
+				events.Publish(event.New(req.ProjectID, eventType, map[string]any{"run_id": req.ID, "status": req.Status}))
+			}
+			if req.Status == run.StatusSuccess && onRunSuccess != nil && existing.PipelineYAML != "" {
+				if pl, perr := pipeline.Parse([]byte(existing.PipelineYAML)); perr == nil {
+					// Detached context: this handler's ctx is scoped to the
+					// inbound RPC and must not cancel the redeploy it triggers.
+					go onRunSuccess(project.WithContext(context.Background(), project.Context{ID: req.ProjectID}), req.ID, pl)
+				}
+			}
 		}
 		return runFinalizeResponse{Applied: applied}, nil
 	})
@@ -170,6 +204,12 @@ func registerPipelineDBHandlers(srv *grpcagent.Server, runRepo run.Repository, s
 		}
 		return resp, nil
 	})
+}
+
+// runReleaser is satisfied by pipelinedispatch.RunOwner (AgentBackend) — see
+// registerPipelineDBHandlers's backend param doc.
+type runReleaser interface {
+	ReleaseRun(runID string)
 }
 
 // WorkerRecoveryResponse is the pipeline.worker_recovery_query response: every

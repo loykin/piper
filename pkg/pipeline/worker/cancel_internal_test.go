@@ -8,8 +8,18 @@ import (
 	"time"
 
 	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline/run"
 	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	"github.com/loykin/piper/pkg/pipeline/worker/scheduler"
 )
+
+// noopReporter is a scheduler.StepReporter that discards everything — this
+// test never exercises the scheduler's own run path, only cancelRun's
+// w.active bookkeeping, so w.registry only needs to exist and no-op.
+type noopReporter struct{}
+
+func (noopReporter) UpsertStep(*run.Step) error          { return nil }
+func (noopReporter) FinalizeRun(string, time.Time) error { return nil }
 
 // fakeDriver is a configurable pdriver.Driver stub for white-box worker
 // tests. Zero-value fields fall back to a safe "not implemented" default so
@@ -73,6 +83,11 @@ func TestCancelRunJoinsDriverStopErrors(t *testing.T) {
 			"key-b": {runID: "run-1", handle: pdriver.Handle{RuntimeKey: "key-b", RunID: "run-1"}, cancel: func() {}},
 			"key-c": {runID: "run-other", handle: pdriver.Handle{RuntimeKey: "key-c", RunID: "run-other"}, cancel: func() {}},
 		},
+		registry: scheduler.NewRegistry(scheduler.RegistryOptions{
+			Driver:        driver,
+			BuildExecSpec: func(*proto.Task) (pdriver.ExecSpec, error) { return pdriver.ExecSpec{}, nil },
+			BuildReporter: func(string, string) scheduler.StepReporter { return noopReporter{} },
+		}),
 	}
 
 	err := w.cancelRun("run-1")

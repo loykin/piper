@@ -2,6 +2,7 @@ package k8sworker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,6 +56,12 @@ type Config struct {
 	K8s   K8sConfig
 	// ResultOutboxDir is the durable directory for unacknowledged pipeline results.
 	ResultOutboxDir string
+	// RequestOutboxDir is the durable directory for undelivered worker-initiated
+	// pipeline.step_upsert/run_finalize requests (see
+	// pkg/pipeline/worker/driver.RequestOutbox) — the scheduler-owned
+	// equivalent of ResultOutboxDir, for runs received via
+	// pipeline.run_dispatch.
+	RequestOutboxDir string
 }
 
 type Worker struct {
@@ -64,6 +71,7 @@ type Worker struct {
 	servingObserver  *k8sserving.Worker
 	pipelineObserver *k8spipeline.Worker
 	resultOutbox     *pdriver.ResultOutbox
+	requestOutbox    *pdriver.RequestOutbox
 	initErr          error
 }
 
@@ -107,6 +115,7 @@ func New(cfg Config) *Worker {
 	})
 
 	var outbox *pdriver.ResultOutbox
+	var requestOutbox *pdriver.RequestOutbox
 	var initErr error
 	if cfg.K8s.Client != nil && domainEnabled(cfg.K8s, iagent.CapabilityPipeline) {
 		outboxDir := cfg.ResultOutboxDir
@@ -123,6 +132,18 @@ func New(cfg Config) *Worker {
 			_ = grpcagent.RegisterJSON(client.Dispatcher(), iagent.MethodPipelineResultAck, func(_ context.Context, ack pdriver.ResultAck) (any, error) {
 				return nil, outbox.Ack(ack)
 			})
+		}
+		if initErr == nil {
+			requestOutboxDir := cfg.RequestOutboxDir
+			if requestOutboxDir == "" {
+				requestOutboxDir = filepath.Join(os.TempDir(), "piper-request-outbox", cfg.Agent.ID)
+			}
+			requestOutbox, initErr = pdriver.NewRequestOutbox(
+				requestOutboxDir,
+				func(ctx context.Context, method string, payload json.RawMessage) error {
+					return client.SendRequest(ctx, method, payload, nil)
+				},
+			)
 		}
 	}
 
@@ -180,10 +201,11 @@ func New(cfg Config) *Worker {
 					}
 					return outbox.Enqueue(result)
 				},
-				RenewLeases: func(taskIDs []string) error {
-					return client.SendPush(iagent.MethodPipelineLeaseRenew, map[string]any{"task_ids": taskIDs})
+				RenewLeases: func(taskIDs, runIDs []string) error {
+					return client.SendPush(iagent.MethodPipelineLeaseRenew, map[string]any{"task_ids": taskIDs, "run_ids": runIDs})
 				},
-				LogClient: client,
+				LogClient:     client,
+				RequestOutbox: requestOutbox,
 			})
 		}
 	}
@@ -194,6 +216,7 @@ func New(cfg Config) *Worker {
 		servingObserver:  servingObserver,
 		pipelineObserver: pipelineObserver,
 		resultOutbox:     outbox,
+		requestOutbox:    requestOutbox,
 		initErr:          initErr,
 	}
 }
@@ -216,6 +239,9 @@ func (a *Worker) Run(ctx context.Context) error {
 	}
 	if a.resultOutbox != nil {
 		go a.resultOutbox.Run(ctx)
+	}
+	if a.requestOutbox != nil {
+		go a.requestOutbox.Run(ctx)
 	}
 	return a.client.Run(ctx)
 }

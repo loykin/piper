@@ -19,7 +19,6 @@ import (
 	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/logstore"
-	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
@@ -173,7 +172,7 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	push := newWorkerPushHandler(nil, nil, nil, nil, p.logs, p.metrics)
+	push := newWorkerPushHandler(nil, nil, nil, p.logs, p.metrics)
 	body, _ := json.Marshal(logsink.LogAppendPush{ProjectID: projectID, RunID: "run-metric", StepName: "train", Lines: []logsink.LogLine{{Ts: time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC), Stream: "stdout", Text: "PIPER_METRIC loss=0.312"}}})
 	push(context.Background(), "worker-a", iagent.MethodLogAppend, body)
 
@@ -975,120 +974,6 @@ func TestCleanupRetentionDeletesExpiredRunsByTTL(t *testing.T) {
 		if got == nil {
 			t.Fatalf("%s should be retained", id)
 		}
-	}
-}
-
-// TestRecoverInterruptedRunsFixesOrphanedFinalizeWrite reproduces the
-// durability gap the periodic reconciler (runCleanup calling
-// recoverInterruptedRuns every recoveryReconcileEvery ticks, not just once at
-// startup) exists to close: a run whose terminal DB write exhausted every
-// persistWithRetry attempt is removed from Queue.runs regardless (see
-// finalizeRunLocked), so it's invisible to Queue.Cleanup's TTL sweep and
-// would otherwise stay stuck non-terminal in the DB until a process restart.
-// This run is never added to p.queue at all — standing in for "not tracked
-// anymore" — with its DB row left at StatusRunning and its one step already
-// persisted as done, matching exactly what a real orphaned run looks like.
-func TestRecoverInterruptedRunsFixesOrphanedFinalizeWrite(t *testing.T) {
-	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
-	ctx := context.Background()
-	projectID := project.DefaultID
-
-	const runID = "run-orphaned-finalize"
-	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: orphan-pipeline\nspec:\n  steps:\n  - name: only\n    run:\n      type: command\n      command: [\"true\"]\n"
-	if err := p.repos.Run.Create(ctx, &run.Run{
-		ProjectID:    projectID,
-		ID:           runID,
-		PipelineName: "orphan-pipeline",
-		Status:       run.StatusRunning,
-		StartedAt:    time.Now().UTC().Add(-time.Minute),
-		PipelineYAML: yaml,
-		ParamsJSON:   "{}",
-	}); err != nil {
-		t.Fatalf("create run: %v", err)
-	}
-	if err := p.repos.Step.Upsert(ctx, &run.Step{
-		ProjectID: projectID,
-		RunID:     runID,
-		StepName:  "only",
-		Status:    "done",
-		Attempts:  1,
-	}); err != nil {
-		t.Fatalf("upsert step: %v", err)
-	}
-
-	if p.queue.IsTracking(runID) {
-		t.Fatal("precondition failed: run should not be tracked in memory")
-	}
-
-	p.recoverInterruptedRuns(ctx)
-
-	got, err := p.repos.Run.Get(ctx, projectID, runID)
-	if err != nil {
-		t.Fatalf("get run: %v", err)
-	}
-	if got == nil || got.Status != run.StatusSuccess {
-		t.Fatalf("run status = %+v, want finalized to success", got)
-	}
-}
-
-// TestRecoverInterruptedRunsSkipsTrackedRun verifies the IsTracking guard
-// that makes it safe to call recoverInterruptedRuns repeatedly (not just once
-// at startup): a run the live queue is still actively processing must be
-// left alone, not re-added and corrupted.
-func TestRecoverInterruptedRunsSkipsTrackedRun(t *testing.T) {
-	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
-	ctx := context.Background()
-	projectID := project.DefaultID
-
-	pl := &pipeline.Pipeline{
-		Metadata: manifest.ObjectMeta{Name: "tracked-pipeline"},
-		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{
-			{Name: "only", Run: pipeline.Run{Command: []string{"true"}}},
-		}},
-	}
-	dag, err := pipeline.BuildDAG(pl)
-	if err != nil {
-		t.Fatalf("build dag: %v", err)
-	}
-	const runID = "run-still-tracked"
-	pipelineJSON, _ := json.Marshal(pl)
-	if err := p.repos.Run.Create(ctx, &run.Run{
-		ProjectID:    projectID,
-		ID:           runID,
-		PipelineName: "tracked-pipeline",
-		Status:       run.StatusRunning,
-		StartedAt:    time.Now().UTC(),
-		PipelineYAML: string(pipelineJSON),
-		ParamsJSON:   "{}",
-	}); err != nil {
-		t.Fatalf("create run: %v", err)
-	}
-	// Detach the backend before Add so promoteReady's dispatchIfNeeded is a
-	// no-op instead of actually retry-dispatching the step forever against
-	// an embedded worker with no configured capacity — this test only cares
-	// that the run lands in Queue.runs, not that it actually executes.
-	p.queue.SetBackend(nil)
-	p.queue.Add(ctx, projectID, pl, dag, runID, ".", t.TempDir(), proto.BuiltinVars{}, nil)
-
-	if !p.queue.IsTracking(runID) {
-		t.Fatal("precondition failed: run should be tracked in memory after Add")
-	}
-
-	p.recoverInterruptedRuns(ctx)
-
-	// Still tracked and still running — recoverInterruptedRuns must not have
-	// touched its DB row (a real bug here would show up as the row jumping
-	// to failed via one of the YAML/DAG-parse-error fallback paths, since
-	// re-adding it would confuse Queue.runs bookkeeping).
-	got, err := p.repos.Run.Get(ctx, projectID, runID)
-	if err != nil {
-		t.Fatalf("get run: %v", err)
-	}
-	if got == nil || got.Status != run.StatusRunning {
-		t.Fatalf("run status = %+v, want still running (untouched)", got)
-	}
-	if !p.queue.IsTracking(runID) {
-		t.Fatal("run should still be tracked after a no-op recoverInterruptedRuns pass")
 	}
 }
 

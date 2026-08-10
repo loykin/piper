@@ -13,22 +13,18 @@ import (
 	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/logstore"
-	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/notebook"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 	"github.com/loykin/piper/pkg/serving"
 )
 
-type pipelineStatusQueue interface {
-	Complete(ctx context.Context, result proto.TaskResult) error
-	RenewLeases(workerID string, taskIDs []string)
+// runLivenessRecorder records a run-level heartbeat from a worker whose
+// scheduler (pkg/pipeline/worker/scheduler) owns a run — pushed every 10s
+// via pipeline.lease_renew's run_ids. Satisfied by pkg/pipeline/run.Repository.
+type runLivenessRecorder interface {
+	TouchWorkerLastSeen(ctx context.Context, workerID string, runIDs []string) error
 }
 
-type pipelineResultAcker interface {
-	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
-}
-
-func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, pipelineQueue pipelineStatusQueue, acker pipelineResultAcker, logs logstore.LogStore, metrics logstore.MetricStore) func(ctx context.Context, agentID, method string, payload []byte) {
+func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, runLiveness runLivenessRecorder, logs logstore.LogStore, metrics logstore.MetricStore) func(ctx context.Context, agentID, method string, payload []byte) {
 	return func(ctx context.Context, agentID, method string, payload []byte) {
 		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -76,43 +72,15 @@ func newWorkerPushHandler(nbMgr *notebook.Manager, servingMgr *serving.Manager, 
 			}
 		case iagent.MethodPipelineLeaseRenew:
 			var body struct {
-				TaskIDs []string `json:"task_ids"`
+				RunIDs []string `json:"run_ids"`
 			}
 			if err := json.Unmarshal(payload, &body); err != nil {
 				slog.Warn("pipeline lease push unmarshal failed", "agent_id", agentID, "err", err)
 				return
 			}
-			pipelineQueue.RenewLeases(agentID, body.TaskIDs)
-		case iagent.MethodPipelineTaskResult:
-			var result proto.TaskResult
-			if err := json.Unmarshal(payload, &result); err != nil {
-				slog.Warn("pipeline result push unmarshal failed", "agent_id", agentID, "err", err)
-				return
-			}
-			result.WorkerID = agentID
-			if metrics != nil && len(result.Metrics) > 0 {
-				runID, stepName, ok := strings.Cut(result.TaskID, ":")
-				if ok {
-					now := time.Now().UTC()
-					rows := make([]*logstore.Metric, 0, len(result.Metrics))
-					for key, value := range result.Metrics {
-						rows = append(rows, &logstore.Metric{ProjectID: result.ProjectID, RunID: runID, StepName: stepName, Key: key, Value: value, Ts: now})
-					}
-					if err := metrics.AppendMetrics(pushCtx, rows); err != nil {
-						slog.Warn("pipeline metrics push failed", "agent_id", agentID, "task_id", result.TaskID, "err", err)
-					}
-				}
-			}
-			if err := pipelineQueue.Complete(pushCtx, result); err != nil {
-				slog.Warn("pipeline result push failed", "agent_id", agentID, "task_id", result.TaskID, "err", err)
-				return
-			}
-			if acker != nil {
-				ack := pdriver.ResultAck{TaskID: result.TaskID, Attempt: result.Attempt}
-				ackCtx, ackCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer ackCancel()
-				if err := acker.SendRPC(ackCtx, agentID, iagent.MethodPipelineResultAck, ack, nil); err != nil {
-					slog.Warn("pipeline result ack failed", "agent_id", agentID, "task_id", result.TaskID, "err", err)
+			if len(body.RunIDs) > 0 && runLiveness != nil {
+				if err := runLiveness.TouchWorkerLastSeen(pushCtx, agentID, body.RunIDs); err != nil {
+					slog.Warn("pipeline run liveness touch failed", "agent_id", agentID, "err", err)
 				}
 			}
 		default:

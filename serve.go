@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loykin/piper/internal/event"
+	"github.com/loykin/piper/internal/pipelinedispatch"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -804,7 +805,53 @@ func (p *Piper) StartRun(ctx context.Context, yaml string, params map[string]any
 // CancelRun cancels a queued or running run.
 func (p *Piper) CancelRun(ctx context.Context, runID string) error {
 	projectContext, _ := project.FromContext(ctx)
-	return p.queue.Cancel(ctx, projectContext.ID, runID)
+	if p.backend == nil {
+		return fmt.Errorf("pipeline: no backend configured, cannot cancel run")
+	}
+	return p.cancelDispatchedRun(ctx, projectContext.ID, runID, p.backend)
+}
+
+// cancelDispatchedRun implements the worker-owned-scheduling model's cancel
+// ownership transfer: the worker's own scheduler (pkg/pipeline/worker/scheduler)
+// is authoritative for marking its steps canceled and finalizing the run —
+// this only signals that intent, it never finalizes the run itself except
+// for the one case where there is nothing to signal at all (never
+// dispatched).
+func (p *Piper) cancelDispatchedRun(ctx context.Context, projectID, runID string, rb pipelinedispatch.RunDispatchBackend) error {
+	r, err := p.repos.Run.Get(ctx, projectID, runID)
+	if err != nil {
+		return err
+	}
+	if r == nil {
+		return fmt.Errorf("run not found")
+	}
+	if r.WorkerID == "" {
+		// Never dispatched (or dispatch never got far enough to bind a
+		// worker) — nothing to relay to, so the master is the only party
+		// that can finalize this.
+		now := time.Now().UTC()
+		_, err := p.repos.Run.FinalizeStatusCAS(ctx, projectID, runID, run.StatusCanceled, &now)
+		return err
+	}
+	// Persist cancel intent durably before attempting live relay — this
+	// record must survive even if the relay below fails or silently no-ops
+	// (e.g. this master process never dispatched this run itself after a
+	// restart, so AgentBackend has no in-memory binding to relay through).
+	// Consumed on worker reconnect/restart (RecoveredRun.CancelRequested),
+	// or by sweepStaleWorkerBoundRuns if the bound worker never comes back —
+	// see docs/backend/develop.md's State Ownership section. This is what
+	// guarantees a cancel request is never silently dropped, without the
+	// master ever unilaterally deciding the run's outcome out from under a
+	// worker that's merely slow or reconnecting.
+	if _, err := p.repos.Run.SetCancelRequested(ctx, projectID, runID); err != nil {
+		return fmt.Errorf("persist cancel request: %w", err)
+	}
+	if cb, ok := rb.(pipelinedispatch.CancelableBackend); ok {
+		if err := cb.CancelRun(ctx, runID); err != nil {
+			slog.Warn("pipeline: best-effort live cancel relay failed, cancel intent recorded durably", "run_id", runID, "err", err)
+		}
+	}
+	return nil
 }
 
 // RerunRun re-executes a run, optionally limiting to failed steps only.
@@ -820,11 +867,6 @@ func (p *Piper) RetryStep(ctx context.Context, runID, stepName string) (string, 
 // DeleteRun deletes a run and its artifacts.
 func (p *Piper) DeleteRun(ctx context.Context, runID string) error {
 	return p.deleteRunWithArtifacts(ctx, runID)
-}
-
-func (p *Piper) cancelRun(ctx context.Context, runID string) error {
-	projectContext, _ := project.FromContext(ctx)
-	return p.queue.Cancel(ctx, projectContext.ID, runID)
 }
 
 type piperCollector struct {
@@ -862,12 +904,6 @@ func (c *piperCollector) Collect(ch chan<- prometheus.Metric) {
 		totalDurationSeconds,
 		map[float64]float64{},
 	)
-	stats := c.p.queue.Stats()
-	ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("piper_queue_runs", "Runs held by the in-memory queue.", nil, nil), prometheus.GaugeValue, float64(stats.Runs))
-	taskDesc := prometheus.NewDesc("piper_queue_tasks", "Queued tasks by status.", []string{"status"}, nil)
-	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Pending), "pending")
-	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Ready), "ready")
-	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Running), "running")
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc("piper_workers", "Connected Piper workers.", nil, nil),
 		prometheus.GaugeValue,

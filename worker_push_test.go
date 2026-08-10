@@ -10,47 +10,27 @@ import (
 	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/logstore"
-	"github.com/loykin/piper/internal/proto"
-	"github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
 
-type recordingPipelineStatusQueue struct {
-	result proto.TaskResult
+type recordingRunLiveness struct {
+	mu       sync.Mutex
+	workerID string
+	runIDs   []string
+	calls    int
 }
 
-func (q *recordingPipelineStatusQueue) Complete(_ context.Context, result proto.TaskResult) error {
-	q.result = result
-	return nil
-}
-
-func (q *recordingPipelineStatusQueue) RenewLeases(string, []string) {}
-
-type recordingPipelineResultAcker struct {
-	agentID string
-	method  string
-	ack     driver.ResultAck
-}
-
-func (a *recordingPipelineResultAcker) SendRPC(_ context.Context, agentID, method string, payload any, _ any) error {
-	a.agentID = agentID
-	a.method = method
-	a.ack = payload.(driver.ResultAck)
+func (r *recordingRunLiveness) TouchWorkerLastSeen(_ context.Context, workerID string, runIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.workerID = workerID
+	r.runIDs = runIDs
+	r.calls++
 	return nil
 }
 
 type recordingLogStore struct {
 	mu    sync.Mutex
 	lines []*logstore.Line
-}
-
-type recordingMetricStore struct{ metrics []*logstore.Metric }
-
-func (s *recordingMetricStore) AppendMetrics(_ context.Context, metrics []*logstore.Metric) error {
-	s.metrics = append(s.metrics, metrics...)
-	return nil
-}
-func (s *recordingMetricStore) QueryMetrics(_, _, _ string) ([]*logstore.Metric, error) {
-	return s.metrics, nil
 }
 
 func (s *recordingLogStore) Append(_ context.Context, lines []*logstore.Line) error {
@@ -74,7 +54,7 @@ func (s *recordingLogStore) all() []*logstore.Line {
 
 func TestWorkerPushHandlerLogAppend(t *testing.T) {
 	store := &recordingLogStore{}
-	handler := newWorkerPushHandler(nil, nil, nil, nil, store, nil)
+	handler := newWorkerPushHandler(nil, nil, nil, store, nil)
 
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	push := logsink.LogAppendPush{
@@ -108,7 +88,7 @@ func TestWorkerPushHandlerLogAppend(t *testing.T) {
 }
 
 func TestWorkerPushHandlerLogAppend_NilStoreDropsSilently(t *testing.T) {
-	handler := newWorkerPushHandler(nil, nil, nil, nil, nil, nil)
+	handler := newWorkerPushHandler(nil, nil, nil, nil, nil)
 
 	payload, _ := json.Marshal(logsink.LogAppendPush{
 		ProjectID: "proj-1", RunID: "nb:test", StepName: "runtime",
@@ -118,51 +98,34 @@ func TestWorkerPushHandlerLogAppend_NilStoreDropsSilently(t *testing.T) {
 	handler(context.Background(), "worker-1", iagent.MethodLogAppend, payload)
 }
 
-func TestWorkerPushAcknowledgesCompletedPipelineResult(t *testing.T) {
-	queue := &recordingPipelineStatusQueue{}
-	acker := &recordingPipelineResultAcker{}
-	handler := newWorkerPushHandler(nil, nil, queue, acker, nil, nil)
-	result := proto.TaskResult{
-		TaskID:  "run-1:step-1",
-		Attempt: 2,
-		Status:  proto.TaskStatusDone,
-	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestWorkerPushLeaseRenewTouchesRunLiveness(t *testing.T) {
+	liveness := &recordingRunLiveness{}
+	handler := newWorkerPushHandler(nil, nil, liveness, nil, nil)
 
-	handler(context.Background(), "worker-1", iagent.MethodPipelineTaskResult, payload)
+	payload, _ := json.Marshal(map[string]any{
+		"run_ids": []string{"run-1", "run-2"},
+	})
+	handler(context.Background(), "worker-1", iagent.MethodPipelineLeaseRenew, payload)
 
-	if queue.result.WorkerID != "worker-1" {
-		t.Fatalf("queue worker ID = %q, want worker-1", queue.result.WorkerID)
+	if liveness.calls != 1 {
+		t.Fatalf("TouchWorkerLastSeen called %d times, want 1", liveness.calls)
 	}
-	if acker.agentID != "worker-1" || acker.method != iagent.MethodPipelineResultAck {
-		t.Fatalf("ack target = (%q, %q)", acker.agentID, acker.method)
+	if liveness.workerID != "worker-1" {
+		t.Fatalf("workerID = %q, want worker-1", liveness.workerID)
 	}
-	if acker.ack.TaskID != result.TaskID || acker.ack.Attempt != result.Attempt {
-		t.Fatalf("ack = %#v, want task %q attempt %d", acker.ack, result.TaskID, result.Attempt)
+	if len(liveness.runIDs) != 2 || liveness.runIDs[0] != "run-1" || liveness.runIDs[1] != "run-2" {
+		t.Fatalf("runIDs = %#v, want [run-1 run-2]", liveness.runIDs)
 	}
 }
 
-func TestWorkerPushPersistsFinalMetrics(t *testing.T) {
-	queue := &recordingPipelineStatusQueue{}
-	metrics := &recordingMetricStore{}
-	handler := newWorkerPushHandler(nil, nil, queue, nil, nil, metrics)
-	payload, _ := json.Marshal(proto.TaskResult{
-		ProjectID: "proj-1",
-		TaskID:    "run-1:train",
-		Status:    proto.TaskStatusDone,
-		Metrics:   map[string]float64{"accuracy": 0.94},
-	})
+func TestWorkerPushLeaseRenewSkipsRunLivenessWhenNoRunIDs(t *testing.T) {
+	liveness := &recordingRunLiveness{}
+	handler := newWorkerPushHandler(nil, nil, liveness, nil, nil)
 
-	handler(context.Background(), "worker-1", iagent.MethodPipelineTaskResult, payload)
+	payload, _ := json.Marshal(map[string]any{})
+	handler(context.Background(), "worker-1", iagent.MethodPipelineLeaseRenew, payload)
 
-	if len(metrics.metrics) != 1 {
-		t.Fatalf("stored metrics = %#v", metrics.metrics)
-	}
-	got := metrics.metrics[0]
-	if got.ProjectID != "proj-1" || got.RunID != "run-1" || got.StepName != "train" || got.Key != "accuracy" || got.Value != 0.94 {
-		t.Fatalf("metric = %+v", got)
+	if liveness.calls != 0 {
+		t.Fatalf("TouchWorkerLastSeen called %d times for a push with no run_ids, want 0", liveness.calls)
 	}
 }

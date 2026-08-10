@@ -3,12 +3,15 @@ package piper
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	iagent "github.com/loykin/piper/internal/agent"
+	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/grpcagent"
 	"github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 )
@@ -44,10 +47,20 @@ type testHandlerRig struct {
 
 func newTestHandlerRig(t *testing.T, agentID string) *testHandlerRig {
 	t.Helper()
+	return newTestHandlerRigWithEvents(t, agentID, nil, nil)
+}
+
+func newTestHandlerRigWithEvents(t *testing.T, agentID string, events event.Publisher, onRunSuccess func(context.Context, string, *pipeline.Pipeline)) *testHandlerRig {
+	t.Helper()
+	return newTestHandlerRigFull(t, agentID, events, onRunSuccess, nil)
+}
+
+func newTestHandlerRigFull(t *testing.T, agentID string, events event.Publisher, onRunSuccess func(context.Context, string, *pipeline.Pipeline), backend runReleaser) *testHandlerRig {
+	t.Helper()
 	repos := newTestReposForHandlers(t)
 
 	srv := grpcagent.NewServer(nil, nil)
-	registerPipelineDBHandlers(srv, repos.Run, repos.Step)
+	registerPipelineDBHandlers(srv, repos.Run, repos.Step, events, onRunSuccess, backend)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -440,6 +453,196 @@ func TestRegisterPipelineDBHandlers_WorkerRecoveryQuerySkipsTerminalRun(t *testi
 	}
 	if len(resp.Runs) != 0 {
 		t.Fatalf("recovery query returned a run that already finalized: %#v", resp.Runs)
+	}
+}
+
+// recordingPublisher is a thread-safe event.Publisher spy.
+type recordingPublisher struct {
+	mu     sync.Mutex
+	events []event.Event
+}
+
+func (r *recordingPublisher) Publish(e event.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+}
+
+func (r *recordingPublisher) all() []event.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]event.Event, len(r.events))
+	copy(out, r.events)
+	return out
+}
+
+// TestRegisterPipelineDBHandlers_StepUpsertPublishesEvent covers a regression
+// where the worker-owned scheduler cutover left step_upsert/run_finalize as
+// DB-only writes with no event.Hub.Publish equivalent to the old
+// internal/queue/queue.go's q.emit — silently breaking any event-driven
+// consumer (waitForRunCompleted, SSE, etc.).
+func TestRegisterPipelineDBHandlers_StepUpsertPublishesEvent(t *testing.T) {
+	pub := &recordingPublisher{}
+	rig := newTestHandlerRigWithEvents(t, "worker-1", pub, nil)
+	if err := rig.repos.Run.Create(context.Background(), &run.Run{
+		ID: "run-1", ProjectID: "proj-1", PipelineName: "p", Status: run.StatusRunning, StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.repos.Run.SetWorkerID(context.Background(), "proj-1", "run-1", "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var resp stepUpsertResponse
+	if err := rig.client.SendRequest(context.Background(), iagent.MethodPipelineStepUpsert, run.Step{
+		ProjectID: "proj-1", RunID: "run-1", StepName: "train", Status: "done", Attempts: 1,
+	}, &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	events := pub.all()
+	if len(events) != 1 {
+		t.Fatalf("published events = %#v, want exactly 1", events)
+	}
+	if events[0].Type != "step.done" || events[0].ProjectID != "proj-1" {
+		t.Fatalf("event = %#v, want type=step.done project_id=proj-1", events[0])
+	}
+	if events[0].Fields["run_id"] != "run-1" || events[0].Fields["step"] != "train" {
+		t.Fatalf("event fields = %#v, want run_id=run-1 step=train", events[0].Fields)
+	}
+}
+
+// TestRegisterPipelineDBHandlers_RunFinalizePublishesEventAndInvokesOnSuccess
+// covers the run_finalize side of the same regression: "run.completed" must
+// fire for waitForRunCompleted, and onRunSuccess (the on_success.deploy
+// auto-redeploy hook) must be invoked for a successful run.
+func TestRegisterPipelineDBHandlers_RunFinalizePublishesEventAndInvokesOnSuccess(t *testing.T) {
+	pub := &recordingPublisher{}
+	successCh := make(chan string, 1)
+	onSuccess := func(_ context.Context, runID string, pl *pipeline.Pipeline) {
+		if pl == nil {
+			t.Error("onRunSuccess called with nil pipeline")
+		}
+		successCh <- runID
+	}
+	rig := newTestHandlerRigWithEvents(t, "worker-1", pub, onSuccess)
+	if err := rig.repos.Run.Create(context.Background(), &run.Run{
+		ID: "run-1", ProjectID: "proj-1", PipelineName: "p", Status: run.StatusRunning, StartedAt: time.Now().UTC(),
+		PipelineYAML: "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: p\nspec:\n  steps:\n  - name: only\n    run:\n      type: command\n      command: [\"true\"]\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.repos.Run.SetWorkerID(context.Background(), "proj-1", "run-1", "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var resp runFinalizeResponse
+	if err := rig.client.SendRequest(context.Background(), iagent.MethodPipelineRunFinalize, runFinalizeRequest{
+		ProjectID: "proj-1", ID: "run-1", Status: run.StatusSuccess,
+	}, &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	events := pub.all()
+	if len(events) != 1 || events[0].Type != "run.completed" {
+		t.Fatalf("published events = %#v, want exactly one run.completed", events)
+	}
+	if events[0].Fields["run_id"] != "run-1" || events[0].Fields["status"] != run.StatusSuccess {
+		t.Fatalf("event fields = %#v, want run_id=run-1 status=%s", events[0].Fields, run.StatusSuccess)
+	}
+
+	select {
+	case gotRunID := <-successCh:
+		if gotRunID != "run-1" {
+			t.Fatalf("onRunSuccess runID = %q, want run-1", gotRunID)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("onRunSuccess was not invoked within 3s")
+	}
+}
+
+// TestRegisterPipelineDBHandlers_RunFinalizeCanceledPublishesRunCanceled
+// covers the "run.canceled" branch (as opposed to "run.completed") and
+// confirms onRunSuccess is NOT invoked for a non-success terminal status.
+func TestRegisterPipelineDBHandlers_RunFinalizeCanceledPublishesRunCanceled(t *testing.T) {
+	pub := &recordingPublisher{}
+	onSuccess := func(context.Context, string, *pipeline.Pipeline) {
+		t.Error("onRunSuccess must not be invoked for a canceled run")
+	}
+	rig := newTestHandlerRigWithEvents(t, "worker-1", pub, onSuccess)
+	if err := rig.repos.Run.Create(context.Background(), &run.Run{
+		ID: "run-1", ProjectID: "proj-1", PipelineName: "p", Status: run.StatusRunning, StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.repos.Run.SetWorkerID(context.Background(), "proj-1", "run-1", "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var resp runFinalizeResponse
+	if err := rig.client.SendRequest(context.Background(), iagent.MethodPipelineRunFinalize, runFinalizeRequest{
+		ProjectID: "proj-1", ID: "run-1", Status: run.StatusCanceled,
+	}, &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	events := pub.all()
+	if len(events) != 1 || events[0].Type != "run.canceled" {
+		t.Fatalf("published events = %#v, want exactly one run.canceled", events)
+	}
+	// onRunSuccess is invoked asynchronously (go onRunSuccess(...)) — give
+	// it a moment to fire if it incorrectly would.
+	time.Sleep(200 * time.Millisecond)
+}
+
+// recordingReleaser is a runReleaser spy.
+type recordingReleaser struct {
+	mu       sync.Mutex
+	released []string
+}
+
+func (r *recordingReleaser) ReleaseRun(runID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.released = append(r.released, runID)
+}
+
+func (r *recordingReleaser) all() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.released))
+	copy(out, r.released)
+	return out
+}
+
+// TestRegisterPipelineDBHandlers_RunFinalizeReleasesBackendBinding covers a
+// regression where the worker-owned-scheduling cutover left run_finalize
+// without any equivalent of the old Queue's RunOwner.ReleaseRun call —
+// AgentBackend's in-memory runAgents entry (and IsTracking) would otherwise
+// never be cleaned up for a run that finishes normally (as opposed to being
+// explicitly canceled, which AgentBackend.CancelRun already releases
+// itself), leaking one entry per completed run for the life of the process.
+func TestRegisterPipelineDBHandlers_RunFinalizeReleasesBackendBinding(t *testing.T) {
+	releaser := &recordingReleaser{}
+	rig := newTestHandlerRigFull(t, "worker-1", nil, nil, releaser)
+	if err := rig.repos.Run.Create(context.Background(), &run.Run{
+		ID: "run-1", ProjectID: "proj-1", PipelineName: "p", Status: run.StatusRunning, StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rig.repos.Run.SetWorkerID(context.Background(), "proj-1", "run-1", "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var resp runFinalizeResponse
+	if err := rig.client.SendRequest(context.Background(), iagent.MethodPipelineRunFinalize, runFinalizeRequest{
+		ProjectID: "proj-1", ID: "run-1", Status: run.StatusSuccess,
+	}, &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if released := releaser.all(); len(released) != 1 || released[0] != "run-1" {
+		t.Fatalf("ReleaseRun calls = %#v, want exactly [\"run-1\"]", released)
 	}
 }
 

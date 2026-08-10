@@ -92,7 +92,14 @@ type RunDispatch struct {
 	WorkDir      string         `json:"work_dir"`
 	OutputDir    string         `json:"output_dir"`
 	CreatedAt    time.Time      `json:"created_at"`
-	Vars         BuiltinVars    `json:"vars,omitempty"`
+	// WorkerID, if set, forces placement onto this exact worker instead of
+	// letting the router select one — used when resending a dispatch for a
+	// run that's already durably bound (runs.worker_id already set from an
+	// earlier attempt), so a master-restart resend can't land on a
+	// different worker than the one the run (and any of its already-durable
+	// step rows) is already bound to. Empty for a run's first-ever dispatch.
+	WorkerID string      `json:"worker_id,omitempty"`
+	Vars     BuiltinVars `json:"vars,omitempty"`
 
 	// Env holds master-resolved execution env per step name (may contain
 	// secrets) — one Task carried a single flat Env for its one step; a

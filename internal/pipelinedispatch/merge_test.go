@@ -1,36 +1,36 @@
 package pipelinedispatch
 
 import (
-	"encoding/json"
 	"testing"
 
+	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
 )
 
-func TestApplyPodPolicyToPipeline_InvalidJSON(t *testing.T) {
-	_, err := applyPodPolicyToPipeline([]byte("not json {"), corev1.PodTemplateSpec{})
+func TestApplyPodPolicyToPipelineYAML_InvalidYAML(t *testing.T) {
+	_, err := applyPodPolicyToPipelineYAML("not: [valid", corev1.PodTemplateSpec{})
 	if err == nil {
-		t.Fatal("expected error for invalid JSON")
+		t.Fatal("expected error for invalid YAML")
 	}
 }
 
-func TestApplyPodPolicyToPipeline_NoK8sDriver(t *testing.T) {
+func TestApplyPodPolicyToPipelineYAML_NoK8sDriver(t *testing.T) {
 	pl := pipeline.Pipeline{}
 	pl.Spec.Steps = []pipeline.Step{{Name: "step1"}}
-	data, _ := json.Marshal(&pl)
+	data, _ := yaml.Marshal(&pl)
 
 	policy := corev1.PodTemplateSpec{}
 	policy.Spec.NodeSelector = map[string]string{"gpu": "true"}
 
-	result, err := applyPodPolicyToPipeline(data, policy)
+	result, err := applyPodPolicyToPipelineYAML(string(data), policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got pipeline.Pipeline
-	if err := json.Unmarshal(result, &got); err != nil {
+	if err := yaml.Unmarshal([]byte(result), &got); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 	if got.Spec.Defaults != nil && got.Spec.Defaults.Driver.K8s != nil {
@@ -45,25 +45,25 @@ func TestApplyPodPolicyToPipeline_NoK8sDriver(t *testing.T) {
 	}
 }
 
-func TestApplyPodPolicyToPipeline_DefaultsK8sMerged(t *testing.T) {
+func TestApplyPodPolicyToPipelineYAML_DefaultsK8sMerged(t *testing.T) {
 	pl := pipeline.Pipeline{}
 	pl.Spec.Defaults = &pipeline.PipelineDefaults{
 		Driver: manifest.DriverSpec{
 			K8s: &manifest.DriverK8sSpec{Image: "train:latest"},
 		},
 	}
-	data, _ := json.Marshal(&pl)
+	data, _ := yaml.Marshal(&pl)
 
 	policy := corev1.PodTemplateSpec{}
 	policy.Spec.NodeSelector = map[string]string{"gpu": "true"}
 	policy.Spec.Tolerations = []corev1.Toleration{{Key: "dedicated", Value: "gpu"}}
 
-	result, err := applyPodPolicyToPipeline(data, policy)
+	result, err := applyPodPolicyToPipelineYAML(string(data), policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got pipeline.Pipeline
-	if err := json.Unmarshal(result, &got); err != nil {
+	if err := yaml.Unmarshal([]byte(result), &got); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 	if got.Spec.Defaults == nil || got.Spec.Defaults.Driver.K8s == nil {
@@ -78,7 +78,7 @@ func TestApplyPodPolicyToPipeline_DefaultsK8sMerged(t *testing.T) {
 	}
 }
 
-func TestApplyPodPolicyToPipeline_StepK8sMerged(t *testing.T) {
+func TestApplyPodPolicyToPipelineYAML_StepK8sMerged(t *testing.T) {
 	pl := pipeline.Pipeline{}
 	pl.Spec.Steps = []pipeline.Step{
 		{
@@ -86,17 +86,17 @@ func TestApplyPodPolicyToPipeline_StepK8sMerged(t *testing.T) {
 			Driver: manifest.DriverSpec{K8s: &manifest.DriverK8sSpec{Image: "step:latest"}},
 		},
 	}
-	data, _ := json.Marshal(&pl)
+	data, _ := yaml.Marshal(&pl)
 
 	policy := corev1.PodTemplateSpec{}
 	policy.Spec.NodeSelector = map[string]string{"region": "us-east-1"}
 
-	result, err := applyPodPolicyToPipeline(data, policy)
+	result, err := applyPodPolicyToPipelineYAML(string(data), policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got pipeline.Pipeline
-	if err := json.Unmarshal(result, &got); err != nil {
+	if err := yaml.Unmarshal([]byte(result), &got); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 	if len(got.Spec.Steps) != 1 || got.Spec.Steps[0].Driver.K8s == nil {
@@ -108,7 +108,7 @@ func TestApplyPodPolicyToPipeline_StepK8sMerged(t *testing.T) {
 	}
 }
 
-func TestApplyPodPolicyToPipeline_ManifestWinsOnConflict(t *testing.T) {
+func TestApplyPodPolicyToPipelineYAML_ManifestWinsOnConflict(t *testing.T) {
 	pl := pipeline.Pipeline{}
 	pl.Spec.Defaults = &pipeline.PipelineDefaults{
 		Driver: manifest.DriverSpec{
@@ -122,17 +122,17 @@ func TestApplyPodPolicyToPipeline_ManifestWinsOnConflict(t *testing.T) {
 			},
 		},
 	}
-	data, _ := json.Marshal(&pl)
+	data, _ := yaml.Marshal(&pl)
 
 	policy := corev1.PodTemplateSpec{}
 	policy.Spec.NodeSelector = map[string]string{"tier": "policy", "gpu": "true"}
 
-	result, err := applyPodPolicyToPipeline(data, policy)
+	result, err := applyPodPolicyToPipelineYAML(string(data), policy)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got pipeline.Pipeline
-	if err := json.Unmarshal(result, &got); err != nil {
+	if err := yaml.Unmarshal([]byte(result), &got); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 	ns := got.Spec.Defaults.Driver.K8s.PodTemplate.Spec.NodeSelector
@@ -144,7 +144,7 @@ func TestApplyPodPolicyToPipeline_ManifestWinsOnConflict(t *testing.T) {
 	}
 }
 
-func TestApplyPodPolicyToPipeline_EmptyPolicyIsNoOp(t *testing.T) {
+func TestApplyPodPolicyToPipelineYAML_EmptyPolicyIsNoOp(t *testing.T) {
 	pl := pipeline.Pipeline{}
 	pl.Spec.Defaults = &pipeline.PipelineDefaults{
 		Driver: manifest.DriverSpec{
@@ -158,14 +158,14 @@ func TestApplyPodPolicyToPipeline_EmptyPolicyIsNoOp(t *testing.T) {
 			},
 		},
 	}
-	data, _ := json.Marshal(&pl)
+	data, _ := yaml.Marshal(&pl)
 
-	result, err := applyPodPolicyToPipeline(data, corev1.PodTemplateSpec{})
+	result, err := applyPodPolicyToPipelineYAML(string(data), corev1.PodTemplateSpec{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var got pipeline.Pipeline
-	if err := json.Unmarshal(result, &got); err != nil {
+	if err := yaml.Unmarshal([]byte(result), &got); err != nil {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 	ns := got.Spec.Defaults.Driver.K8s.PodTemplate.Spec.NodeSelector

@@ -7,11 +7,11 @@ import (
 	"github.com/loykin/piper/pkg/pipeline"
 )
 
-// applyPodPolicyToPipeline merges workerPolicy (base) into all K8s driver
-// pod_templates in the pipeline JSON (defaults + per-step). The step's own
-// pod_template takes precedence on any field conflict.
-func applyPodPolicyToPipeline(pipelineJSON []byte, policy corev1.PodTemplateSpec) ([]byte, error) {
-	return iagent.ApplyPodPolicyJSON[pipeline.Pipeline](pipelineJSON, policy, applyPolicyToPipeline)
+// applyPodPolicyToPipelineYAML merges workerPolicy (base) into all K8s
+// driver pod_templates in the pipeline YAML (defaults + per-step). The
+// step's own pod_template takes precedence on any field conflict.
+func applyPodPolicyToPipelineYAML(pipelineYAML string, policy corev1.PodTemplateSpec) (string, error) {
+	return iagent.ApplyPodPolicyYAML[pipeline.Pipeline](pipelineYAML, policy, applyPolicyToPipeline)
 }
 
 func applyPolicyToPipeline(pl *pipeline.Pipeline, policy corev1.PodTemplateSpec) bool {

@@ -3,6 +3,7 @@ package pipelineworker
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/loykin/piper/internal/proto"
 	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 	k8sdriver "github.com/loykin/piper/pkg/pipeline/worker/driver/k8s"
+	"github.com/loykin/piper/pkg/pipeline/worker/scheduler"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -47,9 +49,26 @@ type Config struct {
 	// ReportResult is called with the final TaskResult for each completed step.
 	// Typically enqueues into a ResultOutbox for durable delivery.
 	ReportResult func(proto.TaskResult) error
-	// RenewLeases pushes active task IDs to the master for lease renewal.
-	RenewLeases func([]string) error
+	// RenewLeases pushes active task IDs and Registry-owned run IDs to the
+	// master for lease renewal — the latter also covers a run between steps
+	// (e.g. mid retry-delay) with no currently-active task, so the master's
+	// staleness sweep doesn't mistake it for abandoned.
+	RenewLeases func(taskIDs, runIDs []string) error
 	LogClient   logsink.PushClient
+	// RequestOutbox durably delivers the worker-owned DAG scheduler's
+	// (pkg/pipeline/worker/scheduler) pipeline.step_upsert/run_finalize
+	// reports for runs received via pipeline.run_dispatch. Required
+	// whenever the caller wants that (still additive, not yet reachable in
+	// production) path to work — see internal/k8sworker/worker.go, which
+	// constructs it the same way it already does for ReportResult's
+	// ResultOutbox.
+	RequestOutbox *pdriver.RequestOutbox
+	// MaxAttempts and RetryDelay configure the scheduler's retry policy.
+	// MaxAttempts <1 means 1 (no retries). See
+	// pkg/pipeline/worker/worker.go's AgentConfig for the baremetal/docker
+	// equivalent.
+	MaxAttempts int
+	RetryDelay  time.Duration
 }
 
 // Worker manages K8s pipeline workloads dispatched via gRPC.
@@ -61,6 +80,11 @@ type Worker struct {
 	observable pdriver.Observable
 	runStopper pdriver.RunStopper
 	initErr    error
+	// registry owns the worker-side DAG scheduler (pkg/pipeline/worker/scheduler)
+	// for runs received via pipeline.run_dispatch. Additive alongside the
+	// per-step pipeline.dispatch path above — see docs/backend/develop.md's
+	// State Ownership section: nothing on the master sends run_dispatch yet.
+	registry *scheduler.Registry
 
 	mu      sync.Mutex
 	handles map[string]*trackedTask // runtimeKey → task
@@ -81,7 +105,7 @@ func New(cfg Config) *Worker {
 		TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
 		K8sClient:            cfg.K8s.Client,
 	})
-	return &Worker{
+	w := &Worker{
 		cfg:        cfg,
 		driver:     driver,
 		observable: driver,
@@ -89,6 +113,28 @@ func New(cfg Config) *Worker {
 		initErr:    err,
 		handles:    make(map[string]*trackedTask),
 	}
+	w.registry = scheduler.NewRegistry(scheduler.RegistryOptions{
+		Driver:        driver,
+		BuildExecSpec: w.buildExecSpec,
+		// Live pod log streaming needs the k8s API client and the exact
+		// namespace/job-name chosen for this step — neither fits
+		// driver.Driver's infra-agnostic Handle/Exit contract, so it's
+		// wired here via AfterStart rather than inside k8sdriver itself.
+		// Mirrors dispatchPipeline's own `go streamJobLogs(...)` call below
+		// exactly, just reached through the scheduler instead.
+		AfterStart: func(stepCtx context.Context, task *proto.Task, spec pdriver.ExecSpec, handle pdriver.Handle) {
+			if spec.LogSink != nil {
+				go streamJobLogs(stepCtx, cfg.K8s.Client, spec.Namespace, handle.RuntimeKey, task, spec.LogSink)
+			}
+		},
+		BuildReporter: func(projectID, runID string) scheduler.StepReporter {
+			return scheduler.NewOutboxReporter(cfg.RequestOutbox, projectID, runID)
+		},
+		MaxAttempts: cfg.MaxAttempts,
+		RetryDelay:  cfg.RetryDelay,
+		WorkerID:    cfg.WorkerID,
+	})
+	return w
 }
 
 func Register(dispatcher Dispatcher, cfg Config) *Worker {
@@ -105,6 +151,9 @@ type pipelineCancelRunRequest struct {
 func (a *Worker) register(dispatcher Dispatcher) {
 	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodPipelineDispatch, func(ctx context.Context, task proto.Task) (any, error) {
 		return nil, a.dispatchPipeline(ctx, &task)
+	})
+	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodPipelineRunDispatch, func(_ context.Context, dispatch proto.RunDispatch) (any, error) {
+		return nil, a.registry.StartRun(dispatch)
 	})
 	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodPipelineCancelRun, func(ctx context.Context, req pipelineCancelRunRequest) (any, error) {
 		return nil, a.cancelPipelineRun(ctx, req)
@@ -163,6 +212,41 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 
 	go a.observe(waitCtx, handle)
 	return nil
+}
+
+// buildExecSpec builds the driver.ExecSpec for task — the scheduler.BuildExecSpec
+// hook pkg/pipeline/worker/scheduler's RunScheduler uses for runs received
+// via pipeline.run_dispatch. Mirrors the ExecSpec construction inlined in
+// dispatchPipeline above (the per-step pipeline.dispatch path) so both
+// paths resolve image/namespace/storage/log-sink identically. Live pod log
+// streaming (dispatchPipeline's streamJobLogs) is wired separately, via the
+// Registry's AfterStart hook in New() — see the comment there.
+func (a *Worker) buildExecSpec(task *proto.Task) (pdriver.ExecSpec, error) {
+	image, err := pdriver.ResolveImage(task, "k8s")
+	if err != nil {
+		return pdriver.ExecSpec{}, err
+	}
+	namespace, err := pdriver.ResolveNamespace(task)
+	if err != nil {
+		return pdriver.ExecSpec{}, err
+	}
+	if len(a.cfg.K8s.Namespaces) > 0 && !slices.Contains(a.cfg.K8s.Namespaces, namespace) {
+		return pdriver.ExecSpec{}, fmt.Errorf("k8s pipeline worker: namespace %q is not in the allowed list", namespace)
+	}
+
+	storageURL, storageToken := taskStorageForK8sWorker(task, a.cfg.Store.MasterURL, a.cfg.Store.WorkerToken)
+	execEnv := append([]string{}, task.Env...)
+	spec := pdriver.ExecSpec{
+		RuntimeKey:   pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),
+		Image:        image,
+		Namespace:    namespace,
+		StorageToken: storageToken,
+		StorageURL:   storageURL,
+	}
+	if a.cfg.LogClient != nil {
+		spec.LogSink = logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, a.cfg.LogClient), logsink.ValuesFromEnv(execEnv))
+	}
+	return spec, nil
 }
 
 func taskStorageForK8sWorker(task *proto.Task, masterURL, workerToken string) (storageURL, storageToken string) {
@@ -255,13 +339,20 @@ func (a *Worker) cancelPipelineRun(ctx context.Context, req pipelineCancelRunReq
 	}
 	a.mu.Unlock()
 
+	var errs []error
 	if a.runStopper == nil {
-		return fmt.Errorf("pipeline driver does not support run cancellation")
+		errs = append(errs, fmt.Errorf("pipeline driver does not support run cancellation"))
+	} else if err := a.runStopper.StopRun(ctx, req.RunID, req.Namespace); err != nil {
+		errs = append(errs, err)
 	}
-	if err := a.runStopper.StopRun(ctx, req.RunID, req.Namespace); err != nil {
-		return err
+	// Also forward to the scheduler-owned path (pipeline.run_dispatch) —
+	// no-ops if req.RunID isn't a run its Registry currently tracks. The
+	// two paths are mutually exclusive per run today, so exactly one of
+	// them ever has real work to do for a given cancel.
+	if err := a.registry.CancelRun(req.RunID); err != nil {
+		errs = append(errs, fmt.Errorf("scheduler cancel: %w", err))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Observe runs the K8s Job reconcile loop (implements the outer Observe contract).
@@ -310,8 +401,9 @@ func (a *Worker) leaseLoop(ctx context.Context) {
 				ids = append(ids, tracked.handle.TaskID)
 			}
 			a.mu.Unlock()
-			if len(ids) > 0 {
-				_ = a.cfg.RenewLeases(ids)
+			runIDs := a.registry.RunIDs()
+			if len(ids) > 0 || len(runIDs) > 0 {
+				_ = a.cfg.RenewLeases(ids, runIDs)
 			}
 		}
 	}

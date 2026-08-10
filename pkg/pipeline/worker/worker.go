@@ -23,6 +23,7 @@ import (
 	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 	baremetaldriver "github.com/loykin/piper/pkg/pipeline/worker/driver/baremetal"
 	dockerdriver "github.com/loykin/piper/pkg/pipeline/worker/driver/docker"
+	"github.com/loykin/piper/pkg/pipeline/worker/scheduler"
 )
 
 // RuntimeType selects how pipeline steps are executed.
@@ -51,6 +52,13 @@ type AgentConfig struct {
 	// ShutdownGrace bounds how long shutdown() waits for in-flight jobs to
 	// stop gracefully before Run returns. Defaults to 20s.
 	ShutdownGrace time.Duration
+	// MaxAttempts and RetryDelay configure the worker-owned DAG scheduler's
+	// (pkg/pipeline/worker/scheduler) retry policy for runs received via
+	// pipeline.run_dispatch — the worker-local equivalent of the master's
+	// old Queue.SetRetryPolicy. MaxAttempts <1 means 1 (no retries).
+	// RetryDelay 0 means redispatch immediately.
+	MaxAttempts int
+	RetryDelay  time.Duration
 }
 
 // StoreConfig holds the master connection and artifact store settings
@@ -100,10 +108,16 @@ type trackedTask struct {
 
 // Worker manages pipeline workloads via gRPC.
 type Worker struct {
-	cfg    Config
-	client *grpcagent.Client
-	driver pdriver.Driver
-	outbox *pdriver.ResultOutbox
+	cfg           Config
+	client        *grpcagent.Client
+	driver        pdriver.Driver
+	outbox        *pdriver.ResultOutbox
+	requestOutbox *pdriver.RequestOutbox
+	// registry owns the worker-side DAG scheduler (pkg/pipeline/worker/scheduler)
+	// for runs received via pipeline.run_dispatch. Additive alongside the
+	// per-step pipeline.dispatch path above — see docs/backend/develop.md's
+	// State Ownership section: nothing on the master sends run_dispatch yet.
+	registry *scheduler.Registry
 
 	mu       sync.Mutex
 	active   map[string]*trackedTask // runtimeKey → trackedTask
@@ -220,9 +234,38 @@ func New(cfg Config) (*Worker, error) {
 	}
 	w.outbox = outbox
 
+	requestOutbox, err := pdriver.NewRequestOutbox(
+		filepath.Join(cfg.Store.OutputDir, ".request-outbox", cfg.Agent.ID),
+		func(ctx context.Context, method string, payload json.RawMessage) error {
+			return client.SendRequest(ctx, method, payload, nil)
+		},
+	)
+	if err != nil {
+		closeDriver()
+		return nil, err
+	}
+	w.requestOutbox = requestOutbox
+
+	w.registry = scheduler.NewRegistry(scheduler.RegistryOptions{
+		Driver:        driver,
+		BuildExecSpec: w.buildExecSpec,
+		BuildReporter: func(projectID, runID string) scheduler.StepReporter {
+			return scheduler.NewOutboxReporter(w.requestOutbox, projectID, runID)
+		},
+		MaxAttempts: cfg.Agent.MaxAttempts,
+		RetryDelay:  cfg.Agent.RetryDelay,
+		WorkerID:    cfg.Agent.ID,
+	})
+
 	d := client.Dispatcher()
 	if err := grpcagent.RegisterJSON(d, iagent.MethodPipelineDispatch, func(ctx context.Context, task proto.Task) (any, error) {
 		return nil, w.dispatch(ctx, &task)
+	}); err != nil {
+		closeDriver()
+		return nil, err
+	}
+	if err := grpcagent.RegisterJSON(d, iagent.MethodPipelineRunDispatch, func(_ context.Context, dispatch proto.RunDispatch) (any, error) {
+		return nil, w.registry.StartRun(dispatch)
 	}); err != nil {
 		closeDriver()
 		return nil, err
@@ -273,6 +316,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 	go w.leaseLoop(ctx)
 	go w.outbox.Run(ctx)
+	go w.requestOutbox.Run(ctx)
 
 	err := w.client.Run(ctx)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Agent.ShutdownGrace)
@@ -379,6 +423,39 @@ func (w *Worker) dispatch(_ context.Context, task *proto.Task) error {
 	go w.observe(taskCtx, handle)
 	slog.Info("pipeline step dispatched", "task_id", task.ID, "runtime_key", runtimeKey)
 	return nil
+}
+
+// buildExecSpec builds the driver.ExecSpec for task, merging in git
+// credentials onto task.Env in place. This is the scheduler.BuildExecSpec
+// hook pkg/pipeline/worker/scheduler's RunScheduler uses for runs received
+// via pipeline.run_dispatch — it mirrors the ExecSpec construction inlined
+// in dispatch above (the per-step pipeline.dispatch path) so both paths
+// build storage/image/log-sink settings identically; kept as its own method
+// rather than a shared helper so dispatch's existing, already-verified
+// per-step flow stays untouched.
+func (w *Worker) buildExecSpec(task *proto.Task) (pdriver.ExecSpec, error) {
+	runtimeKey := pdriver.RuntimeKey(w.cfg.Agent.ID, task.RunID, task.StepName, task.Attempt)
+	storageURL, storageToken := taskStorageForWorker(task, w.cfg.Agent.MasterURL, w.cfg.Agent.WorkerToken, w.cfg.Store.LocalStoreAccess)
+	execEnv := mergeExecutionEnv(w.gitEnv(), task.Env)
+	task.Env = execEnv
+
+	spec := pdriver.ExecSpec{
+		RuntimeKey:   runtimeKey,
+		OutputDir:    w.cfg.Store.OutputDir,
+		StorageToken: storageToken,
+		StorageURL:   storageURL,
+		LogSink:      logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, w.client), logsink.ValuesFromEnv(execEnv)),
+	}
+
+	if w.cfg.Runtime == RuntimeDocker {
+		image, err := pdriver.ResolveImage(task, string(RuntimeDocker))
+		if err != nil {
+			spec.LogSink.Stop()
+			return pdriver.ExecSpec{}, err
+		}
+		spec.Image = image
+	}
+	return spec, nil
 }
 
 func mergeEnv(base, override []string) []string {
@@ -530,7 +607,11 @@ func (w *Worker) buildResult(handle pdriver.Handle, exit pdriver.Exit) proto.Tas
 
 // cancelRun stops all active jobs for the given run and reports any stop
 // failures back to the caller so they can be surfaced to the master as a
-// best-effort-remote-stop warning rather than silently swallowed.
+// best-effort-remote-stop warning rather than silently swallowed. Also
+// forwards to w.registry, which no-ops if runID isn't a run its scheduler
+// currently owns — the two paths (per-step pipeline.dispatch's w.active, and
+// pipeline.run_dispatch's Registry) are mutually exclusive per run today, so
+// exactly one of them ever has real work to do for a given cancel.
 func (w *Worker) cancelRun(runID string) error {
 	w.mu.Lock()
 	var toStop []trackedTask
@@ -559,6 +640,9 @@ func (w *Worker) cancelRun(runID string) error {
 			errs = append(errs, fmt.Errorf("stop %s: %w", tt.runID, err))
 		}
 	}
+	if err := w.registry.CancelRun(runID); err != nil {
+		errs = append(errs, fmt.Errorf("scheduler cancel: %w", err))
+	}
 	return errors.Join(errs...)
 }
 
@@ -577,10 +661,16 @@ func (w *Worker) leaseLoop(ctx context.Context) {
 				taskIDs = append(taskIDs, tt.handle.TaskID)
 			}
 			w.mu.Unlock()
-			if len(taskIDs) == 0 {
+			// runIDs also covers a run between steps (e.g. mid retry-delay)
+			// that has no currently-active task — without this, the master's
+			// staleness sweep (see docs/backend/develop.md's State
+			// Ownership section) would see no heartbeat at all for such a
+			// run and could eventually mistake it for an abandoned one.
+			runIDs := w.registry.RunIDs()
+			if len(taskIDs) == 0 && len(runIDs) == 0 {
 				continue
 			}
-			payload := map[string]any{"task_ids": taskIDs}
+			payload := map[string]any{"task_ids": taskIDs, "run_ids": runIDs}
 			data, _ := json.Marshal(payload)
 			if err := w.client.SendPush(iagent.MethodPipelineLeaseRenew, json.RawMessage(data)); err != nil {
 				slog.Warn("pipeline worker: lease renew failed", "err", err)

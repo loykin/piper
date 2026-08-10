@@ -24,7 +24,6 @@ import (
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/pipelinedispatch"
 	"github.com/loykin/piper/internal/proto"
-	"github.com/loykin/piper/internal/queue"
 	ischeduler "github.com/loykin/piper/internal/scheduler"
 	"github.com/loykin/piper/internal/srcfetch"
 	"github.com/loykin/piper/pkg/credential"
@@ -61,7 +60,6 @@ type Piper struct {
 	repos           *storemod.Repos
 	logs            logstore.LogStore
 	metrics         logstore.MetricStore
-	queue           *queue.Queue
 	serving         servingBundle
 	notebookManager *notebook.Manager
 	agentRegistry   *iagent.Registry
@@ -72,7 +70,7 @@ type Piper struct {
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
 	resolver        artifact.Resolver // central artifact resolver
-	backend         pipelinedispatch.ExecutionBackend
+	backend         pipelinedispatch.RunDispatchBackend
 	events          *event.Hub
 	scheduler       *ischeduler.Scheduler
 	startedAt       time.Time // wall-clock when New() ran; used for misfire detection
@@ -196,19 +194,13 @@ func New(cfg Config) (*Piper, error) {
 		WithEnvResolver(credentialStore.ResolveEnv))
 	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
-	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
-	if cfg.Queue.MaxAttempts > 0 || cfg.Queue.RetryDelay > 0 {
-		q.SetRetryPolicy(cfg.Queue.MaxAttempts, cfg.Queue.RetryDelay)
-	}
-	q.SetRecoveryGracePeriod(cfg.Queue.RecoveryGrace)
-	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv, repos.Log, repos.Metric))
+	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, repos.Run, repos.Log, repos.Metric))
 	// On agent (re)connect: sync notebook status so master DB catches up on any
 	// state changes that occurred while the connection was down.
 	grpcSrv.SetConnectHandler(func(agentID string) {
 		nbMgr.SyncAgent(context.Background(), agentID)
 		servingMgr.SyncAgent(context.Background(), agentID)
 	})
-	registerPipelineDBHandlers(grpcSrv, repos.Run, repos.Step)
 
 	p := &Piper{
 		cfg:         cfg,
@@ -217,7 +209,6 @@ func New(cfg Config) (*Piper, error) {
 		logs:        repos.Log,
 		metrics:     repos.Metric,
 		credentials: credentialStore,
-		queue:       q,
 		serving: servingBundle{
 			manager: servingMgr,
 			proxy:   serving.NewProxy(repos.Serving),
@@ -247,7 +238,6 @@ func New(cfg Config) (*Piper, error) {
 			p.storageURL = storageURL
 		}
 	}
-	q.SetStorageConfig(p.storageURL, cfg.Storage.Token)
 	servingDriver.WithStorage(p.storageURL, cfg.Storage.Token)
 	p.resolver = &piperArtifactResolver{
 		runRepo:    repos.Run,
@@ -255,12 +245,12 @@ func New(cfg Config) (*Piper, error) {
 		storageURL: p.storageURL,
 	}
 	// Pipeline tasks are delivered only through gRPC-connected agents.
-	p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.Run, repos.WorkerPodPolicy))
-	q.OnRunSuccess = p.handleRunSuccess
-	q.SetEventPublisher(p.events)
+	agentBackend := pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.Run, repos.WorkerPodPolicy)
+	p.SetBackend(agentBackend)
 	p.serving.manager.SetEventPublisher(p.events)
 	p.notebookManager.SetEventPublisher(p.events)
-	p.recoverInterruptedRuns(context.Background())
+	registerPipelineDBHandlers(grpcSrv, repos.Run, repos.Step, p.events, p.handleRunSuccess, agentBackend)
+	p.reconcileInterruptedRuns(context.Background())
 
 	// Start the in-memory scheduler and seed it from the DB.
 	// startedAt is set before LoadFromRepo so misfire detection works on first Add.
@@ -364,13 +354,79 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			return
 		case <-ticker.C:
 			tick++
-			p.reconcileBackend(ctx)
-			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.cleanupRetention(ctx)
 			p.cleanupOrphanArtifacts(ctx)
+			p.sweepStaleWorkerBoundRuns(ctx)
 			if tick%recoveryReconcileEvery == 0 {
-				p.recoverInterruptedRuns(ctx)
+				p.reconcileInterruptedRuns(ctx)
 			}
+		}
+	}
+}
+
+// staleWorkerGrace bounds how long a run-level heartbeat (pipeline.lease_renew's
+// run_ids, pushed every 10s — see pkg/pipeline/worker/worker.go's leaseLoop)
+// can go stale before sweepStaleWorkerBoundRuns treats the bound worker as
+// permanently gone. Must comfortably exceed that 10s cadence so a handful of
+// missed ticks (a brief network hiccup) doesn't spuriously kill an
+// otherwise-healthy run.
+const staleWorkerGrace = 60 * time.Second
+
+// sweepStaleWorkerBoundRuns is the worker-owned-scheduling model's backstop
+// against a permanently-lost worker. Unlike the old per-step model, the
+// master no longer watches individual steps once dispatched — the worker's
+// own scheduler (pkg/pipeline/worker/scheduler) owns that — so nothing else
+// would ever notice a run whose bound worker vanished (process killed, host
+// died, network partitioned for good) and force it to a terminal state
+// instead of leaving it stuck "running" forever. A run is only
+// force-finalized when BOTH signals agree it's actually gone — a stale
+// heartbeat AND absence from the live connection registry — so a worker
+// that's merely slow to report, or actively reconnecting (which reappears
+// in the registry immediately, before its next heartbeat even lands), is
+// never mistaken for dead. Runs whose cancel was requested while the worker
+// was unreachable (see CancelRun's SetCancelRequested fallback) are
+// finalized as Canceled here rather than Failed, once this same backstop
+// confirms the worker they were waiting to hear back from is never coming
+// back.
+func (p *Piper) sweepStaleWorkerBoundRuns(ctx context.Context) {
+	if p.backend == nil {
+		return
+	}
+	runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{Status: run.StatusRunning})
+	if err != nil {
+		slog.Warn("sweep stale worker-bound runs: list runs failed", "err", err)
+		return
+	}
+	cutoff := time.Now().UTC().Add(-staleWorkerGrace)
+	for _, r := range runs {
+		if r.WorkerID == "" {
+			// Not yet dispatched (or dispatch never got far enough to bind
+			// a worker) — resendUndeliveredRunDispatches's concern, not
+			// this sweep's.
+			continue
+		}
+		lastSeen := r.StartedAt
+		if r.WorkerLastSeenAt != nil {
+			lastSeen = *r.WorkerLastSeenAt
+		}
+		if lastSeen.After(cutoff) {
+			continue // heartbeat (or dispatch itself, absent any heartbeat yet) still recent enough
+		}
+		if _, err := p.agentRegistry.Get(r.WorkerID); err == nil {
+			continue // still connected — a stale DB heartbeat here just means this sweep raced a fresh push, not that the worker is gone
+		}
+		status := run.StatusFailed
+		if r.CancelRequestedAt != nil {
+			status = run.StatusCanceled
+		}
+		now := time.Now().UTC()
+		applied, err := p.repos.Run.FinalizeStatusCAS(ctx, r.ProjectID, r.ID, status, &now)
+		if err != nil {
+			slog.Warn("sweep stale worker-bound run: finalize failed", "run_id", r.ID, "err", err)
+			continue
+		}
+		if applied {
+			slog.Warn("pipeline: run force-finalized, bound worker unreachable", "run_id", r.ID, "worker_id", r.WorkerID, "status", status)
 		}
 	}
 }
@@ -384,20 +440,6 @@ func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
 		exclude = append(exclude, "models")
 	}
 	cleanupOrphanArtifacts(ctx, p.repos.Run, p.store, p.cfg.OutputDir, exclude...)
-}
-
-type jobReconciler interface {
-	ReconcileJobs(ctx context.Context, report func(context.Context, proto.TaskResult) error)
-}
-
-func (p *Piper) reconcileBackend(ctx context.Context) {
-	reconciler, ok := p.backend.(jobReconciler)
-	if !ok {
-		return
-	}
-	reconciler.ReconcileJobs(ctx, func(ctx context.Context, result proto.TaskResult) error {
-		return p.queue.Complete(ctx, result)
-	})
 }
 
 func (p *Piper) listRunsAcrossProjects(ctx context.Context, filter run.RunFilter) ([]*run.Run, error) {
@@ -416,67 +458,88 @@ func (p *Piper) listRunsAcrossProjects(ctx context.Context, filter run.RunFilter
 	return runs, nil
 }
 
-func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
+// resendUndeliveredRunDispatches is the worker-owned-scheduling model's
+// crash-recovery reconciler — used instead of recoverInterruptedRuns
+// whenever the backend supports it (see RunDispatchBackend). Unlike the old
+// model, the master never held live per-step scheduling state to
+// reconstruct in the first place (the worker's own scheduler owns that —
+// see pkg/pipeline/worker/scheduler), so there's nothing to rebuild here.
+// The only real gap a master crash can leave is a run whose
+// pipeline.run_dispatch was never confirmed delivered (e.g. the master died
+// between confirmRunBinding's DB write and SendRPC returning, or even
+// before either). Resending is safe and idempotent: the worker's
+// Registry.StartRun no-ops for a RunID it already has an active scheduler
+// for, so an at-least-once resend can never start a run twice.
+func (p *Piper) resendUndeliveredRunDispatches(ctx context.Context, rb pipelinedispatch.RunDispatchBackend) {
 	runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{Status: run.StatusRunning})
 	if err != nil {
-		slog.Warn("recover running runs failed", "err", err)
+		slog.Warn("resend run dispatches: list runs failed", "err", err)
 		return
 	}
 	now := time.Now().UTC()
 	for _, r := range runs {
-		if p.queue.IsTracking(r.ID) {
-			// Still actively being processed by this queue instance — leave
-			// it alone. Without this guard, calling this function again
-			// after startup (see runCleanup's periodic reconciler pass)
-			// would re-add a live run and corrupt its in-memory state.
+		if rb.IsTracking(r.ID) {
+			// Already dispatched by this process's AgentBackend instance —
+			// its worker's own scheduler owns it. Resending would be
+			// harmless (StartRun is idempotent) but pointless network
+			// traffic on every sweep tick, so skip it.
 			continue
 		}
 		if r.PipelineYAML == "" {
-			// No YAML — can't reconstruct DAG, mark failed.
 			if err := p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now); err != nil {
-				slog.Warn("recover run failed", "run_id", r.ID, "err", err)
+				slog.Warn("resend run dispatch: mark failed (no yaml)", "run_id", r.ID, "err", err)
 			}
 			continue
 		}
 		pl, err := p.Parse([]byte(r.PipelineYAML))
 		if err != nil {
-			slog.Warn("recover: parse pipeline failed", "run_id", r.ID, "err", err)
+			slog.Warn("resend run dispatch: parse pipeline failed", "run_id", r.ID, "err", err)
 			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
 			continue
-		}
-		dag, err := pipeline.BuildDAG(pl)
-		if err != nil {
-			slog.Warn("recover: build dag failed", "run_id", r.ID, "err", err)
-			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
-			continue
-		}
-		steps, _ := p.repos.Step.List(ctx, r.ProjectID, r.ID)
-		var recovered []queue.RecoveredStep
-		for _, s := range steps {
-			switch s.Status {
-			case "done", "skipped":
-				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, Done: true})
-			case "running":
-				startedAt := now
-				if s.StartedAt != nil {
-					startedAt = *s.StartedAt
-				}
-				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, StartedAt: startedAt, Attempts: s.Attempts})
-			}
 		}
 		var params map[string]any
 		if r.ParamsJSON != "" {
 			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
 		}
-		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
 		envByStep, err := p.resolvePipelineCredentialEnv(ctx, r.ProjectID, r.ID, pl)
 		if err != nil {
-			slog.Warn("recover: resolve credential env failed", "run_id", r.ID, "err", err)
+			slog.Warn("resend run dispatch: resolve credential env failed", "run_id", r.ID, "err", err)
 			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
 			continue
 		}
-		p.queue.RecoverWithEnv(ctx, r.ProjectID, pl, dag, r.ID, r.WorkerID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered, envByStep)
+		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
+		if err := rb.DispatchRun(ctx, proto.RunDispatch{
+			ProjectID:    r.ProjectID,
+			RunID:        r.ID,
+			PipelineYAML: r.PipelineYAML,
+			RunParams:    params,
+			WorkDir:      ".",
+			OutputDir:    outputDir,
+			CreatedAt:    now,
+			WorkerID:     r.WorkerID, // force placement onto the already-bound worker, if any
+			Vars:         proto.BuiltinVars{ScheduledAt: r.ScheduledAt},
+			Env:          envByStep,
+			StorageURL:   p.storageURL,
+			StorageToken: p.cfg.Storage.Token,
+		}); err != nil {
+			slog.Warn("resend run dispatch failed", "run_id", r.ID, "err", err)
+			// Left running — retried on the next sweep tick, or eventually
+			// force-finalized by sweepStaleWorkerBoundRuns if the bound
+			// worker (if any) turns out to be permanently unreachable.
+		}
 	}
+}
+
+// reconcileInterruptedRuns is the crash-recovery entry point, called once at
+// startup and periodically by runCleanup: resends pipeline.run_dispatch for
+// any run this master believes is still running but can't confirm actually
+// reached its bound worker (see resendUndeliveredRunDispatches) — a no-op
+// when no backend is configured (SetBackend(nil) disables dispatch).
+func (p *Piper) reconcileInterruptedRuns(ctx context.Context) {
+	if p.backend == nil {
+		return
+	}
+	p.resendUndeliveredRunDispatches(ctx, p.backend)
 }
 
 // retentionScheduleBatch bounds how many overflow runs cleanupScheduleRetention
@@ -572,25 +635,9 @@ func (p *Piper) cleanupScheduleRetention(ctx context.Context) {
 	}
 }
 
-// queueDrainGrace bounds how long Close waits for the queue's own in-flight
-// goroutines (dispatch calls, fired timeout/retry/recovery-grace timers) to
-// finish flushing before giving up and tearing down the DB out from under
-// them anyway.
-const queueDrainGrace = 20 * time.Second
-
 // Close stops background goroutines and closes the store.
 func (p *Piper) Close() error {
 	p.scheduler.Stop()
-	// Drain the queue's own goroutines *before* cancelling p.ctx (== the
-	// queue's serverCtx) and closing the DB: several of them persist a
-	// write using that same ctx/repos, and cutting either out from under a
-	// goroutine that's mid-flush would silently drop the write. Bounded so a
-	// goroutine that's genuinely stuck can't hang shutdown forever.
-	drainCtx, cancel := context.WithTimeout(context.Background(), queueDrainGrace)
-	defer cancel()
-	if err := p.queue.Close(drainCtx); err != nil {
-		slog.Warn("queue drain did not finish before shutdown grace expired", "err", err)
-	}
 	p.stopCtx() // cancel runCleanup and any pending dispatches
 	p.wg.Wait()
 	return p.repos.Close()
@@ -931,7 +978,52 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 		return "", err
 	}
 
-	p.queue.AddWithEnv(ctx, opts.ProjectID, pl, dag, runID, ".", outputDir, opts.Vars, opts.Params, envByStep)
+	if p.backend == nil {
+		now := time.Now().UTC()
+		_ = p.repos.Run.UpdateStatus(ctx, opts.ProjectID, runID, run.StatusFailed, &now)
+		return "", fmt.Errorf("pipeline: no backend configured, cannot dispatch run")
+	}
+	// Hand the whole DAG to the bound worker in one message; its own local
+	// scheduler (pkg/pipeline/worker/scheduler) owns dependency promotion,
+	// retry, and timeout for every step from here on — see
+	// docs/backend/develop.md's State Ownership section. Async so a
+	// slow/failed worker round trip doesn't block this HTTP-facing call.
+	//
+	// Dispatch the caller-supplied pl, not opts.YAML: rerunRun's failedOnly
+	// path (and retryStep) filter pl.Spec.Steps down to a subset before
+	// calling startRun, while opts.YAML stays the original full manifest
+	// (stored on the run row as-is as the historical record — see
+	// r.PipelineYAML above). Dispatching opts.YAML here would send the
+	// worker the unfiltered step list and re-run everything instead of just
+	// the retried subset.
+	dispatchYAML := opts.YAML
+	if marshaled, merr := pipeline.Marshal(pl); merr == nil {
+		dispatchYAML = string(marshaled)
+	} else {
+		slog.Warn("pipeline: marshal pipeline for dispatch failed, falling back to the original manifest YAML", "run_id", runID, "err", merr)
+	}
+	go func() {
+		dispatchCtx := p.ctx
+		if err := p.backend.DispatchRun(dispatchCtx, proto.RunDispatch{
+			ProjectID:    opts.ProjectID,
+			RunID:        runID,
+			PipelineYAML: dispatchYAML,
+			RunParams:    opts.Params,
+			WorkDir:      ".",
+			OutputDir:    outputDir,
+			CreatedAt:    now,
+			Vars:         opts.Vars,
+			Env:          envByStep,
+			StorageURL:   p.storageURL,
+			StorageToken: p.cfg.Storage.Token,
+		}); err != nil {
+			slog.Error("pipeline: run dispatch failed", "run_id", runID, "err", err)
+			// Left running: the periodic resendUndeliveredRunDispatches
+			// sweep (runCleanup) will retry, and sweepStaleWorkerBoundRuns
+			// eventually force-finalizes it if the target worker turns
+			// out to be permanently unreachable.
+		}
+	}()
 	slog.Info("event", "type", "run.started", "run_id", runID, "pipeline", pl.Metadata.Name)
 
 	if p.cfg.Hooks.OnRunStart != nil {
@@ -1063,12 +1155,12 @@ func (p *Piper) resolvePipelineCredentialEnv(ctx context.Context, projectID, run
 	return envByStep, nil
 }
 
-// SetBackend registers an external execution environment such as a K8s Job launcher.
-// When set, Dispatch is called immediately whenever a task becomes ready.
-// Setting nil disables task dispatch until another backend is configured.
-func (p *Piper) SetBackend(b pipelinedispatch.ExecutionBackend) {
+// SetBackend registers the execution backend runs are dispatched through —
+// must implement the worker-owned scheduling model (pipeline.run_dispatch);
+// see pipelinedispatch.RunDispatchBackend. Setting nil disables run dispatch
+// (StartRun then fails) until another backend is configured.
+func (p *Piper) SetBackend(b pipelinedispatch.RunDispatchBackend) {
 	p.backend = b
-	p.queue.SetBackend(b)
 }
 
 func (p *Piper) Config() Config {

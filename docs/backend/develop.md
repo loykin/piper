@@ -2,6 +2,10 @@
 
 ## Worker Network Invariant
 
+These rules apply to remote workers. A server configured with
+`runtime.type: k8s` owns pipeline execution in-process and is the explicit
+exception described below.
+
 - Workers establish one outbound tunnel to the Piper master using `worker.master_url`.
 - The master serves the HTTP API and the gRPC worker tunnel on the same `server.http_addr` endpoint.
 - Do not add a separate agent listener/address or reintroduce `server.agent_addr`, `worker.agent_addr`, or `--agent-addr`.
@@ -12,6 +16,28 @@
 - Pipeline subprocesses, containers, and Kubernetes Job pods must not call the master directly. They report locally to their parent worker, which forwards data through the tunnel.
 - Artifact storage is the only exception: workers and workload runtimes may connect directly to the configured `storage.url` such as S3.
 - Changes that create any additional worker-side outbound endpoint require an explicit architecture decision and documentation update.
+
+## Server-Owned Kubernetes Pipeline Runtime
+
+- `runtime.type: k8s` moves **pipeline** Job lifecycle ownership into the Piper
+  server. The server uses its configured Kubernetes client directly; pipeline
+  dispatch, cancellation, observation, and recovery must not pass through a
+  registered Kubernetes worker.
+- Direct runtime results still enter through `Queue.Complete`; the runtime must
+  not write run/step repositories or finalize runs itself.
+- The configured `runtime.namespaces` list is the complete namespace scope for
+  creation, recovery, and cancellation. Never silently expand it based on a
+  workload manifest.
+- `placement.worker` and `placement.label` are invalid for this runtime.
+  `placement.runtime` may be empty or `k8s`; Docker/baremetal placement must
+  fail before creating a Job.
+- Kubernetes Job pods may connect to configured artifact storage. When Piper's
+  built-in file store is used, `runtime.workload_url` is the private in-cluster
+  `/store` endpoint base and is the only master endpoint given to the Job.
+- Notebook and serving remain remote-worker controlled during this staged
+  migration. Do not remove their compatibility worker/tunnel path until direct
+  drivers preserve proxying, status reconciliation, volume lifecycle, logs,
+  credentials, and restart recovery.
 
 ## State Ownership — Master Is Authoritative
 
@@ -35,12 +61,16 @@
   ignores duplicate/stale/future-attempt reports. A worker's "done" report is
   a request the master validates and applies — the master decides retries,
   timeouts, and crash recovery, not the worker.
-- Non-tunnel dispatch (the Kubernetes Job launcher polling loop in
-  `piper.go`'s `reconcileBackend`) funnels through the exact same
+- Non-tunnel dispatch (including the server-owned Kubernetes runtime) funnels
+  through the exact same
   `Queue.Complete` validation path — there is no second, looser path to
   mutate state.
 
 ## Worker Assignment
+
+The rules in this section apply to remote-worker dispatch. With
+`runtime.type: k8s`, the installation itself is the execution owner and the
+placement constraints in the server-owned runtime section apply instead.
 
 - Design invariant (`pkg/manifest/driver.go` `PlacementSpec`): **one run
   executes on one worker** — every step in a run is dispatched to the same

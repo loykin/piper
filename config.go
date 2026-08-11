@@ -3,13 +3,17 @@ package piper
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/loykin/dbstore"
 	storemod "github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/security"
+	"k8s.io/client-go/kubernetes"
 )
+
+const RuntimeK8s = "k8s"
 
 // Config is the global piper configuration. Accepts a struct and can be embedded.
 type Config struct {
@@ -61,6 +65,26 @@ type Config struct {
 
 	// NotebookWorker — embedded bare-metal notebook worker configuration.
 	NotebookWorker NotebookWorkerConfig `yaml:"notebook_worker" mapstructure:"notebook_worker"`
+
+	// Runtime selects an in-process execution backend. Empty keeps the legacy
+	// remote-worker dispatch model for backward compatibility.
+	Runtime RuntimeConfig `yaml:"runtime" mapstructure:"runtime"`
+}
+
+type RuntimeConfig struct {
+	Type string           `yaml:"type" mapstructure:"type"`
+	K8s  K8sRuntimeConfig `yaml:"k8s" mapstructure:"k8s"`
+}
+
+type K8sRuntimeConfig struct {
+	Client              kubernetes.Interface `yaml:"-" mapstructure:"-"`
+	Namespaces          []string             `yaml:"namespaces" mapstructure:"namespaces"`
+	PipelineRunnerImage string               `yaml:"pipeline_runner_image" mapstructure:"pipeline_runner_image"`
+	ImagePullPolicy     string               `yaml:"image_pull_policy" mapstructure:"image_pull_policy"`
+	TTLAfterFinished    *int32               `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
+	// WorkloadURL is the URL Kubernetes workloads use to reach Piper's built-in
+	// artifact endpoint when storage resolves to file://.
+	WorkloadURL string `yaml:"workload_url" mapstructure:"workload_url"`
 }
 
 type GitConfig struct {
@@ -254,6 +278,36 @@ func (c Config) Validate() error {
 	}
 	if c.Schedule.MisfireGracePeriod < 0 {
 		return fmt.Errorf("schedule.misfire_grace_period must not be negative")
+	}
+	switch c.Runtime.Type {
+	case "":
+	case RuntimeK8s:
+		if c.Runtime.K8s.Client == nil {
+			return fmt.Errorf("runtime.k8s client is required")
+		}
+		if len(c.Runtime.K8s.Namespaces) == 0 {
+			return fmt.Errorf("runtime.k8s.namespaces must contain at least one allowed namespace")
+		}
+		seen := make(map[string]struct{}, len(c.Runtime.K8s.Namespaces))
+		for _, namespace := range c.Runtime.K8s.Namespaces {
+			if strings.TrimSpace(namespace) == "" {
+				return fmt.Errorf("runtime.k8s.namespaces must not contain an empty namespace")
+			}
+			if _, exists := seen[namespace]; exists {
+				return fmt.Errorf("runtime.k8s.namespaces contains duplicate namespace %q", namespace)
+			}
+			seen[namespace] = struct{}{}
+		}
+		switch c.Runtime.K8s.ImagePullPolicy {
+		case "", "Always", "IfNotPresent", "Never":
+		default:
+			return fmt.Errorf("runtime.k8s.image_pull_policy must be Always, IfNotPresent, or Never")
+		}
+		if strings.HasPrefix(resolveStorageURL(c), "file://") && strings.TrimSpace(c.Runtime.K8s.WorkloadURL) == "" {
+			return fmt.Errorf("runtime.k8s.workload_url is required when using the built-in file artifact store")
+		}
+	default:
+		return fmt.Errorf("runtime.type must be k8s or empty")
 	}
 
 	return nil

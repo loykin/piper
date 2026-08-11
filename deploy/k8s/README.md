@@ -1,8 +1,12 @@
 # Kubernetes deployment
 
-This deployment runs one Piper control plane and one outbound-tunnel Kubernetes
-worker. The server and worker communicate through the single HTTP/gRPC endpoint
-on port 8080. Both processes read the generated ConfigMap from `piper.yaml`;
+This deployment runs one Piper control plane with an in-process Kubernetes
+pipeline runtime. Pipeline Jobs are created, reconciled, recovered, and canceled
+directly through the in-cluster Kubernetes API; they no longer traverse the
+worker tunnel.
+
+The Kubernetes worker remains temporarily for notebook and serving lifecycle
+operations. Both processes read the generated ConfigMap from `piper.yaml`;
 their commands contain no operational flags.
 
 ## Install
@@ -23,7 +27,7 @@ the initial administrator.
 
 The installer creates `piper-server-secrets` once and reuses it on later runs.
 It contains the authentication signing key, credential-encryption key, and the
-shared worker-tunnel token.
+compatibility worker-tunnel token.
 Back up that Secret and the `piper-server-data` PVC together. Losing or rotating
 the authentication key invalidates sessions; losing the encryption key makes
 stored credentials unreadable.

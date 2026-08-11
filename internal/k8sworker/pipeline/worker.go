@@ -42,8 +42,11 @@ type K8sConfig struct {
 // Config holds K8s pipeline worker configuration grouped by layer.
 type Config struct {
 	WorkerID string
-	Store    StoreConfig
-	K8s      K8sConfig
+	// Context owns locally-dispatched observers. When nil, Background is used
+	// for compatibility with the standalone worker process.
+	Context context.Context
+	Store   StoreConfig
+	K8s     K8sConfig
 	// ReportResult is called with the final TaskResult for each completed step.
 	// Typically enqueues into a ResultOutbox for durable delivery.
 	ReportResult func(proto.TaskResult) error
@@ -89,6 +92,41 @@ func New(cfg Config) *Worker {
 		initErr:    err,
 		handles:    make(map[string]*trackedTask),
 	}
+}
+
+// InitError reports whether the runtime driver could be constructed.
+func (a *Worker) InitError() error {
+	if a == nil {
+		return fmt.Errorf("k8s pipeline worker is nil")
+	}
+	return a.initErr
+}
+
+// Dispatch starts a pipeline task without going through the gRPC dispatcher.
+// It is used by the in-process Kubernetes runtime backend.
+func (a *Worker) Dispatch(ctx context.Context, task *proto.Task) error {
+	return a.dispatchPipeline(ctx, task)
+}
+
+// CancelRun stops every Kubernetes Job for runID in the configured namespace
+// scope. Scanning the configured scope also covers jobs recovered after a
+// Piper restart, before any new dispatch has rebuilt local run metadata.
+func (a *Worker) CancelRun(ctx context.Context, runID string) error {
+	if runID == "" {
+		return nil
+	}
+	if a.initErr != nil {
+		return a.initErr
+	}
+	if len(a.cfg.K8s.Namespaces) == 0 {
+		return fmt.Errorf("k8s pipeline worker: at least one namespace is required for run cancellation")
+	}
+	for _, namespace := range a.cfg.K8s.Namespaces {
+		if err := a.cancelPipelineRun(ctx, pipelineCancelRunRequest{RunID: runID, Namespace: namespace}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func Register(dispatcher Dispatcher, cfg Config) *Worker {
@@ -153,7 +191,11 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		return err
 	}
 
-	waitCtx, cancel := context.WithCancel(context.Background())
+	parentCtx := a.cfg.Context
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	waitCtx, cancel := context.WithCancel(parentCtx)
 	a.mu.Lock()
 	a.handles[handle.RuntimeKey] = &trackedTask{handle: handle, cancel: cancel, logs: spec.LogSink}
 	a.mu.Unlock()
@@ -232,14 +274,25 @@ func streamJobLogs(ctx context.Context, client kubernetes.Interface, namespace, 
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{Follow: true}).Stream(ctx)
-	if err != nil {
-		return
-	}
-	defer func() { _ = stream.Close() }()
-	scanner := bufio.NewScanner(stream)
-	for scanner.Scan() {
-		sink.Append(task.RunID, task.StepName, "combined", scanner.Text(), time.Now())
+	// Pod discovery can win the race with container startup. Opening logs once
+	// in that window returns PodInitializing/ContainerCreating and used to make
+	// short Jobs permanently lose all UI logs. Retry until the container is
+	// readable or the task observer is canceled.
+	for {
+		stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{Follow: true}).Stream(ctx)
+		if err == nil {
+			scanner := bufio.NewScanner(stream)
+			for scanner.Scan() {
+				sink.Append(task.RunID, task.StepName, "combined", scanner.Text(), time.Now())
+			}
+			_ = stream.Close()
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 }
 

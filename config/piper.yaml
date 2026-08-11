@@ -79,6 +79,19 @@ server:
       notebooks_root: ./notebooks
       port_range: 8888-9900
 
+# Server-owned Kubernetes pipeline runtime. This is mutually exclusive with
+# server.local. Empty/omitted runtime.type keeps remote-worker dispatch.
+# runtime:
+#   type: k8s
+#   namespaces: [piper]
+#   kubeconfig: "" # required only outside the cluster
+#   in_cluster: true
+#   # Required with the built-in file store; Job pods use this private URL.
+#   workload_url: http://piper-server.piper.svc.cluster.local:8080
+#   pipeline_runner:
+#     image: ghcr.io/loykin/piper:latest
+#     image_pull_policy: IfNotPresent
+
 # Standalone worker reference. A worker process configures exactly one
 # infrastructure and, for baremetal/docker, exactly one capability. Kubernetes
 # workers may enable multiple capabilities. Start every variant with:

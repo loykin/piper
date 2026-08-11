@@ -23,6 +23,7 @@ import { useCredentials } from '@/features/credentials/hooks'
 import { createPipeline } from '@/features/pipelines/api'
 import { getPipeline } from '@/features/pipelines/api'
 import { useWorkers } from '@/features/workers/hooks'
+import { useSystemSettings } from '@/features/system/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
@@ -420,6 +421,8 @@ export default function PipelineEditorPage() {
   // prefill the sole registered type once, and require an explicit choice
   // when more than one type is registered.
   const { data: pipelineWorkers = [] } = useWorkers('pipeline')
+  const { data: systemSettings, isLoading: systemSettingsLoading } = useSystemSettings()
+  const serverRuntime = systemSettings?.runtime?.type ?? ''
   const pipelineInfraTypes = useMemo(
     () => Array.from(new Set(pipelineWorkers.map(w => w.infrastructure))),
     [pipelineWorkers],
@@ -427,12 +430,23 @@ export default function PipelineEditorPage() {
   const runtimeAutofilledRef = useRef(false)
   useEffect(() => {
     if (runtimeAutofilledRef.current) return
+    // The server runtime wins over any registered compatibility worker. Wait
+    // for settings before allowing the worker query to choose a default so
+    // query completion order cannot make the editor non-deterministic.
+    if (systemSettingsLoading) return
+    if (serverRuntime) {
+      runtimeAutofilledRef.current = true
+      if (!defaults.placementRuntime) {
+        setDefaults(prev => (prev.placementRuntime ? prev : { ...prev, placementRuntime: serverRuntime }))
+      }
+      return
+    }
     if (pipelineWorkers.length === 0) return
     runtimeAutofilledRef.current = true
     if (pipelineInfraTypes.length === 1 && !defaults.placementRuntime) {
       setDefaults(prev => (prev.placementRuntime ? prev : { ...prev, placementRuntime: pipelineInfraTypes[0] }))
     }
-  }, [pipelineWorkers.length, pipelineInfraTypes, defaults.placementRuntime])
+  }, [pipelineWorkers.length, pipelineInfraTypes, defaults.placementRuntime, serverRuntime, systemSettingsLoading])
   // Same rationale as Notebook/Serving's Worker field: the router refuses to
   // guess between separately managed workers of the same infrastructure
   // type, so the defaults panel must offer an explicit, required choice
@@ -725,12 +739,17 @@ export default function PipelineEditorPage() {
   async function handleSubmit() {
     const draft = resolveSubmitDraft()
     if (!draft) return
-    if (pipelineInfraTypes.length > 1 && !draft.defaults.placementRuntime) {
+    const runtimeMessage = validateRuntimePlacement(draft.defaults)
+    if (runtimeMessage) {
+      setError(runtimeMessage)
+      return
+    }
+    if (!serverRuntime && pipelineInfraTypes.length > 1 && !draft.defaults.placementRuntime) {
       setError(`Multiple worker infrastructure types are registered (${pipelineInfraTypes.join(', ')}) — choose a Runtime before submitting.`)
       return
     }
     const draftCompatibleWorkers = pipelineWorkers.filter(w => !draft.defaults.placementRuntime || w.infrastructure === draft.defaults.placementRuntime)
-    if (draftCompatibleWorkers.length > 1 && !draft.defaults.placementWorker.trim() && !draft.defaults.placementLabel.trim()) {
+    if (!serverRuntime && draftCompatibleWorkers.length > 1 && !draft.defaults.placementWorker.trim() && !draft.defaults.placementLabel.trim()) {
       setError('Multiple compatible workers are registered — choose a Worker (or set an advanced Worker Label) before submitting.')
       return
     }
@@ -763,8 +782,21 @@ export default function PipelineEditorPage() {
 
   function validateNow() {
     const messages = validatePipelineDraft({ name: pipelineName, steps: tasks, defaults })
+    const runtimeMessage = validateRuntimePlacement(defaults)
+    if (runtimeMessage) messages.unshift(runtimeMessage)
     setValidation(messages)
     setError(messages[0] || '')
+  }
+
+  function validateRuntimePlacement(candidate: PipelineDefaultsDraft): string {
+    if (!serverRuntime) return ''
+    if (candidate.placementRuntime && candidate.placementRuntime !== serverRuntime) {
+      return `This Piper installation owns the ${serverRuntime} runtime; placement.runtime must be ${serverRuntime} or empty.`
+    }
+    if (candidate.placementWorker.trim() || candidate.placementLabel.trim()) {
+      return 'Server-owned runtimes do not support Worker or Worker Label placement.'
+    }
+    return ''
   }
 
   function handlePaletteDragStart(event: DragEvent<HTMLButtonElement>, type: PipelineTaskType) {
@@ -1001,12 +1033,12 @@ export default function PipelineEditorPage() {
               <div>
                <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Runtime Defaults</h2>
                <div className="space-y-3">
-                {pipelineWorkers.length === 0 && (
+                {pipelineWorkers.length === 0 && !serverRuntime && (
                   <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                     No worker in this project advertises the pipeline capability yet. You can still save this pipeline, but running it will fail until one connects.
                   </p>
                 )}
-                {pipelineInfraTypes.length > 1 && !defaults.placementRuntime && (
+                {!serverRuntime && pipelineInfraTypes.length > 1 && !defaults.placementRuntime && (
                   <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                     {pipelineInfraTypes.length} worker infrastructure types are registered ({pipelineInfraTypes.join(', ')}) — choose a Runtime so this pipeline always runs where you expect.
                   </p>
@@ -1016,6 +1048,7 @@ export default function PipelineEditorPage() {
                   <Select
                     value={defaults.placementRuntime}
                     onValueChange={value => updateDefaults({ placementRuntime: value ?? '' })}
+                    disabled={!!serverRuntime && (!defaults.placementRuntime || defaults.placementRuntime === serverRuntime)}
                   >
                     <SelectTrigger size="sm" className="w-full"><SelectValue placeholder="— select runtime —" /></SelectTrigger>
                     <SelectContent>
@@ -1025,37 +1058,41 @@ export default function PipelineEditorPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker</Label>
-                  <Select
-                    value={defaults.placementWorker}
-                    onValueChange={value => updateDefaults({ placementWorker: value ?? '' })}
-                  >
-                    <SelectTrigger size="sm" className="w-full" aria-invalid={defaultsCompatibleWorkers.length > 1 && !defaults.placementWorker}>
-                      <SelectValue placeholder="— select worker —" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {defaultsCompatibleWorkers.map(w => (
-                        <SelectItem key={w.id} value={w.id}>
-                          <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${workerInfraBadgeClass(w.infrastructure)}`}>
-                            {workerInfraBadgeLabel(w.infrastructure)}
-                          </span>
-                          {pipelineWorkerLabel(w)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {defaultsCompatibleWorkers.length > 1
-                      ? 'Multiple workers are registered — pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'
-                      : 'Optional. Only one compatible worker is registered, so it will be used automatically.'}
-                  </p>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker Label</label>
-                  <Input value={defaults.placementLabel} onChange={e => updateDefaults({ placementLabel: e.target.value })} />
-                  <p className="mt-1 text-xs text-muted-foreground">Advanced: route by label instead. Must resolve to exactly one worker.</p>
-                </div>
+                {!serverRuntime && (
+                  <div>
+                    <Label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker</Label>
+                    <Select
+                      value={defaults.placementWorker}
+                      onValueChange={value => updateDefaults({ placementWorker: value ?? '' })}
+                    >
+                      <SelectTrigger size="sm" className="w-full" aria-invalid={defaultsCompatibleWorkers.length > 1 && !defaults.placementWorker}>
+                        <SelectValue placeholder="— select worker —" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {defaultsCompatibleWorkers.map(w => (
+                          <SelectItem key={w.id} value={w.id}>
+                            <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${workerInfraBadgeClass(w.infrastructure)}`}>
+                              {workerInfraBadgeLabel(w.infrastructure)}
+                            </span>
+                            {pipelineWorkerLabel(w)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {defaultsCompatibleWorkers.length > 1
+                        ? 'Multiple workers are registered — pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'
+                        : 'Optional. Only one compatible worker is registered, so it will be used automatically.'}
+                    </p>
+                  </div>
+                )}
+                {!serverRuntime && (
+                  <div>
+                    <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Worker Label</label>
+                    <Input value={defaults.placementLabel} onChange={e => updateDefaults({ placementLabel: e.target.value })} />
+                    <p className="mt-1 text-xs text-muted-foreground">Advanced: route by label instead. Must resolve to exactly one worker.</p>
+                  </div>
+                )}
                 {defaults.placementRuntime === 'k8s' && (
                   <>
                     <div>

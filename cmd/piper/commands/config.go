@@ -33,6 +33,31 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 			slog.Debug("loaded persistent server secrets", "path", secrets.Path)
 		}
 	}
+	var runtimeCfg piper.RuntimeConfig
+	if root.Runtime.Type == cliconfig.InfrastructureK8s {
+		client, err := buildK8sClient(root.Runtime.Kubeconfig, root.Runtime.InCluster)
+		if err != nil {
+			return nil, err
+		}
+		runnerImage := root.Runtime.PipelineRunner.Image
+		if runnerImage == "" {
+			runnerImage = "ghcr.io/loykin/piper:latest"
+		}
+		pullPolicy := root.Runtime.PipelineRunner.ImagePullPolicy
+		if pullPolicy == "" {
+			pullPolicy = "IfNotPresent"
+		}
+		runtimeCfg = piper.RuntimeConfig{
+			Type: piper.RuntimeK8s,
+			K8s: piper.K8sRuntimeConfig{
+				Client:              client,
+				Namespaces:          append([]string(nil), root.Runtime.Namespaces...),
+				PipelineRunnerImage: runnerImage,
+				ImagePullPolicy:     pullPolicy,
+				WorkloadURL:         root.Runtime.WorkloadURL,
+			},
+		}
+	}
 	cfg := piper.Config{
 		OutputDir: root.Server.DataDir,
 		Git:       piper.GitConfig{User: root.Source.Git.User, Token: root.Source.Git.Token},
@@ -47,6 +72,7 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 			NotebooksRoot: root.Server.Local.NotebookCfg.NotebooksRoot,
 			PortRange:     root.Server.Local.NotebookCfg.PortRange,
 		},
+		Runtime: runtimeCfg,
 	}
 
 	signingKey := root.Server.AuthSigningKey

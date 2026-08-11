@@ -1,5 +1,6 @@
-# Kubernetes-native worker. Deploy with server.yaml and rbac.yaml when Piper
-# should execute pipeline steps as Jobs and manage notebook/serving workloads.
+# Compatibility worker for notebook and serving while those controllers are
+# migrated to the server-owned Kubernetes runtime. Pipeline Jobs are launched
+# directly by piper-server and do not traverse this worker tunnel.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

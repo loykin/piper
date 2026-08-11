@@ -16,7 +16,9 @@ spec:
         app: piper-server
     spec:
       serviceAccountName: piper
-      automountServiceAccountToken: false
+      # The in-process Kubernetes runtime uses this identity to create and
+      # reconcile pipeline Jobs directly.
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -55,12 +57,8 @@ spec:
                 secretKeyRef:
                   name: piper-server-secrets
                   key: worker_token
-            # Artifact storage is configured once here, on the master — workers
-            # never need their own copy; storage.url and storage.token are
-            # forwarded to workers per-task over the existing tunnel (see
-            # AGENTS.md's "Worker Network Invariant"; storage.url is the one
-            # documented exception, allowing workers to connect directly to
-            # the object store for the actual data transfer).
+            # Artifact storage is configured once here. Direct Kubernetes
+            # pipeline Jobs receive the effective URL per task.
             - name: PIPER_STORAGE_URL
               valueFrom:
                 secretKeyRef:

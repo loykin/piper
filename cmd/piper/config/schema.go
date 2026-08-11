@@ -8,7 +8,19 @@ type RootConfig struct {
 	Storage StorageConfig `mapstructure:"storage" yaml:"storage"`
 	Source  SourceConfig  `mapstructure:"source" yaml:"source"`
 	Server  ServerConfig  `mapstructure:"server" yaml:"server"`
+	Runtime RuntimeConfig `mapstructure:"runtime" yaml:"runtime"`
 	Worker  WorkerConfig  `mapstructure:"worker" yaml:"worker"`
+}
+
+// RuntimeConfig selects execution owned directly by the Piper server. An
+// empty type preserves the existing remote-worker mode.
+type RuntimeConfig struct {
+	Type           string                  `mapstructure:"type" yaml:"type"`
+	Namespaces     []string                `mapstructure:"namespaces" yaml:"namespaces"`
+	Kubeconfig     string                  `mapstructure:"kubeconfig" yaml:"kubeconfig"`
+	InCluster      bool                    `mapstructure:"in_cluster" yaml:"in_cluster"`
+	WorkloadURL    string                  `mapstructure:"workload_url" yaml:"workload_url"`
+	PipelineRunner K8sPipelineRunnerConfig `mapstructure:"pipeline_runner" yaml:"pipeline_runner"`
 }
 
 type LogConfig struct {

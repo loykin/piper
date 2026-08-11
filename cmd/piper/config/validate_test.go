@@ -120,6 +120,52 @@ func TestValidateServerAllowsRuntimeGeneratedSecrets(t *testing.T) {
 	}
 }
 
+func TestValidateServerAcceptsK8sRuntime(t *testing.T) {
+	cfg := RootConfig{
+		Storage: StorageConfig{Disabled: true},
+		Runtime: RuntimeConfig{Type: InfrastructureK8s, InCluster: true, Namespaces: []string{"piper"}},
+	}
+	if err := ValidateServer(cfg); err != nil {
+		t.Fatalf("K8s runtime rejected: %v", err)
+	}
+}
+
+func TestValidateServerRejectsLocalAndK8sRuntime(t *testing.T) {
+	cfg := RootConfig{
+		Storage: StorageConfig{Disabled: true},
+		Server:  ServerConfig{Local: LocalConfig{Enabled: true, Concurrency: 1}},
+		Runtime: RuntimeConfig{Type: InfrastructureK8s, InCluster: true, Namespaces: []string{"piper"}},
+	}
+	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRuntimeConfigLoadsFromFile(t *testing.T) {
+	loader := NewLoader()
+	loader.SetConfigFile(writeConfig(t, `version: 4
+storage:
+  disabled: true
+runtime:
+  type: k8s
+  namespaces: [piper]
+  in_cluster: true
+  pipeline_runner:
+    image: piper:test
+    image_pull_policy: Never
+`))
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateServer(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runtime.PipelineRunner.Image != "piper:test" {
+		t.Fatalf("pipeline runner image = %q", cfg.Runtime.PipelineRunner.Image)
+	}
+}
+
 func TestRoleConfigsLoadFromFile(t *testing.T) {
 	tests := map[string]struct {
 		body     string

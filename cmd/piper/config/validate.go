@@ -186,12 +186,49 @@ func ValidateServer(c RootConfig) error {
 		return fmt.Errorf("config: server.db.dsn is required for postgres")
 	}
 	if c.Server.Local.Enabled {
+		if c.Runtime.Type != "" {
+			return fmt.Errorf("config: server.local and runtime.type are mutually exclusive")
+		}
 		if c.Server.Local.Concurrency < 1 {
 			return fmt.Errorf("config: server.local.concurrency must be at least 1")
 		}
 		if err := validatePortRange("server.local.notebook_config.port_range", c.Server.Local.NotebookCfg.PortRange); err != nil {
 			return err
 		}
+	}
+	if err := validateRuntime(c); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRuntime(c RootConfig) error {
+	switch c.Runtime.Type {
+	case "":
+		return nil
+	case InfrastructureK8s:
+	default:
+		return fmt.Errorf("config: runtime.type must be k8s or empty")
+	}
+	if c.Runtime.InCluster && c.Runtime.Kubeconfig != "" {
+		return fmt.Errorf("config: runtime.in_cluster and runtime.kubeconfig are mutually exclusive")
+	}
+	if !c.Runtime.InCluster && c.Runtime.Kubeconfig == "" {
+		return fmt.Errorf("config: runtime.kubeconfig is required outside the cluster")
+	}
+	if len(c.Runtime.Namespaces) == 0 {
+		return fmt.Errorf("config: runtime.namespaces must contain at least one allowed namespace")
+	}
+	if err := unique("runtime.namespaces", c.Runtime.Namespaces); err != nil {
+		return err
+	}
+	switch c.Runtime.PipelineRunner.ImagePullPolicy {
+	case "", "Always", "IfNotPresent", "Never":
+	default:
+		return fmt.Errorf("config: runtime.pipeline_runner.image_pull_policy must be Always, IfNotPresent, or Never")
+	}
+	if !c.Storage.Disabled && (c.Storage.URL == "" || strings.HasPrefix(c.Storage.URL, "file://")) && strings.TrimSpace(c.Runtime.WorkloadURL) == "" {
+		return fmt.Errorf("config: runtime.workload_url is required when using the built-in file artifact store")
 	}
 	return nil
 }

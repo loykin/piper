@@ -4,4 +4,7 @@ export interface SystemSettings {
     backend?: string
     reason?: string
   }
+  runtime: {
+    type: '' | 'k8s'
+  }
 }

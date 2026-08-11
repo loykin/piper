@@ -263,6 +263,30 @@ piper --config ./config/pipeline-worker.yaml config validate --command worker
 piper --config ./config/pipeline-worker.yaml worker
 ```
 
+### Server-owned Kubernetes pipeline runtime
+
+Kubernetes installations can launch pipeline Jobs directly from the server,
+without registering a pipeline-capable Kubernetes worker:
+
+```yaml
+runtime:
+  type: k8s
+  namespaces: [piper]
+  in_cluster: true
+  workload_url: http://piper-server.piper.svc.cluster.local:8080
+  pipeline_runner:
+    image: ghcr.io/loykin/piper:latest
+    image_pull_policy: IfNotPresent
+```
+
+`runtime.namespaces` is an allowlist. `workload_url` is required when the
+built-in file artifact store is used so Job pods can reach its private `/store`
+endpoint. This mode rejects `placement.worker`, `placement.label`, and any
+non-Kubernetes `placement.runtime` before creating a Job.
+
+Notebook and serving lifecycle operations remain on the compatibility
+Kubernetes worker during this staged migration.
+
 ## Execution modes
 
 | Mode | Workload | Worker location | Server needs host/cluster access |
@@ -270,7 +294,8 @@ piper --config ./config/pipeline-worker.yaml worker
 | Embedded local | Host subprocess | Server process | No |
 | Bare metal | Host subprocess | Any reachable node | No |
 | Docker | Container | Host running Docker | No |
-| Kubernetes | Job, StatefulSet, or Deployment | Inside or connected to a cluster | No |
+| Kubernetes pipeline runtime | Job | Piper's own cluster | Yes |
+| Kubernetes notebook/serving | StatefulSet or Deployment | Compatibility worker cluster | No |
 
 Standalone workers connect outbound to `worker.master_url`. Registration,
 heartbeat, dispatch, cancellation, status, results, logs, metrics, notebook and
@@ -544,8 +569,8 @@ docker run --name piper --restart unless-stopped -p 8080:8080 \
 
 The checked-in Kustomize deployment creates:
 
-- one Piper server
-- one outbound-tunnel Kubernetes worker
+- one Piper server that launches and reconciles pipeline Jobs directly
+- one compatibility Kubernetes worker for notebook and serving
 - RBAC, Services, and persistent volumes
 - a generated ConfigMap sourced from
   [`deploy/k8s/piper.yaml`](deploy/k8s/piper.yaml)
@@ -698,7 +723,8 @@ cmd/piper/                 CLI commands and configuration loader
 frontend/                  React web application
 internal/agent/            Worker registry and RPC routing
 internal/grpcagent/        Bidirectional worker tunnel
-internal/k8sworker/        Unified Kubernetes worker
+internal/k8sworker/        Kubernetes lifecycle components and compatibility worker
+internal/pipelinedispatch/ Queue execution backends, including direct Kubernetes
 internal/queue/            Dispatch, retry, lease, and idempotency
 internal/store/            SQLite and PostgreSQL repositories
 pkg/pipeline/              Pipeline parsing and execution

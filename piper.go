@@ -21,6 +21,7 @@ import (
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/grpcagent"
+	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/pipelinedispatch"
 	"github.com/loykin/piper/internal/proto"
@@ -253,13 +254,46 @@ func New(cfg Config) (*Piper, error) {
 		outputDir:  cfg.OutputDir,
 		storageURL: p.storageURL,
 	}
-	// Pipeline tasks are delivered only through gRPC-connected agents.
-	p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.WorkerPodPolicy))
+	var runtimeObserver interface{ Observe(context.Context) }
+	if cfg.Runtime.Type == RuntimeK8s {
+		k8sBackend, err := pipelinedispatch.NewK8sBackend(pipelinedispatch.K8sBackendConfig{
+			Context:             bgCtx,
+			Client:              cfg.Runtime.K8s.Client,
+			Namespaces:          cfg.Runtime.K8s.Namespaces,
+			PipelineRunnerImage: cfg.Runtime.K8s.PipelineRunnerImage,
+			ImagePullPolicy:     cfg.Runtime.K8s.ImagePullPolicy,
+			TTLAfterFinished:    cfg.Runtime.K8s.TTLAfterFinished,
+			MasterURL:           cfg.Runtime.K8s.WorkloadURL,
+			WorkerToken:         cfg.Server.WorkerToken,
+			LogClient:           localLogPushClient{store: repos.Log},
+			Complete: func(result proto.TaskResult) error {
+				return q.Complete(context.Background(), result)
+			},
+			RenewLeases: q.RenewLeases,
+		})
+		if err != nil {
+			stopFn()
+			_ = repos.Close()
+			return nil, fmt.Errorf("create k8s runtime backend: %w", err)
+		}
+		p.SetBackend(k8sBackend)
+		runtimeObserver = k8sBackend
+	} else {
+		// Legacy mode: pipeline tasks are delivered through connected agents.
+		p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.WorkerPodPolicy))
+	}
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)
 	p.notebookManager.SetEventPublisher(p.events)
 	p.recoverInterruptedRuns(context.Background())
+	if runtimeObserver != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			runtimeObserver.Observe(p.ctx)
+		}()
+	}
 
 	// Start the in-memory scheduler and seed it from the DB.
 	// startedAt is set before LoadFromRepo so misfire detection works on first Add.
@@ -387,6 +421,38 @@ func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
 
 type jobReconciler interface {
 	ReconcileJobs(ctx context.Context, report func(context.Context, proto.TaskResult) error)
+}
+
+// localLogPushClient preserves the existing batched/redacted log path while
+// replacing the worker tunnel hop with a direct write to the master-owned
+// log store.
+type localLogPushClient struct {
+	store logstore.LogStore
+}
+
+func (c localLogPushClient) SendPush(method string, payload any) error {
+	if method != iagent.MethodLogAppend {
+		return fmt.Errorf("local runtime: unsupported push method %q", method)
+	}
+	batch, ok := payload.(logsink.LogAppendPush)
+	if !ok {
+		return fmt.Errorf("local runtime: invalid log payload %T", payload)
+	}
+	lines := make([]*logstore.Line, 0, len(batch.Lines))
+	for _, line := range batch.Lines {
+		lines = append(lines, &logstore.Line{
+			ProjectID: batch.ProjectID,
+			RunID:     batch.RunID,
+			StepName:  batch.StepName,
+			Ts:        line.Ts,
+			Stream:    line.Stream,
+			Line:      line.Text,
+		})
+	}
+	if len(lines) == 0 || c.store == nil {
+		return nil
+	}
+	return c.store.Append(context.Background(), lines)
 }
 
 func (p *Piper) reconcileBackend(ctx context.Context) {
@@ -630,8 +696,7 @@ type RunOptions struct {
 	Params    map[string]any // run-level params; override step-level YAML params at runtime
 }
 
-// RunFile runs a pipeline YAML file through the full dispatch stack
-// (queue → gRPC → embedded worker → executor), matching the production code path.
+// RunFile runs a pipeline YAML file through the configured execution backend.
 func (p *Piper) RunFile(ctx context.Context, path string) (*pipeline.RunResult, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -640,13 +705,15 @@ func (p *Piper) RunFile(ctx context.Context, path string) (*pipeline.RunResult, 
 	return p.Run(ctx, data)
 }
 
-// Run runs a pipeline YAML through the full dispatch stack
-// (queue → gRPC → embedded worker → executor), matching the production code path.
+// Run runs a pipeline YAML through the configured execution backend.
 func (p *Piper) Run(ctx context.Context, yamlBytes []byte) (*pipeline.RunResult, error) {
+	if p.cfg.Runtime.Type != "" {
+		return p.runWithConfiguredBackend(ctx, yamlBytes, RunOptions{})
+	}
 	return p.runWithEmbeddedWorker(ctx, yamlBytes, RunOptions{})
 }
 
-// RunPipeline runs a parsed Pipeline through the full dispatch stack.
+// RunPipeline runs a parsed Pipeline through the configured execution backend.
 func (p *Piper) RunPipeline(ctx context.Context, pl *pipeline.Pipeline) (*pipeline.RunResult, error) {
 	return p.RunPipelineOpts(ctx, pl, RunOptions{})
 }
@@ -657,7 +724,36 @@ func (p *Piper) RunPipelineOpts(ctx context.Context, pl *pipeline.Pipeline, opts
 	if err != nil {
 		return nil, err
 	}
+	if p.cfg.Runtime.Type != "" {
+		return p.runWithConfiguredBackend(ctx, data, opts)
+	}
 	return p.runWithEmbeddedWorker(ctx, data, opts)
+}
+
+func (p *Piper) runWithConfiguredBackend(ctx context.Context, yamlBytes []byte, opts RunOptions) (*pipeline.RunResult, error) {
+	events, unsub := p.events.Subscribe()
+	defer unsub()
+
+	projectID := opts.ProjectID
+	if projectID == "" {
+		projectID = project.DefaultID
+	}
+	if existing, err := p.repos.Project.Get(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("run: get project: %w", err)
+	} else if existing == nil {
+		if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+			return nil, fmt.Errorf("run: create project: %w", err)
+		}
+	}
+	projectCtx := project.WithContext(ctx, project.Context{ID: projectID})
+	runID, err := p.startRunFromAPI(projectCtx, string(yamlBytes), opts.Params, opts.Vars, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := waitForRunCompleted(ctx, events, runID); err != nil {
+		return nil, fmt.Errorf("run: wait for completion: %w", err)
+	}
+	return p.buildRunResult(ctx, projectID, runID)
 }
 
 // runWithEmbeddedWorker runs a pipeline through the full production stack:

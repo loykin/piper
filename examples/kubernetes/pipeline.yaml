@@ -1,15 +1,17 @@
 # K8s execution example
 #
-# When a worker with worker.k8s is connected, each step runs in a separate Pod.
-# Each step can use a different container image.
+# With runtime.type=k8s, the Piper server creates each step as a separate Job
+# through the Kubernetes API. Each step can use a different container image.
 #
 # Server configuration (piper.yaml):
-#   k8s:
-#     worker: true
+#   runtime:
+#     type: k8s
+#     namespaces: [piper]
+#     in_cluster: true
+#     workload_url: http://piper-server.piper.svc.cluster.local:8080
 #
 # Run:
 #   piper server --config piper.yaml
-#   piper worker --config ./config/k8s-worker.yaml
 
 apiVersion: piper/v1
 kind: Pipeline
@@ -23,6 +25,7 @@ spec:
     driver:
       k8s:
         image: python:3.12-slim  # This step runs with the Python image
+        namespace: piper
     run:
       type: command
       command:
@@ -43,6 +46,7 @@ spec:
     driver:
       k8s:
         image: alpine:3.20       # This step runs with Alpine
+        namespace: piper
     run:
       type: command
       command:

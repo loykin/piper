@@ -5,6 +5,13 @@ import "net/url"
 // SystemSettings captures the current server-side capability state exposed to the UI.
 type SystemSettings struct {
 	ArtifactStore ArtifactStoreSettings `json:"artifact_store"`
+	Runtime       RuntimeSettings       `json:"runtime"`
+}
+
+// RuntimeSettings identifies execution owned directly by this Piper server.
+// An empty type means pipeline execution still uses registered workers.
+type RuntimeSettings struct {
+	Type string `json:"type"`
 }
 
 // ArtifactStoreSettings describes whether artifact storage is usable.
@@ -20,6 +27,7 @@ func (p *Piper) Settings() SystemSettings {
 	if p == nil {
 		return out
 	}
+	out.Runtime.Type = p.cfg.Runtime.Type
 	if p.cfg.Storage.Disabled {
 		out.ArtifactStore.Status = "disabled"
 		out.ArtifactStore.Backend = storageScheme(p.cfg.Storage.URL)

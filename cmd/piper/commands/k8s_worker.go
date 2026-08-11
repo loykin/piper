@@ -26,7 +26,7 @@ func runK8sWorker(root cliconfig.RootConfig) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	k8sClient, err := buildK8sWorkerClient(c.Kubeconfig, c.InCluster)
+	k8sClient, err := buildK8sClient(c.Kubeconfig, c.InCluster)
 	if err != nil {
 		return err
 	}
@@ -90,23 +90,32 @@ func k8sPipelinePullPolicy(k cliconfig.K8sWorkerConfig, c cliconfig.WorkerCapabi
 	return k.PipelineRunner.ImagePullPolicy
 }
 
-func buildK8sWorkerClient(kubeconfig string, inCluster bool) (kubernetes.Interface, error) {
+func buildK8sClient(kubeconfig string, inCluster bool) (kubernetes.Interface, error) {
+	if inCluster && kubeconfig != "" {
+		return nil, fmt.Errorf("config: in_cluster and kubeconfig are mutually exclusive")
+	}
 	var cfg *rest.Config
 	var err error
 	if inCluster {
 		cfg, err = rest.InClusterConfig()
 	} else {
 		if kubeconfig == "" {
-			return nil, fmt.Errorf("config: worker.k8s.kubeconfig is required when worker.k8s.in_cluster=false")
+			return nil, fmt.Errorf("config: kubeconfig is required when in_cluster=false")
 		}
 		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("k8s worker config: %w", err)
+		return nil, fmt.Errorf("k8s config: %w", err)
 	}
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("k8s worker client: %w", err)
+		return nil, fmt.Errorf("k8s client: %w", err)
 	}
 	return client, nil
+}
+
+// buildK8sWorkerClient is kept as a narrow compatibility wrapper for worker
+// callers while server-owned runtimes use the shared client builder above.
+func buildK8sWorkerClient(kubeconfig string, inCluster bool) (kubernetes.Interface, error) {
+	return buildK8sClient(kubeconfig, inCluster)
 }

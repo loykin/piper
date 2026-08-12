@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,11 +14,11 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 
 	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/internal/event"
-	"github.com/loykin/piper/internal/grpcagent"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/pipelinedispatch"
@@ -30,18 +28,42 @@ import (
 	"github.com/loykin/piper/internal/srcfetch"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/notebook"
-	notebookdispatch "github.com/loykin/piper/pkg/notebook/dispatch"
+	"github.com/loykin/piper/pkg/notebook/dispatch/localdriver"
+	notebookk8sdriver "github.com/loykin/piper/pkg/notebook/dispatch/localdriver/k8s"
+	notebookworkerdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
+	notebookdocker "github.com/loykin/piper/pkg/notebook/worker/driver/docker"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
-	worker "github.com/loykin/piper/pkg/pipeline/worker"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 	"github.com/loykin/piper/pkg/serving"
-	servingdispatch "github.com/loykin/piper/pkg/serving/dispatch"
+	servinglocaldriver "github.com/loykin/piper/pkg/serving/dispatch/localdriver"
+	servingk8sdriver "github.com/loykin/piper/pkg/serving/dispatch/localdriver/k8s"
+	servingdocker "github.com/loykin/piper/pkg/serving/worker/driver/docker"
 	"github.com/loykin/piper/pkg/storage"
 
 	storemod "github.com/loykin/piper/internal/store"
 )
+
+// notebookLocalWorkerID is the fixed identity used by the in-process
+// notebook direct-runtime driver (docker/baremetal), matching the
+// localDockerWorkerID/localBaremetalWorkerID convention already used by
+// internal/pipelinedispatch for pipeline direct-runtime.
+const notebookLocalWorkerID = "piper-notebook-runtime"
+
+// servingLocalWorkerID is the equivalent fixed identity for the in-process
+// serving direct-runtime driver.
+const servingLocalWorkerID = "piper-serving-runtime"
+
+// notebookK8sLocalWorkerID is the fixed identity for the in-process K8s
+// notebook direct-runtime driver — distinct from notebookLocalWorkerID
+// (docker/baremetal) even though only one is ever active per Piper
+// instance, matching internal/pipelinedispatch's per-infra constant convention.
+const notebookK8sLocalWorkerID = "piper-notebook-k8s-runtime"
+
+// servingK8sLocalWorkerID is the equivalent fixed identity for the
+// in-process K8s serving direct-runtime driver.
+const servingK8sLocalWorkerID = "piper-serving-k8s-runtime"
 
 // servingBundle groups the serving manager and proxy together.
 type servingBundle struct {
@@ -65,9 +87,6 @@ type Piper struct {
 	queue           *queue.Queue
 	serving         servingBundle
 	notebookManager *notebook.Manager
-	agentRegistry   *iagent.Registry
-	workloadRouter  *iagent.Router
-	grpcAgentServer *grpcagent.Server
 	store           storage.Store // nil when no artifact store configured
 	credentials     *credential.Store
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
@@ -164,51 +183,129 @@ func New(cfg Config) (*Piper, error) {
 		return nil, fmt.Errorf("create model dir: %w", err)
 	}
 
-	agentReg := iagent.NewRegistry()
-	workloadRouter := iagent.NewRouter(agentReg)
+	// servingMgr is assigned below, after servingDriver is constructed, but
+	// the ReportStatus closure passed into localdriver.New must already
+	// reference it — see the identical nbMgr/nbDriver pattern below for why
+	// this is safe.
+	var servingMgr *serving.Manager
+	var servingDriver serving.Driver
+	// servingK8sDriver is non-nil only in the RuntimeK8s case — WithStorage
+	// below applies there (it fetches stored artifacts remotely via a pod
+	// init container), unlike docker/baremetal direct-runtime, which needs
+	// no storage URL/token handoff since localdriver.Deploy receives an
+	// already-resolved local model path (ArtifactTarget=Local).
+	var servingK8sDriver *servingk8sdriver.Driver
+	// servingK8sObserver's Observe loop is launched as its own background
+	// goroutine below (separate from runtimeObserver, which is
+	// Pipeline-specific) once p.ctx exists.
+	var servingK8sObserver interface{ Observe(context.Context) }
+	switch cfg.Runtime.Type {
+	case RuntimeDocker, RuntimeBaremetal:
+		lsd, err := servinglocaldriver.New(servinglocaldriver.Config{
+			WorkerID:       servingLocalWorkerID,
+			Infrastructure: cfg.Runtime.Type,
+			Docker:         servingdocker.Config{Network: cfg.Runtime.Docker.Network},
+			LogClient:      localLogPushClient{store: repos.Log, metrics: repos.Metric},
+			EnvResolver:    credentialStore.ResolveEnv,
+			ReportStatus: func(projectID, name, status, endpoint string) error {
+				return servingMgr.UpdateStatus(context.Background(), projectID, servingLocalWorkerID, name, status, endpoint)
+			},
+		})
+		if err != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("create serving local driver: %w", err)
+		}
+		servingDriver = lsd
+	case RuntimeK8s:
+		ksd, err := servingk8sdriver.New(servingk8sdriver.Config{
+			WorkerID:             servingK8sLocalWorkerID,
+			Namespaces:           cfg.Runtime.K8s.Namespaces,
+			Client:               cfg.Runtime.K8s.Client,
+			ArtifactFetcherImage: cfg.Runtime.K8s.PipelineRunnerImage,
+			ArtifactPullPolicy:   corev1.PullPolicy(cfg.Runtime.K8s.ImagePullPolicy),
+			WorkloadURL:          cfg.Runtime.K8s.WorkloadURL,
+			WorkerToken:          cfg.Server.WorkerToken,
+			LogClient:            localLogPushClient{store: repos.Log, metrics: repos.Metric},
+			ReportStatus: func(projectID, name, status, endpoint string) error {
+				return servingMgr.UpdateStatus(context.Background(), projectID, servingK8sLocalWorkerID, name, status, endpoint)
+			},
+		})
+		if err != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("create serving k8s driver: %w", err)
+		}
+		servingDriver = ksd
+		servingK8sDriver = ksd
+		servingK8sObserver = ksd
+	default:
+		_ = repos.Close()
+		return nil, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
+	}
+	servingMgr = serving.New(repos.Serving, servingDriver)
 
-	grpcSrv := grpcagent.NewServer(
-		func(reg grpcagent.Registration) {
-			info := iagent.Info{
-				ID:             reg.ID,
-				Infrastructure: reg.Infrastructure,
-				Hostname:       reg.Hostname,
-				Capabilities:   reg.Capabilities,
-				ClusterName:    reg.ClusterName,
-				Labels:         reg.Labels,
-				Namespaces:     reg.Namespaces,
-			}
-			// Extract capacity encoded in Labels by grpcagent.Client.
-			if c := reg.Labels["capacity"]; c != "" {
-				if n, err := strconv.Atoi(c); err == nil {
-					info.Capacity = n
-				}
-			}
-			agentReg.Register(info)
-		},
-		agentReg.Remove,
-	)
-
-	servingDriver := servingdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Serving, repos.WorkerPodPolicy).
-		WithEnvResolver(credentialStore.ResolveEnv)
-	servingMgr := serving.New(repos.Serving, servingDriver)
-
-	nbDriver := notebook.Driver(notebookdispatch.NewAgentDriver(workloadRouter, grpcSrv, repos.Notebook, repos.WorkerPodPolicy).
-		WithEnvResolver(credentialStore.ResolveEnv))
-	nbMgr := notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
+	// nbMgr is assigned below, after nbDriver is constructed, but the
+	// ReportStatus closure passed into localdriver.New must already
+	// reference it — Go closures capture the variable, not its value at
+	// closure-creation time, so this is safe as long as nbMgr is assigned
+	// before any notebook actually starts (guaranteed: no HTTP handler can
+	// run before New returns).
+	var nbMgr *notebook.Manager
+	var nbDriver notebook.Driver
+	// nbK8sObserver is non-nil only in the RuntimeK8s case; its Observe
+	// loop is launched as its own background goroutine below (separate from
+	// runtimeObserver, which is Pipeline-specific) once p.ctx exists.
+	var nbK8sObserver interface{ Observe(context.Context) }
+	switch cfg.Runtime.Type {
+	case RuntimeDocker, RuntimeBaremetal:
+		infra := notebookworkerdriver.ModeDocker
+		if cfg.Runtime.Type == RuntimeBaremetal {
+			infra = notebookworkerdriver.ModeProcess
+		}
+		ld, err := localdriver.New(localdriver.Config{
+			WorkerID:         notebookLocalWorkerID,
+			Infrastructure:   infra,
+			PlacementRuntime: cfg.Runtime.Type,
+			Docker:           notebookdocker.Config{Network: cfg.Runtime.Docker.Network},
+			NotebooksRoot:    cfg.NotebookWorker.NotebooksRoot,
+			PortRange:        cfg.NotebookWorker.PortRange,
+			LogClient:        localLogPushClient{store: repos.Log, metrics: repos.Metric},
+			EnvResolver:      credentialStore.ResolveEnv,
+			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
+				return nbMgr.UpdateStatus(context.Background(), projectID, notebookLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
+			},
+		})
+		if err != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("create notebook local driver: %w", err)
+		}
+		nbDriver = ld
+	case RuntimeK8s:
+		kd, err := notebookk8sdriver.New(notebookk8sdriver.Config{
+			WorkerID:   notebookK8sLocalWorkerID,
+			Namespaces: cfg.Runtime.K8s.Namespaces,
+			Client:     cfg.Runtime.K8s.Client,
+			LogClient:  localLogPushClient{store: repos.Log, metrics: repos.Metric},
+			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
+				return nbMgr.UpdateStatus(context.Background(), projectID, notebookK8sLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
+			},
+		})
+		if err != nil {
+			_ = repos.Close()
+			return nil, fmt.Errorf("create notebook k8s driver: %w", err)
+		}
+		nbDriver = kd
+		nbK8sObserver = kd
+	default:
+		_ = repos.Close()
+		return nil, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
+	}
+	nbMgr = notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
 	if cfg.Queue.MaxAttempts > 0 || cfg.Queue.RetryDelay > 0 {
 		q.SetRetryPolicy(cfg.Queue.MaxAttempts, cfg.Queue.RetryDelay)
 	}
 	q.SetRecoveryGracePeriod(cfg.Queue.RecoveryGrace)
-	grpcSrv.SetPushHandler(newWorkerPushHandler(nbMgr, servingMgr, q, grpcSrv, repos.Log, repos.Metric))
-	// On agent (re)connect: sync notebook status so master DB catches up on any
-	// state changes that occurred while the connection was down.
-	grpcSrv.SetConnectHandler(func(agentID string) {
-		nbMgr.SyncAgent(context.Background(), agentID)
-		servingMgr.SyncAgent(context.Background(), agentID)
-	})
 
 	p := &Piper{
 		cfg:         cfg,
@@ -223,9 +320,6 @@ func New(cfg Config) (*Piper, error) {
 			proxy:   serving.NewProxy(repos.Serving),
 		},
 		notebookManager: nbMgr,
-		agentRegistry:   agentReg,
-		workloadRouter:  workloadRouter,
-		grpcAgentServer: grpcSrv,
 		stopCtx:         stopFn,
 		events:          event.NewHub(),
 	}
@@ -248,14 +342,17 @@ func New(cfg Config) (*Piper, error) {
 		}
 	}
 	q.SetStorageConfig(p.storageURL, cfg.Storage.Token)
-	servingDriver.WithStorage(p.storageURL, cfg.Storage.Token)
+	if servingK8sDriver != nil {
+		servingK8sDriver.WithStorage(p.storageURL, cfg.Storage.Token)
+	}
 	p.resolver = &piperArtifactResolver{
 		runRepo:    repos.Run,
 		outputDir:  cfg.OutputDir,
 		storageURL: p.storageURL,
 	}
 	var runtimeObserver interface{ Observe(context.Context) }
-	if cfg.Runtime.Type == RuntimeK8s {
+	switch cfg.Runtime.Type {
+	case RuntimeK8s:
 		k8sBackend, err := pipelinedispatch.NewK8sBackend(pipelinedispatch.K8sBackendConfig{
 			Context:             bgCtx,
 			Client:              cfg.Runtime.K8s.Client,
@@ -265,8 +362,9 @@ func New(cfg Config) (*Piper, error) {
 			TTLAfterFinished:    cfg.Runtime.K8s.TTLAfterFinished,
 			MasterURL:           cfg.Runtime.K8s.WorkloadURL,
 			WorkerToken:         cfg.Server.WorkerToken,
-			LogClient:           localLogPushClient{store: repos.Log},
+			LogClient:           localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			Complete: func(result proto.TaskResult) error {
+				persistTaskMetrics(context.Background(), repos.Metric, result)
 				return q.Complete(context.Background(), result)
 			},
 			RenewLeases: q.RenewLeases,
@@ -278,9 +376,58 @@ func New(cfg Config) (*Piper, error) {
 		}
 		p.SetBackend(k8sBackend)
 		runtimeObserver = k8sBackend
-	} else {
-		// Legacy mode: pipeline tasks are delivered through connected agents.
-		p.SetBackend(pipelinedispatch.NewAgentBackend(workloadRouter, p.grpcAgentServer, repos.WorkerPodPolicy))
+	case RuntimeDocker:
+		concurrency := cfg.Runtime.Docker.Concurrency
+		if concurrency <= 0 {
+			concurrency = 4
+		}
+		dockerBackend, err := pipelinedispatch.NewDockerBackend(pipelinedispatch.DockerBackendConfig{
+			Network:     cfg.Runtime.Docker.Network,
+			OutputDir:   cfg.OutputDir,
+			Concurrency: concurrency,
+			MasterURL:   cfg.Runtime.Docker.WorkloadURL,
+			WorkerToken: cfg.Server.WorkerToken,
+			LogClient:   localLogPushClient{store: repos.Log, metrics: repos.Metric},
+			Complete: func(result proto.TaskResult) error {
+				persistTaskMetrics(context.Background(), repos.Metric, result)
+				return q.Complete(context.Background(), result)
+			},
+			RenewLeases: q.RenewLeases,
+		})
+		if err != nil {
+			stopFn()
+			_ = repos.Close()
+			return nil, fmt.Errorf("create docker runtime backend: %w", err)
+		}
+		p.SetBackend(dockerBackend)
+		runtimeObserver = dockerBackend
+	case RuntimeBaremetal:
+		concurrency := cfg.Runtime.Baremetal.Concurrency
+		if concurrency <= 0 {
+			concurrency = 4
+		}
+		baremetalBackend, err := pipelinedispatch.NewBaremetalBackend(pipelinedispatch.BaremetalBackendConfig{
+			MetaDir:     cfg.Runtime.Baremetal.MetaDir,
+			OutputDir:   cfg.OutputDir,
+			Concurrency: concurrency,
+			LogClient:   localLogPushClient{store: repos.Log, metrics: repos.Metric},
+			Complete: func(result proto.TaskResult) error {
+				persistTaskMetrics(context.Background(), repos.Metric, result)
+				return q.Complete(context.Background(), result)
+			},
+			RenewLeases: q.RenewLeases,
+		})
+		if err != nil {
+			stopFn()
+			_ = repos.Close()
+			return nil, fmt.Errorf("create baremetal runtime backend: %w", err)
+		}
+		p.SetBackend(baremetalBackend)
+		runtimeObserver = baremetalBackend
+	default:
+		stopFn()
+		_ = repos.Close()
+		return nil, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
 	}
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
@@ -292,6 +439,20 @@ func New(cfg Config) (*Piper, error) {
 		go func() {
 			defer p.wg.Done()
 			runtimeObserver.Observe(p.ctx)
+		}()
+	}
+	if nbK8sObserver != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			nbK8sObserver.Observe(p.ctx)
+		}()
+	}
+	if servingK8sObserver != nil {
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			servingK8sObserver.Observe(p.ctx)
 		}()
 	}
 
@@ -425,9 +586,10 @@ type jobReconciler interface {
 
 // localLogPushClient preserves the existing batched/redacted log path while
 // replacing the worker tunnel hop with a direct write to the master-owned
-// log store.
+// log and metric stores.
 type localLogPushClient struct {
-	store logstore.LogStore
+	store   logstore.LogStore
+	metrics logstore.MetricStore
 }
 
 func (c localLogPushClient) SendPush(method string, payload any) error {
@@ -439,6 +601,7 @@ func (c localLogPushClient) SendPush(method string, payload any) error {
 		return fmt.Errorf("local runtime: invalid log payload %T", payload)
 	}
 	lines := make([]*logstore.Line, 0, len(batch.Lines))
+	metricRows := make([]*logstore.Metric, 0)
 	for _, line := range batch.Lines {
 		lines = append(lines, &logstore.Line{
 			ProjectID: batch.ProjectID,
@@ -448,11 +611,57 @@ func (c localLogPushClient) SendPush(method string, payload any) error {
 			Stream:    line.Stream,
 			Line:      line.Text,
 		})
+		if key, value, ok := parsePushedMetric(line.Text); ok && c.metrics != nil {
+			metricRows = append(metricRows, &logstore.Metric{ProjectID: batch.ProjectID, RunID: batch.RunID, StepName: batch.StepName, Key: key, Value: value, Ts: line.Ts})
+		}
+	}
+	if c.metrics != nil && len(metricRows) > 0 {
+		if err := c.metrics.AppendMetrics(context.Background(), metricRows); err != nil {
+			slog.Warn("metric append failed", "run_id", batch.RunID, "err", err)
+		}
 	}
 	if len(lines) == 0 || c.store == nil {
 		return nil
 	}
 	return c.store.Append(context.Background(), lines)
+}
+
+// persistTaskMetrics writes a completed task's structured metrics (populated
+// by the runner from the step's metrics file, see
+// pkg/pipeline/worker/agent/runner.go's readFinalMetrics) to the metric
+// store before the result reaches Queue.Complete.
+func persistTaskMetrics(ctx context.Context, metrics logstore.MetricStore, result proto.TaskResult) {
+	if metrics == nil || len(result.Metrics) == 0 {
+		return
+	}
+	runID, stepName, ok := strings.Cut(result.TaskID, ":")
+	if !ok {
+		return
+	}
+	now := time.Now().UTC()
+	rows := make([]*logstore.Metric, 0, len(result.Metrics))
+	for key, value := range result.Metrics {
+		rows = append(rows, &logstore.Metric{ProjectID: result.ProjectID, RunID: runID, StepName: stepName, Key: key, Value: value, Ts: now})
+	}
+	if err := metrics.AppendMetrics(ctx, rows); err != nil {
+		slog.Warn("pipeline metrics persist failed", "task_id", result.TaskID, "err", err)
+	}
+}
+
+// parsePushedMetric extracts a PIPER_METRIC key=value marker from a log
+// line, e.g. "PIPER_METRIC loss=0.312".
+func parsePushedMetric(line string) (string, float64, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "PIPER_METRIC ") {
+		return "", 0, false
+	}
+	key, raw, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(line, "PIPER_METRIC ")), "=")
+	if !ok {
+		return "", 0, false
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	key = strings.TrimSpace(key)
+	return key, value, key != "" && err == nil
 }
 
 func (p *Piper) reconcileBackend(ctx context.Context) {
@@ -658,6 +867,11 @@ func (p *Piper) Close() error {
 	}
 	p.stopCtx() // cancel runCleanup and any pending dispatches
 	p.wg.Wait()
+	// DockerBackend holds a real Docker daemon client connection that must be
+	// closed explicitly (unlike kubernetes.Interface, which needs no closing).
+	if closer, ok := p.backend.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 	return p.repos.Close()
 }
 
@@ -707,10 +921,7 @@ func (p *Piper) RunFile(ctx context.Context, path string) (*pipeline.RunResult, 
 
 // Run runs a pipeline YAML through the configured execution backend.
 func (p *Piper) Run(ctx context.Context, yamlBytes []byte) (*pipeline.RunResult, error) {
-	if p.cfg.Runtime.Type != "" {
-		return p.runWithConfiguredBackend(ctx, yamlBytes, RunOptions{})
-	}
-	return p.runWithEmbeddedWorker(ctx, yamlBytes, RunOptions{})
+	return p.runWithConfiguredBackend(ctx, yamlBytes, RunOptions{})
 }
 
 // RunPipeline runs a parsed Pipeline through the configured execution backend.
@@ -724,10 +935,7 @@ func (p *Piper) RunPipelineOpts(ctx context.Context, pl *pipeline.Pipeline, opts
 	if err != nil {
 		return nil, err
 	}
-	if p.cfg.Runtime.Type != "" {
-		return p.runWithConfiguredBackend(ctx, data, opts)
-	}
-	return p.runWithEmbeddedWorker(ctx, data, opts)
+	return p.runWithConfiguredBackend(ctx, data, opts)
 }
 
 func (p *Piper) runWithConfiguredBackend(ctx context.Context, yamlBytes []byte, opts RunOptions) (*pipeline.RunResult, error) {
@@ -754,159 +962,6 @@ func (p *Piper) runWithConfiguredBackend(ctx context.Context, yamlBytes []byte, 
 		return nil, fmt.Errorf("run: wait for completion: %w", err)
 	}
 	return p.buildRunResult(ctx, projectID, runID)
-}
-
-// runWithEmbeddedWorker runs a pipeline through the full production stack:
-// queue → gRPC → embedded worker → executor.
-// This ensures p.Run() validates the same code path as a deployed worker.
-func (p *Piper) runWithEmbeddedWorker(ctx context.Context, yamlBytes []byte, opts RunOptions) (*pipeline.RunResult, error) {
-	httpPort, err := randomFreePort()
-	if err != nil {
-		return nil, fmt.Errorf("run: allocate HTTP port: %w", err)
-	}
-	httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
-	masterURL := "http://" + httpAddr
-
-	events, unsub := p.events.Subscribe()
-	defer unsub()
-
-	runCtx, runCancel := context.WithCancel(ctx)
-	defer runCancel()
-
-	go func() { _ = p.Serve(runCtx, ServeOption{Addr: httpAddr}) }()
-
-	if err := waitForHTTPReady(ctx, masterURL+"/health", 10*time.Second); err != nil {
-		return nil, fmt.Errorf("run: server not ready: %w", err)
-	}
-
-	outputDir := p.cfg.OutputDir
-	if outputDir == "" {
-		outputDir = "./piper-outputs"
-	}
-	concurrency := 4
-
-	metaDir, err := os.MkdirTemp("", "piper-run-meta-*")
-	if err != nil {
-		return nil, fmt.Errorf("run: create meta dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(metaDir) }()
-
-	w, err := worker.New(worker.Config{
-		Agent: worker.AgentConfig{
-			MasterURL:   masterURL,
-			WorkerToken: p.cfg.Server.WorkerToken,
-			ID:          worker.NewID("run"),
-			Concurrency: concurrency,
-		},
-		Store: worker.StoreConfig{
-			OutputDir:        outputDir,
-			LocalStoreAccess: true,
-		},
-		Baremetal: worker.BaremetalConfig{
-			MetaDir: metaDir,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("run: embedded worker: %w", err)
-	}
-	go func() { _ = w.Run(runCtx) }()
-
-	if err := waitForPipelineWorker(ctx, masterURL, 10*time.Second); err != nil {
-		return nil, fmt.Errorf("run: worker did not register: %w", err)
-	}
-
-	projectID := opts.ProjectID
-	if projectID == "" {
-		projectID = "default"
-	}
-	if existing, err := p.repos.Project.Get(ctx, projectID); err != nil {
-		return nil, fmt.Errorf("run: get project: %w", err)
-	} else if existing == nil {
-		if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
-			return nil, fmt.Errorf("run: create project: %w", err)
-		}
-	}
-	projectCtx := project.WithContext(ctx, project.Context{ID: projectID})
-	runID, err := p.startRunFromAPI(projectCtx, string(yamlBytes), opts.Params, opts.Vars, "")
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = waitForRunCompleted(ctx, events, runID)
-	if err != nil {
-		return nil, fmt.Errorf("run: wait for completion: %w", err)
-	}
-
-	return p.buildRunResult(ctx, projectID, runID)
-}
-
-// randomFreePort asks the OS for an available TCP port.
-func randomFreePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port, nil
-}
-
-// waitForHTTPReady polls url until it returns 2xx or timeout.
-func waitForHTTPReady(ctx context.Context, url string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode < 300 {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	return fmt.Errorf("not ready within %s", timeout)
-}
-
-// waitForPipelineWorker polls GET /api/workers until a pipeline worker appears.
-func waitForPipelineWorker(ctx context.Context, masterURL string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, masterURL+"/api/workers", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			var agents []struct {
-				Capabilities []string `json:"capabilities"`
-			}
-			if json.NewDecoder(resp.Body).Decode(&agents) == nil {
-				for _, a := range agents {
-					for _, capa := range a.Capabilities {
-						if capa == "pipeline" {
-							_ = resp.Body.Close()
-							return nil
-						}
-					}
-				}
-			}
-			_ = resp.Body.Close()
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-	return fmt.Errorf("no pipeline agent registered within %s", timeout)
 }
 
 // waitForRunCompleted waits for run.completed event with the given run ID and returns its status.

@@ -2,8 +2,6 @@ package notebook
 
 import (
 	"context"
-	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -11,25 +9,11 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/tunnelproxy"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 	"gopkg.in/yaml.v3"
 )
-
-// HandlerDeps holds all dependencies for the notebook HTTP handler.
-// ProxyDialer dials a target host:port through a connected gRPC agent.
-// agentID is the worker's registration ID; target is "host:port" reachable inside
-// the agent's network (e.g. a Jupyter pod's ClusterIP address).
-type ProxyDialer interface {
-	DialProxy(ctx context.Context, agentID, target string) (net.Conn, error)
-}
-
-// RPCSender sends a typed RPC to a specific worker agent and decodes the response.
-type RPCSender interface {
-	SendRPC(ctx context.Context, agentID, method string, payload any, result any) error
-}
 
 type HandlerDeps struct {
 	Notebooks        Repository
@@ -40,9 +24,6 @@ type HandlerDeps struct {
 	Restart          func(ctx context.Context, projectID, name string) error
 	Delete           func(ctx context.Context, projectID, name string) error
 	PurgeVolume      func(ctx context.Context, projectID, volumeID string) error
-	AgentRegistry    *iagent.Registry
-	ProxyDialer      ProxyDialer
-	RPCSender        RPCSender
 }
 
 // Handler is the Gin HTTP handler for the /notebooks domain.
@@ -214,7 +195,10 @@ func (h *Handler) listVolumes(c *gin.Context) {
 
 // GET /notebook-volumes/:id/files — list files inside the volume's work_dir.
 // Query params: ext (comma-separated extensions), path (subpath within volume).
-// Routes through gRPC when the volume has a remote worker; falls back to local walk.
+// Direct-runtime notebooks (all infra types) always live on the same host as
+// Piper itself, so this is always a local filesystem walk — see
+// NotebookVolume.WorkerID's doc comment and localdriver's ProvisionVolume
+// for why WorkerID is never set to a real routing target anymore.
 func (h *Handler) listVolumeFiles(c *gin.Context) {
 	id := c.Param("id")
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
@@ -243,43 +227,6 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 		}
 	}
 
-	// Look up the active notebook for this volume (provides Jupyter token for K8s).
-	var nbName, nbToken string
-	if h.deps.Notebooks != nil {
-		if nb, lookupErr := h.deps.Notebooks.GetByVolumeID(c.Request.Context(), currentProjectID(c), vol.ID); lookupErr == nil && nb != nil {
-			nbName = nb.Name
-			nbToken = nb.Token
-		}
-	}
-
-	// Route through gRPC when the volume is owned by a specific remote worker.
-	if vol.WorkerID != "" && h.deps.RPCSender != nil {
-		req := FSListFilesRequest{
-			ProjectID: currentProjectID(c),
-			VolumeID:  vol.ID,
-			WorkDir:   vol.WorkDir,
-			Notebook:  nbName,
-			Token:     nbToken,
-			Path:      c.Query("path"),
-			Ext:       extList,
-			MaxFiles:  500,
-		}
-		var resp FSListFilesResponse
-		if err := h.deps.RPCSender.SendRPC(c.Request.Context(), vol.WorkerID, iagent.MethodFSListFiles, req, &resp); err != nil {
-			slog.Error("notebook: list volume files RPC failed", "worker", vol.WorkerID, "volume_id", vol.ID, "err", err)
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"error":     "worker unavailable",
-				"code":      "worker_offline",
-				"retryable": true,
-			})
-			c.Header("Retry-After", "2")
-			return
-		}
-		h.writeFilesResponse(c, &resp)
-		return
-	}
-
-	// Local filesystem walk — single-node bare-metal where master and worker share filesystem.
 	walkRoot := vol.WorkDir
 	subPath := c.Query("path")
 	if subPath != "" {
@@ -353,7 +300,10 @@ func (h *Handler) purgeVolume(c *gin.Context) {
 // ANY /notebooks/:name/proxy/*path — reverse-proxies to the notebook endpoint.
 // Handles both HTTP and WebSocket (required for Jupyter kernel communication).
 // Called from a group that has :project_id in scope, so the full Jupyter
-// base_url is /projects/:project_id/notebooks/:name/proxy.
+// base_url is /projects/:project_id/notebooks/:name/proxy. Endpoint is
+// always a plain, directly reachable URL — every direct-runtime driver
+// (docker/baremetal/k8s) returns one, since Piper dispatches in-process now
+// and there is no more agent tunnel to relay through.
 func (h *Handler) proxyNotebook(c *gin.Context) {
 	projectID := currentProjectID(c)
 	name := c.Param("name")
@@ -376,27 +326,6 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 	proxyPrefix := "/projects/" + projectID + "/notebooks/" + name + "/proxy"
 	upstreamPath := tunnelproxy.JoinPathPrefix(proxyPrefix, c.Param("path"))
 
-	agentID := target.Host
-	dialTarget := target.Query().Get("target")
-	if agentID == "" || dialTarget == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid notebook endpoint"})
-		return
-	}
-	if h.deps.ProxyDialer == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "proxy not configured"})
-		return
-	}
-
-	upstream, err := h.deps.ProxyDialer.DialProxy(c.Request.Context(), agentID, dialTarget)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "cannot connect to notebook: " + err.Error()})
-		return
-	}
-
-	r2 := c.Request.Clone(context.Background())
-	r2.URL.Path = upstreamPath
-	r2.URL.RawPath = ""
-
 	policy, err := tunnelproxy.BuildPolicy("notebook", tunnelproxy.PolicyContext{
 		Request:     c.Request,
 		Name:        name,
@@ -410,11 +339,8 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		return
 	}
 
-	session := tunnelproxy.NewBuilder(upstream).WithPolicy(policy).Build()
-	defer func() { _ = session.Close() }()
-
-	if err := session.ServeHTTP(c.Writer, r2); err != nil {
-		c.Status(http.StatusBadGateway)
-		return
-	}
+	r2 := c.Request.Clone(context.Background())
+	r2.URL.Path = upstreamPath
+	r2.URL.RawPath = ""
+	tunnelproxy.ServeReverseProxy(c.Writer, r2, target, policy)
 }

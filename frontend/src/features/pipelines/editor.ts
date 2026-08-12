@@ -19,8 +19,6 @@ export interface PipelineKeyValueDraft {
 }
 
 export interface PipelineDriverDraft {
-  placementWorker: string
-  placementLabel: string
   placementRuntime: string
   k8sImage: string
   k8sNamespace: string
@@ -100,8 +98,6 @@ function defaultArtifacts(): PipelineArtifactDraft[] {
 
 export function defaultPipelineDriver(): PipelineDriverDraft {
   return {
-    placementWorker: '',
-    placementLabel: '',
     placementRuntime: '',
     k8sImage: '',
     k8sNamespace: '',
@@ -159,8 +155,6 @@ function parseDriver(value: unknown): PipelineDefaultsDraft {
   const docker = (driver.docker ?? {}) as Record<string, unknown>
   const process = (driver.process ?? {}) as Record<string, unknown>
   return {
-    placementWorker: stringValue(placement.worker),
-    placementLabel: stringValue(placement.label),
     placementRuntime: stringValue(placement.runtime),
     k8sImage: stringValue(k8s.image),
     k8sNamespace: stringValue(k8s.namespace),
@@ -280,8 +274,6 @@ function appendDriverYaml(
   resources: { cpu: string, memory: string, gpu: string },
 ) {
   const placement = {
-    worker: driver.placementWorker.trim(),
-    label: driver.placementLabel.trim(),
     runtime: driver.placementRuntime.trim(),
   }
   const k8s = {

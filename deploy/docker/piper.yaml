@@ -12,12 +12,15 @@ server:
   db:
     driver: sqlite
     path: /var/lib/piper/piper.db
-  local:
-    enabled: true
-    pipeline: true
-    notebook: true
-    serving: true
+
+# Pipeline/Notebook execution runs directly inside this container as
+# subprocesses — no worker tunnel involved.
+runtime:
+  type: baremetal
+  baremetal:
+    meta_dir: /var/lib/piper/pipeline-meta
     concurrency: 4
-    notebook_config:
-      notebooks_root: /var/lib/piper/notebooks
-      port_range: 8888-9900
+
+notebook:
+  notebooks_root: /var/lib/piper/notebooks
+  port_range: 8888-9900

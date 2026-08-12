@@ -68,13 +68,20 @@ type Config struct {
 	WorkerID    string
 	MetaDir     string // directory for metadata + PID files; default: $TMPDIR/piper-meta
 	RemoteStore bool   // true when using S3 or other remote artifact store
+	// PiperBin overrides the executable Start execs as piper agent exec.
+	// Test-only; empty (the default) preserves the real os.Executable() behavior.
+	PiperBin string
 }
 
 // New creates a BaremetalDriver.
 func New(cfg Config) (*Driver, error) {
-	piperBin, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("baremetal driver: resolve executable: %w", err)
+	piperBin := cfg.PiperBin
+	if piperBin == "" {
+		resolved, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("baremetal driver: resolve executable: %w", err)
+		}
+		piperBin = resolved
 	}
 
 	metaDir := cfg.MetaDir

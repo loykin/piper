@@ -2,7 +2,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import { useProjectId } from '@/lib/projectContext'
-import { useWorkers } from '@/features/workers/hooks'
 import { backgroundPolling, backgroundPollingNotifications } from '@/lib/query'
 
 export const notebookKeys = {
@@ -105,9 +104,4 @@ export function usePurgeVolume() {
     mutationFn: (id: string) => api.purgeNotebookVolume(projectId, id),
     onSuccess: () => qc.invalidateQueries({ queryKey: notebookKeys.volumes(projectId) }),
   })
-}
-
-
-export function useNotebookWorkers() {
-  return useWorkers('notebook')
 }

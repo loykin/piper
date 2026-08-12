@@ -69,6 +69,9 @@ func newTestPiper(t *testing.T, cfg Config) *Piper {
 	if cfg.Server.SecretEncryptionKey == "" {
 		cfg.Server.AllowInsecureDevKey = true
 	}
+	if cfg.Runtime.Type == "" {
+		cfg.Runtime.Type = RuntimeBaremetal
+	}
 	p, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -173,9 +176,11 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	push := newWorkerPushHandler(nil, nil, nil, nil, p.logs, p.metrics)
-	body, _ := json.Marshal(logsink.LogAppendPush{ProjectID: projectID, RunID: "run-metric", StepName: "train", Lines: []logsink.LogLine{{Ts: time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC), Stream: "stdout", Text: "PIPER_METRIC loss=0.312"}}})
-	push(context.Background(), "worker-a", iagent.MethodLogAppend, body)
+	push := localLogPushClient{store: p.logs, metrics: p.metrics}
+	batch := logsink.LogAppendPush{ProjectID: projectID, RunID: "run-metric", StepName: "train", Lines: []logsink.LogLine{{Ts: time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC), Stream: "stdout", Text: "PIPER_METRIC loss=0.312"}}}
+	if err := push.SendPush(iagent.MethodLogAppend, batch); err != nil {
+		t.Fatal(err)
+	}
 
 	router := p.Handler(nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/runs/run-metric/metrics?step=train", nil)
@@ -739,6 +744,7 @@ func TestAuthFactoryRunsDuringNew(t *testing.T) {
 	p, err := New(Config{
 		OutputDir: t.TempDir(),
 		Server:    ServerConfig{AllowInsecureDevKey: true},
+		Runtime:   RuntimeConfig{Type: RuntimeBaremetal},
 		Auth: AuthConfig{
 			Factory: func(deps AuthDependencies) (AuthConfig, error) {
 				called = true
@@ -1202,17 +1208,5 @@ func TestArtifactPath_LocalMatchesDistributed(t *testing.T) {
 
 	if localPath != runnerPath {
 		t.Errorf("path mismatch: local=%q runner=%q", localPath, runnerPath)
-	}
-}
-
-func TestHandlerContextStopsGRPCServerOnCancel(t *testing.T) {
-	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
-	ctx, cancel := context.WithCancel(context.Background())
-	_, stopped := p.handlerContext(ctx, nil)
-	cancel()
-	select {
-	case <-stopped:
-	case <-time.After(time.Second):
-		t.Fatal("handler gRPC server did not stop after context cancellation")
 	}
 }

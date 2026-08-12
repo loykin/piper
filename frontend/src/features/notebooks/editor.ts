@@ -47,7 +47,7 @@ export const DEFAULT_WORKER: WorkerFormState = {
   prepare: '',
 }
 
-export function buildK8sYAML(f: K8sFormState, workerID?: string): string {
+export function buildK8sYAML(f: K8sFormState): string {
   const lines: string[] = [
     `apiVersion: piper/v1`,
     `kind: Notebook`,
@@ -64,7 +64,6 @@ export function buildK8sYAML(f: K8sFormState, workerID?: string): string {
 
   // driver block
   lines.push(`  driver:`, `    placement:`, `      runtime: k8s`)
-  if (workerID) lines.push(`      worker: ${JSON.stringify(workerID)}`)
   lines.push(`    k8s:`)
   if (f.image) lines.push(`      image: ${JSON.stringify(f.image)}`)
   if (f.namespace) lines.push(`      namespace: ${JSON.stringify(f.namespace)}`)
@@ -91,13 +90,12 @@ export function buildK8sYAML(f: K8sFormState, workerID?: string): string {
   return lines.join('\n') + '\n'
 }
 
-export function buildWorkerYAML(f: WorkerFormState, workerID?: string): string {
-  return buildWorkerYAMLWithBackend(f, workerID, f.prepareBackend)
+export function buildWorkerYAML(f: WorkerFormState): string {
+  return buildWorkerYAMLWithBackend(f, f.prepareBackend)
 }
 
 export function buildWorkerYAMLWithBackend(
   f: WorkerFormState,
-  workerID: string | undefined,
   backend: 'process' | 'docker',
 ): string {
   const lines: string[] = [
@@ -114,7 +112,6 @@ export function buildWorkerYAMLWithBackend(
   // driver block
   const runtime = backend === 'docker' ? 'docker' : 'baremetal'
   lines.push(`  driver:`, `    placement:`, `      runtime: ${runtime}`)
-  if (workerID) lines.push(`      worker: ${JSON.stringify(workerID)}`)
 
   if (backend === 'docker') {
     lines.push(`    docker:`, `      image: ${JSON.stringify(f.dockerImage)}`)

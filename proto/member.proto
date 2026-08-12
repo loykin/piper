@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package piper.member.v1;
+
+option go_package = "github.com/loykin/piper/internal/agentpb";
+
+// MemberTunnelService is the outbound tunnel a remote Member dials to reach
+// its Home (fed.md §13.4). Unlike AgentService (proto/agent.proto), it never
+// carries a generic-target proxy — a Home may only invoke the fixed set of
+// memberclient.Client methods against an enrolled Member, never an
+// arbitrary host:port. Message/service names are all Member-prefixed so
+// this file can share agent.proto's generated Go package without symbol
+// collisions.
+//
+// The Member dials Connect() and keeps the stream open for its lifetime.
+// - First MemberMessage must be a MemberEnrollment (identifies the Member).
+// - Home sends HomeMessage to invoke a memberclient.Client method.
+// - Member replies with MemberRPCResponse per command.
+service MemberTunnelService {
+  rpc Connect(stream MemberMessage) returns (stream HomeMessage);
+}
+
+// ── Member → Home ────────────────────────────────────────────────────────────
+
+message MemberMessage {
+  oneof payload {
+    MemberEnrollment  enroll   = 1;
+    MemberRPCResponse response = 2;
+  }
+}
+
+// MemberEnrollment is the first message a Member sends after connecting.
+// token is a static per-Member shared secret configured on both sides.
+// Rotation/revocation is deferred (fed.md §13.4 follow-up) — this proves
+// the enrollment boundary, not a full credential lifecycle.
+message MemberEnrollment {
+  string home_id   = 1;
+  string member_id = 2;
+  string token      = 3;
+}
+
+// MemberRPCResponse carries the result (or error) for a MemberRPCCommand.
+message MemberRPCResponse {
+  string request_id = 1;
+  bytes  payload     = 2; // JSON-encoded response DTO from internal/memberclient
+  string error       = 3; // non-empty on failure
+}
+
+// ── Home → Member ────────────────────────────────────────────────────────────
+
+message HomeMessage {
+  oneof payload {
+    MemberRPCCommand rpc_cmd = 1;
+  }
+}
+
+// MemberRPCCommand invokes one memberclient.Client method on the Member.
+message MemberRPCCommand {
+  string request_id = 1; // correlated with MemberRPCResponse.request_id
+  string method     = 2; // e.g. "SubmitRun" — matches a memberclient.Client method 1:1
+  bytes  payload    = 3; // JSON-encoded request DTO from internal/memberclient
+}

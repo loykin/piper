@@ -18,7 +18,6 @@ func newConfigCmd(loader *cliconfig.Loader) *cobra.Command {
 }
 
 func newConfigValidateCmd(loader *cliconfig.Loader) *cobra.Command {
-	var role string
 	cmd := &cobra.Command{
 		Use: "validate", Short: "validate the effective configuration",
 		PreRunE: makePreRunE(loader),
@@ -27,19 +26,17 @@ func newConfigValidateCmd(loader *cliconfig.Loader) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateRole(cfg, role); err != nil {
+			if err := cliconfig.ValidateServer(cfg); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "configuration is valid")
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&role, "command", "server", "role: server or worker")
 	return cmd
 }
 
 func newConfigShowCmd(loader *cliconfig.Loader) *cobra.Command {
-	var role string
 	var sources bool
 	cmd := &cobra.Command{
 		Use: "show", Short: "print the redacted effective configuration",
@@ -49,7 +46,7 @@ func newConfigShowCmd(loader *cliconfig.Loader) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateRole(cfg, role); err != nil {
+			if err := cliconfig.ValidateServer(cfg); err != nil {
 				return err
 			}
 			cfg.Storage.Token = redact(cfg.Storage.Token)
@@ -58,8 +55,6 @@ func newConfigShowCmd(loader *cliconfig.Loader) *cobra.Command {
 			cfg.Server.WorkerToken = redact(cfg.Server.WorkerToken)
 			cfg.Server.AuthSigningKey = redact(cfg.Server.AuthSigningKey)
 			cfg.Server.SecretEncryptionKey = redact(cfg.Server.SecretEncryptionKey)
-			cfg.Worker.WorkerToken = redact(cfg.Worker.WorkerToken)
-			cfg.Worker.StorageToken = redact(cfg.Worker.StorageToken)
 			data, err := yaml.Marshal(cfg)
 			if err != nil {
 				return err
@@ -81,20 +76,8 @@ func newConfigShowCmd(loader *cliconfig.Loader) *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&role, "command", "server", "role to validate before printing")
 	cmd.Flags().BoolVar(&sources, "sources", false, "include the winning source for each key")
 	return cmd
-}
-
-func validateRole(cfg cliconfig.RootConfig, role string) error {
-	switch role {
-	case "server":
-		return cliconfig.ValidateServer(cfg)
-	case "worker":
-		return cliconfig.ValidateWorker(cfg)
-	default:
-		return fmt.Errorf("unknown command role %q", role)
-	}
 }
 
 func redact(value string) string {

@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import { useProjectId } from '@/lib/projectContext'
-import { useWorkers } from '@/features/workers/hooks'
 import { backgroundPolling } from '@/lib/query'
 
 export const servingKeys = {
@@ -65,8 +64,4 @@ export function useRestartService() {
     mutationFn: (name: string) => api.restartServing(projectId, name),
     onSuccess: () => qc.invalidateQueries({ queryKey: servingKeys.all(projectId) }),
   })
-}
-
-export function useServingWorkers() {
-  return useWorkers('serving')
 }

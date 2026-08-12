@@ -7,8 +7,9 @@ log:
   level: info  # debug | info | warn | error
 
 # Artifact storage defaults to the built-in file store under server.data_dir.
-# For distributed workers, configure an S3-compatible URL here. Secrets should
-# come from PIPER_STORAGE_TOKEN or the credential referenced by credentialRef.
+# For distributed direct-runtime execution (K8s pods, Docker containers), an
+# S3-compatible URL is recommended. Secrets should come from PIPER_STORAGE_TOKEN
+# or the credential referenced by credentialRef.
 # storage:
 #   disabled: false
 #   url: "s3://bucket?region=us-east-1"
@@ -23,10 +24,10 @@ log:
 #     token: ""
 
 server:
-  # HTTP API, UI, and gRPC worker tunnel share this single address.
+  # HTTP API and UI.
   http_addr: ":8080"
 
-  # Persistent database, artifacts, generated keys, and local worker state.
+  # Persistent database, artifacts, and generated keys.
   data_dir: ./piper-data
 
   # Omit both keys to generate them on first startup. Piper stores them in
@@ -35,8 +36,9 @@ server:
   # auth_signing_key: ""
   # secret_encryption_key: ""
 
-  # Optional shared secret required from standalone workers.
-  # Prefer PIPER_SERVER_WORKER_TOKEN instead of committing it.
+  # Optional shared secret required on the built-in /store HTTP endpoint —
+  # relevant when runtime.workload_url points K8s pods or Docker containers
+  # back at Piper's own file-based artifact store.
   # worker_token: ""
 
   # Enable when Piper terminates TLS itself. When TLS terminates at an ingress
@@ -67,72 +69,38 @@ server:
   # serving:
   #   model_dir: ./piper-data/models
 
-  # Embedded workers are convenient for a single-node installation. Disable
-  # this block on a control plane served by standalone workers.
-  local:
-    enabled: true
-    pipeline: true
-    notebook: true
-    serving: true
+# runtime.type is required — Piper always owns pipeline/notebook/serving
+# execution directly, in-process. Pick exactly one.
+runtime:
+  type: baremetal
+  baremetal:
+    meta_dir: ./piper-data/pipeline-meta
     concurrency: 4
-    notebook_config:
-      notebooks_root: ./notebooks
-      port_range: 8888-9900
 
-# Server-owned Kubernetes pipeline runtime. This is mutually exclusive with
-# server.local. Empty/omitted runtime.type keeps remote-worker dispatch.
+# Docker alternative — containers run directly on the Piper host.
+# runtime:
+#   type: docker
+#   docker:
+#     network: bridge
+#     concurrency: 4
+#     # Required with the built-in file store; containers use this private URL.
+#     workload_url: http://host.docker.internal:8080
+
+# Kubernetes alternative — Pipeline runs as Jobs, Notebook as
+# StatefulSets, Serving as Deployments, all in the configured namespaces.
 # runtime:
 #   type: k8s
 #   namespaces: [piper]
 #   kubeconfig: "" # required only outside the cluster
 #   in_cluster: true
-#   # Required with the built-in file store; Job pods use this private URL.
+#   # Required with the built-in file store; pods use this private URL.
 #   workload_url: http://piper-server.piper.svc.cluster.local:8080
 #   pipeline_runner:
 #     image: ghcr.io/loykin/piper:latest
 #     image_pull_policy: IfNotPresent
 
-# Standalone worker reference. A worker process configures exactly one
-# infrastructure and, for baremetal/docker, exactly one capability. Kubernetes
-# workers may enable multiple capabilities. Start every variant with:
-#   piper worker --config ./config/<worker-file>.yaml
-#
-# worker:
-#   master_url: http://localhost:8080
-#   worker_token: "" # prefer PIPER_WORKER_WORKER_TOKEN
-#   hostname: ""     # empty uses the OS hostname
-#   state_dir: ./piper-worker-state
-#   labels:
-#     accelerator: cpu
-#
-#   # Choose exactly one infrastructure:
-#   baremetal: {}
-#   # docker:
-#   #   network: bridge
-#   #   volumes:
-#   #     - name: notebooks
-#   #       host_path: ./notebooks
-#   #       container_path: /notebooks
-#   #       read_only: false
-#   # k8s:
-#   #   cluster: production
-#   #   namespaces: [piper]
-#   #   kubeconfig: "" # required only outside the cluster
-#   #   in_cluster: true
-#   #   result_outbox_dir: ./piper-worker-state/result-outbox
-#   #   pipeline_runner:
-#   #     image: ghcr.io/loykin/piper:latest
-#   #     image_pull_policy: IfNotPresent
-#   #   notebook_volume_browser:
-#   #     image: ghcr.io/loykin/piper:latest
-#
-#   capabilities:
-#     pipeline:
-#       label: ""
-#       concurrency: 4
-#       output_dir: ./piper-outputs
-#       meta_dir: ""
-#     # notebook:
-#     #   notebooks_root: ./notebooks
-#     #   port_range: 8888-9900
-#     # serving: {}
+# Notebook workspace layout — only meaningful when runtime.type is docker or
+# baremetal (K8s notebooks use a PVC and a fixed in-pod port instead).
+notebook:
+  notebooks_root: ./notebooks
+  port_range: 8888-9900

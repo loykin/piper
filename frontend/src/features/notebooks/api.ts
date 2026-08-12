@@ -1,6 +1,6 @@
 // notebooks feature API
 export type {
-  NotebookServer, NotebookVolume, NotebookWorkerInfo,
+  NotebookServer, NotebookVolume,
 } from './types'
 
 import type { NotebookServer, NotebookVolume } from './types'

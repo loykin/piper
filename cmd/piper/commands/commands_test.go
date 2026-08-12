@@ -15,7 +15,7 @@ func TestPublicCommandSurface(t *testing.T) {
 		}
 	}
 	slices.Sort(public)
-	want := []string{"config", "parse", "run", "server", "user", "worker"}
+	want := []string{"config", "parse", "run", "server", "user"}
 	if !slices.Equal(public, want) {
 		t.Fatalf("public commands = %v, want %v", public, want)
 	}

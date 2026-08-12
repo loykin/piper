@@ -5,7 +5,6 @@ resources:
   - namespace.yaml
   - rbac.yaml
   - server.yaml
-  - k8s-worker.yaml
 configMapGenerator:
   - name: piper-config
     files:

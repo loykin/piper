@@ -1,23 +1,24 @@
 # Piper — Agent Guide Index
 
-Piper is a Go pipeline-orchestration server (master) with a React frontend
-embedded in the same binary, plus workers that connect to the master over a
-single outbound tunnel.
+Piper is a Go pipeline-orchestration server with a React frontend embedded in
+the same binary. Each installation owns exactly one execution runtime
+(`baremetal`, `docker`, or `k8s`) and drives it directly, in-process — there
+is no worker process and no worker tunnel.
 
 This file only indexes role-specific guides. Do not duplicate their content
 here — read the relevant guide when you start work in that area.
 
 - **Frontend work** (anything under `frontend/`): read
   `docs/frontend/develop.md` before making changes.
-- **Backend work** (Go code, server, worker, scheduler, etc.): read
+- **Backend work** (Go code, server, scheduler, etc.): read
   `docs/backend/develop.md` before making changes.
 - **Before signing off** any feature or fix as verified: follow
-  `docs/qa/adversarial-qa-playbook.md`. Unit/e2e tests and a single-worker
-  manual smoke test do not satisfy this — the playbook specifically requires
-  registering multiple worker infrastructure types (`baremetal`, `docker`,
-  `k8s`) at once, submitting through the real rendered UI forms rather than
-  hand-built API payloads, and cross-checking server logs rather than trusting
-  API success responses alone.
+  `docs/qa/adversarial-qa-playbook.md`. Unit/e2e tests and a single manual
+  smoke test do not satisfy this — the playbook specifically requires
+  exercising each `runtime.type` (`baremetal`, `docker`, `k8s`) as its own
+  separately configured instance, submitting through the real rendered UI
+  forms rather than hand-built API payloads, and cross-checking server logs
+  rather than trusting API success responses alone.
 
 ## Cross-Role Integration Review
 

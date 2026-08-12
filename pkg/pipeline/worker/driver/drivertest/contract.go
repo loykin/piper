@@ -6,6 +6,7 @@ package drivertest
 import (
 	"context"
 	"testing"
+	"time"
 
 	pipelinedriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
@@ -27,4 +28,29 @@ func RunContract(t *testing.T, newDriver func() pipelinedriver.Driver) {
 			t.Fatalf("Recover on empty state: got %d handles, want 0", len(handles))
 		}
 	})
+}
+
+// MustWait calls drv.Wait and fails the test if it doesn't return within
+// timeout, so a driver bug in a cancel/cleanup path can't hang the whole
+// test run.
+func MustWait(t *testing.T, ctx context.Context, drv pipelinedriver.Driver, handle pipelinedriver.Handle, timeout time.Duration) (pipelinedriver.Exit, error) {
+	t.Helper()
+
+	type result struct {
+		exit pipelinedriver.Exit
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		exit, err := drv.Wait(ctx, handle)
+		done <- result{exit: exit, err: err}
+	}()
+
+	select {
+	case r := <-done:
+		return r.exit, r.err
+	case <-time.After(timeout):
+		t.Fatalf("Wait did not return within %s", timeout)
+		return pipelinedriver.Exit{}, nil
+	}
 }

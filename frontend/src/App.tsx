@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
-import { CalendarClock, History, Server, Cpu, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, Boxes, ChevronRight, KeyRound, UserRoundCog, UsersRound } from 'lucide-react'
+import { CalendarClock, History, Server, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, ChevronRight, KeyRound, UserRoundCog, UsersRound } from 'lucide-react'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
@@ -56,14 +56,11 @@ const ServingCreatePage      = lazyRouteComponent(() => import('@/pages/serving/
 const ServingHistoryPage     = lazyRouteComponent(() => import('@/pages/serving/ServingHistoryPage'))
 const CredentialsPage        = lazyRouteComponent(() => import('@/pages/credentials/CredentialsPage'))
 const CredentialCreatePage   = lazyRouteComponent(() => import('@/pages/credentials/CredentialCreatePage'))
-const WorkersPage            = lazyRouteComponent(() => import('@/pages/system/WorkersPage'))
 const StoragePage            = lazyRouteComponent(() => import('@/pages/system/StoragePage'))
 const UsersPage              = lazyRouteComponent(() => import('@/pages/system/UsersPage'))
 const UserCreatePage         = lazyRouteComponent(() => import('@/pages/system/UserCreatePage'))
 const MembersPage            = lazyRouteComponent(() => import('@/pages/projects/MembersPage'))
 const MemberCreatePage       = lazyRouteComponent(() => import('@/pages/projects/MemberCreatePage'))
-const PodPoliciesPage        = lazyRouteComponent(() => import('@/pages/kubernetes/PodPoliciesPage'))
-const PodPoliciesCreatePage  = lazyRouteComponent(() => import('@/pages/kubernetes/PodPoliciesCreatePage'))
 
 type NavSubItem = {
   id: string
@@ -114,20 +111,10 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
     {
       label: 'Infrastructure',
       items: [
-        { id: 'workers',  label: 'Workers',  icon: Cpu,      to: `/workers`, system: true },
         { id: 'storage',  label: 'Storage',  icon: Database, to: `${base}/storage` },
         { id: 'credentials', label: 'Credentials', icon: KeyRound, to: `${base}/credentials` },
         { id: 'members', label: 'Members', icon: UsersRound, to: `${base}/members` },
         { id: 'users', label: 'Users', icon: UserRoundCog, to: `/users`, system: true },
-        {
-          id: 'kubernetes',
-          label: 'Kubernetes',
-          icon: Boxes,
-          system: true,
-          children: [
-            { id: 'pod-policies', label: 'Pod Policies', to: `/kubernetes/pod-policies`, system: true },
-          ],
-        },
       ],
     },
   ]
@@ -186,7 +173,7 @@ function AppSidebar() {
                   if (item.children) {
                     const anyChildActive = item.children.some(c =>
                       location.pathname === c.to ||
-                      (c.to !== '/workers' && location.pathname.startsWith(c.to + '/'))
+                      location.pathname.startsWith(c.to + '/')
                     )
                     return (
                       <Collapsible key={item.id} defaultOpen className="group/collapsible">
@@ -209,7 +196,7 @@ function AppSidebar() {
                                 const childActive = child.exact
                                   ? location.pathname === child.to
                                   : location.pathname === child.to ||
-                                    (child.to !== '/workers' && location.pathname.startsWith(child.to + '/'))
+                                    location.pathname.startsWith(child.to + '/')
                                 return (
                                   <SidebarMenuSubItem key={child.id}>
                                     <SidebarMenuSubButton
@@ -236,7 +223,7 @@ function AppSidebar() {
                   const isActive = item.exact
                     ? location.pathname === item.to
                     : location.pathname === item.to ||
-                      (item.to !== '/workers' && item.to != null && location.pathname.startsWith(item.to + '/'))
+                      (item.to != null && location.pathname.startsWith(item.to + '/'))
                   return (
                     <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton
@@ -414,7 +401,7 @@ function AppLayout() {
 function RootRedirect() {
   const { projectId, loading } = useProjectContext()
   if (loading) return null
-  return <RedirectTo to={projectId ? `/projects/${projectId}/schedules` : '/workers'} />
+  return <RedirectTo to={projectId ? `/projects/${projectId}/schedules` : '/users'} />
 }
 
 function ProjectScopedFallback() {
@@ -512,11 +499,8 @@ const routeTree = rootRoute.addChildren([
   appLayoutRoute.addChildren([
     indexRoute,
     projectRoute.addChildren(projectRoutes),
-    createRoute({ getParentRoute: () => appLayoutRoute, path: 'workers', component: WorkersPage }),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'users', component: UsersPage }),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'users/new', component: UserCreatePage }),
-    createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies', component: PodPoliciesPage }),
-    createRoute({ getParentRoute: () => appLayoutRoute, path: 'kubernetes/pod-policies/new', component: PodPoliciesCreatePage }),
     ...legacyProjectRoutes,
     createRoute({ getParentRoute: () => appLayoutRoute, path: '$', component: AppNotFoundFallback }),
   ]),

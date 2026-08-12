@@ -139,48 +139,6 @@ func (l *Loader) Load() (RootConfig, error) {
 		l.loadErr = fmt.Errorf("config: %w", err)
 		return RootConfig{}, l.loadErr
 	}
-	if l.explicitPrefix("worker.baremetal") {
-		if cfg.Worker.Baremetal == nil {
-			cfg.Worker.Baremetal = &BaremetalWorkerConfig{}
-		}
-	} else {
-		cfg.Worker.Baremetal = nil
-	}
-	if l.explicitPrefix("worker.docker") {
-		if cfg.Worker.Docker == nil {
-			cfg.Worker.Docker = &DockerWorkerConfig{}
-		}
-	} else {
-		cfg.Worker.Docker = nil
-	}
-	if l.explicitPrefix("worker.k8s") {
-		if cfg.Worker.K8s == nil {
-			cfg.Worker.K8s = &K8sWorkerConfig{}
-		}
-	} else {
-		cfg.Worker.K8s = nil
-	}
-	if l.explicitPrefix("worker.capabilities.pipeline") {
-		if cfg.Worker.Capabilities.Pipeline == nil {
-			cfg.Worker.Capabilities.Pipeline = &PipelineCapabilityConfig{}
-		}
-	} else {
-		cfg.Worker.Capabilities.Pipeline = nil
-	}
-	if l.explicitPrefix("worker.capabilities.notebook") {
-		if cfg.Worker.Capabilities.Notebook == nil {
-			cfg.Worker.Capabilities.Notebook = &NotebookCapabilityConfig{}
-		}
-	} else {
-		cfg.Worker.Capabilities.Notebook = nil
-	}
-	if l.explicitPrefix("worker.capabilities.serving") {
-		if cfg.Worker.Capabilities.Serving == nil {
-			cfg.Worker.Capabilities.Serving = &ServingCapabilityConfig{}
-		}
-	} else {
-		cfg.Worker.Capabilities.Serving = nil
-	}
 	if cfg.Version != 4 {
 		l.loadErr = fmt.Errorf("config: version must be 4")
 		return RootConfig{}, l.loadErr

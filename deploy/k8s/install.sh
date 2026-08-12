@@ -36,7 +36,6 @@ fi
 
 kubectl apply -k "$SCRIPT_DIR"
 kubectl -n piper rollout status deployment/piper-server
-kubectl -n piper rollout status deployment/piper-k8s-worker
 
 echo "Piper is running. Open a local tunnel with:"
 echo "  kubectl -n piper port-forward service/piper-server 8080:8080"

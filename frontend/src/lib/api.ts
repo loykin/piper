@@ -2,7 +2,7 @@
  * Central HTTP client for the Piper API.
  *
  * All project-scoped requests go through `projectApi(projectId)`.
- * System-scoped requests (workers, storage settings) use `api` directly.
+ * System-scoped requests (system settings, users) use `api` directly.
  */
 
 export class ApiError extends Error {

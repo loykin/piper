@@ -146,6 +146,7 @@ type captureDockerClient struct {
 	create    dockerclient.ContainerCreateOptions
 	waitErr   error
 	removedID string
+	stoppedID string
 }
 
 func (c *captureDockerClient) ContainerCreate(_ context.Context, opts dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
@@ -175,4 +176,55 @@ func (c *captureDockerClient) ContainerWait(context.Context, string, dockerclien
 func (c *captureDockerClient) ContainerRemove(_ context.Context, id string, _ dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error) {
 	c.removedID = id
 	return dockerclient.ContainerRemoveResult{}, nil
+}
+
+func (c *captureDockerClient) ContainerStop(_ context.Context, id string, _ dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error) {
+	c.stoppedID = id
+	return dockerclient.ContainerStopResult{}, nil
+}
+
+// TestDockerDriverStartWaitSucceedsAndCleansUpContainer freezes fed.md 13.1's
+// "Start and terminal completion" behavior on the pure success path
+// (StatusCode==0), which TestDockerDriverWaitErrorCleansRuntimeState does not
+// cover — that test only exercises the transport-error branch.
+func TestDockerDriverStartWaitSucceedsAndCleansUpContainer(t *testing.T) {
+	cli := &captureDockerClient{}
+	resultDir := t.TempDir()
+	d := NewWithClient(Config{WorkerID: "worker-1", ResultDir: resultDir}, cli)
+	handle, err := d.Start(context.Background(), &proto.Task{
+		ID:       "run-1:train",
+		RunID:    "run-1",
+		StepName: "train",
+		Attempt:  1,
+	}, pipelinedriver.ExecSpec{
+		RuntimeKey: "worker-1-run-1-train-a1",
+		Image:      "python:3.11",
+		OutputDir:  t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	exit, err := d.Wait(context.Background(), handle)
+	if err != nil {
+		t.Fatalf("Wait returned transport error: %v", err)
+	}
+	if exit.InfraFailure != nil {
+		t.Fatalf("unexpected InfraFailure: %v", exit.InfraFailure)
+	}
+	if exit.ResultPath != handle.ResultPath {
+		t.Fatalf("exit.ResultPath = %q, want %q", exit.ResultPath, handle.ResultPath)
+	}
+	if cli.removedID == "" {
+		t.Fatal("container was not removed on the success path")
+	}
+	if _, err := os.Stat(handle.TaskPath); !os.IsNotExist(err) {
+		t.Fatalf("task file still exists after successful Wait: %v", err)
+	}
+	d.mu.Lock()
+	_, active := d.active[handle.RuntimeKey]
+	d.mu.Unlock()
+	if active {
+		t.Fatalf("runtime key %q remained active", handle.RuntimeKey)
+	}
 }

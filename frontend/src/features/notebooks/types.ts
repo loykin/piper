@@ -25,5 +25,3 @@ export interface NotebookVolume {
   created_at: string
   updated_at: string
 }
-
-export type NotebookWorkerInfo = import('@/features/workers/types').Worker

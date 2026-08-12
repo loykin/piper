@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	iagent "github.com/loykin/piper/internal/agent"
-	"github.com/loykin/piper/internal/grpcagent"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/proto"
 	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
@@ -20,8 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
-
-type Dispatcher = *grpcagent.Dispatcher
 
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to K8s Job pods via piper agent exec arguments.
@@ -129,24 +125,9 @@ func (a *Worker) CancelRun(ctx context.Context, runID string) error {
 	return nil
 }
 
-func Register(dispatcher Dispatcher, cfg Config) *Worker {
-	w := New(cfg)
-	w.register(dispatcher)
-	return w
-}
-
 type pipelineCancelRunRequest struct {
 	RunID     string `json:"run_id"`
 	Namespace string `json:"namespace,omitempty"`
-}
-
-func (a *Worker) register(dispatcher Dispatcher) {
-	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodPipelineDispatch, func(ctx context.Context, task proto.Task) (any, error) {
-		return nil, a.dispatchPipeline(ctx, &task)
-	})
-	_ = grpcagent.RegisterJSON(dispatcher, iagent.MethodPipelineCancelRun, func(ctx context.Context, req pipelineCancelRunRequest) (any, error) {
-		return nil, a.cancelPipelineRun(ctx, req)
-	})
 }
 
 func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {

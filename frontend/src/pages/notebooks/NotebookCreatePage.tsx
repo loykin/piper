@@ -1,5 +1,5 @@
 import { useNavigate, useSearchParams } from '@/lib/router'
-import { useCreateNotebook, useNotebookVolumes, useNotebookWorkers } from '@/features/notebooks/hooks'
+import { useCreateNotebook, useNotebookVolumes } from '@/features/notebooks/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import { NotebookK8sForm } from '@/features/notebooks/components/NotebookK8sForm'
 
@@ -10,7 +10,6 @@ export default function NotebookCreatePage() {
   const preselectedVolume = searchParams.get('volume') ?? ''
 
   const { mutateAsync: createNotebook, isPending: submitting, error: createError } = useCreateNotebook()
-  const { data: workers = [] } = useNotebookWorkers()
   const { data: allVolumes = [] } = useNotebookVolumes()
 
   const releasedVolumes = allVolumes.filter(v => v.status === 'released')
@@ -22,7 +21,6 @@ export default function NotebookCreatePage() {
 
   return (
     <NotebookK8sForm
-      workers={workers}
       releasedVolumes={releasedVolumes}
       preselectedVolume={preselectedVolume}
       onSubmit={(yaml, volumeId) => void handleSubmit(yaml, volumeId)}

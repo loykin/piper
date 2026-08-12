@@ -2,21 +2,16 @@ package commands
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
 	piper "github.com/loykin/piper"
 	cliconfig "github.com/loykin/piper/cmd/piper/config"
-	notebookworker "github.com/loykin/piper/pkg/notebook/worker"
-	worker "github.com/loykin/piper/pkg/pipeline/worker"
-	servingworker "github.com/loykin/piper/pkg/serving/worker"
+	"github.com/loykin/piper/internal/membertunnel"
 	"github.com/spf13/cobra"
-	"golang.org/x/sync/errgroup"
 )
 
 func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command {
@@ -38,110 +33,69 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 			}
 			defer func() { _ = p.Close() }()
 
+			if root.Deployment.Mode == cliconfig.DeploymentModeMember {
+				return runMemberMode(root, p)
+			}
+
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			addr := root.Server.HTTPAddr
-			local, localConcurrency := root.Server.Local.Enabled, root.Server.Local.Concurrency
-
-			if !local {
-				return p.Serve(ctx, piper.ServeOption{Addr: addr})
-			}
-
-			// Embedded local pipeline worker: connects to the local gRPC agent server.
-			hostname, _ := os.Hostname()
-			localMaster := localMasterURL(addr)
-			localStateDir := filepath.Join(root.Server.DataDir, ".worker-state")
-			pipelineID, err := loadOrCreateWorkerID(localStateDir, "local-pipeline")
-			if err != nil {
-				return err
-			}
-			servingID, err := loadOrCreateWorkerID(localStateDir, "local-serving")
-			if err != nil {
-				return err
-			}
-			notebookID, err := loadOrCreateWorkerID(localStateDir, "local-notebook")
-			if err != nil {
-				return err
-			}
-
-			workerToken := p.Config().Server.WorkerToken
-
-			wCfg := embeddedPipelineWorkerConfig(root, localMaster, pipelineID, localStateDir, localConcurrency, workerToken)
-			var w *worker.Worker
-			if root.Server.Local.Pipeline {
-				w, err = worker.New(wCfg)
-				if err != nil {
-					return fmt.Errorf("embedded worker: %w", err)
-				}
-			}
-			slog.Info("embedded local worker enabled", "master_url", localMaster, "concurrency", localConcurrency)
-
-			sw := servingworker.New(servingworker.Config{
-				MasterURL:      localMaster,
-				WorkerToken:    workerToken,
-				Hostname:       hostname,
-				ID:             servingID,
-				Infrastructure: servingworker.InfrastructureBaremetal,
-			})
-
-			nw := notebookworker.New(notebookworker.Config{
-				MasterURL:      localMaster,
-				WorkerToken:    workerToken,
-				Hostname:       hostname,
-				ID:             notebookID,
-				NotebooksRoot:  p.Config().NotebookWorker.NotebooksRoot,
-				PortRange:      p.Config().NotebookWorker.PortRange,
-				Infrastructure: notebookworker.InfrastructureBaremetal,
-			})
-
-			eg, gctx := errgroup.WithContext(ctx)
-			eg.Go(func() error {
-				return p.Serve(gctx, piper.ServeOption{Addr: addr})
-			})
-			if root.Server.Local.Pipeline {
-				eg.Go(func() error { return w.Run(gctx) })
-			}
-			if root.Server.Local.Serving {
-				eg.Go(func() error { return sw.Run(gctx) })
-			}
-			if root.Server.Local.Notebook {
-				eg.Go(func() error { return nw.Run(gctx) })
-			}
-			return eg.Wait()
+			return p.Serve(ctx, piper.ServeOption{Addr: root.Server.HTTPAddr})
 		},
 	}
 
 	return cmd
 }
 
-func embeddedPipelineWorkerConfig(root cliconfig.RootConfig, localMaster, pipelineID, localStateDir string, localConcurrency int, workerToken string) worker.Config {
-	return worker.Config{
-		Agent: worker.AgentConfig{
-			MasterURL:   localMaster,
-			WorkerToken: workerToken,
-			ID:          pipelineID,
-			Concurrency: localConcurrency,
-		},
-		Store: worker.StoreConfig{
-			OutputDir:        root.Server.DataDir,
-			LocalStoreAccess: true,
-			GitUser:          root.Source.Git.User,
-			GitToken:         root.Source.Git.Token,
-		},
-		Runtime:   worker.RuntimeBaremetal,
-		Baremetal: worker.BaremetalConfig{MetaDir: filepath.Join(localStateDir, "pipeline-meta")},
-	}
+// runMemberMode connects p to its configured Home over an outbound tunnel
+// (fed.md §13.5) and serves memberclient.Client calls from it via
+// piper.NewLocalMemberClient. Unlike home mode, it never calls p.Serve —
+// a Member exposes no inbound HTTP/UI (fed.md §10.7).
+func runMemberMode(root cliconfig.RootConfig, p *piper.Piper) error {
+	memberID := resolveMemberID(root)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	cli := membertunnel.NewClient(membertunnel.Config{
+		HomeURL:  root.Home.URL,
+		HomeID:   root.Home.ID,
+		MemberID: memberID,
+		Token:    root.Home.EnrollmentToken,
+	}, piper.NewLocalMemberClient(p))
+
+	slog.Info("member mode: connecting to home", "home_url", root.Home.URL, "home_id", root.Home.ID, "member_id", memberID)
+	return cli.Run(ctx)
 }
 
-// localMasterURL converts a listen address like ":8080" or "0.0.0.0:8080"
-// to "http://localhost:8080" for the embedded pipeline worker to connect to.
-func localMasterURL(addr string) string {
-	if strings.HasPrefix(addr, ":") {
-		return "http://localhost" + addr
+// resolveMemberID returns deployment.member_id, or a stable hostname-derived
+// default when unset.
+func resolveMemberID(root cliconfig.RootConfig) string {
+	if root.Deployment.MemberID != "" {
+		return root.Deployment.MemberID
 	}
-	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		return "http://localhost" + addr[idx:]
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "member"
+	} else {
+		host = "member-" + host
 	}
-	return "http://" + addr
+	return sanitizeName(host)
+}
+
+// sanitizeName converts an arbitrary string into a DNS-label-safe
+// identifier: lowercase, [a-z0-9-] only, at most 63 characters.
+func sanitizeName(s string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(s) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if len(name) > 63 {
+		name = strings.TrimRight(name[:63], "-")
+	}
+	return name
 }

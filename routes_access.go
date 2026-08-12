@@ -5,7 +5,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	iagent "github.com/loykin/piper/internal/agent"
 	authpkg "github.com/loykin/piper/pkg/auth"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
@@ -74,8 +73,4 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 		c.JSON(http.StatusOK, view)
 	})
 	return admin
-}
-
-func (p *Piper) registerWorkerRoutes(admin *gin.RouterGroup) {
-	iagent.NewHandler(p.agentRegistry, p.repos.WorkerPodPolicy).RegisterRoutes(admin)
 }

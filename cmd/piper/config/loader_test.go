@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/spf13/pflag"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -16,53 +14,6 @@ func writeConfig(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-func TestLoaderPrecedence(t *testing.T) {
-	t.Setenv("PIPER_WORKER_CAPABILITIES_PIPELINE_CONCURRENCY", "7")
-	l := NewLoader()
-	l.SetConfigFile(writeConfig(t, "version: 4\nworker:\n  baremetal: {}\n  capabilities:\n    pipeline:\n      concurrency: 6\n"))
-	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	flags.Int("concurrency", 0, "")
-	l.MustBindFlag("worker.capabilities.pipeline.concurrency", flags.Lookup("concurrency"))
-	if err := flags.Set("concurrency", "8"); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := l.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Worker.Capabilities.Pipeline.Concurrency != 8 {
-		t.Fatalf("got %d, want 8", cfg.Worker.Capabilities.Pipeline.Concurrency)
-	}
-}
-
-func TestLoaderUnchangedFlagDoesNotOverrideFile(t *testing.T) {
-	l := NewLoader()
-	l.SetConfigFile(writeConfig(t, "version: 4\nworker:\n  baremetal: {}\n  capabilities:\n    pipeline:\n      concurrency: 6\n"))
-	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	flags.Int("concurrency", 0, "")
-	l.MustBindFlag("worker.capabilities.pipeline.concurrency", flags.Lookup("concurrency"))
-	cfg, err := l.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Worker.Capabilities.Pipeline.Concurrency != 6 {
-		t.Fatalf("got %d, want 6", cfg.Worker.Capabilities.Pipeline.Concurrency)
-	}
-}
-
-func TestLoaderEnvironmentOverridesFile(t *testing.T) {
-	t.Setenv("PIPER_WORKER_CAPABILITIES_PIPELINE_CONCURRENCY", "7")
-	l := NewLoader()
-	l.SetConfigFile(writeConfig(t, "version: 4\nworker:\n  baremetal: {}\n  capabilities:\n    pipeline:\n      concurrency: 6\n"))
-	cfg, err := l.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Worker.Capabilities.Pipeline.Concurrency != 7 {
-		t.Fatalf("got %d, want 7", cfg.Worker.Capabilities.Pipeline.Concurrency)
-	}
 }
 
 func TestLoaderCachesDecodedConfig(t *testing.T) {
@@ -131,36 +82,6 @@ func TestLoaderReportsWinningSources(t *testing.T) {
 	}
 }
 
-func TestLoaderEnvironmentJSONCollection(t *testing.T) {
-	t.Setenv("PIPER_WORKER_DOCKER_VOLUMES", `[{"name":"data","host_path":"/tmp/data","container_path":"/data"}]`)
-	l := NewLoader()
-	cfg, err := l.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Worker.Docker == nil || len(cfg.Worker.Docker.Volumes) != 1 || cfg.Worker.Docker.Volumes[0].Name != "data" {
-		t.Fatalf("unexpected worker config: %#v", cfg.Worker)
-	}
-}
-
-func TestLoaderFlagWorkerMasterURL(t *testing.T) {
-	l := NewLoader()
-	l.SetConfigFile(writeConfig(t, "version: 4\nworker:\n  baremetal: {}\n  capabilities:\n    pipeline: {}\n"))
-	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	flags.String("master-url", "", "master URL")
-	l.MustBindFlag("worker.master_url", flags.Lookup("master-url"))
-	if err := flags.Set("master-url", "http://127.0.0.1:8080"); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := l.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Worker.MasterURL != "http://127.0.0.1:8080" {
-		t.Fatalf("got %q, want http://127.0.0.1:8080", cfg.Worker.MasterURL)
-	}
-}
-
 func TestLoaderRejectsUnknownAndMissingVersion(t *testing.T) {
 	for _, body := range []string{"version: 4\nworker:\n  capabilities:\n    notebook:\n      port_rang: 8888-9900\n", "worker: {}\n"} {
 		l := NewLoader()
@@ -173,9 +94,9 @@ func TestLoaderRejectsUnknownAndMissingVersion(t *testing.T) {
 
 func TestLoaderUnknownKeyIncludesFullPath(t *testing.T) {
 	l := NewLoader()
-	l.SetConfigFile(writeConfig(t, "version: 4\nworker:\n  capabilities:\n    notebook:\n      port_rang: 8888-9900\n"))
+	l.SetConfigFile(writeConfig(t, "version: 4\nruntime:\n  type: baremetal\n  baremetal:\n    bogus_field: true\n"))
 	_, err := l.Load()
-	if err == nil || !strings.Contains(err.Error(), "worker.capabilities.notebook.port_rang") {
+	if err == nil || !strings.Contains(err.Error(), "runtime.baremetal.bogus_field") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

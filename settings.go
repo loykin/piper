@@ -8,8 +8,8 @@ type SystemSettings struct {
 	Runtime       RuntimeSettings       `json:"runtime"`
 }
 
-// RuntimeSettings identifies execution owned directly by this Piper server.
-// An empty type means pipeline execution still uses registered workers.
+// RuntimeSettings identifies the direct in-process execution runtime this
+// Piper server owns for pipeline, notebook, and serving workloads.
 type RuntimeSettings struct {
 	Type string `json:"type"`
 }

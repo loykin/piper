@@ -11,11 +11,7 @@ func Defaults() RootConfig {
 			DB:       DBConfig{Driver: "sqlite"},
 			DataDir:  "./piper-outputs",
 			Schedule: ScheduleConfig{MisfirePolicy: "run_once", MisfireGracePeriod: 5 * time.Minute},
-			Local: LocalConfig{
-				Pipeline: true, Notebook: true, Serving: true, Concurrency: 4,
-				NotebookCfg: LocalNotebookConfig{NotebooksRoot: "./notebooks", PortRange: "8888-9900"},
-			},
 		},
-		Worker: WorkerConfig{StateDir: "./piper-worker-state"},
+		Notebook: NotebookConfig{NotebooksRoot: "./notebooks", PortRange: "8888-9900"},
 	}
 }

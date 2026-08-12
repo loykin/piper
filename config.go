@@ -13,7 +13,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const RuntimeK8s = "k8s"
+const (
+	RuntimeK8s       = "k8s"
+	RuntimeDocker    = "docker"
+	RuntimeBaremetal = "baremetal"
+)
 
 // Config is the global piper configuration. Accepts a struct and can be embedded.
 type Config struct {
@@ -72,8 +76,10 @@ type Config struct {
 }
 
 type RuntimeConfig struct {
-	Type string           `yaml:"type" mapstructure:"type"`
-	K8s  K8sRuntimeConfig `yaml:"k8s" mapstructure:"k8s"`
+	Type      string                 `yaml:"type" mapstructure:"type"`
+	K8s       K8sRuntimeConfig       `yaml:"k8s" mapstructure:"k8s"`
+	Docker    DockerRuntimeConfig    `yaml:"docker" mapstructure:"docker"`
+	Baremetal BaremetalRuntimeConfig `yaml:"baremetal" mapstructure:"baremetal"`
 }
 
 type K8sRuntimeConfig struct {
@@ -85,6 +91,30 @@ type K8sRuntimeConfig struct {
 	// WorkloadURL is the URL Kubernetes workloads use to reach Piper's built-in
 	// artifact endpoint when storage resolves to file://.
 	WorkloadURL string `yaml:"workload_url" mapstructure:"workload_url"`
+}
+
+// DockerRuntimeConfig configures direct, in-process Docker pipeline
+// execution (runtime.type: docker). Unlike K8s (bounded by the cluster
+// scheduler), containers run directly on the Piper host, so Concurrency is
+// required.
+type DockerRuntimeConfig struct {
+	Network     string `yaml:"network" mapstructure:"network"`
+	Concurrency int    `yaml:"concurrency" mapstructure:"concurrency"`
+	// WorkloadURL is the URL Docker containers use to reach Piper's built-in
+	// artifact endpoint when storage resolves to file:// — a container
+	// cannot reach the host's local filesystem directly, the same boundary
+	// K8s.WorkloadURL exists for.
+	WorkloadURL string `yaml:"workload_url" mapstructure:"workload_url"`
+}
+
+// BaremetalRuntimeConfig configures direct, in-process baremetal (subprocess)
+// pipeline execution (runtime.type: baremetal). Like Docker, subprocesses run
+// directly on the Piper host, so Concurrency is required. Unlike Docker/K8s,
+// baremetal shares the host filesystem directly, so it has no WorkloadURL —
+// file:// artifact storage is used as-is.
+type BaremetalRuntimeConfig struct {
+	MetaDir     string `yaml:"meta_dir" mapstructure:"meta_dir"`
+	Concurrency int    `yaml:"concurrency" mapstructure:"concurrency"`
 }
 
 type GitConfig struct {
@@ -158,7 +188,7 @@ type AuthFactory func(AuthDependencies) (AuthConfig, error)
 
 type ServerConfig struct {
 	Addr                string    `yaml:"addr"                   mapstructure:"addr"`
-	WorkerToken         string    `yaml:"worker_token"           mapstructure:"worker_token"` // separate token for worker/agent auth
+	WorkerToken         string    `yaml:"worker_token"           mapstructure:"worker_token"` // guards the built-in /store endpoint for Docker/K8s workload access
 	SecretEncryptionKey string    `yaml:"secret_encryption_key"  mapstructure:"secret_encryption_key"`
 	AllowInsecureDevKey bool      `yaml:"allow_insecure_dev_key" mapstructure:"allow_insecure_dev_key"`
 	TLS                 TLSConfig `yaml:"tls"                    mapstructure:"tls"`
@@ -306,8 +336,19 @@ func (c Config) Validate() error {
 		if strings.HasPrefix(resolveStorageURL(c), "file://") && strings.TrimSpace(c.Runtime.K8s.WorkloadURL) == "" {
 			return fmt.Errorf("runtime.k8s.workload_url is required when using the built-in file artifact store")
 		}
+	case RuntimeDocker:
+		if c.Runtime.Docker.Concurrency < 0 {
+			return fmt.Errorf("runtime.docker.concurrency must not be negative")
+		}
+		if strings.HasPrefix(resolveStorageURL(c), "file://") && strings.TrimSpace(c.Runtime.Docker.WorkloadURL) == "" {
+			return fmt.Errorf("runtime.docker.workload_url is required when using the built-in file artifact store")
+		}
+	case RuntimeBaremetal:
+		if c.Runtime.Baremetal.Concurrency < 0 {
+			return fmt.Errorf("runtime.baremetal.concurrency must not be negative")
+		}
 	default:
-		return fmt.Errorf("runtime.type must be k8s or empty")
+		return fmt.Errorf("runtime.type must be k8s, docker, baremetal, or empty")
 	}
 
 	return nil

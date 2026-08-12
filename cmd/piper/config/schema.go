@@ -3,17 +3,48 @@ package config
 import "time"
 
 type RootConfig struct {
-	Version int           `mapstructure:"version" yaml:"version"`
-	Log     LogConfig     `mapstructure:"log" yaml:"log"`
-	Storage StorageConfig `mapstructure:"storage" yaml:"storage"`
-	Source  SourceConfig  `mapstructure:"source" yaml:"source"`
-	Server  ServerConfig  `mapstructure:"server" yaml:"server"`
-	Runtime RuntimeConfig `mapstructure:"runtime" yaml:"runtime"`
-	Worker  WorkerConfig  `mapstructure:"worker" yaml:"worker"`
+	Version    int              `mapstructure:"version" yaml:"version"`
+	Log        LogConfig        `mapstructure:"log" yaml:"log"`
+	Storage    StorageConfig    `mapstructure:"storage" yaml:"storage"`
+	Source     SourceConfig     `mapstructure:"source" yaml:"source"`
+	Server     ServerConfig     `mapstructure:"server" yaml:"server"`
+	Runtime    RuntimeConfig    `mapstructure:"runtime" yaml:"runtime"`
+	Notebook   NotebookConfig   `mapstructure:"notebook" yaml:"notebook"`
+	Deployment DeploymentConfig `mapstructure:"deployment" yaml:"deployment"`
+	Home       HomeConfig       `mapstructure:"home" yaml:"home"`
 }
 
-// RuntimeConfig selects execution owned directly by the Piper server. An
-// empty type preserves the existing remote-worker mode.
+// NotebookConfig configures the notebook direct-runtime workspace layout.
+// Only meaningful when runtime.type is docker or baremetal (K8s notebooks
+// use a PVC and a fixed in-pod port instead).
+type NotebookConfig struct {
+	NotebooksRoot string `mapstructure:"notebooks_root" yaml:"notebooks_root"`
+	PortRange     string `mapstructure:"port_range" yaml:"port_range"`
+}
+
+// DeploymentConfig selects how this installation participates in the
+// Home/Member topology (fed.md §13.5). Mode "" behaves exactly like "home"
+// — today's default: full UI, plus an optional in-process runtime
+// (runtime.type, §13.2) acting as that Home's own Local Member.
+type DeploymentConfig struct {
+	Mode string `mapstructure:"mode" yaml:"mode"` // "" | "home" | "member"
+	// MemberID is this installation's stable identity when mode is
+	// "member". Auto-generated from hostname (worker.NewID) if empty.
+	MemberID string `mapstructure:"member_id" yaml:"member_id"`
+}
+
+// HomeConfig is required when deployment.mode is "member": which Home to
+// dial and enroll with over the outbound tunnel (internal/membertunnel).
+type HomeConfig struct {
+	ID              string `mapstructure:"id" yaml:"id"`
+	URL             string `mapstructure:"url" yaml:"url"`
+	EnrollmentToken string `mapstructure:"enrollment_token" yaml:"enrollment_token"`
+}
+
+// RuntimeConfig selects execution owned directly by the Piper server —
+// required; there is no remote-worker fallback. The Namespaces through
+// PipelineRunner fields are k8s-only; Docker/Baremetal carry their own
+// runtime-specific fields in their own sub-structs.
 type RuntimeConfig struct {
 	Type           string                  `mapstructure:"type" yaml:"type"`
 	Namespaces     []string                `mapstructure:"namespaces" yaml:"namespaces"`
@@ -21,6 +52,23 @@ type RuntimeConfig struct {
 	InCluster      bool                    `mapstructure:"in_cluster" yaml:"in_cluster"`
 	WorkloadURL    string                  `mapstructure:"workload_url" yaml:"workload_url"`
 	PipelineRunner K8sPipelineRunnerConfig `mapstructure:"pipeline_runner" yaml:"pipeline_runner"`
+	Docker         *RuntimeDockerConfig    `mapstructure:"docker" yaml:"docker,omitempty"`
+	Baremetal      *RuntimeBaremetalConfig `mapstructure:"baremetal" yaml:"baremetal,omitempty"`
+}
+
+// RuntimeDockerConfig configures runtime.type: docker (direct, in-process
+// Docker pipeline execution — no worker tunnel involved).
+type RuntimeDockerConfig struct {
+	Network     string `mapstructure:"network" yaml:"network"`
+	Concurrency int    `mapstructure:"concurrency" yaml:"concurrency"`
+	WorkloadURL string `mapstructure:"workload_url" yaml:"workload_url"`
+}
+
+// RuntimeBaremetalConfig configures runtime.type: baremetal (direct,
+// in-process subprocess pipeline execution — no worker tunnel involved).
+type RuntimeBaremetalConfig struct {
+	MetaDir     string `mapstructure:"meta_dir" yaml:"meta_dir"`
+	Concurrency int    `mapstructure:"concurrency" yaml:"concurrency"`
 }
 
 type LogConfig struct {
@@ -57,7 +105,6 @@ type ServerConfig struct {
 	Retention                RetentionConfig `mapstructure:"retention" yaml:"retention"`
 	Schedule                 ScheduleConfig  `mapstructure:"schedule" yaml:"schedule"`
 	Serving                  ServerServing   `mapstructure:"serving" yaml:"serving"`
-	Local                    LocalConfig     `mapstructure:"local" yaml:"local"`
 }
 
 type TLSConfig struct {
@@ -86,84 +133,7 @@ type ServerServing struct {
 	ModelDir string `mapstructure:"model_dir" yaml:"model_dir"`
 }
 
-type LocalConfig struct {
-	Enabled     bool                `mapstructure:"enabled" yaml:"enabled"`
-	Pipeline    bool                `mapstructure:"pipeline" yaml:"pipeline"`
-	Notebook    bool                `mapstructure:"notebook" yaml:"notebook"`
-	Serving     bool                `mapstructure:"serving" yaml:"serving"`
-	Concurrency int                 `mapstructure:"concurrency" yaml:"concurrency"`
-	NotebookCfg LocalNotebookConfig `mapstructure:"notebook_config" yaml:"notebook_config"`
-}
-
-type LocalNotebookConfig struct {
-	NotebooksRoot string `mapstructure:"notebooks_root" yaml:"notebooks_root"`
-	PortRange     string `mapstructure:"port_range" yaml:"port_range"`
-}
-
-// WorkerConfig describes exactly one standalone worker process. Exactly one of
-// Baremetal, Docker, or K8s must be configured.
-type WorkerConfig struct {
-	MasterURL    string                   `mapstructure:"master_url" yaml:"master_url"`
-	WorkerToken  string                   `mapstructure:"worker_token" yaml:"worker_token"`
-	StorageToken string                   `mapstructure:"storage_token" yaml:"storage_token"`
-	Hostname     string                   `mapstructure:"hostname" yaml:"hostname"`
-	StateDir     string                   `mapstructure:"state_dir" yaml:"state_dir"`
-	Labels       map[string]string        `mapstructure:"labels" yaml:"labels"`
-	Baremetal    *BaremetalWorkerConfig   `mapstructure:"baremetal" yaml:"baremetal,omitempty"`
-	Docker       *DockerWorkerConfig      `mapstructure:"docker" yaml:"docker,omitempty"`
-	K8s          *K8sWorkerConfig         `mapstructure:"k8s" yaml:"k8s,omitempty"`
-	Capabilities WorkerCapabilitiesConfig `mapstructure:"capabilities" yaml:"capabilities"`
-}
-
-type BaremetalWorkerConfig struct{}
-
-type DockerWorkerConfig struct {
-	Network string         `mapstructure:"network" yaml:"network"`
-	Volumes []DockerVolume `mapstructure:"volumes" yaml:"volumes"`
-}
-
-type WorkerCapabilitiesConfig struct {
-	Pipeline *PipelineCapabilityConfig `mapstructure:"pipeline" yaml:"pipeline,omitempty"`
-	Notebook *NotebookCapabilityConfig `mapstructure:"notebook" yaml:"notebook,omitempty"`
-	Serving  *ServingCapabilityConfig  `mapstructure:"serving" yaml:"serving,omitempty"`
-}
-
-type PipelineCapabilityConfig struct {
-	Label       string `mapstructure:"label" yaml:"label"`
-	Concurrency int    `mapstructure:"concurrency" yaml:"concurrency"`
-	OutputDir   string `mapstructure:"output_dir" yaml:"output_dir"`
-	MetaDir     string `mapstructure:"meta_dir" yaml:"meta_dir"`
-}
-
-type NotebookCapabilityConfig struct {
-	NotebooksRoot string `mapstructure:"notebooks_root" yaml:"notebooks_root"`
-	PortRange     string `mapstructure:"port_range" yaml:"port_range"`
-}
-
-type DockerVolume struct {
-	Name          string `mapstructure:"name" yaml:"name"`
-	HostPath      string `mapstructure:"host_path" yaml:"host_path"`
-	ContainerPath string `mapstructure:"container_path" yaml:"container_path"`
-	ReadOnly      bool   `mapstructure:"read_only" yaml:"read_only"`
-}
-
-type ServingCapabilityConfig struct{}
-
-type K8sWorkerConfig struct {
-	Cluster               string                         `mapstructure:"cluster" yaml:"cluster"`
-	Namespaces            []string                       `mapstructure:"namespaces" yaml:"namespaces"`
-	Kubeconfig            string                         `mapstructure:"kubeconfig" yaml:"kubeconfig"`
-	InCluster             bool                           `mapstructure:"in_cluster" yaml:"in_cluster"`
-	ResultOutboxDir       string                         `mapstructure:"result_outbox_dir" yaml:"result_outbox_dir"`
-	PipelineRunner        K8sPipelineRunnerConfig        `mapstructure:"pipeline_runner" yaml:"pipeline_runner"`
-	NotebookVolumeBrowser K8sNotebookVolumeBrowserConfig `mapstructure:"notebook_volume_browser" yaml:"notebook_volume_browser"`
-}
-
 type K8sPipelineRunnerConfig struct {
 	Image           string `mapstructure:"image" yaml:"image"`
 	ImagePullPolicy string `mapstructure:"image_pull_policy" yaml:"image_pull_policy"`
-}
-
-type K8sNotebookVolumeBrowserConfig struct {
-	Image string `mapstructure:"image" yaml:"image"`
 }

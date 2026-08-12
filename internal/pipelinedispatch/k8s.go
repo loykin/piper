@@ -2,7 +2,6 @@ package pipelinedispatch
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -10,7 +9,6 @@ import (
 	pipelineworker "github.com/loykin/piper/internal/k8sworker/pipeline"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/proto"
-	"github.com/loykin/piper/pkg/pipeline"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -133,38 +131,7 @@ func (b *K8sBackend) markCanceledLocked(runID string) {
 }
 
 func validateDirectK8sTask(task *proto.Task) error {
-	if task == nil {
-		return fmt.Errorf("k8s runtime task is required")
-	}
-	var pl pipeline.Pipeline
-	if err := json.Unmarshal(task.Pipeline, &pl); err != nil {
-		return fmt.Errorf("k8s runtime unmarshal pipeline: %w", err)
-	}
-	check := func(scope, worker, label, runtime string) error {
-		if worker != "" {
-			return fmt.Errorf("k8s runtime %s: placement.worker is not supported by an in-process runtime", scope)
-		}
-		if label != "" {
-			return fmt.Errorf("k8s runtime %s: placement.label is not supported by an in-process runtime", scope)
-		}
-		if runtime != "" && runtime != "k8s" {
-			return fmt.Errorf("k8s runtime %s: placement.runtime must be k8s or empty", scope)
-		}
-		return nil
-	}
-	if pl.Spec.Defaults != nil {
-		p := pl.Spec.Defaults.Driver.Placement
-		if err := check("defaults", p.Worker, p.Label, p.Runtime); err != nil {
-			return err
-		}
-	}
-	for i := range pl.Spec.Steps {
-		p := pl.Spec.Steps[i].Driver.Placement
-		if err := check(fmt.Sprintf("step %q", pl.Spec.Steps[i].Name), p.Worker, p.Label, p.Runtime); err != nil {
-			return err
-		}
-	}
-	return nil
+	return validateDirectPlacement(task, "k8s runtime", "k8s")
 }
 
 var _ ExecutionBackend = (*K8sBackend)(nil)

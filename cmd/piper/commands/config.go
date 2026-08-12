@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+
 	piper "github.com/loykin/piper"
 	cliconfig "github.com/loykin/piper/cmd/piper/config"
 	storemod "github.com/loykin/piper/internal/store"
@@ -12,6 +16,30 @@ import (
 	"github.com/loykin/piper/pkg/auth"
 	"github.com/loykin/piper/pkg/security"
 )
+
+func buildK8sClient(kubeconfig string, inCluster bool) (kubernetes.Interface, error) {
+	if inCluster && kubeconfig != "" {
+		return nil, fmt.Errorf("config: in_cluster and kubeconfig are mutually exclusive")
+	}
+	var cfg *rest.Config
+	var err error
+	if inCluster {
+		cfg, err = rest.InClusterConfig()
+	} else {
+		if kubeconfig == "" {
+			return nil, fmt.Errorf("config: kubeconfig is required when in_cluster=false")
+		}
+		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("k8s config: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("k8s client: %w", err)
+	}
+	return client, nil
+}
 
 // NewPiper builds the library-facing server config from the canonical CLI config.
 func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
@@ -34,7 +62,8 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 		}
 	}
 	var runtimeCfg piper.RuntimeConfig
-	if root.Runtime.Type == cliconfig.InfrastructureK8s {
+	switch root.Runtime.Type {
+	case cliconfig.InfrastructureK8s:
 		client, err := buildK8sClient(root.Runtime.Kubeconfig, root.Runtime.InCluster)
 		if err != nil {
 			return nil, err
@@ -57,6 +86,31 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 				WorkloadURL:         root.Runtime.WorkloadURL,
 			},
 		}
+	case cliconfig.InfrastructureDocker:
+		var docker cliconfig.RuntimeDockerConfig
+		if root.Runtime.Docker != nil {
+			docker = *root.Runtime.Docker
+		}
+		runtimeCfg = piper.RuntimeConfig{
+			Type: piper.RuntimeDocker,
+			Docker: piper.DockerRuntimeConfig{
+				Network:     docker.Network,
+				Concurrency: docker.Concurrency,
+				WorkloadURL: docker.WorkloadURL,
+			},
+		}
+	case cliconfig.InfrastructureBaremetal:
+		var baremetal cliconfig.RuntimeBaremetalConfig
+		if root.Runtime.Baremetal != nil {
+			baremetal = *root.Runtime.Baremetal
+		}
+		runtimeCfg = piper.RuntimeConfig{
+			Type: piper.RuntimeBaremetal,
+			Baremetal: piper.BaremetalRuntimeConfig{
+				MetaDir:     baremetal.MetaDir,
+				Concurrency: baremetal.Concurrency,
+			},
+		}
 	}
 	cfg := piper.Config{
 		OutputDir: root.Server.DataDir,
@@ -69,10 +123,19 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 		Serving:   piper.ServingConfig{ModelDir: root.Server.Serving.ModelDir},
 		DBDriver:  root.Server.DB.Driver, DBDSN: root.Server.DB.DSN, DBPath: root.Server.DB.Path,
 		NotebookWorker: piper.NotebookWorkerConfig{
-			NotebooksRoot: root.Server.Local.NotebookCfg.NotebooksRoot,
-			PortRange:     root.Server.Local.NotebookCfg.PortRange,
+			NotebooksRoot: root.Notebook.NotebooksRoot,
+			PortRange:     root.Notebook.PortRange,
 		},
 		Runtime: runtimeCfg,
+	}
+
+	if root.Deployment.Mode == cliconfig.DeploymentModeMember {
+		// Member mode never serves the UI or any user-facing/auth-gated
+		// route (fed.md §10.7) — it only opens an outbound tunnel to Home
+		// (see runMemberMode in server.go). server.auth_signing_key is
+		// therefore irrelevant here, not just optional.
+		cfg.Auth = piper.AuthConfig{Trusted: true}
+		return piper.New(cfg)
 	}
 
 	signingKey := root.Server.AuthSigningKey

@@ -127,7 +127,6 @@ export interface FormState {
   command: string
   port: string
   healthPath: string
-  worker: string
   k8sNamespace: string
   k8sReplicas: string
   k8sCPU: string
@@ -150,7 +149,6 @@ export const DEFAULT_FORM: FormState = {
   command: 'python\nserve.py',
   port: '8000',
   healthPath: '/',
-  worker: '',
   k8sNamespace: 'default',
   k8sReplicas: '1',
   k8sCPU: '',
@@ -168,11 +166,11 @@ export function buildYAML(f: FormState): string {
   // driver block
   const driverLines: string[] = [`  driver:`]
 
-  // placement
+  // placement — local (baremetal/docker) deploys leave placement.runtime
+  // empty; this Piper installation owns exactly one runtime, so there is
+  // nothing to route explicitly.
   if (isK8s) {
     driverLines.push(`    placement:`, `      runtime: k8s`)
-  } else if (f.worker) {
-    driverLines.push(`    placement:`, `      worker: ${JSON.stringify(f.worker)}`)
   }
 
   // k8s-specific settings

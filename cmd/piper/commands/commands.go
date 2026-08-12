@@ -14,7 +14,6 @@
 //	// Result:
 //	// voyager pipeline run train.yaml
 //	// voyager pipeline server
-//	// voyager pipeline worker --config ./config/worker.yaml
 package commands
 
 import (
@@ -64,7 +63,6 @@ func Commands(loader *cliconfig.Loader, factory PiperFactory) []*cobra.Command {
 		newRunCmd(loader, factory),
 		newParseCmd(),
 		newServerCmd(loader, factory),
-		newWorkerCmd(loader),
 		newAgentCmd(),
 		newInternalCmd(),
 		newUserCmd(loader),

@@ -1,9 +1,9 @@
 # Piper
 
 Piper is a lightweight ML pipeline orchestrator for jobs, notebooks, and model
-services. It ships as one Go binary with an embedded web UI and uses outbound
-worker connections, so the control plane does not need direct access to worker
-hosts or Kubernetes API servers.
+services. It ships as one Go binary with an embedded web UI and executes
+pipeline, notebook, and serving workloads directly and in-process — there is
+no separate worker process and no worker tunnel to operate.
 
 ![Piper pipeline run history](docs/assets/piper-history.jpg)
 
@@ -13,14 +13,14 @@ not need a full platform such as Kubeflow.
 ## What Piper provides
 
 - DAG-based pipelines with dependencies, retries, and parallel steps
-- Local, bare-metal, Docker, and Kubernetes execution
+- Direct in-process execution on bare metal, Docker, or Kubernetes
 - Pipeline templates, versioned snapshots, schedules, and run history
 - Logs, metrics, parameters, experiments, and artifacts
 - Jupyter notebook lifecycle management
 - Long-running model service deployment
 - Local or S3-compatible artifact storage
 - Project membership, local users, and credential management
-- One outbound HTTP/2 worker tunnel for registration, dispatch, logs, and status
+- Federated Home/Member management across separate Piper installations
 - An embeddable Go API
 
 Piper is not a feature store, distributed training framework, Kubernetes
@@ -45,8 +45,8 @@ make build
 Open <http://localhost:8080>. On the first visit, Piper asks you to create the
 initial system administrator.
 
-The checked-in [`config/piper.yaml`](config/piper.yaml) enables embedded
-pipeline, notebook, and serving workers for single-node use. The server:
+The checked-in [`config/piper.yaml`](config/piper.yaml) configures a
+single-node bare-metal runtime. The server:
 
 - reads `./config/piper.yaml`
 - listens on `:8080`
@@ -60,8 +60,8 @@ Stop the server with `Ctrl+C`. Back up `piper.db` and
 
 ### Run a pipeline directly
 
-`piper run` starts a temporary loopback server and embedded pipeline worker. It
-uses the same queue, tunnel, and execution path as a deployed server.
+`piper run` executes a pipeline directly against the configured
+`runtime.type`, using the same queue and execution path as a deployed server.
 
 ```bash
 ./bin/piper parse examples/basics/simple.yaml
@@ -74,7 +74,9 @@ uses the same queue, tunnel, and execution path as a deployed server.
 go install github.com/loykin/piper/cmd/piper@latest
 ```
 
-`piper run` works without a configuration file:
+`runtime.type` is required — there is no config file needed for a quick trial,
+but the runtime must be named through the environment when no file is
+present:
 
 ```yaml
 # pipeline.yaml
@@ -90,7 +92,7 @@ spec:
 ```
 
 ```bash
-piper run pipeline.yaml
+PIPER_RUNTIME_TYPE=baremetal piper run pipeline.yaml
 ```
 
 For a persistent server, create `./config/piper.yaml` or copy the repository
@@ -107,23 +109,23 @@ Piper server (:8080)
   ├─ HTTP API and embedded UI
   ├─ scheduler, queue, and state
   ├─ artifact store
-  └─ gRPC worker tunnel
-           ▲
-           │ one outbound connection per worker
+  └─ runtime driver (bare metal / Docker / Kubernetes)
            │
-      Piper worker
-        ├─ bare-metal process
-        ├─ Docker container
-        └─ Kubernetes Jobs, StatefulSets, and Deployments
+           ▼
+      Pipeline subprocess, Docker container,
+      or Kubernetes Job / StatefulSet / Deployment
 ```
 
-The server's HTTP API and worker tunnel share `server.http_addr`. Do not expose
-or configure a separate worker listener.
+The server drives its configured runtime directly — a subprocess supervisor,
+the Docker daemon, or the in-cluster Kubernetes API — with no intermediate
+worker process and no outbound worker tunnel. `server.http_addr` serves the
+HTTP API and embedded UI only.
 
-Pipeline subprocesses, containers, and Kubernetes workload Pods report to their
-parent worker. They do not open their own control-plane connection to the
-server. Artifact storage is the exception: a worker or workload may access the
-configured artifact endpoint directly.
+Pipeline subprocesses, containers, and Kubernetes workload Pods do not open
+their own control-plane connection back to the server. Artifact storage is
+the exception: a workload may access the configured artifact endpoint
+directly (`storage.url`, or Piper's own `/store` endpoint via
+`runtime.workload_url` when the built-in file store is used).
 
 ## Configuration
 
@@ -136,9 +138,9 @@ The default path is project-relative:
 Use another file explicitly when needed:
 
 ```bash
-piper --config ./config/piper.server.yaml config validate --command server
-piper --config ./config/piper.server.yaml config show --command server
-piper --config ./config/piper.server.yaml server
+piper --config ./deploy/docker/piper.yaml config validate
+piper --config ./deploy/docker/piper.yaml config show
+piper --config ./deploy/docker/piper.yaml server
 ```
 
 Environment variables override file values. Names are derived from YAML paths:
@@ -148,10 +150,11 @@ server.http_addr              → PIPER_SERVER_HTTP_ADDR
 server.auth_signing_key       → PIPER_SERVER_AUTH_SIGNING_KEY
 server.secret_encryption_key  → PIPER_SERVER_SECRET_ENCRYPTION_KEY
 storage.url                   → PIPER_STORAGE_URL
+runtime.type                  → PIPER_RUNTIME_TYPE
 ```
 
 `config show` redacts secrets. `config validate` checks the effective
-configuration for a server or worker.
+server configuration.
 
 ### Server settings
 
@@ -167,15 +170,15 @@ server:
   db:
     driver: sqlite
     path: ./piper-data/piper.db
-  local:
-    enabled: true
-    pipeline: true
-    notebook: true
-    serving: true
+
+runtime:
+  type: baremetal
+  baremetal:
+    meta_dir: ./piper-data/pipeline-meta
     concurrency: 4
 ```
 
-Address, TLS, database, local workers, concurrency, retention, and scheduling
+Address, TLS, database, runtime, concurrency, retention, and scheduling
 belong in configuration. The `server` command intentionally has no operational
 flags.
 
@@ -186,133 +189,86 @@ permissions. Explicit configuration or environment values take precedence.
 For production:
 
 - keep generated keys on persistent storage or inject them from a secret manager
-- set `server.worker_token` when standalone workers can reach the server
+- set `server.worker_token` when Kubernetes pods or Docker containers reach
+  back into Piper's own built-in artifact store over `/store`
 - terminate TLS at Piper or a trusted ingress/reverse proxy
 - back up the database, artifact storage, and encryption keys together
 - use PostgreSQL and an appropriate availability design before adding server
   replicas
 
-### Worker settings
+### Runtime settings
 
-One `worker` block describes exactly one worker process:
-
-```yaml
-version: 4
-
-worker:
-  master_url: https://piper.example.com
-  worker_token: ""
-  state_dir: ./piper-worker-state
-  labels:
-    accelerator: cpu
-
-  baremetal: {}
-
-  capabilities:
-    pipeline:
-      concurrency: 4
-      output_dir: ./piper-outputs
-```
-
-Rules:
-
-- configure exactly one infrastructure: `baremetal`, `docker`, or `k8s`
-- bare-metal and Docker workers enable exactly one capability
-- a Kubernetes worker may enable pipeline, notebook, and serving capabilities
-- `worker.state_dir` persists the generated worker identity across restarts
-- workload images, namespaces, resources, and Pod templates belong to submitted
-  Pipeline, Notebook, or ModelService manifests
-- `worker.k8s.namespaces` is an allowlist, not a workload default
-
-A Docker worker runs each pipeline step by bind-mounting its own running
-binary (`os.Executable()`) into the step's container and executing it there
-as `piper agent exec`. That only works if the worker process itself is a
-Linux binary — on a non-Linux host (macOS, Windows) run the worker inside a
-Linux container, using the cross-compiled `bin/piper-arm64` /
-`bin/piper-amd64` from `make build-linux-arm64` / `make build-linux-amd64`,
-not the host-native `piper` binary. For example, on Apple Silicon:
-
-```bash
-make build-linux-arm64
-docker run -d --name piper-docker-worker \
-  --add-host host.docker.internal:host-gateway \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/bin/piper-arm64:$PWD/bin/piper-arm64:ro" \
-  -v "$PWD/config:$PWD/config" \
-  --entrypoint "$PWD/bin/piper-arm64" \
-  alpine:3.20 --config "$PWD/config/pipeline-worker.yaml" worker
-```
-
-Running the host-native binary directly still registers with the master, but
-every dispatched step fails immediately (the container exits without ever
-writing a result file, since the mounted binary can't execute inside the
-step's Linux container) — the error and exit code depend on the step image's
-init/shell, but none of them produce a working step.
-
-Checked-in examples:
-
-- [`config/pipeline-worker.yaml`](config/pipeline-worker.yaml)
-- [`config/notebook-worker.yaml`](config/notebook-worker.yaml)
-- [`config/serving-worker.yaml`](config/serving-worker.yaml)
-- [`config/k8s-worker.yaml`](config/k8s-worker.yaml)
-
-Start a standalone worker with:
-
-```bash
-piper --config ./config/pipeline-worker.yaml config validate --command worker
-piper --config ./config/pipeline-worker.yaml worker
-```
-
-### Server-owned Kubernetes pipeline runtime
-
-Kubernetes installations can launch pipeline Jobs directly from the server,
-without registering a pipeline-capable Kubernetes worker:
+`runtime.type` selects exactly one execution backend for pipeline, notebook,
+and serving workloads. Pick one:
 
 ```yaml
+# Bare metal — subprocesses on the Piper host.
+runtime:
+  type: baremetal
+  baremetal:
+    meta_dir: ./piper-data/pipeline-meta
+    concurrency: 4
+
+# Docker — containers on the Piper host.
+runtime:
+  type: docker
+  docker:
+    network: bridge
+    concurrency: 4
+    # Required with the built-in file store; containers use this private URL.
+    workload_url: http://host.docker.internal:8080
+
+# Kubernetes — Pipeline runs as Jobs, Notebook as StatefulSets, Serving as
+# Deployments, all in the configured namespaces.
 runtime:
   type: k8s
   namespaces: [piper]
+  kubeconfig: ""     # required only outside the cluster
   in_cluster: true
+  # Required with the built-in file store; pods use this private URL.
   workload_url: http://piper-server.piper.svc.cluster.local:8080
   pipeline_runner:
     image: ghcr.io/loykin/piper:latest
     image_pull_policy: IfNotPresent
 ```
 
-`runtime.namespaces` is an allowlist. `workload_url` is required when the
-built-in file artifact store is used so Job pods can reach its private `/store`
-endpoint. This mode rejects `placement.worker`, `placement.label`, and any
-non-Kubernetes `placement.runtime` before creating a Job.
+Rules:
 
-Notebook and serving lifecycle operations remain on the compatibility
-Kubernetes worker during this staged migration.
+- workload images, namespaces, resources, and Pod templates belong to
+  submitted Pipeline, Notebook, or ModelService manifests, not to
+  `runtime.*` — `runtime.namespaces` (k8s) is an allowlist, not a workload
+  default
+- a Docker pipeline step runs by bind-mounting Piper's own running binary
+  (`os.Executable()`) into the step's container and executing it there as
+  `piper agent exec`. That only works if the Piper process itself is a Linux
+  binary — on a non-Linux host (macOS, Windows), run Piper inside a Linux
+  container using a cross-compiled `bin/piper-arm64` / `bin/piper-amd64` from
+  `make build-linux-arm64` / `make build-linux`, not the host-native
+  `piper` binary. For example, on Apple Silicon:
 
-## Execution modes
-
-| Mode | Workload | Worker location | Server needs host/cluster access |
-|---|---|---|---|
-| Embedded local | Host subprocess | Server process | No |
-| Bare metal | Host subprocess | Any reachable node | No |
-| Docker | Container | Host running Docker | No |
-| Kubernetes pipeline runtime | Job | Piper's own cluster | Yes |
-| Kubernetes notebook/serving | StatefulSet or Deployment | Compatibility worker cluster | No |
-
-Standalone workers connect outbound to `worker.master_url`. Registration,
-heartbeat, dispatch, cancellation, status, results, logs, metrics, notebook and
-serving control, and reverse proxy traffic all use that existing tunnel.
-
-Use placement in a workload manifest to select execution:
-
-```yaml
-driver:
-  placement:
-    runtime: k8s
-    worker: ""       # optional exact worker ID
-    label: gpu       # optional worker label
+```bash
+make build-linux-arm64
+docker run -d --name piper \
+  --add-host host.docker.internal:host-gateway \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/bin/piper-arm64:$PWD/bin/piper-arm64:ro" \
+  -v "$PWD/config:$PWD/config" \
+  --entrypoint "$PWD/bin/piper-arm64" \
+  -p 8080:8080 \
+  alpine:3.20 --config "$PWD/config/piper.yaml" server
 ```
 
-Pipeline defaults may set placement for the entire run. Individual steps may
-override it.
+Running the host-native binary directly still starts the server, but every
+dispatched Docker step fails immediately (the container exits without ever
+writing a result file, since the mounted binary can't execute inside the
+step's Linux container) — the error and exit code depend on the step image's
+init/shell, but none of them produce a working step.
+
+Notebook and serving direct-runtime placement follows the same rule:
+`placement.worker` and `placement.label` are rejected outright (there is
+nothing to route to besides this installation's own configured runtime).
+`placement.runtime` may be left empty or set to match `runtime.type`; any
+other value fails validation before dispatch.
 
 ## Pipeline manifests
 
@@ -328,7 +284,6 @@ spec:
     driver:
       placement:
         runtime: k8s
-        label: gpu
       k8s:
         image: python:3.12-slim
         namespace: piper
@@ -359,6 +314,11 @@ spec:
             gpu: "1"
 ```
 
+`driver.placement.runtime` is optional and, if set, must match this
+installation's configured `runtime.type` — Piper does not route a run across
+multiple runtimes. Pipeline defaults may set placement for the entire run;
+individual steps may override it (to the same runtime only).
+
 Piper injects:
 
 | Variable | Meaning |
@@ -375,9 +335,11 @@ More examples are available under [`examples`](examples).
 Artifact storage is independent of execution mode.
 
 With no explicit `storage.url`, Piper uses its built-in file store under
-`server.data_dir`. Co-located embedded workers access it directly. Standalone
-and Kubernetes workers receive the server's authenticated `/store` URL and can
-transfer artifacts over HTTP.
+`server.data_dir`. Baremetal subprocesses share the host filesystem directly
+and read it as a local path. Docker containers and Kubernetes pods cannot
+reach the host filesystem, so they receive the server's authenticated
+`/store` URL (`runtime.workload_url` / `runtime.docker.workload_url`) and
+transfer artifacts over HTTP instead.
 
 For larger distributed or production deployments, configure an S3-compatible
 backend:
@@ -399,8 +361,7 @@ Typical artifact keys are:
 
 S3 is recommended when:
 
-- workers run on multiple hosts or clusters
-- workloads need high-throughput direct artifact access
+- Docker or Kubernetes workloads need high-throughput direct artifact access
 - artifacts must outlive a server volume
 - multiple control-plane instances share storage
 
@@ -433,7 +394,6 @@ spec:
   driver:
     placement:
       runtime: k8s
-      label: gpu
     k8s:
       image: nvcr.io/nvidia/tritonserver:24.01-py3
       namespace: piper
@@ -449,9 +409,9 @@ Piper expands `$PIPER_MODEL_DIR`, `${PIPER_MODEL_DIR}`, and
 
 For stored pipeline artifacts:
 
-- a local serving process receives a local model directory
-- a bare-metal or Docker serving worker downloads the artifact before launch
-- a Kubernetes serving worker uses an init container and mounts the model at
+- a bare-metal serving process receives a local model directory directly
+- a Docker serving container receives the artifact via its normal storage path
+- a Kubernetes serving Pod uses an init container and mounts the model at
   `/piper-model`
 
 ### External model URIs
@@ -464,19 +424,16 @@ spec:
     from_uri: s3://models/fraud-detector/v12
 ```
 
-All current server deployments use the worker tunnel, including embedded
-single-node serving:
-
 | URI | Behavior |
 |---|---|
-| `file:///models/v12` | Rejected because a worker must not assume access to a server-local path |
+| `file:///models/v12` | Rejected — a Docker container or Kubernetes pod must not assume access to a server-local path |
 | `s3://bucket/key` | Passed as a remotely accessible URI |
 | `http://...` or `https://...` | Passed as a remotely accessible URI |
 
-Use `from_artifact` for artifacts managed by Piper. It works with the built-in
-store as well as S3 because Piper gives the worker an accessible artifact
-endpoint and the worker materializes the model before launch. Do not use a
-scheme-less local path in a portable ModelService manifest.
+Use `from_artifact` for artifacts managed by Piper. It works with the
+built-in store as well as S3 because Piper resolves the artifact to wherever
+the runtime can actually read it before launch. Do not use a scheme-less
+local path in a portable ModelService manifest.
 
 Piper also injects `PIPER_SERVICE_NAME` into serving workloads.
 
@@ -501,7 +458,7 @@ manifest.
 
 ## Notebooks
 
-Notebook manifests select the same worker infrastructure model:
+Notebook manifests select the same runtime model as pipelines and services:
 
 ```yaml
 apiVersion: piper/v1
@@ -527,15 +484,15 @@ spec:
         gpu: "1"
 ```
 
-Bare-metal notebook workers require JupyterLab on the worker host. Docker
-workers use `driver.docker.image`. Kubernetes notebook lifecycle operations are
-performed by the Kubernetes worker through the existing tunnel; the server does
-not need kubeconfig access.
+Bare-metal notebooks require JupyterLab on the Piper host. Docker notebooks
+use `driver.docker.image`. Kubernetes notebooks are launched directly through
+the in-cluster API — the server needs `runtime.k8s.in_cluster` (or a
+`kubeconfig` outside the cluster), not a separate worker.
 
 ## Docker deployment
 
-The Compose deployment runs a persistent single-node server with embedded
-workers:
+The Compose deployment runs a persistent single-node server with a direct
+in-process runtime:
 
 ```bash
 docker compose -f deploy/docker-compose.yaml up -d
@@ -569,8 +526,8 @@ docker run --name piper --restart unless-stopped -p 8080:8080 \
 
 The checked-in Kustomize deployment creates:
 
-- one Piper server that launches and reconciles pipeline Jobs directly
-- one compatibility Kubernetes worker for notebook and serving
+- one Piper server that launches and reconciles pipeline Jobs, notebook
+  StatefulSets, and serving Deployments directly through the in-cluster API
 - RBAC, Services, and persistent volumes
 - a generated ConfigMap sourced from
   [`deploy/k8s/piper.yaml`](deploy/k8s/piper.yaml)
@@ -584,7 +541,8 @@ kubectl -n piper port-forward service/piper-server 8080:8080
 
 The installer creates `piper-server-secrets` once and preserves it on later
 runs. It contains the authentication signing key, credential-encryption key,
-and shared worker token.
+and the `worker_token` shared secret that guards Piper's built-in `/store`
+endpoint.
 
 The base deployment uses the built-in artifact store. For production, configure
 an S3-compatible store with
@@ -604,23 +562,21 @@ make docker
 kind load docker-image piper/piper:latest
 ```
 
-Before installing, change the server and worker images in `server.yaml` and
-`k8s-worker.yaml`, the pipeline runner and notebook volume-browser images in
-`piper.yaml`, and their pull policies to use the image loaded into kind. Then
-run `./deploy/k8s/install.sh`. The same immutable image should be used for the
-server, worker, pipeline init container, serving artifact fetcher, and notebook
-volume browser.
+Before installing, change the server image in `server.yaml`, and the
+pipeline runner image in `piper.yaml`, along with their pull policies, to use
+the image loaded into kind. Then run `./deploy/k8s/install.sh`. The same
+immutable image should be used for the server and the pipeline runner init
+container.
 
 ## CLI
 
 ```text
-piper config validate --command server  Validate effective server configuration
-piper config show --command server      Print redacted effective configuration
-piper parse pipeline.yaml               Validate a pipeline manifest
-piper run pipeline.yaml                 Run a pipeline locally
-piper server                            Start the API, UI, and worker tunnel
-piper worker                            Start the configured worker
-piper user                              Manage local users
+piper config validate          Validate effective server configuration
+piper config show              Print redacted effective configuration
+piper parse pipeline.yaml      Validate a pipeline manifest
+piper run pipeline.yaml        Run a pipeline locally
+piper server                   Start the API and UI
+piper user                     Manage local users
 ```
 
 The configuration file is the only global operational option:
@@ -644,7 +600,7 @@ GET    /api/projects/{project_id}/serving/{name}
 DELETE /api/projects/{project_id}/serving/{name}
 POST   /api/projects/{project_id}/serving/{name}/restart
 
-GET    /api/workers
+GET    /api/settings
 GET    /health
 ```
 
@@ -669,6 +625,13 @@ func main() {
         OutputDir: "./outputs",
         Server:    piper.ServerConfig{Addr: ":8080"},
         Auth:      piper.AuthConfig{Trusted: true},
+        Runtime: piper.RuntimeConfig{
+            Type: piper.RuntimeBaremetal,
+            Baremetal: piper.BaremetalRuntimeConfig{
+                MetaDir:     "./piper-meta",
+                Concurrency: 4,
+            },
+        },
     })
     if err != nil {
         panic(err)
@@ -721,19 +684,19 @@ The Docker notebook E2E requires its configured notebook image locally.
 ```text
 cmd/piper/                 CLI commands and configuration loader
 frontend/                  React web application
-internal/agent/            Worker registry and RPC routing
-internal/grpcagent/        Bidirectional worker tunnel
-internal/k8sworker/        Kubernetes lifecycle components and compatibility worker
-internal/pipelinedispatch/ Queue execution backends, including direct Kubernetes
+internal/directworker/     Shared docker/baremetal direct-runtime execution
+internal/k8sworker/        Direct in-cluster Kubernetes lifecycle components
+internal/membertunnel/     Home/Member federation tunnel (fed.md §13.4)
+internal/pipelinedispatch/ Queue execution backends (k8s, docker, baremetal)
 internal/queue/            Dispatch, retry, lease, and idempotency
 internal/store/            SQLite and PostgreSQL repositories
 pkg/pipeline/              Pipeline parsing and execution
-pkg/notebook/              Notebook lifecycle and workers
-pkg/serving/               Model service lifecycle and workers
+pkg/notebook/              Notebook lifecycle and direct-runtime drivers
+pkg/serving/               Model service lifecycle and direct-runtime drivers
 pkg/storage/               Local, HTTP, and S3-compatible artifact storage
 pkg/template/              Versioned pipeline templates
 pkg/ui/                    Embedded production UI
-config/                    Commented server and worker examples
+config/                    Commented server configuration examples
 deploy/                    Docker Compose and Kubernetes manifests
 examples/                  Runnable workload examples
 ```

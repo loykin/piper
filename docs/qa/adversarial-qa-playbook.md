@@ -38,20 +38,21 @@ the running system and its public interfaces.
 - Get a **real, persistent, deployed instance** — not a fresh ephemeral CI
   fixture built from a clean, minimal, already-correct manifest. Ephemeral
   clean environments hide exactly the class of bug this playbook exists to
-  find (missing manifests, stale build artifacts, dispatch races between
-  multiple registered workers). Reuse or stand up a real deployment
-  (`deploy/k8s/*.yaml` applied to a real cluster is a good target; a local
-  `piper server` plus a mix of worker processes also works).
+  find (missing manifests, stale build artifacts, a runtime driver that only
+  works against the fixture's narrow input shape). Reuse or stand up a real
+  deployment (`deploy/k8s/*.yaml` applied to a real cluster is a good target;
+  a local `piper server` also works).
 - Make sure you have **log access**, not just API access — `kubectl logs`
-  on the server/worker pods, or the server's stdout if running locally. A
+  on the server pod, or the server's stdout if running locally. A
   successful-looking API response does not prove the underlying operation
   actually completed (see step 4).
-- If workers of more than one infrastructure type (`baremetal`, `docker`,
-  `k8s`) can plausibly be registered at once, **register at least two
-  simultaneously** before starting. Ambiguous-dispatch bugs only exist
-  when multiple worker types compete for the same dispatch decision — a
-  single-worker environment cannot surface them at all, no matter how
-  thoroughly you test it.
+- Each Piper installation owns exactly one `runtime.type` (`baremetal`,
+  `docker`, or `k8s`) — there is no multi-worker registration to set up
+  anymore, but that also means a pass against only one runtime tells you
+  nothing about the other two. **Run the full playbook once per
+  `runtime.type`**, each against its own separately configured instance
+  (three passes, not one) — a bug in the Docker or Kubernetes driver is
+  invisible from a baremetal-only pass, and vice versa.
 
 ## The procedure
 
@@ -70,31 +71,37 @@ submitting through the real form will show you that.
 Leave every field that looks optional at its default. Don't pre-fill
 things you assume are needed unless the form itself prompts for them.
 
-### 2. Deliberately create ambiguous dispatch conditions
+### 2. Probe `placement.runtime` mismatches and manifest-vs-driver drift
 
-Where the system has to choose a worker automatically ("auto assign," no
-explicit placement), that choice becomes ambiguous and worth probing the
-moment more than one eligible candidate exists — especially candidates of
-different infrastructure types or capability sets. Register a mix
-deliberately, then submit with placement left unset, and check:
+There is no dispatch ambiguity to create anymore — an installation owns
+exactly one runtime, so there is only ever one candidate. What replaces it:
 
-- Did it go where the UI implied it would go (if the UI shows any kind of
-  runtime/infra indicator, does the actual dispatch match it)?
-- Does it fail the same way twice in a row, or is it genuinely
-  non-deterministic? (Deterministic failures that only show up with a
-  specific worker mix are easy to miss in a single-worker test setup and
-  easy to dismiss as "unlucky" if you only try it once.)
+- Submit a manifest with `driver.placement.runtime` set to a value that
+  does **not** match the installation's configured `runtime.type` (e.g.
+  submit `runtime: k8s` against a `docker` installation). Confirm it is
+  rejected before dispatch, with a clear error — not silently ignored, and
+  not accepted and then stuck.
+- Submit a manifest with `driver.placement.worker` or `driver.placement.label`
+  set to any non-empty value. Both must be rejected outright — there is no
+  worker to route to anymore, so a manifest carrying either field is always
+  wrong, never merely suboptimal.
+- Submit a manifest whose driver sub-block doesn't match the active runtime
+  (e.g. a `driver.k8s` block on a `docker`-runtime installation). Confirm
+  the extra block is either rejected or cleanly ignored — not silently
+  misinterpreted as if it were the active runtime's config.
 
 ### 3. Test every degenerate/zero state you can construct
 
 For anything that can be listed, counted, or configured, deliberately try
 the empty/missing/zero case:
 
-- Zero workers advertising a given capability
+- `runtime.type` left empty or set to a value the config loader doesn't
+  recognize — confirm the server refuses to start with a clear error
+  rather than falling back to some implicit default
 - Zero projects (including deleting the last one that exists)
 - Security-relevant configuration left unset (auth signing key, encryption
   key, credentials)
-- Any field that behaves like an enum (runtime, infrastructure, driver
+- Any field that behaves like an enum (`driver.placement.runtime`, driver
   type) submitted empty or with a value that doesn't match any case the
   code branches on
 
@@ -146,10 +153,10 @@ A `200`/`201` or "success" API response only tells you the request was
 *accepted*, not that the underlying operation *completed* or *failed
 cleanly*. Cross-check server-side logs for the expected terminal event
 (e.g., a run reaching `failed` or `completed`, not stuck at `running`
-forever). A dispatch or provisioning step can fail deep inside a worker or
-inside internal error-handling and never propagate that failure back to
-the record the user sees — which looks identical to "still working" from
-the API alone.
+forever). A dispatch or provisioning step can fail deep inside a runtime
+driver or inside internal error-handling and never propagate that failure
+back to the record the user sees — which looks identical to "still
+working" from the API alone.
 
 ### 5. Go past the list view into every detail/comparison view
 

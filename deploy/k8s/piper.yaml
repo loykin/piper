@@ -10,12 +10,11 @@ server:
   db:
     driver: sqlite
     path: /var/lib/piper/piper.db
-  local:
-    enabled: false
 
-# Pipeline Jobs are launched directly by the Piper server through the
-# in-cluster Kubernetes API. workload_url is used only when the built-in
-# file-backed artifact store must be exposed privately to Job pods.
+# Pipeline Jobs, Notebook StatefulSets, and Serving Deployments are all
+# launched directly by the Piper server through the in-cluster Kubernetes
+# API — no worker tunnel involved. workload_url is used only when the
+# built-in file-backed artifact store must be exposed privately to pods.
 runtime:
   type: k8s
   namespaces:
@@ -25,23 +24,3 @@ runtime:
   pipeline_runner:
     image: ghcr.io/loykin/piper:latest
     image_pull_policy: IfNotPresent
-
-# Notebook and serving remain on the compatibility worker during the staged
-# migration. Pipeline is intentionally absent: it is server-owned above.
-worker:
-  master_url: http://piper-server.piper.svc.cluster.local:8080
-  state_dir: /var/lib/piper
-  k8s:
-    cluster: piper
-    namespaces:
-      - piper
-    in_cluster: true
-    result_outbox_dir: /var/lib/piper/result-outbox
-    pipeline_runner:
-      image: ghcr.io/loykin/piper:latest
-      image_pull_policy: IfNotPresent
-    notebook_volume_browser:
-      image: ghcr.io/loykin/piper:latest
-  capabilities:
-    notebook: {}
-    serving: {}

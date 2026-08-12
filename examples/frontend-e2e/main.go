@@ -26,7 +26,6 @@ import (
 	piper "github.com/loykin/piper"
 	"github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/notebook"
-	worker "github.com/loykin/piper/pkg/pipeline/worker"
 	"github.com/loykin/piper/pkg/pipeline/worker/agent"
 	"github.com/loykin/piper/pkg/project"
 )
@@ -94,6 +93,10 @@ func main() {
 		Auth:      piper.AuthConfig{Trusted: true},
 		Storage:   piper.StorageConfig{URL: s3URL},
 		Server:    piper.ServerConfig{AllowInsecureDevKey: true},
+		Runtime: piper.RuntimeConfig{
+			Type:      piper.RuntimeBaremetal,
+			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: filepath.Join(tmpDir, "worker-meta"), Concurrency: 4},
+		},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -117,31 +120,6 @@ func main() {
 	if err := createE2EProject(masterURL); err != nil {
 		log.Fatalf("create e2e project: %v", err)
 	}
-
-	w, err := worker.New(worker.Config{
-		Agent: worker.AgentConfig{
-			MasterURL:    masterURL,
-			ID:           "frontend-e2e-worker",
-			Concurrency:  4,
-			Capabilities: []string{"pipeline", "notebook"},
-		},
-		Store: worker.StoreConfig{
-			OutputDir:   filepath.Join(tmpDir, "worker-outputs"),
-			RemoteStore: true,
-		},
-		Baremetal: worker.BaremetalConfig{
-			MetaDir: filepath.Join(tmpDir, "worker-meta"),
-		},
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	go func() {
-		if err := w.Run(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("worker stopped: %v", err)
-			cancel()
-		}
-	}()
 
 	fmt.Printf("FRONTEND_E2E_URL=%s\n", masterURL)
 	<-ctx.Done()

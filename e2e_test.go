@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -25,8 +24,6 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 
 	"github.com/loykin/piper/internal/testutil"
-	worker "github.com/loykin/piper/pkg/pipeline/worker"
-	servingworker "github.com/loykin/piper/pkg/serving/worker"
 )
 
 const e2eBucket = "piper-e2e"
@@ -34,6 +31,20 @@ const e2eBucket = "piper-e2e"
 // e2eProjectID is the default project used in all e2e tests.
 // newE2EServer creates this project automatically.
 const e2eProjectID = "e2e"
+
+// e2eBaremetalRuntime returns a Runtime config for direct, in-process
+// baremetal execution — every e2e server owns pipeline/notebook/serving
+// execution itself now, there is no separate worker to start or wait for.
+func e2eBaremetalRuntime(t *testing.T) RuntimeConfig {
+	t.Helper()
+	return RuntimeConfig{
+		Type: RuntimeBaremetal,
+		Baremetal: BaremetalRuntimeConfig{
+			MetaDir:     filepath.Join(t.TempDir(), "pipeline-meta"),
+			Concurrency: 4,
+		},
+	}
+}
 
 // newE2EServer starts an in-process piper server and returns the Piper instance
 // and the test HTTP server. Both are closed/stopped via t.Cleanup.
@@ -45,6 +56,7 @@ func newE2EServer(t *testing.T) (*Piper, *testutil.Server) {
 		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 		Server:    ServerConfig{AllowInsecureDevKey: true},
+		Runtime:   e2eBaremetalRuntime(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,190 +87,6 @@ func createE2EProject(t *testing.T, serverURL string) {
 
 // e2eBase returns the project-scoped API base for the default e2e project.
 func e2eBase() string { return "/api/projects/" + e2eProjectID }
-
-// startE2EWorker starts a gRPC pipeline worker goroutine and blocks until it
-// registers with the master. The worker is stopped when the test ends via t.Cleanup.
-func startE2EWorker(t *testing.T, masterURL string, extra ...func(*worker.Config)) {
-	t.Helper()
-	cfg := worker.Config{
-		Agent: worker.AgentConfig{
-			MasterURL:   masterURL,
-			ID:          worker.NewID("e2e"),
-			Concurrency: 2,
-		},
-		Store: worker.StoreConfig{OutputDir: t.TempDir()},
-	}
-	for _, f := range extra {
-		f(&cfg)
-	}
-	w, err := worker.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = w.Run(ctx)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		<-done
-	})
-	// Wait for the worker to appear as a pipeline agent before returning so that
-	// tests can submit pipelines immediately without racing against dispatch.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(masterURL + "/api/workers")
-		if err == nil {
-			var agents []struct {
-				Capabilities []string `json:"capabilities"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&agents)
-			resp.Body.Close()
-			for _, a := range agents {
-				for _, c := range a.Capabilities {
-					if c == "pipeline" {
-						return
-					}
-				}
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	cancel()
-	<-done
-	t.Fatal("pipeline worker did not register within 5s")
-}
-
-func startE2EServingWorker(t *testing.T, httpURL, id string) {
-	t.Helper()
-	w := servingworker.New(servingworker.Config{
-		MasterURL:      httpURL,
-		Hostname:       id,
-		ID:             id,
-		Infrastructure: servingworker.InfrastructureBaremetal,
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = w.Run(ctx)
-	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(httpURL + "/api/workers")
-		if err == nil {
-			var agents []struct {
-				ID string `json:"id"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&agents)
-			resp.Body.Close()
-			for _, agent := range agents {
-				if agent.ID == id {
-					t.Cleanup(func() {
-						cancel()
-						<-done
-					})
-					return
-				}
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	cancel()
-	<-done
-	t.Fatalf("agent %q did not register within %s", id, 5*time.Second)
-}
-
-func freeE2EPort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = l.Close() }()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-func waitE2EAgent(t *testing.T, serverURL, id string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/api/workers")
-		if err == nil {
-			var agents []struct {
-				ID string `json:"id"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&agents)
-			resp.Body.Close()
-			for _, agent := range agents {
-				if agent.ID == id {
-					return
-				}
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatalf("agent %q did not register within %s", id, timeout)
-}
-
-func findE2EAgentByCapability(t *testing.T, serverURL, capability string) string {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/api/workers")
-		if err == nil {
-			var agents []struct {
-				ID           string   `json:"id"`
-				Capabilities []string `json:"capabilities"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&agents)
-			resp.Body.Close()
-			for _, agent := range agents {
-				for _, got := range agent.Capabilities {
-					if got == capability {
-						return agent.ID
-					}
-				}
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	resp, err := http.Get(serverURL + "/api/workers")
-	if err == nil {
-		defer resp.Body.Close()
-		var agents []struct {
-			ID           string   `json:"id"`
-			Capabilities []string `json:"capabilities"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&agents)
-		t.Fatalf("no agent with capability %q: %+v", capability, agents)
-	}
-	t.Fatalf("no agent with capability %q", capability)
-	return ""
-}
-
-func findE2EPollingWorker(t *testing.T, serverURL string) string {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/api/workers")
-		if err == nil {
-			var workers []struct {
-				ID string `json:"id"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&workers)
-			resp.Body.Close()
-			if len(workers) > 0 && workers[0].ID != "" {
-				return workers[0].ID
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatal("no polling pipeline worker registered")
-	return ""
-}
 
 // postRun submits a pipeline YAML to the server and returns the run ID.
 func postRun(t *testing.T, serverURL, yaml string) string {
@@ -466,11 +294,10 @@ func serveE2EGitHTTPBackend(t *testing.T, w http.ResponseWriter, r *http.Request
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-// TestE2E_WorkerExecutesPipeline verifies the full polling worker flow:
-// server receives a pipeline, worker picks it up, executes it, and reports back.
-func TestE2E_WorkerExecutesPipeline(t *testing.T) {
+// TestE2E_ExecutesPipeline verifies the full direct-runtime flow: the server
+// receives a pipeline, executes it in-process, and reports the result back.
+func TestE2E_ExecutesPipeline(t *testing.T) {
 	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
 
 	yaml := `
 metadata:
@@ -495,7 +322,7 @@ spec:
 	logsBody, _ := io.ReadAll(logsResp.Body)
 	logsResp.Body.Close()
 	if !bytes.Contains(logsBody, []byte("hello-from-e2e")) {
-		t.Fatalf("tunnel logs missing command output: %s", logsBody)
+		t.Fatalf("logs missing command output: %s", logsBody)
 	}
 
 	metricsResp, err := http.Get(srv.URL + e2eBase() + "/runs/" + runID + "/metrics?step=hello")
@@ -505,7 +332,7 @@ spec:
 	metricsBody, _ := io.ReadAll(metricsResp.Body)
 	metricsResp.Body.Close()
 	if !bytes.Contains(metricsBody, []byte(`"key":"score"`)) {
-		t.Fatalf("tunnel metrics missing score: %s", metricsBody)
+		t.Fatalf("metrics missing score: %s", metricsBody)
 	}
 }
 
@@ -513,7 +340,6 @@ spec:
 // for pipeline steps.
 func TestE2E_GenericCredentialEnvRef(t *testing.T) {
 	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
 	postE2EGenericCredential(t, srv.URL, "app-env", map[string]string{
 		"token": "generic-env-secret",
 	})
@@ -547,73 +373,10 @@ spec:
 	}
 }
 
-func TestE2E_BareMetalWorkerModePlacement(t *testing.T) {
-	serverPort := freeE2EPort(t)
-	p, err := New(Config{
-		OutputDir: t.TempDir(),
-		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
-		Auth:      AuthConfig{Trusted: true},
-		Server: ServerConfig{
-			Addr:                fmt.Sprintf("127.0.0.1:%d", serverPort),
-			AllowInsecureDevKey: true,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := testutil.NewIPv4Server(t, p.Handler(nil))
-	t.Cleanup(func() { _ = p.Close() })
-	createE2EProject(t, srv.URL)
-
-	startE2EWorker(t, srv.URL)
-	startE2EServingWorker(t, srv.URL, "serving-agent")
-	pipelineWorkerID := findE2EAgentByCapability(t, srv.URL, "pipeline")
-	modelServer := testutil.NewIPv4Server(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("e2e-model"))
-	}))
-
-	runID := postRun(t, srv.URL, fmt.Sprintf(`
-metadata:
-  name: e2e-baremetal-worker
-spec:
-  defaults:
-    driver:
-      placement:
-        worker: %s
-  steps:
-    - name: hello
-      run:
-        command: ["echo", "baremetal-worker-ok"]
-`, pipelineWorkerID))
-	waitRunStatus(t, srv.URL, runID, "success", 15*time.Second)
-
-	postService(t, srv.URL, fmt.Sprintf(`
-apiVersion: piper/v1
-kind: ModelService
-metadata:
-  name: baremetal-worker-service
-spec:
-  model:
-    from_uri: %s/model
-  run:
-    command: ["sleep", "60"]
-    port: 18080
-  driver:
-    placement:
-      worker: serving-agent
-`, modelServer.URL))
-	t.Cleanup(func() { _ = p.StopService(context.Background(), "", "baremetal-worker-service") })
-	svc := getE2EService(t, srv.URL, "baremetal-worker-service")
-	if svc.WorkerID != "serving-agent" {
-		t.Fatalf("service worker_id = %q, want serving-agent", svc.WorkerID)
-	}
-}
-
 // TestE2E_RunCancellation verifies that canceling a run via the API propagates
-// through the SSE event stream to the worker, which stops the in-flight task.
+// through to the running step and stops it.
 func TestE2E_RunCancellation(t *testing.T) {
 	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
 
 	yaml := `
 metadata:
@@ -646,7 +409,6 @@ spec:
 // parsed and stored, and retrievable via GET /runs/{id}/metrics.
 func TestE2E_StepMetrics(t *testing.T) {
 	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
 
 	yaml := `
 metadata:
@@ -688,9 +450,9 @@ spec:
 	}
 }
 
-// TestE2E_WorkerS3Artifacts verifies that a worker configured with S3 credentials
+// TestE2E_S3Artifacts verifies that a server configured with S3 credentials
 // uploads step output artifacts to the fake S3 store after execution.
-func TestE2E_WorkerS3Artifacts(t *testing.T) {
+func TestE2E_S3Artifacts(t *testing.T) {
 	// Start fake S3
 	faker := gofakes3.New(s3mem.New())
 	fakeSrv := testutil.NewIPv4Server(t, faker.Server())
@@ -705,7 +467,6 @@ func TestE2E_WorkerS3Artifacts(t *testing.T) {
 
 	s3URL := fmt.Sprintf("s3://%s?endpoint=%s&s3ForcePathStyle=true&accessKey=test&secretKey=test", e2eBucket, fakeSrv.URL)
 	_, srv := newE2EServerWithDirAndStorage(t, t.TempDir(), s3URL)
-	startE2EWorker(t, srv.URL)
 
 	yaml := `
 metadata:
@@ -740,7 +501,6 @@ spec:
 // and dependent steps wait for their prerequisites.
 func TestE2E_MultiStepParallel(t *testing.T) {
 	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
 
 	yaml := `
 metadata:
@@ -798,6 +558,7 @@ func newE2EServerWithDir(t *testing.T, outputDir string) (*Piper, *testutil.Serv
 		DBPath:    filepath.Join(t.TempDir(), "piper.db"),
 		Auth:      AuthConfig{Trusted: true},
 		Server:    ServerConfig{AllowInsecureDevKey: true},
+		Runtime:   e2eBaremetalRuntime(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -817,6 +578,7 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 		Auth:      AuthConfig{Trusted: true},
 		Storage:   StorageConfig{URL: storageURL},
 		Server:    ServerConfig{AllowInsecureDevKey: true},
+		Runtime:   e2eBaremetalRuntime(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -866,39 +628,15 @@ func waitServiceRunID(t *testing.T, serverURL, serviceName, wantRunID string, ti
 	t.Fatalf("service %q run_id did not become %q within %s", serviceName, wantRunID, timeout)
 }
 
-func getE2EService(t *testing.T, serverURL, serviceName string) struct {
-	WorkerID string `json:"worker_id"`
-} {
-	t.Helper()
-	resp, err := http.Get(serverURL + e2eBase() + "/serving/" + serviceName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("GET /serving/%s status = %d: %s", serviceName, resp.StatusCode, b)
-	}
-	var svc struct {
-		WorkerID string `json:"worker_id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&svc); err != nil {
-		t.Fatal(err)
-	}
-	return svc
-}
-
 // TestE2E_OnSuccessDeployTriggersRedeploy verifies that the on_success.deploy hook
 // updates the service record's run_id after a successful pipeline run.
 //
 // Flow:
-//  1. A shared outputDir is used by both server and worker so that the local
-//     artifact resolver can find step outputs.
-//  2. A tiny httptest.Server acts as the "service process" on the resolved port
+//  1. A tiny httptest.Server acts as the "service process" on the resolved port
 //     so that waitReady() succeeds immediately, avoiding the 10-second timeout.
-//  3. The pipeline is run twice. After each successful run, handleRunSuccess
+//  2. The pipeline is run twice. After each successful run, handleRunSuccess
 //     calls DeployService and sets service.RunID to the current run's ID.
-//  4. After the second run we poll until service.RunID == secondRunID.
+//  3. After the second run we poll until service.RunID == secondRunID.
 func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 	const (
 		pipelineName = "e2e-on-success-pipeline"
@@ -907,7 +645,6 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 		artifactName = "model"
 	)
 
-	// Shared output directory for server and worker.
 	outputDir := t.TempDir()
 
 	faker := gofakes3.New(s3mem.New())
@@ -921,13 +658,6 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 	piperInst, srv := newE2EServerWithDirAndStorage(t, outputDir, storageURL)
 	t.Cleanup(func() {
 		_ = piperInst.StopService(context.Background(), "", serviceName)
-	})
-
-	startE2EServingWorker(t, srv.URL, "fake-serving-worker")
-
-	// Worker shares the same storage backend as the server (URL comes via task dispatch).
-	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
-		cfg.Store.OutputDir = outputDir
 	})
 
 	// Pipeline YAML with on_success.deploy wired to our service.
@@ -990,15 +720,12 @@ spec:
 }
 
 // TestE2E_ProcessGPUsFlowsToCUDA verifies the full path of driver.process.gpus
-// through the baremetal worker to CUDA_VISIBLE_DEVICES inside the step process.
-// No real GPU hardware is needed — the test only checks env var injection.
+// through the baremetal direct runtime to CUDA_VISIBLE_DEVICES inside the
+// step process. No real GPU hardware is needed — the test only checks env
+// var injection.
 func TestE2E_ProcessGPUsFlowsToCUDA(t *testing.T) {
 	outputDir := t.TempDir()
 	_, srv := newE2EServerWithDir(t, outputDir)
-	// Share outputDir with worker so artifact files are accessible locally.
-	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
-		cfg.Store.OutputDir = outputDir
-	})
 
 	// The step writes $CUDA_VISIBLE_DEVICES to a file in $PIPER_OUTPUT_DIR.
 	// driver.process.gpus should inject "mock-0,mock-1" as CUDA_VISIBLE_DEVICES.
@@ -1083,7 +810,6 @@ func repoOrigin(repoURL string) string {
 // and an explicit credentialRef clones the repo and runs the script successfully.
 func TestE2E_GitSourceCredentialRef(t *testing.T) {
 	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
 
 	const (
 		gitUser  = "git-user"
@@ -1123,7 +849,6 @@ spec:
 // credential store auto-matches by endpoint URL and injects credentials.
 func TestE2E_GitSourceAutoMatch(t *testing.T) {
 	_, srv := newE2EServer(t)
-	startE2EWorker(t, srv.URL)
 
 	const (
 		gitUser  = "auto-user"
@@ -1176,11 +901,6 @@ func TestE2E_GitSourcePipelineToServing(t *testing.T) {
 	piperInst, srv := newE2EServerWithDirAndStorage(t, outputDir, storageURL)
 	t.Cleanup(func() { _ = piperInst.StopService(context.Background(), "", serviceName) })
 
-	startE2EServingWorker(t, srv.URL, "git-serving-worker")
-	startE2EWorker(t, srv.URL, func(cfg *worker.Config) {
-		cfg.Store.OutputDir = outputDir
-	})
-
 	const (
 		gitUser  = "model-user"
 		gitToken = "model-token"
@@ -1230,9 +950,6 @@ spec:
   run:
     command: ["sleep", "60"]
     port: 18080
-  driver:
-    placement:
-      worker: git-serving-worker
 `, serviceName, pipelineName)
 
 	firstRunID := postRun(t, srv.URL, pipelineYAML)

@@ -3,6 +3,7 @@ package k8sdriver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -184,6 +186,101 @@ func TestDriverRejectsUnsafeTTL(t *testing.T) {
 		TTLAfterFinished: &ttl,
 	}); err == nil {
 		t.Fatal("expected short TTL to be rejected")
+	}
+}
+
+// TestK8sDriverCancelDuringStartDeletesJustCreatedJob mirrors worker.go
+// dispatch's canceledMidStart sequence (Start followed immediately by Stop)
+// and freezes fed.md 13.1's "cancel during start" behavior.
+func TestK8sDriverCancelDuringStartDeletesJustCreatedJob(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	drv, err := New(Config{
+		WorkerID:   "worker-1",
+		Namespaces: []string{"jobs"},
+		AgentImage: "piper:test",
+		K8sClient:  client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := testTask(t, "jobs")
+	handle, err := drv.Start(context.Background(), task, pdriver.ExecSpec{
+		RuntimeKey: "worker-1-run-1-train-a1",
+		Image:      "python:3.12",
+		Namespace:  "jobs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := drv.Stop(context.Background(), handle, time.Second); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if _, err := client.BatchV1().Jobs("jobs").Get(context.Background(), handle.RuntimeKey, metav1.GetOptions{}); !k8serrors.IsNotFound(err) {
+		t.Fatalf("Get job after Stop: err = %v, want NotFound", err)
+	}
+	drv.mu.Lock()
+	_, hasWaiter := drv.waiters[handle.RuntimeKey]
+	_, hasTaskKey := drv.taskToKey[task.ID]
+	_, hasNamespace := drv.namespaceByKey[handle.RuntimeKey]
+	drv.mu.Unlock()
+	if hasWaiter || hasTaskKey || hasNamespace {
+		t.Fatalf("driver state not forgotten after Stop: waiter=%v taskKey=%v namespace=%v", hasWaiter, hasTaskKey, hasNamespace)
+	}
+}
+
+// TestK8sDriverCancelWhileRunningForgetsHandleBeforeStopCanActOnIt mirrors
+// worker.go's cancelRun (cancel the shared ctx, then Stop the handle) and
+// freezes fed.md 13.1's "cancel while running" behavior — including a
+// currently-real divergence from docker, not an idealized one: k8s's own
+// Wait already calls forget() (clearing waiters/taskToKey/namespaceByKey) on
+// its ctx-cancel branch. Because Stop() looks up the Job's namespace from
+// that same namespaceByKey map, a Stop that arrives after Wait has already
+// unblocked on ctx-cancel finds no namespace and errors out WITHOUT deleting
+// the Job — the Job is orphaned in the cluster. This is the actual behavior
+// today; fixing it is out of scope for this contract-freezing pass.
+func TestK8sDriverCancelWhileRunningForgetsHandleBeforeStopCanActOnIt(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	drv, err := New(Config{
+		WorkerID:   "worker-1",
+		Namespaces: []string{"jobs"},
+		AgentImage: "piper:test",
+		K8sClient:  client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := testTask(t, "jobs")
+	handle, err := drv.Start(context.Background(), task, pdriver.ExecSpec{
+		RuntimeKey: "worker-1-run-1-train-a1",
+		Image:      "python:3.12",
+		Namespace:  "jobs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Already-cancelled ctx: deterministic — no reconcile ever signals the waiter channel.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := drivertest.MustWait(t, ctx, drv, handle, 2*time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Wait err = %v, want context.Canceled", err)
+	}
+	drv.mu.Lock()
+	_, hasWaiter := drv.waiters[handle.RuntimeKey]
+	_, hasNamespace := drv.namespaceByKey[handle.RuntimeKey]
+	drv.mu.Unlock()
+	if hasWaiter || hasNamespace {
+		t.Fatalf("k8s driver's Wait must forget the handle (waiter+namespace) on its own ctx-cancel branch: hasWaiter=%v hasNamespace=%v", hasWaiter, hasNamespace)
+	}
+
+	// A Stop arriving after forget() has already run cannot resolve a
+	// namespace, so it errors and leaves the Job in place — it is not deleted.
+	if err := drv.Stop(context.Background(), handle, time.Second); err == nil {
+		t.Fatal("Stop succeeded after forget() already cleared namespaceByKey; expected the current namespace-required error")
+	}
+	if _, err := client.BatchV1().Jobs("jobs").Get(context.Background(), handle.RuntimeKey, metav1.GetOptions{}); err != nil {
+		t.Fatalf("Job was unexpectedly deleted despite Stop erroring out: %v", err)
 	}
 }
 

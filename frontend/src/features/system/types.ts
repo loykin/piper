@@ -5,6 +5,6 @@ export interface SystemSettings {
     reason?: string
   }
   runtime: {
-    type: '' | 'k8s'
+    type: '' | 'baremetal' | 'docker' | 'k8s'
   }
 }

@@ -14,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -32,7 +31,6 @@ type HandlerDeps struct {
 	Notebooks    notebook.Repository
 	Schedules    schedule.Repository
 	Store        storage.Store // nil when object storage is not configured
-	RPCSender    notebook.RPCSender
 	StorageURL   string
 	StorageToken string
 	// Sched keeps the in-memory Scheduler in sync when a deploy creates a schedule.
@@ -128,36 +126,10 @@ func (h *Handler) submit(c *gin.Context) {
 			return
 		}
 
-		var uploadErr error
-		if vol.WorkerID != "" && h.deps.RPCSender != nil {
-			var active *notebook.NotebookServer
-			if h.deps.Notebooks != nil {
-				active, _ = h.deps.Notebooks.GetByVolumeID(c.Request.Context(), projectContext.ID, vol.ID)
-			}
-			rpcReq := notebook.FSUploadSnapshotRequest{
-				ProjectID:    projectContext.ID,
-				VolumeID:     vol.ID,
-				WorkDir:      vol.WorkDir,
-				SnapshotID:   snapshotID,
-				Paths:        localPaths,
-				StorageURL:   h.deps.StorageURL,
-				StorageToken: h.deps.StorageToken,
-			}
-			if active != nil {
-				rpcReq.Notebook = active.Name
-				rpcReq.Token = active.Token
-			}
-			var rpcResp notebook.FSUploadSnapshotResponse
-			uploadErr = h.deps.RPCSender.SendRPC(
-				c.Request.Context(),
-				vol.WorkerID,
-				iagent.MethodFSUploadSnapshot,
-				rpcReq,
-				&rpcResp,
-			)
-		} else {
-			uploadErr = h.uploadSnapshot(c.Request.Context(), snapshotID, vol.WorkDir, localPaths)
-		}
+		// Direct-runtime notebook volumes always live on the same host as
+		// Piper itself (see NotebookVolume.WorkerID's doc comment), so this
+		// is always a local upload.
+		uploadErr := h.uploadSnapshot(c.Request.Context(), snapshotID, vol.WorkDir, localPaths)
 		// Upload local files to object storage
 		if uploadErr != nil {
 			// Rollback: delete snapshot prefix

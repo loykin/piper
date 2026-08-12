@@ -1,8 +1,0 @@
-version: 4
-
-worker:
-  master_url: http://localhost:8080
-  state_dir: ./piper-worker-state/serving
-  baremetal: {}
-  capabilities:
-    serving: {}

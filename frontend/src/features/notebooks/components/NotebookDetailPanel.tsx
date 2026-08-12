@@ -101,7 +101,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
             <dd className="mt-0.5 font-mono text-xs">{notebook.volume_id || '—'}</dd>
           </div>
           <div>
-            <dt className="text-xs text-muted-foreground">Worker</dt>
+            <dt className="text-xs text-muted-foreground">Runtime</dt>
             <dd className="mt-0.5 text-xs">{notebook.worker_id || '—'}</dd>
           </div>
           <div>

@@ -1,5 +1,5 @@
 // notebooks feature — K8s notebook form component
-import { useMemo, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DataBodyTemplate, PageTopBar,
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
@@ -12,17 +12,13 @@ import { ShellMirror } from '@/components/ui/shell-mirror'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
-import type { NotebookVolume, NotebookWorkerInfo } from '../types'
+import { useSystemSettings } from '@/features/system/hooks'
+import type { NotebookVolume } from '../types'
 import {
   buildK8sYAML, buildWorkerYAML, buildWorkerYAMLWithBackend,
   DEFAULT_K8S, DEFAULT_WORKER,
   type K8sFormState, type WorkerFormState,
 } from '../editor'
-
-function workerLabel(w: NotebookWorkerInfo): string {
-	const base = w.infrastructure === 'k8s' ? (w.cluster_name || w.hostname || w.id) : (w.hostname || w.id)
-	return base
-}
 
 function RuntimeBadge({ runtime }: { runtime: 'k8s' | 'docker' | 'baremetal' }) {
   return (
@@ -63,54 +59,11 @@ function VolumeField({ volumeId, releasedVolumes, onChange }: VolumeFieldProps) 
   )
 }
 
-// ─── WorkerSelectSection ────────────────────────────────────────────────────
-
-interface WorkerSelectSectionProps {
-  workers: NotebookWorkerInfo[]
-  notebookInfraTypes: string[]
-  workerRequired: boolean
-  selectedWorkerID: string
-  onWorkerChange: (id: string | null) => void
-}
-
-function WorkerSelectSection({ workers, notebookInfraTypes, workerRequired, selectedWorkerID, onWorkerChange }: WorkerSelectSectionProps) {
-  return (
-    <DataBodyTemplate.Group layout="stacked" title="Worker">
-      <div className="space-y-1.5">
-        <Label className="text-xs">Worker</Label>
-        <p className="text-xs text-muted-foreground">
-          {notebookInfraTypes.length > 1
-            ? 'Multiple infrastructure types are registered — pick the worker to run on.'
-            : workerRequired
-              ? 'Multiple workers are registered — pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'
-              : 'Optional. Only one compatible worker is registered, so it will be used automatically.'}
-        </p>
-        <Select value={selectedWorkerID} onValueChange={onWorkerChange}>
-          <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={workerRequired && !selectedWorkerID}><SelectValue placeholder="— select worker —" /></SelectTrigger>
-          <SelectContent>
-            {workers.map(w => (
-              <SelectItem key={w.id} value={w.id}>
-                <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${
-                  w.infrastructure === 'k8s' ? 'bg-blue-500/15 text-blue-400' : w.infrastructure === 'docker' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-orange-500/15 text-orange-400'
-                }`}>
-                  {w.infrastructure === 'k8s' ? 'K8s' : w.infrastructure === 'docker' ? 'Docker' : 'BM'}
-                </span>
-                {workerLabel(w)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    </DataBodyTemplate.Group>
-  )
-}
-
 // ─── K8sFieldsSection ───────────────────────────────────────────────────────
 
 interface K8sFieldsSectionProps {
   k8sForm: K8sFormState
   setK8sField: <K extends keyof K8sFormState>(key: K, value: K8sFormState[K]) => void
-  defaultK8sNamespace: string
   volumeId: string
   releasedVolumes: NotebookVolume[]
   onVolumeChange: (id: string) => void
@@ -120,7 +73,7 @@ interface K8sFieldsSectionProps {
 }
 
 function K8sFieldsSection({
-  k8sForm, setK8sField, defaultK8sNamespace,
+  k8sForm, setK8sField,
   volumeId, releasedVolumes, onVolumeChange,
   onAddEnv, onRemoveEnv, onUpdateEnv,
 }: K8sFieldsSectionProps) {
@@ -139,7 +92,7 @@ function K8sFieldsSection({
       <div className="space-y-1.5">
         <Label className="text-xs">Namespace</Label>
         <p className="text-xs text-muted-foreground">Kubernetes namespace where the notebook and its volume will be created.</p>
-        <Input className="h-8 text-sm" value={k8sForm.namespace || defaultK8sNamespace} onChange={e => setK8sField('namespace', e.target.value)} placeholder="notebooks" />
+        <Input className="h-8 text-sm" value={k8sForm.namespace} onChange={e => setK8sField('namespace', e.target.value)} placeholder="notebooks" />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Storage Size</Label>
@@ -224,7 +177,7 @@ function WorkerFieldsSection({
       ) : (
         <div className="space-y-1.5">
           <Label className="text-xs">Python Environment</Label>
-          <p className="text-xs text-muted-foreground">venv path (e.g. /project/venv) or conda env (e.g. conda:ml-env). Leave blank to use the worker default.</p>
+          <p className="text-xs text-muted-foreground">venv path (e.g. /project/venv) or conda env (e.g. conda:ml-env). Leave blank to auto-create a .venv.</p>
           <Input className="h-8 text-sm" value={workerForm.env} onChange={e => setWorkerField('env', e.target.value)} placeholder="/home/user/project/venv" />
         </div>
       )}
@@ -249,7 +202,6 @@ function WorkerFieldsSection({
 }
 
 interface NotebookK8sFormProps {
-  workers: NotebookWorkerInfo[]
   releasedVolumes: NotebookVolume[]
   preselectedVolume?: string
   onSubmit: (yaml: string, volumeId?: string) => void
@@ -259,10 +211,9 @@ interface NotebookK8sFormProps {
 }
 
 export function NotebookK8sForm({
-  workers, releasedVolumes, preselectedVolume = '',
+  releasedVolumes, preselectedVolume = '',
   onSubmit, submitting, error, onCancel,
 }: NotebookK8sFormProps) {
-  const [selectedWorkerID, setSelectedWorkerID] = useState('')
   const [tab, setTab] = useState('form')
 
   const [k8sForm, setK8sForm] = useState<K8sFormState>(DEFAULT_K8S)
@@ -273,52 +224,24 @@ export function NotebookK8sForm({
 
   const [volumeId, setVolumeId] = useState(preselectedVolume)
 
-  const selectedWorker = useMemo(
-    () => workers.find(w => w.id === selectedWorkerID) ?? null,
-    [workers, selectedWorkerID],
-  )
+  // This Piper installation owns exactly one runtime (baremetal, docker, or
+  // k8s) for direct in-process execution — the notebook always launches on it.
+  const { data: systemSettings } = useSystemSettings()
+  const runtime = (systemSettings?.runtime?.type as 'k8s' | 'docker' | 'baremetal' | undefined) || 'baremetal'
 
-  const hasWorkers = workers.length > 0
+  const workerPrepareBackend = runtime === 'docker' ? 'docker' : 'process'
 
-  const notebookInfraTypes = useMemo(
-    () => [...new Set(workers.map(w => w.infrastructure))],
-    [workers],
-  )
-  const ambiguousInfra = notebookInfraTypes.length > 1 && !selectedWorkerID
-  // Mirrors the router's actual rule (internal/agent/router.go): a worker
-  // must be named only when more than one candidate could otherwise match.
-  // With a single registered worker there is nothing ambiguous to resolve,
-  // so requiring a manual pick here would just be friction the backend
-  // doesn't need.
-  const workerRequired = workers.length > 1
-
-  const runtime = useMemo<'k8s' | 'docker' | 'baremetal'>(() => {
-		if (selectedWorker) return selectedWorker.infrastructure
-		if (workers.some(w => w.infrastructure === 'baremetal')) return 'baremetal'
-		if (workers.some(w => w.infrastructure === 'docker')) return 'docker'
-		if (workers.some(w => w.infrastructure === 'k8s')) return 'k8s'
-    return 'baremetal'
-  }, [selectedWorker, workers])
-
-  const defaultK8sNamespace = useMemo(
-    () => (selectedWorker?.infrastructure === 'k8s'
-      ? selectedWorker
-      : workers.find(w => w.infrastructure === 'k8s'))?.namespaces?.[0] ?? '',
-    [selectedWorker, workers],
-  )
-
-  function resolveK8sForm(form: K8sFormState): K8sFormState {
-    return form.namespace ? form : { ...form, namespace: defaultK8sNamespace }
-  }
-
-  const workerPrepareBackend = useMemo<'process' | 'docker'>(() => {
-    return runtime === 'docker' ? 'docker' : 'process'
-  }, [runtime])
+  const prepareBackendSyncedRef = useRef<'process' | 'docker' | null>(null)
+  useEffect(() => {
+    if (prepareBackendSyncedRef.current === workerPrepareBackend) return
+    prepareBackendSyncedRef.current = workerPrepareBackend
+    setWorkerForm(prev => (prev.prepareBackend === workerPrepareBackend ? prev : { ...prev, prepareBackend: workerPrepareBackend }))
+  }, [workerPrepareBackend])
 
   function setK8sField<K extends keyof K8sFormState>(key: K, value: K8sFormState[K]) {
     setK8sForm(prev => {
       const next = { ...prev, [key]: value }
-      setK8sYaml(buildK8sYAML(resolveK8sForm(next), selectedWorker?.id))
+      setK8sYaml(buildK8sYAML(next))
       return next
     })
   }
@@ -326,8 +249,7 @@ export function NotebookK8sForm({
   function setWorkerField<K extends keyof WorkerFormState>(key: K, value: WorkerFormState[K]) {
     setWorkerForm(prev => {
       const next = { ...prev, [key]: value }
-      const backend = runtime === 'docker' ? 'docker' : 'process'
-      setWorkerYaml(buildWorkerYAMLWithBackend(next, selectedWorker?.id, backend))
+      setWorkerYaml(buildWorkerYAMLWithBackend(next, workerPrepareBackend))
       return next
     })
   }
@@ -356,52 +278,33 @@ export function NotebookK8sForm({
     setWorkerField('envVars', workerForm.envVars.filter((_, i) => i !== rowIndex))
   }
 
-  function onWorkerChange(id: string | null) {
-    setSelectedWorkerID(id ?? '')
-    const w = workers.find(x => x.id === id) ?? null
-    const nextK8sForm = w?.infrastructure === 'k8s' && !k8sForm.namespace
-      ? { ...k8sForm, namespace: w.namespaces?.[0] ?? '' }
-      : k8sForm
-    setK8sForm(nextK8sForm)
-    setK8sYaml(buildK8sYAML(nextK8sForm, w?.id))
-		if (w?.infrastructure === 'baremetal' || w?.infrastructure === 'docker') {
-		  const backend = w.infrastructure === 'docker' ? 'docker' : 'process'
-      setWorkerForm(prev => ({ ...prev, prepareBackend: backend }))
-      setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, w?.id, backend))
-    } else {
-      setWorkerYaml(buildWorkerYAML(workerForm, w?.id))
-    }
-  }
-
   function handleTabChange(nextTab: string) {
     if (tab === 'form' && nextTab === 'yaml') {
-      setK8sYaml(buildK8sYAML(resolveK8sForm(k8sForm), selectedWorker?.id))
-      setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, selectedWorker?.id, workerPrepareBackend))
+      setK8sYaml(buildK8sYAML(k8sForm))
+      setWorkerYaml(buildWorkerYAMLWithBackend(workerForm, workerPrepareBackend))
     }
     setTab(nextTab)
   }
 
   function handleSubmit() {
-    if (!hasWorkers || (workerRequired && !selectedWorkerID)) return
     const isK8s = runtime === 'k8s'
     const name = isK8s ? k8sForm.name : workerForm.name
-    const resolvedK8s = resolveK8sForm(k8sForm)
     const formReady = isK8s
-      ? Boolean(name.trim() && resolvedK8s.image.trim() && resolvedK8s.namespace.trim() && resolvedK8s.storageSize.trim())
+      ? Boolean(name.trim() && k8sForm.image.trim() && k8sForm.namespace.trim() && k8sForm.storageSize.trim())
       : Boolean(name.trim() && (runtime !== 'docker' || workerForm.dockerImage.trim()))
     if (tab === 'form' && !formReady) return
     const payload = tab === 'form'
       ? (isK8s
-        ? buildK8sYAML(resolvedK8s, selectedWorker?.id)
-        : buildWorkerYAMLWithBackend(workerForm, selectedWorker?.id, workerPrepareBackend))
+        ? buildK8sYAML(k8sForm)
+        : buildWorkerYAMLWithBackend(workerForm, workerPrepareBackend))
       : (isK8s ? k8sYaml : workerYaml)
     if (!payload.trim()) return
     onSubmit(payload.trim(), volumeId || undefined)
   }
 
-  const submitDisabled = submitting || !hasWorkers || ambiguousInfra || (workerRequired && !selectedWorkerID) || (tab === 'form' && (
+  const submitDisabled = submitting || (tab === 'form' && (
     runtime === 'k8s'
-      ? !k8sForm.name.trim() || !k8sForm.image.trim() || !resolveK8sForm(k8sForm).namespace.trim() || !k8sForm.storageSize.trim()
+      ? !k8sForm.name.trim() || !k8sForm.image.trim() || !k8sForm.namespace.trim() || !k8sForm.storageSize.trim()
       : !workerForm.name.trim() || (runtime === 'docker' && !workerForm.dockerImage.trim())
   ))
 
@@ -409,7 +312,7 @@ export function NotebookK8sForm({
     <DataBodyTemplate
       topBar={<PageTopBar left="Notebooks / Launch" />}
       title="Launch Notebook Server"
-      description={ambiguousInfra ? undefined : <RuntimeBadge runtime={runtime} />}
+      description={<RuntimeBadge runtime={runtime} />}
     >
       <Tabs value={tab} onValueChange={value => handleTabChange(value ?? 'form')}>
         <TabsList>
@@ -420,31 +323,11 @@ export function NotebookK8sForm({
 
       {tab === 'form' ? (
         <>
-          {!hasWorkers && (
-            <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              No worker in this project advertises the notebook capability. Launching would fail immediately — register a worker with notebook support first.
-            </p>
-          )}
-          {ambiguousInfra && (
-            <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {notebookInfraTypes.length} worker infrastructure types are registered ({notebookInfraTypes.join(', ')}) — choose a Worker so this notebook always runs where you expect.
-            </p>
-          )}
-
-          <WorkerSelectSection
-            workers={workers}
-            notebookInfraTypes={notebookInfraTypes}
-            workerRequired={workerRequired}
-            selectedWorkerID={selectedWorkerID}
-            onWorkerChange={onWorkerChange}
-          />
-
           {runtime === 'k8s' ? (
             <>
               <K8sFieldsSection
                 k8sForm={k8sForm}
                 setK8sField={setK8sField}
-                defaultK8sNamespace={defaultK8sNamespace}
                 volumeId={volumeId}
                 releasedVolumes={releasedVolumes}
                 onVolumeChange={setVolumeId}

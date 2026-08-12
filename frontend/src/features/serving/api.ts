@@ -1,4 +1,4 @@
-export type { Service, ServiceHistory, ServingWorkerInfo } from './types'
+export type { Service, ServiceHistory } from './types'
 
 import type { Service, ServiceHistory } from './types'
 import { projectApi } from '@/lib/api'

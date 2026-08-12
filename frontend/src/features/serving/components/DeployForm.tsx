@@ -1,5 +1,5 @@
 // serving feature — Deploy form component
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   DataBodyTemplate,
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
@@ -17,8 +17,8 @@ import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 import { useRuns } from '@/features/runs/hooks'
 import type { Run } from '@/features/runs/api'
 import { listArtifacts, type StepArtifacts } from '@/features/runs/api'
-import { useCreateService, useServingWorkers } from '../hooks'
-import type { ServingWorkerInfo } from '../types'
+import { useCreateService } from '../hooks'
+import { useSystemSettings } from '@/features/system/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import { buildYAML, DEFAULT_FORM, RUNTIME_TEMPLATES, type FormState } from '../editor'
 
@@ -52,7 +52,6 @@ const deployFormSchema = z.object({
     return port > 0 && port <= 65535
   }, 'Port must be between 1 and 65535.'),
   healthPath: z.string().trim().min(1, 'Health path is required.'),
-  worker: z.string(),
   k8sNamespace: z.string(),
   k8sReplicas: z.string(),
   k8sCPU: z.string(),
@@ -166,17 +165,13 @@ interface RuntimeSectionProps {
   setField: <K extends keyof FormState>(key: K, value: FormState[K]) => void
   setValue: UseFormSetValue<FormState>
   setYaml: (yaml: string) => void
-  hasCompatibleWorkers: boolean
-  ambiguousLocalInfra: boolean
-  workerRequired: boolean
-  localInfraTypes: string[]
-  compatibleWorkers: ServingWorkerInfo[]
   isDockerLocal: boolean
+  modeLocked: boolean
 }
 
 function RuntimeSection({
   form, errors, setField, setValue, setYaml,
-  hasCompatibleWorkers, ambiguousLocalInfra, workerRequired, localInfraTypes, compatibleWorkers, isDockerLocal,
+  isDockerLocal, modeLocked,
 }: RuntimeSectionProps) {
   return (
     <DataBodyTemplate.Group layout="stacked" title="Runtime">
@@ -210,20 +205,10 @@ function RuntimeSection({
         ))}
       </div>
 
-      {!hasCompatibleWorkers && (
-        <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          No {form.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected. Deploying would fail immediately — register one first, or switch Mode.
-        </p>
-      )}
-      {ambiguousLocalInfra && (
-        <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {localInfraTypes.length} worker infrastructure types are registered ({localInfraTypes.join(', ')}) — choose a Worker so this service always runs where you expect.
-        </p>
-      )}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="space-y-1.5">
           <Label className="text-xs">Mode</Label>
-          <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')}>
+          <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')} disabled={modeLocked}>
             <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="local">local</SelectItem>
@@ -248,38 +233,6 @@ function RuntimeSection({
         </div>
       </div>
 
-      {form.runtimeMode === 'local' && (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Worker</Label>
-          <p className="text-xs text-muted-foreground">
-            {localInfraTypes.length > 1
-              ? 'Multiple infrastructure types are registered — pick the worker to run on.'
-              : workerRequired
-                ? 'Multiple workers are registered — pick the worker to run on. Separately managed workers of the same type are never chosen automatically.'
-                : 'Optional. Only one compatible worker is registered, so it will be used automatically.'}
-          </p>
-          <Select
-            value={form.worker}
-            onValueChange={v => setField('worker', v ?? '')}
-          >
-            <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={workerRequired && !form.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
-            <SelectContent>
-              {compatibleWorkers.map(w => (
-                <SelectItem key={w.id} value={w.id}>
-                  <span className={`mr-1.5 rounded px-1 py-0.5 text-[10px] font-medium ${
-                    w.infrastructure === 'docker' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-orange-500/15 text-orange-400'
-                  }`}>
-                    {w.infrastructure === 'docker' ? 'Docker' : 'BM'}
-                  </span>
-                  {w.hostname || w.id}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {workerRequired && !form.worker && <p className="text-xs text-destructive">Worker is required.</p>}
-        </div>
-      )}
-
       {isDockerLocal && (
         <div className="space-y-1.5">
           <Label className="text-xs">Container Image</Label>
@@ -294,26 +247,6 @@ function RuntimeSection({
 
       {form.runtimeMode === 'k8s' && (
         <>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Worker</Label>
-            <p className="text-xs text-muted-foreground">
-              {workerRequired
-                ? 'Multiple Kubernetes clusters are registered — pick the cluster to deploy to. Separately managed clusters are never chosen automatically.'
-                : 'Optional. Only one compatible cluster is registered, so it will be used automatically.'}
-            </p>
-            <Select
-              value={form.worker}
-              onValueChange={v => setField('worker', v ?? '')}
-            >
-              <SelectTrigger size="sm" className="h-8 text-sm" aria-invalid={workerRequired && !form.worker}><SelectValue placeholder="— select worker —" /></SelectTrigger>
-              <SelectContent>
-                {compatibleWorkers.map(w => (
-                  <SelectItem key={w.id} value={w.id}>{w.hostname || w.id}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {workerRequired && !form.worker && <p className="text-xs text-destructive">Worker is required.</p>}
-          </div>
           <div className="space-y-1.5">
             <Label className="text-xs">Container Image</Label>
             <Input
@@ -407,7 +340,8 @@ function EnvironmentSection({ items, onAdd, onRemove, onUpdate }: EnvironmentSec
 export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const projectId = useProjectId()
   const { data: allRuns = [] } = useRuns({ status: 'success' })
-  const { data: servingWorkers = [] } = useServingWorkers()
+  const { data: systemSettings, isLoading: systemSettingsLoading } = useSystemSettings()
+  const serverRuntime = systemSettings?.runtime?.type ?? ''
   const { mutateAsync: deploy, isPending: deploying } = useCreateService()
 
   const [tab, setTab] = useState<'form' | 'yaml'>('form')
@@ -430,23 +364,19 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const selectedRunID = form.pipeline
     ? (form.run === 'latest' ? pipelineRuns[0]?.id : form.run)
     : undefined
-  const compatibleWorkers = servingWorkers.filter(worker =>
-    form.runtimeMode === 'k8s'
-      ? worker.infrastructure === 'k8s'
-      : worker.infrastructure !== 'k8s',
-  )
-  const hasCompatibleWorkers = compatibleWorkers.length > 0
-  const localInfraTypes = [...new Set(compatibleWorkers.map(w => w.infrastructure))]
-  const ambiguousLocalInfra = form.runtimeMode === 'local' && localInfraTypes.length > 1 && !form.worker
-  // Mirrors the router's actual rule (internal/agent/router.go): a worker
-  // must be named only when more than one candidate could otherwise match.
-  // A single compatible worker is not ambiguous, so the backend resolves it
-  // without an explicit ID — the form shouldn't demand one either.
-  const workerRequired = compatibleWorkers.length > 1
-  const selectedWorkerInfra = form.worker
-    ? compatibleWorkers.find(w => w.id === form.worker)?.infrastructure
-    : (localInfraTypes.length === 1 ? localInfraTypes[0] : undefined)
-  const isDockerLocal = form.runtimeMode === 'local' && selectedWorkerInfra === 'docker'
+  const isDockerLocal = form.runtimeMode === 'local' && serverRuntime === 'docker'
+
+  // This Piper installation owns exactly one runtime — prefill and lock the
+  // Mode selector to match once settings load, mirroring the Pipeline editor.
+  const modeAutofilledRef = useRef(false)
+  useEffect(() => {
+    if (modeAutofilledRef.current) return
+    if (systemSettingsLoading || !serverRuntime) return
+    modeAutofilledRef.current = true
+    const nextMode = serverRuntime === 'k8s' ? 'k8s' : 'local'
+    if (form.runtimeMode !== nextMode) setField('runtimeMode', nextMode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverRuntime, systemSettingsLoading])
 
   useEffect(() => {
     let canceled = false
@@ -506,20 +436,8 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   }
 
   async function handleDeploy(values: FormState) {
-    if (!hasCompatibleWorkers) {
-      setError(`No ${values.runtimeMode === 'k8s' ? 'Kubernetes' : 'local'} serving worker is connected.`)
-      return
-    }
-    if (ambiguousLocalInfra) {
-      setError(`Multiple worker infrastructure types are registered (${localInfraTypes.join(', ')}) — choose a Worker before deploying.`)
-      return
-    }
-    if (workerRequired && !values.worker.trim()) {
-      setError('Multiple compatible workers are registered — choose a Worker before deploying.')
-      return
-    }
     if (isDockerLocal && !values.dockerImage.trim()) {
-      setError('Container image is required for the selected Docker worker.')
+      setError('Container image is required for a local Docker deploy.')
       return
     }
     await deployPayload(buildYAML(values))
@@ -553,12 +471,6 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
       >
         {tab === 'form' ? (
           <>
-            {!hasCompatibleWorkers && (
-              <p className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                No compatible serving worker is connected for the selected runtime.
-              </p>
-            )}
-
             <ServiceSection
               name={form.name}
               error={errors.name?.message}
@@ -580,12 +492,8 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
               setField={setField}
               setValue={setValue}
               setYaml={setYaml}
-              hasCompatibleWorkers={hasCompatibleWorkers}
-              ambiguousLocalInfra={ambiguousLocalInfra}
-              workerRequired={workerRequired}
-              localInfraTypes={localInfraTypes}
-              compatibleWorkers={compatibleWorkers}
               isDockerLocal={isDockerLocal}
+              modeLocked={!!serverRuntime}
             />
 
             <EnvironmentSection
@@ -613,7 +521,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
           <Button
             type="submit"
             size="sm"
-            disabled={deploying || (tab === 'form' && (!hasCompatibleWorkers || ambiguousLocalInfra || (workerRequired && !form.worker)))}
+            disabled={deploying}
           >
             {deploying ? 'Deploying…' : 'Deploy'}
           </Button>

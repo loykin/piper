@@ -5,117 +5,15 @@ import (
 	"testing"
 )
 
-func TestValidateNotebookRejectsInvalidDockerVolume(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		Docker:    &DockerWorkerConfig{Volumes: []DockerVolume{{Name: "data", HostPath: "relative", ContainerPath: "/data"}}},
-		Capabilities: WorkerCapabilitiesConfig{
-			Notebook: &NotebookCapabilityConfig{PortRange: "8888-9900"},
-		},
-	}}
-	if err := ValidateNotebook(cfg); err == nil || !strings.Contains(err.Error(), "host_path") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateWorkerRejectsMultipleInfrastructureTypes(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		Baremetal: &BaremetalWorkerConfig{},
-		Docker:    &DockerWorkerConfig{},
-		Capabilities: WorkerCapabilitiesConfig{
-			Pipeline: &PipelineCapabilityConfig{},
-		},
-	}}
-	if err := ValidatePipeline(cfg); err == nil || !strings.Contains(err.Error(), "exactly one") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateHostWorkerRejectsMissingCapability(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		Baremetal: &BaremetalWorkerConfig{},
-	}}
-	if err := ValidatePipeline(cfg); err == nil || !strings.Contains(err.Error(), "exactly the pipeline capability") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateK8sRejectsMissingCapability(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		K8s: &K8sWorkerConfig{
-			Cluster: "test", Namespaces: []string{"test"}, InCluster: true,
-		},
-	}}
-	if err := ValidateK8s(cfg); err == nil || !strings.Contains(err.Error(), "at least one") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateHostWorkerRejectsMultipleCapabilities(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		Docker:    &DockerWorkerConfig{},
-		Capabilities: WorkerCapabilitiesConfig{
-			Pipeline: &PipelineCapabilityConfig{Concurrency: 1},
-			Notebook: &NotebookCapabilityConfig{PortRange: "8888-9900"},
-		},
-	}}
-	if err := ValidatePipeline(cfg); err == nil || !strings.Contains(err.Error(), "exactly") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateDockerVolumesOnlyForNotebook(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		Docker:    &DockerWorkerConfig{Volumes: []DockerVolume{{Name: "data", HostPath: "/tmp/data", ContainerPath: "/data"}}},
-		Capabilities: WorkerCapabilitiesConfig{
-			Pipeline: &PipelineCapabilityConfig{Concurrency: 1},
-		},
-	}}
-	if err := ValidatePipeline(cfg); err == nil || !strings.Contains(err.Error(), "only supported by the notebook") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateK8sRejectsPullPolicy(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		K8s: &K8sWorkerConfig{
-			Cluster: "test", Namespaces: []string{"test"}, InCluster: true,
-			PipelineRunner: K8sPipelineRunnerConfig{ImagePullPolicy: "Sometimes"},
-		},
-		Capabilities: WorkerCapabilitiesConfig{Pipeline: &PipelineCapabilityConfig{}},
-	}}
-	if err := ValidateK8s(cfg); err == nil || !strings.Contains(err.Error(), "image_pull_policy") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestValidateK8sRejectsHostCapabilitySettings(t *testing.T) {
-	cfg := RootConfig{Worker: WorkerConfig{
-		MasterURL: "http://master:8080",
-		K8s: &K8sWorkerConfig{
-			Cluster: "test", Namespaces: []string{"test"}, InCluster: true,
-		},
-		Capabilities: WorkerCapabilitiesConfig{Pipeline: &PipelineCapabilityConfig{Concurrency: 2}},
-	}}
-	if err := ValidateK8s(cfg); err == nil || !strings.Contains(err.Error(), "activation marker") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestValidateServerAllowsRuntimeGeneratedSecrets(t *testing.T) {
-	if err := ValidateServer(RootConfig{}); err != nil {
+	baremetal := RuntimeConfig{Type: InfrastructureBaremetal}
+	if err := ValidateServer(RootConfig{Runtime: baremetal}); err != nil {
 		t.Fatalf("runtime-generated secrets rejected: %v", err)
 	}
-	if err := ValidateServer(RootConfig{Server: ServerConfig{AllowInsecureTrustedMode: true}}); err != nil {
+	if err := ValidateServer(RootConfig{Runtime: baremetal, Server: ServerConfig{AllowInsecureTrustedMode: true}}); err != nil {
 		t.Fatalf("explicit trusted mode rejected: %v", err)
 	}
-	if err := ValidateServer(RootConfig{Server: ServerConfig{AuthSigningKey: "test-signing-key"}}); err != nil {
+	if err := ValidateServer(RootConfig{Runtime: baremetal, Server: ServerConfig{AuthSigningKey: "test-signing-key"}}); err != nil {
 		t.Fatalf("signing key rejected: %v", err)
 	}
 }
@@ -130,13 +28,54 @@ func TestValidateServerAcceptsK8sRuntime(t *testing.T) {
 	}
 }
 
-func TestValidateServerRejectsLocalAndK8sRuntime(t *testing.T) {
-	cfg := RootConfig{
-		Storage: StorageConfig{Disabled: true},
-		Server:  ServerConfig{Local: LocalConfig{Enabled: true, Concurrency: 1}},
-		Runtime: RuntimeConfig{Type: InfrastructureK8s, InCluster: true, Namespaces: []string{"piper"}},
+func TestValidateDeploymentMemberRequiresHomeFields(t *testing.T) {
+	base := RootConfig{
+		Storage:    StorageConfig{Disabled: true},
+		Deployment: DeploymentConfig{Mode: DeploymentModeMember},
+		Runtime:    RuntimeConfig{Type: InfrastructureBaremetal},
 	}
-	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+	if err := ValidateServer(base); err == nil || !strings.Contains(err.Error(), "home.id") {
+		t.Fatalf("expected home.id error, got: %v", err)
+	}
+	base.Home.ID = "home-1"
+	if err := ValidateServer(base); err == nil || !strings.Contains(err.Error(), "home.url") {
+		t.Fatalf("expected home.url error, got: %v", err)
+	}
+	base.Home.URL = "https://home.example.com"
+	if err := ValidateServer(base); err == nil || !strings.Contains(err.Error(), "home.enrollment_token") {
+		t.Fatalf("expected home.enrollment_token error, got: %v", err)
+	}
+}
+
+func TestValidateDeploymentMemberRequiresRuntimeType(t *testing.T) {
+	cfg := RootConfig{
+		Storage:    StorageConfig{Disabled: true},
+		Deployment: DeploymentConfig{Mode: DeploymentModeMember},
+		Home:       HomeConfig{ID: "home-1", URL: "https://home.example.com", EnrollmentToken: "secret"},
+	}
+	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "runtime.type") {
+		t.Fatalf("expected runtime.type error, got: %v", err)
+	}
+}
+
+func TestValidateDeploymentMemberAccepted(t *testing.T) {
+	cfg := RootConfig{
+		Storage:    StorageConfig{Disabled: true},
+		Deployment: DeploymentConfig{Mode: DeploymentModeMember, MemberID: "member-1"},
+		Home:       HomeConfig{ID: "home-1", URL: "https://home.example.com", EnrollmentToken: "secret"},
+		Runtime:    RuntimeConfig{Type: InfrastructureBaremetal},
+	}
+	if err := ValidateServer(cfg); err != nil {
+		t.Fatalf("valid member config rejected: %v", err)
+	}
+}
+
+func TestValidateDeploymentRejectsUnknownMode(t *testing.T) {
+	cfg := RootConfig{
+		Runtime:    RuntimeConfig{Type: InfrastructureBaremetal},
+		Deployment: DeploymentConfig{Mode: "bogus"},
+	}
+	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "deployment.mode") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -163,60 +102,5 @@ runtime:
 	}
 	if cfg.Runtime.PipelineRunner.Image != "piper:test" {
 		t.Fatalf("pipeline runner image = %q", cfg.Runtime.PipelineRunner.Image)
-	}
-}
-
-func TestRoleConfigsLoadFromFile(t *testing.T) {
-	tests := map[string]struct {
-		body     string
-		validate func(RootConfig) error
-	}{
-		"pipeline": {`version: 4
-worker:
-  master_url: http://master:8080
-  baremetal: {}
-  capabilities:
-    pipeline: {}
-`, ValidatePipeline},
-		"notebook": {`version: 4
-worker:
-  master_url: http://master:8080
-  docker:
-    network: bridge
-  capabilities:
-    notebook: {}
-`, ValidateNotebook},
-		"serving": {`version: 4
-worker:
-  master_url: http://master:8080
-  baremetal: {}
-  capabilities:
-    serving: {}
-`, ValidateServing},
-		"k8s": {`version: 4
-worker:
-  master_url: http://master:8080
-  k8s:
-    cluster: test
-    namespaces: [test]
-    in_cluster: true
-  capabilities:
-    pipeline: {}
-    notebook: {}
-    serving: {}
-`, ValidateK8s},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			loader := NewLoader()
-			loader.SetConfigFile(writeConfig(t, tt.body))
-			cfg, err := loader.Load()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := tt.validate(cfg); err != nil {
-				t.Fatal(err)
-			}
-		})
 	}
 }

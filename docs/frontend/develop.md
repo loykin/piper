@@ -51,7 +51,7 @@ projectApi(projectId).delete(`/notebooks/${name}`)
 
 // system-scoped — no project prefix
 import { api } from '@/lib/api'
-const workers = await api.get<Worker[]>('/api/workers')
+const settings = await api.get<SystemSettings>('/api/settings')
 ```
 
 Never construct `/api/projects/${id}/...` URLs by hand — use `projectApi`.
@@ -63,7 +63,7 @@ import { useProjectId } from '@/lib/projectContext'
 const projectId = useProjectId()
 ```
 
-System pages (Workers) have no project — `useProjectId()` returns `''` there.
+System pages (Users) have no project — `useProjectId()` returns `''` there.
 
 ## Feature Hooks Convention
 
@@ -86,13 +86,12 @@ export function useRuns(filter?: Filter) {
 }
 ```
 
-System-scoped hooks (workers, notebook-workers, serving-workers) use `api` directly and do not include `projectId` in the query key.
+System-scoped hooks (system settings, users) use `api` directly and do not include `projectId` in the query key.
 
 ## Routing
 
 ```
 /projects/:project_id/*   — project routes (most pages)
-/workers                  — system route (no project)
 /users                    — system user list
 /users/new                — system user creation form
 /login                    — auth
@@ -262,10 +261,12 @@ React Query distinguishes two loading states:
 // hooks — polling query
 import { backgroundPolling } from '@/lib/query'
 
-export function useWorkers() {
+export function useServices() {
+  const projectId = useProjectId()
   return useQuery({
-    queryKey: workerKeys.list(),
-    queryFn: api.listWorkers,
+    queryKey: servingKeys.list(projectId),
+    queryFn: () => api.listServing(projectId),
+    enabled: !!projectId,
     ...backgroundPolling(5000),
   })
 }
@@ -275,7 +276,7 @@ export function useWorkers() {
   data={data}
   columns={columns}
   // isLoading omitted — monitoring pages show empty state immediately
-  emptyMessage="No workers registered."
+  emptyMessage="No services deployed."
   ...
 />
 ```

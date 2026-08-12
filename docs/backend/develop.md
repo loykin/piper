@@ -1,97 +1,171 @@
 # Piper — Backend Agent Guide
 
-## Worker Network Invariant
+## Execution Model — Direct, In-Process, No Worker Tunnel
 
-These rules apply to remote workers. A server configured with
-`runtime.type: k8s` owns pipeline execution in-process and is the explicit
-exception described below.
+Piper owns pipeline, notebook, and serving execution directly and in-process.
+There is no remote worker, no gRPC worker tunnel, and no "server vs worker"
+role split — a single Piper server is the whole installation for a given
+`runtime.type`. (This is unrelated to fed.md §13.4's Home/Member tunnel,
+which federates *management* across separate Piper installations — see
+`internal/membertunnel` and `proto/member.proto` — not workload dispatch.)
 
-- Workers establish one outbound tunnel to the Piper master using `worker.master_url`.
-- The master serves the HTTP API and the gRPC worker tunnel on the same `server.http_addr` endpoint.
-- Do not add a separate agent listener/address or reintroduce `server.agent_addr`, `worker.agent_addr`, or `--agent-addr`.
-- Worker configuration describes exactly one process. Under `worker`, exactly one
-  infrastructure key (`baremetal`, `docker`, or `k8s`) is allowed. Capability
-  configuration always belongs in the sibling `worker.capabilities` map.
-- All worker control-plane traffic must use the existing tunnel: registration, heartbeat, dispatch, cancellation, status, results, logs, metrics, notebook/serving control, and reverse proxy traffic.
-- Pipeline subprocesses, containers, and Kubernetes Job pods must not call the master directly. They report locally to their parent worker, which forwards data through the tunnel.
-- Artifact storage is the only exception: workers and workload runtimes may connect directly to the configured `storage.url` such as S3.
-- Changes that create any additional worker-side outbound endpoint require an explicit architecture decision and documentation update.
+- `runtime.type` (`k8s` | `docker` | `baremetal`) is **required** — there is
+  no empty-string fallback and no other execution mode. `cmd/piper/config`'s
+  `validateRuntime` rejects an empty `runtime.type` with a clear error before
+  a `*Piper` is ever constructed.
+- The server drives its configured Kubernetes client, Docker daemon client,
+  or subprocess supervisor directly. Pipeline/Notebook/Serving dispatch,
+  cancellation, observation, and recovery never leave the process boundary
+  except to talk to the infrastructure itself (the K8s API, the Docker
+  daemon, or a spawned subprocess).
+- Artifact storage is the one legitimate outbound exception: Kubernetes Job
+  pods and Docker containers may need to reach Piper's own file-backed
+  artifact store over HTTP (`runtime.workload_url` /
+  `runtime.docker.workload_url`), guarded by `ServerConfig.WorkerToken` and
+  `workerTokenMiddleware` on the `/store` route group — this middleware name
+  is a holdover from the pre-deletion architecture but the mechanism itself
+  is still real and load-bearing; don't remove it while any runtime uses the
+  built-in file store.
 
-## Server-Owned Kubernetes Pipeline Runtime
+## Server-Owned Pipeline Runtime (k8s / docker / baremetal)
 
-- `runtime.type: k8s` moves **pipeline** Job lifecycle ownership into the Piper
-  server. The server uses its configured Kubernetes client directly; pipeline
-  dispatch, cancellation, observation, and recovery must not pass through a
-  registered Kubernetes worker.
+- `runtime.type: k8s|docker|baremetal` moves **pipeline** Job/container/process
+  lifecycle ownership into the Piper server.
 - Direct runtime results still enter through `Queue.Complete`; the runtime must
-  not write run/step repositories or finalize runs itself.
-- The configured `runtime.namespaces` list is the complete namespace scope for
-  creation, recovery, and cancellation. Never silently expand it based on a
-  workload manifest.
-- `placement.worker` and `placement.label` are invalid for this runtime.
-  `placement.runtime` may be empty or `k8s`; Docker/baremetal placement must
-  fail before creating a Job.
-- Kubernetes Job pods may connect to configured artifact storage. When Piper's
-  built-in file store is used, `runtime.workload_url` is the private in-cluster
-  `/store` endpoint base and is the only master endpoint given to the Job.
-- Notebook and serving remain remote-worker controlled during this staged
-  migration. Do not remove their compatibility worker/tunnel path until direct
-  drivers preserve proxying, status reconciliation, volume lifecycle, logs,
-  credentials, and restart recovery.
+  not write run/step repositories or finalize runs itself. This applies
+  uniformly across `internal/pipelinedispatch`'s `K8sBackend`, `DockerBackend`,
+  and `BaremetalBackend` — all three wrap a driver-agnostic
+  `internal/directworker.Worker` (docker/baremetal) or
+  `internal/k8sworker/pipeline.Worker` (k8s) whose `ReportResult`/`Complete`
+  callback is the only path into the queue.
+- For `k8s`, the configured `runtime.namespaces` list is the complete namespace
+  scope for creation, recovery, and cancellation — never silently expand it
+  based on a workload manifest. Docker and baremetal have no namespace concept.
+- `placement.worker` and `placement.label` are invalid for all three direct
+  runtimes (enforced by the shared `pipelinedispatch.validateDirectPlacement`
+  helper). `placement.runtime` may be empty or match the configured
+  `runtime.type`; any other value must fail before dispatch. Notebook and
+  serving's direct-runtime drivers (docker/baremetal and K8s, both domains)
+  enforce the exact same rule via `notebook.ValidateDirectPlacement` /
+  `serving.ValidateDirectPlacement` (fed.md §13.6) — same shape as the
+  pipeline helper, just simpler since Notebook/ModelService have one
+  placement per workload rather than per-step.
+- Storage reachability differs by runtime: Kubernetes Job pods and Docker
+  containers cannot reach the host's local filesystem directly, so when
+  Piper's built-in file store is used, `runtime.workload_url`
+  (`runtime.docker.workload_url` for Docker) is the private HTTP endpoint base
+  given to the workload instead of a raw `file://` path. Baremetal
+  subprocesses share the host filesystem directly and need no such rewrite —
+  `runtime.baremetal` has no `workload_url` field.
+- `docker`/`baremetal` direct execution has no external scheduler bounding
+  concurrent work on the Piper host (unlike `k8s`, which is bounded by the
+  Kubernetes cluster scheduler) — `runtime.docker.concurrency` /
+  `runtime.baremetal.concurrency` (default 4) is a required admission gate in
+  `internal/directworker.Worker`, not an optional tuning knob.
+- Notebook has the same `docker`/`baremetal` direct-runtime treatment as
+  pipeline: `pkg/notebook/dispatch/localdriver.Driver` implements
+  `notebook.Driver` directly against `pkg/notebook/worker/driver`'s
+  docker/process backends, selected in `piper.go` by the same
+  `cfg.Runtime.Type` switch used for pipeline dispatch. `notebook.Manager`
+  never trusts `Driver.Start`'s returned status — it only persists status
+  changes reported later through a callback (`localdriver.Config.ReportStatus`
+  → `Manager.UpdateStatus`), so `localdriver.Driver.Start` must return fast
+  with placeholder connection info and report the real outcome asynchronously
+  from a background goroutine.
+- Serving has the same `docker`/`baremetal` direct-runtime treatment:
+  `pkg/serving/dispatch/localdriver.Driver` implements `serving.Driver`
+  directly against `pkg/serving/worker/driver`'s docker/process backends,
+  selected the same way in `piper.go`. Unlike Notebook, `serving.Manager.Deploy`
+  is fully synchronous and *does* trust `Driver.Deploy`'s returned
+  `*serving.Service.Status` immediately (it upserts it as-is) — so
+  `localdriver.Driver.Deploy` itself must return fast with `status=starting`
+  and only report `running`/`failed` asynchronously once a background health
+  check (`process.WaitReady` against `spec.run.health_path`) resolves, with a
+  `failService`/`exitAs` override so a health-check failure reports `failed`
+  (not the runtime's raw exit status) once the stopped process/container's
+  own exit callback eventually fires.
+  `localdriver.Driver.ArtifactTarget()` returns `artifact.TargetLocal`, so
+  Piper's existing artifact resolver (`service_api.go`) fully resolves the
+  model to a local host path *before* `Deploy` is ever called — s3/http(s)
+  downloads happen there, not in this driver. Direct-mode Docker serving has
+  a known pre-existing gap: `PIPER_MODEL_DIR` is passed as a container env
+  var pointing at a host path with no bind mount, so it is not actually
+  readable from inside the container. That gap was not fixed — §13.1 froze
+  current behavior rather than redesigning it in passing.
+- Notebook additionally has a K8s direct-runtime path:
+  `pkg/notebook/dispatch/localdriver/k8s.Driver` implements `notebook.Driver`
+  directly against `kubernetes.Interface` (StatefulSet + PVC + headless
+  Service), selected by the same `cfg.Runtime.Type` switch. It is a
+  *separate* package from the docker/process `localdriver`, not a third case
+  in it — K8s notebooks need a fundamentally different lifecycle (StatefulSet
+  + PVC + polling-based readiness) than the docker/process backends' shared
+  low-level `notebookdriver.Driver` interface models, so there is no common
+  low-level type to switch on. `Start` returns fast with `status=starting`;
+  the real `running`/`failed` transition is detected by a long-running
+  `Observe` background goroutine (started once at `New`, independent of any
+  connection lifecycle) that polls StatefulSet readiness and reports through
+  the same `ReportStatus` callback shape the docker/process driver uses.
+  `Endpoint` is a plain `http://<svc>.<ns>.svc.cluster.local:8888` URL (no
+  `tunnel://` scheme) — this assumes Piper itself has cluster-internal network
+  reachability to the target namespaces (e.g. deployed as a pod in the same
+  cluster via `runtime.k8s.in_cluster`), which is already a supported
+  deployment mode for `runtime.type: k8s`, not a new constraint.
+  `pkg/notebook/handler.go`'s `proxyNotebook` always reverse-proxies directly
+  to `Endpoint` (mirroring `pkg/serving/proxy.go`) — there is no scheme
+  branching, since nothing produces a `tunnel://` endpoint anymore. File
+  browsing and snapshot capture (`FSListFiles`/`FSUploadSnapshot`) are **not**
+  implemented by this driver — `notebook.Driver` has no hook point for them
+  at all, so a notebook running under K8s direct-runtime cannot use the
+  volume file browser or template snapshot capture. There is currently no
+  fallback for this; it is an open gap, not a workaround. `NotebookVolume.WorkerID`
+  is left empty here too (same reasoning as docker/process), so
+  `listVolumeFiles`/template snapshot upload correctly skip straight to the
+  local-filesystem fallback — they just can't succeed there either, since the
+  volume lives on a PVC Piper's own host can't read directly.
+- Serving also has a K8s direct-runtime path:
+  `pkg/serving/dispatch/localdriver/k8s.Driver` implements `serving.Driver`
+  directly against `kubernetes.Interface` (Deployment + Service), the same
+  separate-package split as notebook's for the same reason (K8s serving needs
+  a Deployment/Service lifecycle the shared low-level `servingdriver.Driver`
+  interface doesn't model). Unlike docker/baremetal serving direct-runtime
+  (`ArtifactTarget=TargetLocal`, model pre-resolved to a local path before
+  `Deploy` runs), a K8s pod cannot reach Piper's local filesystem — this
+  driver returns `artifact.TargetRemote` and, when the model comes from a
+  stored artifact (`art.ArtifactKey` set), delivers it via an artifact Secret
+  (`storage-url`/`storage-token`/`artifact-key`) plus an `artifact-download`
+  init container (`/piper internal artifact-download`, reusing
+  `cfg.Runtime.K8s.PipelineRunnerImage` as the fetcher image — same binary
+  Pipeline's K8s runtime already uses for runner pods, no new config field)
+  that populates an `EmptyDir` volume mounted into the serving container.
+  Because Piper's own storage URL/token are only resolved partway through
+  `piper.New` (after the driver is constructed), the driver exposes a
+  `WithStorage(url, token string)` setter called once resolution completes.
+  `Endpoint` is a plain `http://<name>.<ns>.svc.cluster.local:<port>` URL;
+  `pkg/serving/proxy.go` reverse-proxies directly to whatever URL is stored,
+  so no scheme-branching was ever needed on the serving side.
+  `serving.Manager.Deploy` is fully synchronous and trusts the returned
+  `*serving.Service.Status` as-is, same constraint the docker/baremetal
+  serving driver has — `Deploy` returns fast with `status=starting`, and the
+  real `running`/`failed` transition is detected by the same kind of
+  long-running `Observe` background goroutine notebook's K8s driver uses.
 
 ## State Ownership — Master Is Authoritative
 
 - All run/step state is owned by the master and persisted to SQLite/Postgres
   through `pkg/pipeline/run` (`Repository`, `StepRepository`, implemented in
-  `internal/store/sqlite` and `internal/store/postgres`). Workers never write
-  to these repositories directly.
+  `internal/store/sqlite` and `internal/store/postgres`). Direct-runtime
+  drivers never write to these repositories directly.
 - `internal/queue/queue.go`'s `Queue` is the single in-memory scheduler.
   `transitionTaskLocked` is the only point through which a task/step status
   changes; `finalizeRunLocked` is the only point through which a run reaches
   a terminal status, using a compare-and-swap (`FinalizeStatusCAS`) so the DB
   row — not the in-memory map — is the real source of truth for "is this run
   done."
-- Workers report results over the tunnel
-  (`internal/agent/rpcmethods.go` `MethodPipelineTaskResult` →
-  `worker_push.go`'s push handler → `Queue.Complete`). The master overwrites
-  `result.WorkerID` with the authenticated tunnel connection's agent ID
-  (`worker_push.go`), so a worker cannot claim another worker's identity.
-  `queue.go`'s `completeLocked` then rejects the report outright if it
-  doesn't come from the worker the master actually assigned the task to, and
-  ignores duplicate/stale/future-attempt reports. A worker's "done" report is
-  a request the master validates and applies — the master decides retries,
-  timeouts, and crash recovery, not the worker.
-- Non-tunnel dispatch (including the server-owned Kubernetes runtime) funnels
-  through the exact same
-  `Queue.Complete` validation path — there is no second, looser path to
-  mutate state.
-
-## Worker Assignment
-
-The rules in this section apply to remote-worker dispatch. With
-`runtime.type: k8s`, the installation itself is the execution owner and the
-placement constraints in the server-owned runtime section apply instead.
-
-- Design invariant (`pkg/manifest/driver.go` `PlacementSpec`): **one run
-  executes on one worker** — every step in a run is dispatched to the same
-  worker agent, enforced structurally by reusing the run's bound worker for
-  every step, not just documented.
-- Explicit `placement.worker` / `placement.label` / `placement.runtime` is
-  **not required** when exactly one registered worker matches the run's
-  runtime/label/infrastructure filters — that single candidate is picked
-  implicitly.
-- Explicit disambiguation **is mandatory** once more than one worker
-  matches: `internal/agent/router.go` returns a non-retryable
-  `AmbiguousInfrastructureError` ("N candidate workers match and none was
-  named; set placement.worker to disambiguate", or the infrastructure-type
-  equivalent asking for `placement.runtime`). This is treated as a
-  configuration problem, not a transient capacity issue, so it is not
-  retried.
-- This rule is enforced at **dispatch time** in the router, not at YAML
-  parse/validate time — `Pipeline.Validate()` / `Notebook.Validate()` /
-  `ModelService.Validate()` do not require placement fields to be set.
-- Zero matching candidates is a distinct, retryable error ("no agent
-  available for placement") — do not conflate it with the ambiguous case.
+- Every runtime (`k8s`, `docker`, `baremetal`) reports task completion through
+  the exact same `Queue.Complete` validation path — there is no second,
+  looser path to mutate state. `queue.go`'s `completeLocked` rejects a report
+  that doesn't come from the runtime the master actually assigned the task
+  to, and ignores duplicate/stale/future-attempt reports.
 
 ## Manifest Rules
 
@@ -106,7 +180,10 @@ placement constraints in the server-owned runtime section apply instead.
   logic branches on them without adding that check first.
 - Shared `pkg/manifest.DriverSpec` (placement + per-runtime `k8s`/`docker`/
   `process` sub-specs) and `ResourceSpec` (cpu/memory/gpu) back
-  `spec.driver` on all three kinds.
+  `spec.driver` on all three kinds. `PlacementSpec.Worker`/`.Label` still
+  exist as struct fields (parsed for backward YAML compatibility) but are
+  rejected by every domain's `ValidateDirectPlacement` — there is no runtime
+  that honors them anymore.
 - Fields actually enforced by each kind's `Validate()`:
   - Pipeline: `metadata.name` required; ≥1 step; unique step names;
     `depends_on` must reference known steps; each `driver.placement.runtime`
@@ -114,16 +191,13 @@ placement constraints in the server-owned runtime section apply instead.
     `driver.docker.image`; `k8s` requires `driver.k8s.image` and
     `driver.k8s.namespace`.
   - Notebook: same runtime/image/namespace rules, plus `k8s` additionally
-    requires `spec.volume.size`. An empty runtime is explicitly allowed as
-    "API-level auto-assignment mode."
+    requires `spec.volume.size`. An empty `driver.placement.runtime` is
+    allowed — it means "use whatever runtime this Piper installation is
+    configured with," resolved at dispatch time, not "pick among candidates"
+    (there is only ever one candidate: this installation).
   - ModelService: same runtime/image/namespace rules as Pipeline.
 - `pkg/manifest/k8s` is a **separate, unrelated** helper package — just
   label/annotation constants (`LabelManagedBy`, `LabelWorkloadID`,
   `AnnotationRunID`, etc.) used to stamp and later select the real
   Kubernetes objects Piper creates. It is not a schema and has no
   `Validate()` — do not confuse it with the YAML manifest kinds above.
-- The local variable named `manifest` in
-  `internal/agent/podpolicy_apply.go` is unrelated to both of the above —
-  it's a generic round-trip of a Kubernetes `PodTemplateSpec` used to merge
-  a server-side pod policy into a step's `driver.k8s.pod_template` (the
-  step's own `pod_template` always takes precedence over the policy).

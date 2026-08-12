@@ -11,7 +11,6 @@ import (
 	"github.com/loykin/dbstore"
 	_ "modernc.org/sqlite"
 
-	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/store/postgres"
 	"github.com/loykin/piper/internal/store/sqlite"
@@ -38,7 +37,6 @@ type Repos struct {
 	Notebook         notebook.Repository
 	NotebookVolume   notebook.VolumeRepository
 	PipelineTemplate template.Repository
-	WorkerPodPolicy  iagent.WorkerPodPolicyRepository
 	Log              logstore.LogStore
 	Metric           logstore.MetricStore
 
@@ -194,7 +192,6 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
 			PipelineTemplate: sqlite.NewPipelineRepo(executor, PrimarySource),
 			Viewer:           sqlite.NewViewerRepo(executor, PrimarySource),
-			WorkerPodPolicy:  sqlite.NewWorkerPodPolicyRepo(executor, PrimarySource),
 			Log:              logstore.NewSQLite(executor, PrimarySource),
 			Metric:           logstore.NewSQLite(executor, PrimarySource),
 			db:               db,
@@ -214,7 +211,6 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(executor, PrimarySource),
 			PipelineTemplate: postgres.NewPipelineRepo(executor, PrimarySource),
 			Viewer:           postgres.NewViewerRepo(executor, PrimarySource),
-			WorkerPodPolicy:  postgres.NewWorkerPodPolicyRepo(executor, PrimarySource),
 			Log:              logstore.NewPostgres(executor, PrimarySource),
 			Metric:           logstore.NewPostgres(executor, PrimarySource),
 			db:               db,

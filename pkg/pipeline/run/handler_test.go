@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/internal/logstore"
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 )
@@ -27,83 +27,116 @@ func injectProjectContext(id string) gin.HandlerFunc {
 	}
 }
 
-type capturingRunRepo struct {
-	filter RunFilter
-	run    *Run
-	runs   []*Run
+// fakeMemberClient is a configurable memberclient.Client double for
+// handler-level tests. Zero-value fields fall back to safe defaults so
+// tests only need to set the hooks/fields they actually exercise (mirrors
+// the fakeDriver pattern used elsewhere in this codebase).
+type fakeMemberClient struct {
+	runOK     bool
+	run       memberclient.RunSummary
+	steps     []memberclient.StepSummary
+	runs      []memberclient.RunSummary
+	runsSteps map[string][]memberclient.StepSummary
+
+	listRunsReq memberclient.ListRunsRequest
+
+	submitRunFn   func(ctx context.Context, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error)
+	submitSweepFn func(ctx context.Context, req memberclient.SubmitSweepRequest) (memberclient.SubmitSweepResponse, error)
+	cancelRunFn   func(ctx context.Context, runID string) error
+	rerunRunFn    func(ctx context.Context, runID string, failedOnly bool) (string, error)
+	deleteRunFn   func(ctx context.Context, runID string) error
+	retryStepFn   func(ctx context.Context, runID, stepName string) (string, error)
 }
 
-func (r *capturingRunRepo) Create(context.Context, *Run) error { return nil }
-func (r *capturingRunRepo) Get(context.Context, string, string) (*Run, error) {
-	return r.run, nil
-}
-func (r *capturingRunRepo) List(_ context.Context, _ string, filter RunFilter) ([]*Run, error) {
-	r.filter = filter
-	return r.runs, nil
-}
-func (r *capturingRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
-	return nil
-}
-func (r *capturingRunRepo) FinalizeStatusCAS(context.Context, string, string, string, *time.Time) (bool, error) {
-	return true, nil
-}
-func (r *capturingRunRepo) MarkRunning(context.Context, string, string, time.Time) error {
-	return nil
-}
-func (r *capturingRunRepo) Delete(context.Context, string, string) error { return nil }
-func (r *capturingRunRepo) GetLatestSuccessful(context.Context, string, string) (*Run, error) {
-	return nil, nil
-}
-func (r *capturingRunRepo) Count(context.Context, string, RunFilter) (int, error) {
-	return len(r.runs), nil
-}
-func (r *capturingRunRepo) ListTerminalBefore(context.Context, string, time.Time) ([]*Run, error) {
-	return nil, nil
-}
-func (r *capturingRunRepo) ExistingIDs(context.Context, []string) (map[string]bool, error) {
-	return map[string]bool{}, nil
-}
-
-type emptyStepRepo struct{}
-
-func (r emptyStepRepo) Upsert(context.Context, *Step) error            { return nil }
-func (r emptyStepRepo) UpsertCAS(context.Context, *Step) (bool, error) { return true, nil }
-func (r emptyStepRepo) List(context.Context, string, string) ([]*Step, error) {
-	return []*Step{}, nil
-}
-func (r emptyStepRepo) ListByRuns(context.Context, string, []string) (map[string][]*Step, error) {
-	return map[string][]*Step{}, nil
-}
-func (r emptyStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
-
-type capturingStepRepo struct {
-	calls int
-	steps []*Step
-}
-
-func (r *capturingStepRepo) Upsert(context.Context, *Step) error            { return nil }
-func (r *capturingStepRepo) UpsertCAS(context.Context, *Step) (bool, error) { return true, nil }
-func (r *capturingStepRepo) List(context.Context, string, string) ([]*Step, error) {
-	r.calls++
-	return r.steps, nil
-}
-func (r *capturingStepRepo) ListByRuns(context.Context, string, []string) (map[string][]*Step, error) {
-	r.calls++
-	out := make(map[string][]*Step)
-	for _, step := range r.steps {
-		out[step.RunID] = append(out[step.RunID], step)
+func (f *fakeMemberClient) SubmitRun(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
+	if f.submitRunFn != nil {
+		return f.submitRunFn(ctx, req)
 	}
-	return out, nil
+	return memberclient.SubmitRunResponse{RunID: "run-1"}, nil
 }
-func (r *capturingStepRepo) DeleteByRun(context.Context, string, string) error { return nil }
+
+func (f *fakeMemberClient) SubmitSweep(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req memberclient.SubmitSweepRequest) (memberclient.SubmitSweepResponse, error) {
+	if f.submitSweepFn != nil {
+		return f.submitSweepFn(ctx, req)
+	}
+	return memberclient.SubmitSweepResponse{Experiment: req.Experiment}, nil
+}
+
+func (f *fakeMemberClient) ListRuns(_ context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req memberclient.ListRunsRequest) (memberclient.ListRunsResponse, error) {
+	f.listRunsReq = req
+	resp := memberclient.ListRunsResponse{Runs: f.runs}
+	if req.Limit > 0 {
+		resp.Total = len(f.runs)
+	}
+	if req.IncludeSteps {
+		resp.Steps = f.runsSteps
+	}
+	return resp, nil
+}
+
+func (f *fakeMemberClient) GetRun(context.Context, memberclient.AuthContext, project.ProjectRef, string) (memberclient.RunDetail, error) {
+	if !f.runOK {
+		return memberclient.RunDetail{}, memberclient.ErrRunNotFound
+	}
+	return memberclient.RunDetail{Run: f.run, Steps: f.steps}, nil
+}
+
+func (f *fakeMemberClient) CancelRun(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, runID string) error {
+	if f.cancelRunFn != nil {
+		return f.cancelRunFn(ctx, runID)
+	}
+	return nil
+}
+
+func (f *fakeMemberClient) RerunRun(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, runID string, failedOnly bool) (string, error) {
+	if f.rerunRunFn != nil {
+		return f.rerunRunFn(ctx, runID, failedOnly)
+	}
+	return "run-2", nil
+}
+
+func (f *fakeMemberClient) DeleteRun(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, runID string) error {
+	if f.deleteRunFn != nil {
+		return f.deleteRunFn(ctx, runID)
+	}
+	return nil
+}
+
+func (f *fakeMemberClient) ListSteps(context.Context, memberclient.AuthContext, project.ProjectRef, string) ([]memberclient.StepSummary, error) {
+	return f.steps, nil
+}
+
+func (f *fakeMemberClient) RetryStep(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, runID, stepName string) (string, error) {
+	if f.retryStepFn != nil {
+		return f.retryStepFn(ctx, runID, stepName)
+	}
+	return "run-3", nil
+}
+
+func (f *fakeMemberClient) QueryLogs(context.Context, memberclient.AuthContext, project.ProjectRef, string, string, int64) ([]*logstore.Line, error) {
+	return nil, nil
+}
+
+func (f *fakeMemberClient) QueryMetrics(context.Context, memberclient.AuthContext, project.ProjectRef, string, string) ([]*logstore.Metric, error) {
+	return nil, nil
+}
+
+func (f *fakeMemberClient) ListArtifacts(context.Context, memberclient.AuthContext, project.ProjectRef, string) ([]any, error) {
+	return nil, nil
+}
+
+func (f *fakeMemberClient) ServeArtifact(context.Context, memberclient.AuthContext, project.ProjectRef, http.ResponseWriter, *http.Request, string, string, string) {
+}
+
+var _ memberclient.Client = (*fakeMemberClient)(nil)
 
 // ── metric filter ─────────────────────────────────────────────────────────────
 
 func TestListRunsMetricFilterPassedToRepo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{}
+	member := &fakeMemberClient{}
 	router := gin.New()
-	NewHandler(HandlerDeps{Runs: repo, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodGet, "/runs?experiment=sweep-1&metric_step=train&metric_key=accuracy&metric_order=asc", nil)
 	rec := httptest.NewRecorder()
@@ -112,14 +145,14 @@ func TestListRunsMetricFilterPassedToRepo(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if repo.filter.MetricStep != "train" {
-		t.Errorf("MetricStep = %q, want train", repo.filter.MetricStep)
+	if member.listRunsReq.MetricStep != "train" {
+		t.Errorf("MetricStep = %q, want train", member.listRunsReq.MetricStep)
 	}
-	if repo.filter.MetricKey != "accuracy" {
-		t.Errorf("MetricKey = %q, want accuracy", repo.filter.MetricKey)
+	if member.listRunsReq.MetricKey != "accuracy" {
+		t.Errorf("MetricKey = %q, want accuracy", member.listRunsReq.MetricKey)
 	}
-	if repo.filter.MetricOrder != "asc" {
-		t.Errorf("MetricOrder = %q, want asc", repo.filter.MetricOrder)
+	if member.listRunsReq.MetricOrder != "asc" {
+		t.Errorf("MetricOrder = %q, want asc", member.listRunsReq.MetricOrder)
 	}
 }
 
@@ -127,16 +160,16 @@ func TestListRunsMetricFilterPassedToRepo(t *testing.T) {
 
 func TestCreateSweep_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{}
-	var gotReq SweepRequest
+	var gotReq memberclient.SubmitSweepRequest
 	router := gin.New()
 	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: emptyStepRepo{},
-		StartSweep: func(_ context.Context, req SweepRequest) (SweepResponse, error) {
-			gotReq = req
-			return SweepResponse{Experiment: req.Experiment, RunIDs: []string{"r1", "r2"}}, nil
+		Member: &fakeMemberClient{
+			submitSweepFn: func(_ context.Context, req memberclient.SubmitSweepRequest) (memberclient.SubmitSweepResponse, error) {
+				gotReq = req
+				return memberclient.SubmitSweepResponse{Experiment: req.Experiment, RunIDs: []string{"r1", "r2"}}, nil
+			},
 		},
+		ProjectRef: project.LocalRef,
 	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"metadata:\n  name: train\n","experiment":"lr-sweep","runs":[{"params":{"lr":0.01}},{"params":{"lr":0.1}}]}`
@@ -162,7 +195,7 @@ func TestCreateSweep_Success(t *testing.T) {
 func TestCreateSweep_MissingExperiment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	NewHandler(HandlerDeps{Member: &fakeMemberClient{}, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"...","runs":[{"params":{"lr":0.01}}]}`
 	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
@@ -178,7 +211,7 @@ func TestCreateSweep_MissingExperiment(t *testing.T) {
 func TestCreateSweep_EmptyRuns(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	NewHandler(HandlerDeps{Runs: &capturingRunRepo{}, Steps: emptyStepRepo{}}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	NewHandler(HandlerDeps{Member: &fakeMemberClient{}, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"...","experiment":"lr-sweep","runs":[]}`
 	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
@@ -193,12 +226,9 @@ func TestCreateSweep_EmptyRuns(t *testing.T) {
 
 func TestListRunsPipelineNameQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{}
+	member := &fakeMemberClient{}
 	router := gin.New()
-	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: emptyStepRepo{},
-	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodGet, "/runs?pipeline_name=train&status=success&experiment=exp-v2", nil)
 	rec := httptest.NewRecorder()
@@ -207,34 +237,33 @@ func TestListRunsPipelineNameQuery(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if repo.filter.PipelineName != "train" {
-		t.Fatalf("PipelineName = %q, want train", repo.filter.PipelineName)
+	if member.listRunsReq.PipelineName != "train" {
+		t.Fatalf("PipelineName = %q, want train", member.listRunsReq.PipelineName)
 	}
-	if repo.filter.Status != "success" {
-		t.Fatalf("Status = %q, want success", repo.filter.Status)
+	if member.listRunsReq.Status != "success" {
+		t.Fatalf("Status = %q, want success", member.listRunsReq.Status)
 	}
-	if repo.filter.Experiment != "exp-v2" {
-		t.Fatalf("Experiment = %q, want exp-v2", repo.filter.Experiment)
+	if member.listRunsReq.Experiment != "exp-v2" {
+		t.Fatalf("Experiment = %q, want exp-v2", member.listRunsReq.Experiment)
 	}
 }
 
 func TestListRunsScheduleFilterAndIncludeSteps(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{runs: []*Run{{
-		ID:           "run-1",
-		ProjectID:    "test-proj",
-		ScheduleID:   "sch-1",
-		PipelineName: "train",
-		Status:       StatusSuccess,
-		StartedAt:    time.Now().UTC(),
-		PipelineYAML: "metadata:\n  name: train\n",
-	}}}
-	steps := &capturingStepRepo{steps: []*Step{{RunID: "run-1", StepName: "fit", Status: "done", Attempts: 1}}}
+	member := &fakeMemberClient{
+		runs: []memberclient.RunSummary{{
+			ID:           "run-1",
+			ProjectID:    "test-proj",
+			ScheduleID:   "sch-1",
+			PipelineName: "train",
+			Status:       StatusSuccess,
+		}},
+		runsSteps: map[string][]memberclient.StepSummary{
+			"run-1": {{RunID: "run-1", StepName: "fit", Status: "done", Attempts: 1}},
+		},
+	}
 	router := gin.New()
-	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: steps,
-	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodGet, "/runs?schedule_id=sch-1&include_steps=true", nil)
 	rec := httptest.NewRecorder()
@@ -243,11 +272,11 @@ func TestListRunsScheduleFilterAndIncludeSteps(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if repo.filter.ScheduleID != "sch-1" {
-		t.Fatalf("ScheduleID = %q, want sch-1", repo.filter.ScheduleID)
+	if member.listRunsReq.ScheduleID != "sch-1" {
+		t.Fatalf("ScheduleID = %q, want sch-1", member.listRunsReq.ScheduleID)
 	}
-	if steps.calls != 1 {
-		t.Fatalf("step List calls = %d, want 1", steps.calls)
+	if !member.listRunsReq.IncludeSteps {
+		t.Fatal("IncludeSteps = false, want true")
 	}
 	if !strings.Contains(rec.Body.String(), `"steps":[`) {
 		t.Fatalf("response did not include steps: %s", rec.Body.String())
@@ -256,19 +285,14 @@ func TestListRunsScheduleFilterAndIncludeSteps(t *testing.T) {
 
 func TestListRunsDefaultOmitsSteps(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{runs: []*Run{{
-		ID:           "run-1",
-		ProjectID:    "test-proj",
-		PipelineName: "train",
-		Status:       StatusSuccess,
-		StartedAt:    time.Now().UTC(),
-	}}}
-	steps := &capturingStepRepo{steps: []*Step{{RunID: "run-1", StepName: "fit", Status: "done", Attempts: 1}}}
+	member := &fakeMemberClient{
+		runs: []memberclient.RunSummary{{ID: "run-1", ProjectID: "test-proj", PipelineName: "train", Status: StatusSuccess}},
+		runsSteps: map[string][]memberclient.StepSummary{
+			"run-1": {{RunID: "run-1", StepName: "fit", Status: "done", Attempts: 1}},
+		},
+	}
 	router := gin.New()
-	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: steps,
-	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodGet, "/runs", nil)
 	rec := httptest.NewRecorder()
@@ -277,8 +301,8 @@ func TestListRunsDefaultOmitsSteps(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if steps.calls != 0 {
-		t.Fatalf("step List calls = %d, want 0", steps.calls)
+	if member.listRunsReq.IncludeSteps {
+		t.Fatal("IncludeSteps = true, want false")
 	}
 	if strings.Contains(rec.Body.String(), `"steps"`) {
 		t.Fatalf("response should omit steps by default: %s", rec.Body.String())
@@ -287,16 +311,16 @@ func TestListRunsDefaultOmitsSteps(t *testing.T) {
 
 func TestCreateRunPassesExperiment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{}
 	var gotExperiment string
 	router := gin.New()
 	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: emptyStepRepo{},
-		StartRun: func(_ context.Context, _ string, _ map[string]any, _ proto.BuiltinVars, experiment string) (string, error) {
-			gotExperiment = experiment
-			return "run-1", nil
+		Member: &fakeMemberClient{
+			submitRunFn: func(_ context.Context, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
+				gotExperiment = req.Experiment
+				return memberclient.SubmitRunResponse{RunID: "run-1"}, nil
+			},
 		},
+		ProjectRef: project.LocalRef,
 	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"yaml":"metadata:\n  name: train\n","experiment":"exp-v2"}`))
@@ -314,16 +338,18 @@ func TestCreateRunPassesExperiment(t *testing.T) {
 
 func TestCancelRunUsesCancelDependency(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusRunning}}
 	canceled := ""
 	router := gin.New()
 	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: emptyStepRepo{},
-		CancelRun: func(_ context.Context, runID string) error {
-			canceled = runID
-			return nil
+		Member: &fakeMemberClient{
+			runOK: true,
+			run:   memberclient.RunSummary{ID: "run-1", Status: StatusRunning},
+			cancelRunFn: func(_ context.Context, runID string) error {
+				canceled = runID
+				return nil
+			},
 		},
+		ProjectRef: project.LocalRef,
 	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/cancel", nil)
@@ -340,18 +366,20 @@ func TestCancelRunUsesCancelDependency(t *testing.T) {
 
 func TestRerunUsesRerunDependency(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusFailed}}
 	var gotRunID string
 	var gotFailedOnly bool
 	router := gin.New()
 	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: emptyStepRepo{},
-		RerunRun: func(_ context.Context, runID string, failedOnly bool) (string, error) {
-			gotRunID = runID
-			gotFailedOnly = failedOnly
-			return "run-2", nil
+		Member: &fakeMemberClient{
+			runOK: true,
+			run:   memberclient.RunSummary{ID: "run-1", Status: StatusFailed},
+			rerunRunFn: func(_ context.Context, runID string, failedOnly bool) (string, error) {
+				gotRunID = runID
+				gotFailedOnly = failedOnly
+				return "run-2", nil
+			},
 		},
+		ProjectRef: project.LocalRef,
 	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/rerun", nil)
@@ -390,16 +418,18 @@ func (h *stubRunHooks) BeforeGetLogs(_ context.Context, _ *http.Request, _, _ st
 func TestDeleteRun_CallsBeforeGetRunHook(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	hookCalled := ""
-	repo := &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusFailed}}
 	deleted := ""
 	router := gin.New()
 	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: emptyStepRepo{},
-		DeleteRun: func(_ context.Context, runID string) error {
-			deleted = runID
-			return nil
+		Member: &fakeMemberClient{
+			runOK: true,
+			run:   memberclient.RunSummary{ID: "run-1", Status: StatusFailed},
+			deleteRunFn: func(_ context.Context, runID string) error {
+				deleted = runID
+				return nil
+			},
 		},
+		ProjectRef: project.LocalRef,
 		Hooks: &stubRunHooks{
 			beforeGetRun: func(_ context.Context, _ *http.Request, id string) error {
 				hookCalled = id
@@ -425,16 +455,18 @@ func TestDeleteRun_CallsBeforeGetRunHook(t *testing.T) {
 
 func TestDeleteRun_HookBlocksDeletion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &capturingRunRepo{run: &Run{ID: "run-1", Status: StatusFailed}}
 	deleteCalled := false
 	router := gin.New()
 	NewHandler(HandlerDeps{
-		Runs:  repo,
-		Steps: emptyStepRepo{},
-		DeleteRun: func(_ context.Context, _ string) error {
-			deleteCalled = true
-			return nil
+		Member: &fakeMemberClient{
+			runOK: true,
+			run:   memberclient.RunSummary{ID: "run-1", Status: StatusFailed},
+			deleteRunFn: func(_ context.Context, _ string) error {
+				deleteCalled = true
+				return nil
+			},
 		},
+		ProjectRef: project.LocalRef,
 		Hooks: &stubRunHooks{
 			beforeGetRun: func(_ context.Context, _ *http.Request, _ string) error {
 				return fmt.Errorf("forbidden")

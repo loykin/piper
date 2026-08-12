@@ -14,11 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 
 	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/pkg/credential"
@@ -109,23 +104,13 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		addr = ":8080"
 	}
 
-	grpcSrv := p.grpcAgentServer.GRPCServer(append(grpcKeepaliveOptions(), p.workerTokenGRPCOptions()...)...)
-	combinedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
-			grpcSrv.ServeHTTP(w, r)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	})
-
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           combinedHandler,
+		Handler:           handler,
 		ReadHeaderTimeout: 30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// WriteTimeout is intentionally unset: SSE streaming endpoints require
-		// an unbounded write deadline. ReadTimeout is also unset because the
-		// worker's bidirectional gRPC request body stays open for its lifetime.
+		// an unbounded write deadline.
 	}
 	srv.Protocols = new(http.Protocols)
 	srv.Protocols.SetHTTP1(true)
@@ -134,9 +119,6 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 	// Graceful shutdown
 	go func() {
 		<-ctx.Done()
-		// gRPC is hosted through ServeHTTP on the shared listener. Its handler
-		// transport does not implement graceful drain; Stop closes active streams.
-		grpcSrv.Stop()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
@@ -193,7 +175,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 
 	userAPI := r.Group("/api", p.authenticateUser())
 	p.registerAuthRoutes(r, userAPI)
-	sysAdmin := p.registerAdminRoutes(userAPI)
+	p.registerAdminRoutes(userAPI)
 
 	// Project management — logged-in users can list; create/delete is system-admin.
 	project.NewHandler(p.repos.Project, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
@@ -275,25 +257,13 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 		c.Status(http.StatusNoContent)
 	})
 
-	// Run domain
+	// Run domain — Home reaches Member only through memberclient.Client
+	// (fed.md §11.3/§13.3); for the single-install case that Member is
+	// in-process (NewLocalMemberClient).
 	runHandler := run.NewHandler(run.HandlerDeps{
-		Runs:    p.repos.Run,
-		Steps:   p.repos.Step,
-		Logs:    p.logs,
-		Metrics: p.metrics,
-		StartRun: func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-			return p.startRunFromAPI(ctx, yaml, params, vars, experiment)
-		},
-		StartSweep: func(ctx context.Context, req run.SweepRequest) (run.SweepResponse, error) {
-			projectContext, _ := project.FromContext(ctx)
-			return p.startSweep(ctx, projectContext.ID, req)
-		},
-		CancelRun: p.CancelRun,
-		RerunRun:  p.RerunRun,
-		RetryStep: p.RetryStep,
-		DeleteRun: p.DeleteRun,
-		Artifacts: &piperArtifacts{p: p},
-		Hooks:     &piperRunHooks{p: p},
+		Member:     NewLocalMemberClient(p),
+		ProjectRef: project.LocalRef,
+		Hooks:      &piperRunHooks{p: p},
 	})
 	runHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
@@ -331,9 +301,6 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 		Restart:          p.notebookManager.Restart,
 		Delete:           p.notebookManager.Delete,
 		PurgeVolume:      p.notebookManager.PurgeVolume,
-		AgentRegistry:    p.agentRegistry,
-		ProxyDialer:      p.grpcAgentServer,
-		RPCSender:        p.grpcAgentServer,
 	})
 	notebookHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 	notebookHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
@@ -350,7 +317,6 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 		Notebooks:    p.repos.Notebook,
 		Schedules:    p.repos.Schedule,
 		Store:        p.store,
-		RPCSender:    p.grpcAgentServer,
 		StorageURL:   p.storageURL,
 		StorageToken: p.cfg.Storage.Token,
 		Sched:        p.scheduler,
@@ -365,10 +331,9 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	}).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 
 	// Built-in file server: expose /store/* routes only when using a LocalStore.
-	// Workers and K8s pods reach the store via HTTP using the master URL.
+	// K8s pods and Docker containers reach the store via HTTP using
+	// runtime.workload_url when Piper's built-in file store is used.
 	p.registerStoreRoutes(r)
-
-	p.registerWorkerRoutes(sysAdmin)
 
 	// JupyterLab requests /custom/custom.css as an absolute path (no base_url prefix).
 	// The file is empty by convention — it is a user customization hook.
@@ -421,50 +386,26 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
-// Handler returns a handler whose gRPC lifecycle is tied to Piper.Close.
-// Library users that own an HTTP server should prefer HandlerContext and cancel
-// its context when that server shuts down.
+// Handler returns the Piper HTTP handler for mounting on a caller-owned
+// http.Server (e.g. inside a larger application).
 //
 //	mux.Handle("/piper/", http.StripPrefix("/piper", p.Handler(nil)))
 func (p *Piper) Handler(extra http.Handler) http.Handler {
 	return p.HandlerContext(p.ctx, extra)
 }
 
-// HandlerContext returns the Piper HTTP/gRPC handler and stops its gRPC server
-// when ctx is cancelled. The context should share the parent HTTP server's
-// lifecycle so connected workers receive a deterministic shutdown.
-//
-// The caller's http.Server must enable unencrypted HTTP/2 (H2C) so that gRPC
-// workers can connect:
-//
-//	srv.Protocols = new(http.Protocols)
-//	srv.Protocols.SetHTTP1(true)
-//	srv.Protocols.SetUnencryptedHTTP2(true)
-func (p *Piper) HandlerContext(ctx context.Context, extra http.Handler) http.Handler {
-	handler, _ := p.handlerContext(ctx, extra)
-	return handler
+// HandlerContext returns the Piper HTTP handler. ctx is accepted for
+// backward-compatible call sites but is otherwise unused — the handler has
+// no background lifecycle of its own to tie to it.
+func (p *Piper) HandlerContext(_ context.Context, extra http.Handler) http.Handler {
+	return p.handlerContext(extra)
 }
 
-func (p *Piper) handlerContext(ctx context.Context, extra http.Handler) (http.Handler, <-chan struct{}) {
+func (p *Piper) handlerContext(extra http.Handler) http.Handler {
 	mgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
 	mgr.RegisterDriver(viewertb.New())
 	mgr.RegisterDriver(viewerhtml.New())
-	handler := p.newRouter(extra, mgr)
-	grpcSrv := p.grpcAgentServer.GRPCServer(append(grpcKeepaliveOptions(), p.workerTokenGRPCOptions()...)...)
-	stopped := make(chan struct{})
-	go func() {
-		<-ctx.Done()
-		grpcSrv.Stop()
-		close(stopped)
-	}()
-	combined := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
-			grpcSrv.ServeHTTP(w, r)
-			return
-		}
-		handler.ServeHTTP(w, r)
-	})
-	return combined, stopped
+	return p.newRouter(extra, mgr)
 }
 
 // ── responseRecorder ────────────────────────────────────────────────────────
@@ -583,59 +524,6 @@ func (p *Piper) requireSystemAdmin() gin.HandlerFunc {
 			return
 		}
 		c.Next()
-	}
-}
-
-// workerTokenGRPCOptions returns gRPC server options that install unary and
-// stream interceptors to verify the worker token in Authorization metadata.
-// Returns nil when no token is configured (trusted mode).
-func (p *Piper) workerTokenGRPCOptions() []grpc.ServerOption {
-	token := p.cfg.Server.WorkerToken
-	if token == "" {
-		return nil
-	}
-	check := func(ctx context.Context) error {
-		if md, ok := metadata.FromIncomingContext(ctx); ok {
-			for _, v := range md.Get("authorization") {
-				if strings.TrimPrefix(v, "Bearer ") == token {
-					return nil
-				}
-			}
-		}
-		return status.Error(codes.Unauthenticated, "invalid worker token")
-	}
-	return []grpc.ServerOption{
-		grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-			if err := check(ctx); err != nil {
-				return nil, err
-			}
-			return handler(ctx, req)
-		}),
-		grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-			if err := check(ss.Context()); err != nil {
-				return err
-			}
-			return handler(srv, ss)
-		}),
-	}
-}
-
-// grpcKeepaliveOptions returns gRPC server options enforcing conservative
-// keepalive so the master can detect a half-open worker tunnel (e.g. the
-// worker process died without a clean TCP close, or sits behind a NAT that
-// silently dropped the mapping) instead of holding a dead connection open
-// indefinitely. Unlike workerTokenGRPCOptions this is never nil — it must
-// apply regardless of whether a worker token is configured.
-func grpcKeepaliveOptions() []grpc.ServerOption {
-	return []grpc.ServerOption{
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    20 * time.Second,
-			Timeout: 10 * time.Second,
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
 	}
 }
 
@@ -868,11 +756,6 @@ func (c *piperCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Pending), "pending")
 	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Ready), "ready")
 	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Running), "running")
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc("piper_workers", "Connected Piper workers.", nil, nil),
-		prometheus.GaugeValue,
-		float64(len(c.p.agentRegistry.List())),
-	)
 }
 
 func (p *Piper) metricsHandler(c *gin.Context) {

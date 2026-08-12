@@ -1,26 +1,20 @@
-// Server mode example — run as master server
+// Server example — run Piper with baremetal direct-runtime.
 //
-// Runs piper with HTTP API and gRPC worker tunnel on one endpoint.
+// Pipeline execution runs in-process on the host — no separate worker
+// binary or gRPC tunnel involved.
 //
 //	# Start the server
 //	go run ./examples/bare-metal/server
-//
-//	# Start a worker in another terminal
-//	go run ./examples/bare-metal/worker --master=http://localhost:8080
 //
 //	# Submit a pipeline run
 //	curl -X POST http://localhost:8080/runs \
 //	  -H 'Content-Type: application/json' \
 //	  -d '{"yaml": "apiVersion: piper/v1\nkind: Pipeline\n..."}'
-//
-//	# List active agents
-//	curl http://localhost:8080/api/workers
 package main
 
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -41,6 +35,10 @@ func main() {
 			Addr:                *addr,
 			AllowInsecureDevKey: true,
 		},
+		Runtime: piper.RuntimeConfig{
+			Type:      piper.RuntimeBaremetal,
+			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: "./piper-meta"},
+		},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -51,7 +49,6 @@ func main() {
 	defer cancel()
 
 	log.Printf("piper server starting on %s", *addr)
-	fmt.Printf("LISTEN_ADDR=%s\n", *addr)
 
 	if err := p.Serve(ctx, piper.ServeOption{}); err != nil {
 		log.Fatal(err)

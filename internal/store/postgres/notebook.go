@@ -76,15 +76,6 @@ func (r *notebookRepo) List(ctx context.Context, projectID string) ([]*notebook.
 	return out, err
 }
 
-func (r *notebookRepo) ListByWorker(ctx context.Context, workerID string) ([]*notebook.NotebookServer, error) {
-	var out []*notebook.NotebookServer
-	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT ` + notebookCols + ` FROM notebook_servers WHERE worker_id=? ORDER BY created_at DESC`)
-		return db.SelectContext(ctx, &out, q, workerID)
-	})
-	return out, err
-}
-
 func (r *notebookRepo) GetByVolumeID(ctx context.Context, projectID, volumeID string) (*notebook.NotebookServer, error) {
 	var nb notebook.NotebookServer
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {

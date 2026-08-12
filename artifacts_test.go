@@ -126,7 +126,7 @@ func TestCleanupOrphanArtifacts(t *testing.T) {
 	mkDir("run-orphan-fresh", 1*time.Minute) // fresh, no DB row -> too new, kept for now
 
 	checker := &fakeExistenceChecker{existing: map[string]bool{"run-known-old": true}}
-	cleanupOrphanArtifacts(context.Background(), checker, nil, outputDir)
+	cleanupOrphanArtifacts(context.Background(), checker, outputDir)
 
 	assertExists := func(name string, want bool) {
 		t.Helper()
@@ -155,7 +155,7 @@ func TestCleanupOrphanArtifacts_excludesNamedDirs(t *testing.T) {
 	}
 
 	checker := &fakeExistenceChecker{}
-	cleanupOrphanArtifacts(context.Background(), checker, nil, outputDir, "models")
+	cleanupOrphanArtifacts(context.Background(), checker, outputDir, "models")
 
 	if _, err := os.Stat(filepath.Join(outputDir, "models")); err != nil {
 		t.Fatalf("excluded dir 'models' should survive the sweep: %v", err)
@@ -165,23 +165,209 @@ func TestCleanupOrphanArtifacts_excludesNamedDirs(t *testing.T) {
 	}
 }
 
-func TestCleanupOrphanArtifacts_skipsWhenBlobstoreConfigured(t *testing.T) {
+// TestCleanupOrphanArtifacts_SweepsWorkspaceEvenWithStoreConfigured is a
+// regression test for fed.md §13.6: the run workspace (outputDir) and the
+// artifact repository (Store) have independent lifecycles, so an orphaned
+// workspace directory must still be swept regardless of whether a Store is
+// configured — as long as the Store's own root is excluded (the caller's
+// job; see Piper.cleanupOrphanArtifacts, which computes that exclusion).
+func TestCleanupOrphanArtifacts_SweepsWorkspaceEvenWithStoreConfigured(t *testing.T) {
 	outputDir := t.TempDir()
-	dir := filepath.Join(outputDir, "run-orphan")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
 	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(dir, old, old); err != nil {
-		t.Fatalf("chtimes: %v", err)
+	for _, name := range []string{"store", "run-orphan"} {
+		dir := filepath.Join(outputDir, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatalf("chtimes %s: %v", name, err)
+		}
 	}
 
 	checker := &fakeExistenceChecker{}
-	// A non-nil storage.Store means artifacts live in a blobstore, not
-	// outputDir — the local sweep must not touch anything in that mode.
-	cleanupOrphanArtifacts(context.Background(), checker, storage.NewMemStore(), outputDir)
+	// The caller excludes "store" (the Store's own root) explicitly, exactly
+	// as Piper.cleanupOrphanArtifacts does for a LocalStore rooted under
+	// outputDir.
+	cleanupOrphanArtifacts(context.Background(), checker, outputDir, "store")
 
-	if _, err := os.Stat(dir); err != nil {
-		t.Fatalf("directory should be untouched when a blobstore is configured: %v", err)
+	if _, err := os.Stat(filepath.Join(outputDir, "store")); err != nil {
+		t.Fatalf("excluded store root should survive the sweep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "run-orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphaned workspace directory should still be removed even with a store configured, err=%v", err)
+	}
+}
+
+// TestPiperCleanupOrphanArtifacts_ExcludesDefaultLocalStoreRoot exercises
+// Piper.cleanupOrphanArtifacts (the method, not the standalone function
+// tested above) end-to-end with the default configuration — no explicit
+// storage.url — which provisions a LocalStore rooted at OutputDir/store
+// (see resolveStorageURL). The method must compute that root and exclude it
+// dynamically, not just rely on the caller passing "store" by convention.
+func TestPiperCleanupOrphanArtifacts_ExcludesDefaultLocalStoreRoot(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	if _, ok := p.store.(*storage.LocalStore); !ok {
+		t.Fatalf("expected default config to provision a LocalStore, got %T", p.store)
+	}
+
+	old := time.Now().Add(-time.Hour)
+	orphanDir := filepath.Join(p.cfg.OutputDir, "run-orphan")
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(orphanDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// Put something in the store so it's non-empty, then touch its mtime old
+	// too — if the exclusion logic is broken, the sweep would delete this.
+	ctx := context.Background()
+	if err := p.store.Put(ctx, "some-run/step/artifact/file.txt", strings.NewReader("data"), -1); err != nil {
+		t.Fatal(err)
+	}
+
+	p.cleanupOrphanArtifacts(ctx)
+
+	if _, err := os.Stat(orphanDir); !os.IsNotExist(err) {
+		t.Fatalf("orphaned workspace directory should be removed, err=%v", err)
+	}
+	if _, err := p.store.Get(ctx, "some-run/step/artifact/file.txt"); err != nil {
+		t.Fatalf("artifact repository content should survive the sweep: %v", err)
+	}
+}
+
+// TestPiperCleanupOrphanArtifacts_RelativeOutputDirExcludesStore is a
+// regression test for a real bug found during local QA (fed.md §14): when
+// OutputDir is a relative path (e.g. "./piper-data", the common case for a
+// real deployment run from a working directory — see qa-baremetal's
+// piper.yaml), filepath.Rel(p.cfg.OutputDir, ls.Root()) used to fail because
+// ls.Root() is always absolute (storage.NewLocal calls filepath.Abs), and
+// mixing a relative base with an absolute target is a filepath.Rel error.
+// The exclusion was silently skipped on that error, so the orphan sweep
+// deleted the LocalStore's own root directory — the artifact repository
+// itself, including every artifact ever uploaded.
+func TestPiperCleanupOrphanArtifacts_RelativeOutputDirExcludesStore(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	p := newTestPiper(t, Config{OutputDir: "./piper-data"})
+	if _, ok := p.store.(*storage.LocalStore); !ok {
+		t.Fatalf("expected default config to provision a LocalStore, got %T", p.store)
+	}
+
+	ctx := context.Background()
+	if err := p.store.Put(ctx, "some-run/step/artifact/file.txt", strings.NewReader("data"), -1); err != nil {
+		t.Fatal(err)
+	}
+
+	old := time.Now().Add(-time.Hour)
+	orphanDir := filepath.Join(p.cfg.OutputDir, "run-orphan")
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(orphanDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	p.cleanupOrphanArtifacts(ctx)
+
+	if _, err := p.store.Get(ctx, "some-run/step/artifact/file.txt"); err != nil {
+		t.Fatalf("artifact repository content should survive the sweep with a relative OutputDir: %v", err)
+	}
+	if _, err := os.Stat(orphanDir); !os.IsNotExist(err) {
+		t.Fatalf("orphaned workspace directory should still be removed, err=%v", err)
+	}
+}
+
+// TestPiperCleanupOrphanArtifacts_ExcludesResultsAndBaremetalMetaDir is a
+// regression test for a real bug found during local QA (fed.md §14): the
+// baremetal and docker direct-runtime drivers create a fixed ".results"
+// directory directly under OutputDir to hold every task's result/task JSON
+// (see pkg/pipeline/worker/driver/{baremetal,docker}.Start), and an operator
+// may point runtime.baremetal.meta_dir at a subdirectory of OutputDir (as
+// qa-baremetal's piper.yaml did: "./piper-data/pipeline-meta" under
+// output_dir "./piper-data"). Neither name is a run ID, so before this fix
+// the orphan sweep deleted both as "orphaned run directories" — wiping the
+// baremetal driver's process bookkeeping and result history.
+func TestPiperCleanupOrphanArtifacts_ExcludesResultsAndBaremetalMetaDir(t *testing.T) {
+	outputDir := t.TempDir()
+	p := newTestPiper(t, Config{
+		OutputDir: outputDir,
+		Runtime: RuntimeConfig{
+			Type:      RuntimeBaremetal,
+			Baremetal: BaremetalRuntimeConfig{MetaDir: filepath.Join(outputDir, "pipeline-meta")},
+		},
+	})
+
+	old := time.Now().Add(-time.Hour)
+	for _, name := range []string{".results", "pipeline-meta", "run-orphan"} {
+		dir := filepath.Join(p.cfg.OutputDir, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p.cleanupOrphanArtifacts(context.Background())
+
+	for _, name := range []string{".results", "pipeline-meta"} {
+		if _, err := os.Stat(filepath.Join(p.cfg.OutputDir, name)); err != nil {
+			t.Fatalf("%s should survive the sweep: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(p.cfg.OutputDir, "run-orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphaned workspace directory should still be removed, err=%v", err)
+	}
+}
+
+// ─── deleteArtifactsFromStore / deleteRunWorkspace (fed.md §13.6) ──────────
+
+// TestDeleteRunWorkspace_IndependentOfStore is a regression test: before the
+// fed.md §13.6 fix, run deletion only cleaned up whichever of {store,
+// workspace} matched whether a store was configured — never both — so with
+// the default LocalStore config, a deleted run's workspace directory leaked
+// forever. deleteRunWorkspace must remove it regardless of what deleteArtifactsFromStore does.
+func TestDeleteRunWorkspace_IndependentOfStore(t *testing.T) {
+	outputDir := t.TempDir()
+	runDir := filepath.Join(outputDir, "run-1")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteRunWorkspace(outputDir, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
+		t.Fatalf("workspace should be removed, err=%v", err)
+	}
+	// Idempotent: removing an already-gone workspace is not an error.
+	if err := deleteRunWorkspace(outputDir, "run-1"); err != nil {
+		t.Fatalf("second delete should be a no-op, got: %v", err)
+	}
+}
+
+func TestDeleteArtifactsFromStore_NilStoreIsNoop(t *testing.T) {
+	if err := deleteArtifactsFromStore(context.Background(), nil, "run-1"); err != nil {
+		t.Fatalf("nil store should be a no-op, got: %v", err)
+	}
+}
+
+func TestDeleteArtifactsFromStore_RemovesOnlyThatRunsKeys(t *testing.T) {
+	ctx := context.Background()
+	ms := storage.NewMemStore()
+	if err := ms.Put(ctx, "run-1/step/artifact/file.txt", strings.NewReader("a"), -1); err != nil {
+		t.Fatal(err)
+	}
+	if err := ms.Put(ctx, "run-2/step/artifact/file.txt", strings.NewReader("b"), -1); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteArtifactsFromStore(ctx, ms, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ms.Get(ctx, "run-1/step/artifact/file.txt"); err == nil {
+		t.Fatal("run-1's artifact should be gone")
+	}
+	if _, err := ms.Get(ctx, "run-2/step/artifact/file.txt"); err != nil {
+		t.Fatalf("run-2's artifact should be untouched: %v", err)
 	}
 }

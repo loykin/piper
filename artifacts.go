@@ -151,22 +151,29 @@ type runExistenceChecker interface {
 	ExistingIDs(ctx context.Context, ids []string) (map[string]bool, error)
 }
 
-// cleanupOrphanArtifacts removes local artifact directories with no matching
-// run row. deleteRunWithArtifacts now deletes the DB row before its
+// cleanupOrphanArtifacts removes local workspace directories with no
+// matching run row. deleteRunWithArtifacts now deletes the DB row before its
 // artifacts (see its comment), which trades "orphan artifact directory" for
 // "orphan DB row" as the failure mode when the two steps don't both
-// complete — this sweep is what actually reclaims the former. Only the
-// local filesystem layout is swept; blobstore-backed artifact storage (S3,
-// etc.) needs prefix enumeration with a different cost profile and isn't
-// covered here.
+// complete — this sweep is what actually reclaims the former.
+//
+// This always sweeps outputDir, regardless of whether an artifact Store is
+// configured: outputDir holds each run's own ephemeral workspace (fed.md
+// §13.6 — distinct from the immutable artifact repository), and that
+// workspace's lifetime is tied to the run's own lifecycle, not to whether
+// artifacts additionally live in a separate blobstore. Only the local
+// filesystem layout is swept; blobstore-backed artifact storage (S3, a
+// LocalStore rooted under outputDir, etc.) is a different namespace — the
+// caller is responsible for excluding it via excludeDirs (see
+// Piper.cleanupOrphanArtifacts).
 //
 // excludeDirs lists non-run subdirectories that legitimately live under
 // outputDir and must never be swept, no matter their age — for example the
-// default serving model dir (outputDir/models, see Piper.modelDir). A run ID
-// never collides with these names, so excluding them by exact basename is
-// safe.
-func cleanupOrphanArtifacts(ctx context.Context, repo runExistenceChecker, st storage.Store, outputDir string, excludeDirs ...string) {
-	if st != nil || outputDir == "" {
+// default serving model dir (outputDir/models, see Piper.modelDir) or a
+// LocalStore's own root. A run ID never collides with these names, so
+// excluding them by exact basename is safe.
+func cleanupOrphanArtifacts(ctx context.Context, repo runExistenceChecker, outputDir string, excludeDirs ...string) {
+	if outputDir == "" {
 		return
 	}
 	entries, err := os.ReadDir(outputDir)
@@ -217,22 +224,37 @@ func cleanupOrphanArtifacts(ctx context.Context, repo runExistenceChecker, st st
 	}
 }
 
-// deleteArtifacts removes all artifact files for a run.
-// Uses the blobstore if configured; falls back to local filesystem.
-func deleteArtifacts(ctx context.Context, st storage.Store, outputDir, runID string) error {
-	if st != nil {
-		// List all keys under runID/ and delete them.
-		objs, err := st.List(ctx, runID+"/")
-		if err != nil {
-			return err
-		}
-		if len(objs) > 0 {
-			keys := make([]string, len(objs))
-			for i, o := range objs {
-				keys[i] = o.Key
-			}
-			return st.Delete(ctx, keys...)
-		}
+// deleteArtifactsFromStore removes a run's artifact copies from the
+// artifact repository (Store) only — used by artifactTTL retention, which
+// must retire a run's artifact blobs without disturbing the run's own
+// record or workspace (fed.md §13.6: the two have independent lifecycles).
+// A nil store is a no-op: with no artifact repository configured, there is
+// nothing here to delete — deleteRunWorkspace covers the workspace copy
+// once the run itself expires via runTTL.
+func deleteArtifactsFromStore(ctx context.Context, st storage.Store, runID string) error {
+	if st == nil {
+		return nil
+	}
+	objs, err := st.List(ctx, runID+"/")
+	if err != nil {
+		return err
+	}
+	if len(objs) == 0 {
+		return nil
+	}
+	keys := make([]string, len(objs))
+	for i, o := range objs {
+		keys[i] = o.Key
+	}
+	return st.Delete(ctx, keys...)
+}
+
+// deleteRunWorkspace removes a run's local ephemeral workspace directory —
+// independent of whether an artifact Store is configured, since the
+// workspace's lifetime is tied to the run's own lifecycle (runTTL / explicit
+// deletion), not to the separate artifact repository's (artifactTTL).
+func deleteRunWorkspace(outputDir, runID string) error {
+	if outputDir == "" {
 		return nil
 	}
 	runDir := filepath.Join(outputDir, runID)

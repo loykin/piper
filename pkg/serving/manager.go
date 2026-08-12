@@ -3,7 +3,6 @@ package serving
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/internal/event"
@@ -150,31 +149,6 @@ func (m *Manager) UpdateStatus(ctx context.Context, projectID, agentID, name, st
 	}
 	m.emit(projectID, "service.status", map[string]any{"name": name, "status": status})
 	return nil
-}
-
-func (m *Manager) SyncAgent(ctx context.Context, agentID string) {
-	syncer, ok := m.driver.(StatusSyncer)
-	if !ok {
-		return
-	}
-	services, err := m.repo.ListByWorker(ctx, agentID)
-	if err != nil {
-		return
-	}
-	active := make([]*Service, 0)
-	for _, svc := range services {
-		if svc.WorkerID == agentID && svc.Status != StatusStopped {
-			active = append(active, svc)
-		}
-	}
-	if len(active) == 0 {
-		return
-	}
-	_ = syncer.SyncStatus(ctx, active, func(projectID, name, status string) {
-		if err := m.UpdateStatus(ctx, projectID, agentID, name, status, ""); err != nil {
-			slog.Warn("serving sync apply failed", "agent", agentID, "project", projectID, "name", name, "status", status, "err", err)
-		}
-	})
 }
 
 func (m *Manager) emit(projectID, eventType string, fields map[string]any) {

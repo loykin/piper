@@ -106,6 +106,18 @@ func New(cfg Config) (*Piper, error) {
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = def.OutputDir
 	}
+	// OutputDir must be absolute: it backs Docker bind-mount sources (which
+	// reject relative host paths outright — see the docker driver's
+	// ".results" mount) and is compared against a LocalStore's always-absolute
+	// Root() during the orphan-artifact sweep. Resolving it once here, rather
+	// than expecting every downstream consumer to know to do it, is what a
+	// relative output_dir (the common case — see config/piper.yaml's default
+	// "./piper-data") requires to work with every runtime.type.
+	if abs, err := filepath.Abs(cfg.OutputDir); err != nil {
+		return nil, fmt.Errorf("resolve output dir: %w", err)
+	} else {
+		cfg.OutputDir = abs
+	}
 	if cfg.Server.Addr == "" {
 		cfg.Server.Addr = def.Server.Addr
 	}
@@ -349,6 +361,7 @@ func New(cfg Config) (*Piper, error) {
 		runRepo:    repos.Run,
 		outputDir:  cfg.OutputDir,
 		storageURL: p.storageURL,
+		store:      p.store,
 	}
 	var runtimeObserver interface{ Observe(context.Context) }
 	switch cfg.Runtime.Type {
@@ -569,15 +582,65 @@ func (p *Piper) runCleanup(ctx context.Context) {
 	}
 }
 
+// artifactCacheDirName is where piperArtifactResolver stages a local copy of
+// an artifact when the configured Store is remote (S3/HTTP/cloud) — a
+// subdirectory of OutputDir, distinct from both the per-run workspace and
+// the Store itself, so it needs its own exclusion from the orphan sweep
+// (see Piper.cleanupOrphanArtifacts).
+const artifactCacheDirName = "artifact-cache"
+
 // cleanupOrphanArtifacts sweeps outputDir for run directories with no
-// matching DB row, excluding the default serving model dir (outputDir/models)
-// when Serving.ModelDir wasn't overridden to point elsewhere — see modelDir().
+// matching DB row, excluding:
+//   - the default serving model dir (outputDir/models) when Serving.ModelDir
+//     wasn't overridden to point elsewhere — see modelDir().
+//   - artifactCacheDirName, the local staging cache for remote-store reads.
+//   - ".results", the fixed bookkeeping directory the baremetal and docker
+//     direct-runtime drivers create directly under OutputDir to hold each
+//     task's result/task JSON — not a run's workspace, and not swept even
+//     though its name never matches a run ID.
+//   - a LocalStore's own root, when one is configured and happens to live
+//     directly under outputDir (the default) — that directory is the
+//     artifact repository itself, not a run's workspace, and must never be
+//     swept by run-ID existence (fed.md §13.6).
+//   - runtime.baremetal.meta_dir, when the operator configured it as a
+//     subdirectory of outputDir — it holds the baremetal driver's process
+//     registry, not a run's workspace.
+//
+// Excluding a directory requires comparing it against outputDir; both sides
+// are resolved to absolute paths first, since outputDir is commonly a
+// relative path (e.g. "./piper-data") while a store's Root() is always
+// absolute (storage.NewLocal calls filepath.Abs) — comparing a relative
+// outputDir against an absolute root made filepath.Rel fail and silently
+// skip the exclusion, which is what let the sweep delete the store itself.
 func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
-	var exclude []string
+	exclude := []string{artifactCacheDirName, ".results"}
 	if p.cfg.Serving.ModelDir == "" {
 		exclude = append(exclude, "models")
 	}
-	cleanupOrphanArtifacts(ctx, p.repos.Run, p.store, p.cfg.OutputDir, exclude...)
+	absOutputDir, err := filepath.Abs(p.cfg.OutputDir)
+	if err != nil {
+		slog.Warn("cleanupOrphanArtifacts: resolve absolute output dir failed, skipping sweep", "err", err)
+		return
+	}
+	excludeUnderOutputDir := func(dir string) {
+		if dir == "" {
+			return
+		}
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			return
+		}
+		if rel, err := filepath.Rel(absOutputDir, absDir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			exclude = append(exclude, strings.Split(rel, string(filepath.Separator))[0])
+		}
+	}
+	if ls, ok := p.store.(*storage.LocalStore); ok {
+		excludeUnderOutputDir(ls.Root())
+	}
+	if p.cfg.Runtime.Type == RuntimeBaremetal {
+		excludeUnderOutputDir(p.cfg.Runtime.Baremetal.MetaDir)
+	}
+	cleanupOrphanArtifacts(ctx, p.repos.Run, p.cfg.OutputDir, exclude...)
 }
 
 type jobReconciler interface {
@@ -792,7 +855,10 @@ func (p *Piper) cleanupRetention(ctx context.Context) {
 					continue
 				}
 				if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
-					if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, r.ID); err != nil {
+					// Store only: artifactTTL retires the artifact repository
+					// copy, not the run's own workspace/record — that's
+					// runTTL's job, above (fed.md §13.6).
+					if err := deleteArtifactsFromStore(ctx, p.store, r.ID); err != nil {
 						slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
 					}
 				}
@@ -1232,7 +1298,8 @@ func (p *Piper) Repos() *storemod.Repos { return p.repos }
 type piperArtifactResolver struct {
 	runRepo    run.Repository
 	outputDir  string
-	storageURL string // resolved storage URL; empty means local-only
+	storageURL string        // resolved storage URL; empty means local-only
+	store      storage.Store // nil when storage is disabled
 }
 
 func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, artName, runRef string, target artifact.Target) (artifact.Resolved, error) {
@@ -1273,12 +1340,38 @@ func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, art
 		}
 		return resolved, nil
 	default:
-		// LocalPath points to the step output directory.
-		return artifact.Resolved{
-			RunID:     runID,
-			LocalPath: filepath.Join(r.outputDir, runID, step),
-		}, nil
+		return r.resolveLocal(ctx, runID, step, artKey)
 	}
+}
+
+// resolveLocal produces a local filesystem directory for artKey, preferring
+// the artifact repository (Store) over the ephemeral per-run workspace
+// (r.outputDir/runID/step) — the workspace is not guaranteed to survive
+// artifactTTL cleanup, and with a non-local store the runner already deletes
+// it right after upload (see pkg/pipeline/worker/agent's cleanWorkdir), so
+// it cannot be treated as a durable copy (fed.md §13.6).
+func (r *piperArtifactResolver) resolveLocal(ctx context.Context, runID, step, artKey string) (artifact.Resolved, error) {
+	if ls, ok := r.store.(*storage.LocalStore); ok {
+		// Same host, same disk: the store already holds a durable copy under
+		// this exact key — use it directly, no copy needed.
+		return artifact.Resolved{RunID: runID, LocalPath: filepath.Join(ls.Root(), artKey)}, nil
+	}
+	if r.store != nil {
+		// Remote store (S3/HTTP/cloud): stage a local copy once, under a
+		// cache directory distinct from both the workspace and the store,
+		// and reuse it on subsequent resolutions of the same artifact
+		// instead of re-downloading every time.
+		dest := filepath.Join(r.outputDir, artifactCacheDirName, filepath.FromSlash(artKey))
+		if _, err := os.Stat(dest); err == nil {
+			return artifact.Resolved{RunID: runID, LocalPath: dest}, nil
+		}
+		if err := storage.DownloadDir(ctx, r.store, artKey+"/", dest); err != nil {
+			return artifact.Resolved{}, fmt.Errorf("stage local copy of %s: %w", artKey, err)
+		}
+		return artifact.Resolved{RunID: runID, LocalPath: dest}, nil
+	}
+	// No store configured at all: only the raw workspace copy exists.
+	return artifact.Resolved{RunID: runID, LocalPath: filepath.Join(r.outputDir, runID, step)}, nil
 }
 
 // artifactURI constructs a URI for the artifact key based on the configured storage.

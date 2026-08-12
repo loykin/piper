@@ -167,6 +167,70 @@ which federates *management* across separate Piper installations — see
   that doesn't come from the runtime the master actually assigned the task
   to, and ignores duplicate/stale/future-attempt reports.
 
+## Workspace vs. Artifact Repository (fed.md §13.6)
+
+Two distinct, independently-lifecycled things live under `OutputDir`, and
+code that reads or cleans up local files must be deliberate about which one
+it means:
+
+- **Workspace** (`OutputDir/<runID>/<step>/`): the ephemeral directory a
+  step's own process/container writes to while running. Tied to the run's
+  lifecycle — cleaned up by `runTTL` (via `deleteRunWorkspace`, called from
+  `deleteRunWithArtifacts`/`deleteRunsWithArtifacts`) or by the orphan sweep
+  (`cleanupOrphanArtifacts`, which now always runs regardless of whether a
+  Store is configured — it used to no-op whenever any Store existed, which
+  silently leaked every run's workspace directory forever under the default
+  config).
+- **Artifact repository** (`p.store`, a `storage.Store` — `LocalStore`
+  rooted at `OutputDir/store` by default, or S3/HTTP/cloud when configured):
+  the durable, keyed (`{runID}/{step}/{artifactName}/…`) copy that
+  `uploadOutputs` (`pkg/pipeline/worker/agent/runner.go`) writes after each
+  step completes, for every runtime including baremetal. Cleaned up by
+  `artifactTTL` (via `deleteArtifactsFromStore`) — independently of
+  `runTTL`, so an expired artifact doesn't have to take the run record with
+  it, and vice versa.
+
+`piperArtifactResolver.Resolve`'s `TargetLocal` case (`resolveLocal`) is the
+one place that reads a local artifact back out, and it must prefer the
+repository over the workspace whenever a `Store` exists:
+
+- `Store` is a `*storage.LocalStore`: read directly from `store.Root()` —
+  same host, same disk, no copy needed.
+- `Store` is remote (S3/HTTP/cloud): stage a local copy once, under
+  `OutputDir/artifact-cache/…` (`artifactCacheDirName`), and reuse it on
+  later resolutions instead of re-downloading. This is required, not an
+  optimization: `pkg/pipeline/worker/agent.Runner` sets `cleanWorkdir=true`
+  whenever the store isn't a `LocalStore` and deletes the step's workspace
+  copy right after upload — so for a remote store, the workspace is *already
+  gone* by the time anything resolves `TargetLocal` later (e.g. a baremetal
+  or Docker `ModelService` deploying `from_artifact`, since that driver's
+  `ArtifactTarget()` is unconditionally `TargetLocal`). Reading from the
+  workspace in this case doesn't just risk a stale copy, it fails outright.
+- No `Store` at all: only the workspace copy exists — read from there, same
+  as before this distinction existed.
+
+Because the repository can live inside `OutputDir` (the default `store`
+subdirectory) and the cache directory always does, both must be excluded
+from `cleanupOrphanArtifacts`'s run-ID sweep — `Piper.cleanupOrphanArtifacts`
+computes the `LocalStore` exclusion dynamically via `filepath.Rel` (it isn't
+always literally named `store`; a custom `storage.url` can point anywhere
+under `OutputDir`), always excludes `artifactCacheDirName` and `.results`
+(the fixed bookkeeping dir the baremetal/docker drivers write task/result
+JSON to — see `pkg/pipeline/worker/driver/{baremetal,docker}.Start`), and
+dynamically excludes `runtime.baremetal.meta_dir` when it's nested under
+`OutputDir`.
+
+**`OutputDir` is always resolved to an absolute path in `New()`**, right
+after the config default is applied — a real local QA pass (fed.md §14)
+found that leaving it relative (`./piper-data`, the documented default)
+broke this in two ways: `filepath.Rel` against a relative base and
+`storage.NewLocal`'s always-absolute `Root()` errors out, which the
+exclusion logic silently swallowed and let the sweep delete the store
+itself; and Docker's bind-mount source must be absolute outright, so
+`runtime.type: docker` couldn't even start a container. Don't reintroduce a
+relative-`OutputDir` code path anywhere downstream — rely on the
+already-absolute `cfg.OutputDir` instead of re-deriving or re-validating it.
+
 ## Manifest Rules
 
 "Manifest" refers to the shared YAML kind envelope that `Pipeline`,
@@ -183,7 +247,14 @@ which federates *management* across separate Piper installations — see
   `spec.driver` on all three kinds. `PlacementSpec.Worker`/`.Label` still
   exist as struct fields (parsed for backward YAML compatibility) but are
   rejected by every domain's `ValidateDirectPlacement` — there is no runtime
-  that honors them anymore.
+  that honors them anymore. Stored manifests from before this change can
+  still carry a non-empty `placement.worker`/`.label` in their saved YAML
+  text (Pipeline templates, Notebook records, ModelService records) —
+  `internal/manifestmigrate` (`piper manifest migrate [--apply]`, fed.md
+  §13.6) scans and cleans those up. Notebook/ModelService are rewritten in
+  place; Pipeline templates get a new version with the field removed rather
+  than a mutated old version, since template versions are otherwise
+  immutable everywhere else in the codebase.
 - Fields actually enforced by each kind's `Validate()`:
   - Pipeline: `metadata.name` required; ≥1 step; unique step names;
     `depends_on` must reference known steps; each `driver.placement.runtime`

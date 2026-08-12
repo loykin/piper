@@ -93,6 +93,26 @@ func TestNewRequiresCredentialEncryptionKeyUnlessDevOptIn(t *testing.T) {
 	}
 }
 
+// TestNew_ResolvesRelativeOutputDirToAbsolute is a regression test for a real
+// bug found during local QA (fed.md §14): a relative output_dir (the
+// documented default, "./piper-data" — see config/piper.yaml) worked fine for
+// runtime.type: baremetal but broke runtime.type: docker, because the docker
+// driver bind-mounts OutputDir/.results into the container and Docker's
+// daemon rejects a relative bind-mount source outright ("mount path must be
+// absolute"). New() must resolve OutputDir to an absolute path once, up
+// front, so every downstream consumer (Docker mounts, the orphan-sweep's
+// LocalStore-root comparison) sees an absolute path regardless of how the
+// operator wrote output_dir in config.
+func TestNew_ResolvesRelativeOutputDirToAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	p := newTestPiper(t, Config{OutputDir: "./relative-output"})
+	if !filepath.IsAbs(p.cfg.OutputDir) {
+		t.Fatalf("OutputDir = %q, want an absolute path", p.cfg.OutputDir)
+	}
+}
+
 func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 	outputDir := t.TempDir()
 	p := newTestPiper(t, Config{OutputDir: outputDir})

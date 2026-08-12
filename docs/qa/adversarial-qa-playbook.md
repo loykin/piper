@@ -53,6 +53,11 @@ the running system and its public interfaces.
   `runtime.type`**, each against its own separately configured instance
   (three passes, not one) — a bug in the Docker or Kubernetes driver is
   invisible from a baremetal-only pass, and vice versa.
+- A single-instance pass (§1-§7) covers a standalone installation's own
+  execution correctness. It does **not** cover Home↔Member behavior — for
+  that, run §2b separately against an actual multi-host or multi-container
+  Home+Member deployment. Don't skip §2b just because three `runtime.type`
+  passes were completed; they test different things.
 
 ## The procedure
 
@@ -89,6 +94,60 @@ exactly one runtime, so there is only ever one candidate. What replaces it:
   (e.g. a `driver.k8s` block on a `docker`-runtime installation). Confirm
   the extra block is either rejected or cleanly ignored — not silently
   misinterpreted as if it were the active runtime's config.
+
+### 2b. Probe Home-Member protocol, permission delegation, and partial failure
+
+A Piper installation can run as a Home (owns Project routing across
+enrolled Members) or as a Member (owns direct execution for its enrolled
+Projects), connected over the outbound tunnel described in fed.md §13.3-§13.5.
+This is a fundamentally different failure surface from single-installation
+`runtime.type` QA above — it requires an actual multi-host or
+multi-container Home+Member deployment, not a single local instance, so
+treat it as its own pass rather than folding it into a `runtime.type` pass:
+
+- **Enrollment and detach are audited, not silent.** Enroll a Member,
+  detach it, and re-enroll it under a new `HomeID`. Confirm each transition
+  produces an audit record (fed.md §13.5) — a Home config edit that changes
+  which Member owns a Project must never be a config-file-only change with
+  no trace.
+- **Tunnel disconnect mid-execution.** Start a long-running pipeline/notebook
+  on a Member, then kill the tunnel connection (stop the Member process,
+  block the port, whatever severs it at the transport level — not a clean
+  shutdown). Confirm: the run keeps executing on the Member (it does not
+  abort just because the tunnel dropped), the Home's UI clearly shows the
+  Project as unreachable rather than silently going stale, and reconnecting
+  the tunnel resyncs the Home's view of the run's actual current state
+  (not just resuming from whatever the Home last cached).
+- **Permission delegation and revocation.** Grant a user access to a Project
+  owned by a Member, confirm they can act on it through the Home, then
+  revoke that access and confirm the *next* request is rejected — both at
+  the Home (routing layer) and, separately, verify the Member itself would
+  also reject a request that somehow reached it directly without a valid
+  delegation (target-side verification per fed.md §13.7 — the Member must
+  not trust the Home's routing decision blindly).
+- **Mutation timeout and idempotent retry.** Trigger a mutation (e.g. submit
+  a run) against a Member that is slow or unreachable, let the Home's
+  request time out, then retry the identical mutation. Confirm the retry is
+  idempotent — it must not double-submit the run once the Member becomes
+  reachable again.
+- **Partial Member unavailability in aggregate views.** With at least two
+  Members enrolled, take one offline and load a Home-level view that
+  aggregates across Projects/Members (dashboards, cross-project lists).
+  Confirm the unavailable Member's Projects are clearly marked unreachable
+  rather than silently omitted (which reads as "everything is fine") or
+  causing the whole view to error out (one bad Member should not take down
+  visibility into the healthy ones).
+- **Home HA, if configured.** If the deployment has more than one Home
+  endpoint for HA, fail over between them and confirm a Member reconnecting
+  to the new endpoint is verified against the same `HomeID` — a Member must
+  refuse to attach to an endpoint claiming a different identity, even if
+  it's otherwise reachable.
+
+This list replaces the old worker-candidate-combination and
+placement-ambiguity QA that made sense when multiple workers could compete
+for the same job — that dispatch model no longer exists (see §2 above), and
+the interesting failure modes now live at the Home↔Member trust and
+connectivity boundary instead.
 
 ### 3. Test every degenerate/zero state you can construct
 

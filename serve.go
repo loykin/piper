@@ -877,8 +877,11 @@ func (p *Piper) deleteRunWithArtifacts(ctx context.Context, runID string) error 
 	if err := p.repos.DeleteRun(ctx, projectContext.ID, runID); err != nil {
 		return err
 	}
-	if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, runID); err != nil {
+	if err := deleteArtifactsFromStore(ctx, p.store, runID); err != nil {
 		slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
+	}
+	if err := deleteRunWorkspace(p.cfg.OutputDir, runID); err != nil {
+		slog.Warn("delete run workspace failed", "run_id", runID, "err", err)
 	}
 	return nil
 }
@@ -889,8 +892,11 @@ func (p *Piper) deleteRunsWithArtifacts(ctx context.Context, runIDs []string) er
 		return err
 	}
 	for _, runID := range runIDs {
-		if err := deleteArtifacts(ctx, p.store, p.cfg.OutputDir, runID); err != nil {
+		if err := deleteArtifactsFromStore(ctx, p.store, runID); err != nil {
 			slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
+		}
+		if err := deleteRunWorkspace(p.cfg.OutputDir, runID); err != nil {
+			slog.Warn("delete run workspace failed", "run_id", runID, "err", err)
 		}
 	}
 	return nil

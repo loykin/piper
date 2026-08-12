@@ -63,9 +63,6 @@ func (r *stubServingRepo) List(_ context.Context, _ string) ([]*Service, error) 
 	}
 	return out, nil
 }
-func (r *stubServingRepo) ListByWorker(_ context.Context, _ string) ([]*Service, error) {
-	return r.List(context.Background(), "")
-}
 func (r *stubServingRepo) Delete(_ context.Context, _, name string) error {
 	delete(r.services, name)
 	return nil

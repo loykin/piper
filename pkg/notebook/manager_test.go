@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// errDriverUnavailable is a stand-in error for tests exercising the "driver
+// returned an error" path, independent of what specifically caused it.
+var errDriverUnavailable = errors.New("notebook: driver unavailable")
+
 // ─── In-memory fakes ──────────────────────────────────────────────────────────
 
 type fakeRepo struct {
@@ -79,19 +83,6 @@ func (r *fakeRepo) List(_ context.Context, _ string) ([]*NotebookServer, error) 
 	for _, nb := range r.servers {
 		cp := *nb
 		out = append(out, &cp)
-	}
-	return out, nil
-}
-
-func (r *fakeRepo) ListByWorker(_ context.Context, workerID string) ([]*NotebookServer, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var out []*NotebookServer
-	for _, nb := range r.servers {
-		if nb.WorkerID == workerID {
-			cp := *nb
-			out = append(out, &cp)
-		}
 	}
 	return out, nil
 }
@@ -591,13 +582,13 @@ func TestManager_Stop_RunningServer(t *testing.T) {
 func TestManager_Stop_DriverFailureRestoresObservedStatus(t *testing.T) {
 	repo := newFakeRepo()
 	drv := newFakeDriver()
-	drv.stopErr = ErrAgentUnavailable
+	drv.stopErr = errDriverUnavailable
 	m := New(repo, newFakeVols(), drv)
 	ctx := context.Background()
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-offline", Status: StatusRunning})
 
-	if err := m.Stop(ctx, "project-a", "nb-offline"); !errors.Is(err, ErrAgentUnavailable) {
-		t.Fatalf("Stop() error = %v, want ErrAgentUnavailable", err)
+	if err := m.Stop(ctx, "project-a", "nb-offline"); !errors.Is(err, errDriverUnavailable) {
+		t.Fatalf("Stop() error = %v, want errDriverUnavailable", err)
 	}
 	nb := repo.get("nb-offline")
 	if nb == nil {
@@ -738,7 +729,7 @@ func TestManager_Delete_DoesNotRemoveRecordWhenStopFails(t *testing.T) {
 	repo := newFakeRepo()
 	vols := newFakeVols()
 	drv := newFakeDriver()
-	drv.stopErr = ErrAgentUnavailable
+	drv.stopErr = errDriverUnavailable
 	m := New(repo, vols, drv)
 	ctx := context.Background()
 

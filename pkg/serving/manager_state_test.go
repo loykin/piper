@@ -55,9 +55,6 @@ func (r *stateTestRepo) List(context.Context, string) ([]*Service, error) {
 	}
 	return []*Service{cloneService(r.service)}, nil
 }
-func (r *stateTestRepo) ListByWorker(context.Context, string) ([]*Service, error) {
-	return r.List(context.Background(), "")
-}
 func (r *stateTestRepo) Delete(context.Context, string, string) error { r.service = nil; return nil }
 func (r *stateTestRepo) ListHistory(context.Context, string) ([]*ServiceHistory, error) {
 	return nil, nil

@@ -31,30 +31,27 @@ func newUserCmd(loader *cliconfig.Loader) *cobra.Command {
 	return cmd
 }
 
-// openAuthProvider opens the configured database and returns an auth.Provider.
-// It opens the DB directly — no Piper instance is created — so background
-// goroutines and queue loops are not started.
-func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, error) {
-	cfg, loadErr := loader.Load()
-	if loadErr != nil {
-		return nil, nil, loadErr
-	}
+// openRepos opens the configured database directly — no Piper instance is
+// created, so background goroutines and queue loops are not started — and
+// returns the fully-wired Repos. Shared by any CLI command that needs direct
+// DB access without running a server (user management, manifest migration).
+func openRepos(cfg cliconfig.RootConfig) (*storemod.Repos, error) {
 	driver := cfg.Server.DB.Driver
 	if driver == "" {
 		driver = "sqlite"
 	}
 
-	var (
-		repos *storemod.Repos
-		err   error
-	)
 	switch driver {
 	case "postgres":
 		dsn := cfg.Server.DB.DSN
 		if dsn == "" {
-			return nil, nil, fmt.Errorf("db.dsn is required for postgres")
+			return nil, fmt.Errorf("db.dsn is required for postgres")
 		}
-		repos, err = storemod.OpenPostgres(dsn)
+		repos, err := storemod.OpenPostgres(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open db: %w", err)
+		}
+		return repos, nil
 	default:
 		dbFile := cfg.Server.DB.Path
 		if dbFile == "" {
@@ -65,12 +62,25 @@ func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, e
 			dbFile = filepath.Join(outputDir, "piper.db")
 		}
 		if err := os.MkdirAll(filepath.Dir(dbFile), 0755); err != nil {
-			return nil, nil, fmt.Errorf("create database directory for %q: %w", dbFile, err)
+			return nil, fmt.Errorf("create database directory for %q: %w", dbFile, err)
 		}
-		repos, err = storemod.Open(dbFile)
+		repos, err := storemod.Open(dbFile)
+		if err != nil {
+			return nil, fmt.Errorf("open db: %w", err)
+		}
+		return repos, nil
 	}
+}
+
+// openAuthProvider opens the configured database and returns an auth.Provider.
+func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, error) {
+	cfg, loadErr := loader.Load()
+	if loadErr != nil {
+		return nil, nil, loadErr
+	}
+	repos, err := openRepos(cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open db: %w", err)
+		return nil, nil, err
 	}
 	closeOnError := true
 	defer func() {
@@ -78,6 +88,11 @@ func openAuthProvider(loader *cliconfig.Loader) (*auth.Provider, func() error, e
 			_ = repos.Close()
 		}
 	}()
+
+	driver := cfg.Server.DB.Driver
+	if driver == "" {
+		driver = "sqlite"
+	}
 
 	signingKey := cfg.Server.AuthSigningKey
 	if signingKey == "" {

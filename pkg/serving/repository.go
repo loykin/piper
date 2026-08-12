@@ -11,7 +11,6 @@ type Repository interface {
 	SetStatus(ctx context.Context, projectID, name, status string) error
 	SetStatusEndpoint(ctx context.Context, projectID, name, status, endpoint string) error
 	List(ctx context.Context, projectID string) ([]*Service, error)
-	ListByWorker(ctx context.Context, workerID string) ([]*Service, error)
 	Delete(ctx context.Context, projectID, name string) error
 	ListHistory(ctx context.Context, projectID string) ([]*ServiceHistory, error)
 }

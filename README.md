@@ -577,6 +577,7 @@ piper parse pipeline.yaml      Validate a pipeline manifest
 piper run pipeline.yaml        Run a pipeline locally
 piper server                   Start the API and UI
 piper user                     Manage local users
+piper manifest migrate         Find/fix stored manifests with a removed placement.worker/label field
 ```
 
 The configuration file is the only global operational option:

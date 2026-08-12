@@ -458,35 +458,6 @@ func (m *Manager) UpdateStatus(ctx context.Context, projectID, agentID, name, st
 	return nil
 }
 
-// SyncAgent requests current notebook status from a specific agent.
-// Called when an agent (re)connects so master DB reflects any state changes
-// that occurred while the agent was offline or gRPC was disconnected.
-func (m *Manager) SyncAgent(ctx context.Context, agentID string) {
-	syncer, ok := m.driver.(StatusSyncer)
-	if !ok {
-		return
-	}
-	servers, err := m.repo.ListByWorker(ctx, agentID)
-	if err != nil {
-		return
-	}
-	active := make([]*NotebookServer, 0)
-	for _, s := range servers {
-		if s.WorkerID == agentID && (s.Status == StatusStarting || s.Status == StatusRunning || s.Status == StatusStopping) {
-			active = append(active, s)
-		}
-	}
-	if len(active) == 0 {
-		return
-	}
-	apply := func(projectID, name, status string) {
-		if err := m.UpdateStatus(ctx, projectID, agentID, name, status, "", "", "", 0, ""); err != nil {
-			slog.Warn("notebook sync apply failed", "agent", agentID, "project", projectID, "name", name, "status", status, "err", err)
-		}
-	}
-	_ = syncer.SyncStatus(ctx, active, apply)
-}
-
 func (m *Manager) emit(projectID, eventType string, fields map[string]any) {
 	if m.events != nil {
 		m.events.Publish(event.New(projectID, eventType, fields))

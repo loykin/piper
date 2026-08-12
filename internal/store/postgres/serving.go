@@ -110,15 +110,6 @@ func (r *servingRepo) List(ctx context.Context, projectID string) ([]*serving.Se
 	return out, err
 }
 
-func (r *servingRepo) ListByWorker(ctx context.Context, workerID string) ([]*serving.Service, error) {
-	var out []*serving.Service
-	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT ` + serviceSelectCols + ` FROM services WHERE worker_id=? ORDER BY created_at DESC`)
-		return db.SelectContext(ctx, &out, q, workerID)
-	})
-	return out, err
-}
-
 func (r *servingRepo) Delete(ctx context.Context, projectID, name string) error {
 	var svc serving.Service
 	if err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {

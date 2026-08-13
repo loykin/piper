@@ -55,26 +55,30 @@ func requireBinary(t *testing.T) string {
 	return p
 }
 
-// TestBinaryE2E_WorkerS3ConfigFromFile is the primary regression guard for the
-// bug where buildConfig() in main.go executed before cobra's initConfig() loaded
-// the config file. As a result the piper instance had empty S3 credentials and
-// the worker silently skipped all artifact uploads.
+// TestBinaryE2E_ServerS3ConfigFromFile is the regression guard for the bug
+// where buildConfig() in main.go executed before cobra's initConfig() loaded
+// the config file — the piper instance ended up with empty S3 credentials
+// and silently skipped all artifact uploads. There is no longer a separate
+// `piper worker` subprocess (direct-runtime execution now happens in-process
+// inside `piper server` — see fed.md §13.2-§13.8), so this exercises the
+// same ordering hazard against `piper server` itself: it's the only process
+// left whose config load order this bug class could still regress in.
 //
 // The test verifies the full CLI path:
-//  1. Write a real piper.yaml with S3 credentials.
+//  1. Write a real piper.yaml with S3 credentials and runtime.type: baremetal.
 //  2. Start `piper server --config piper.yaml` as a subprocess.
-//  3. Start `piper worker --config piper.yaml` as a subprocess.
-//  4. Submit a pipeline that produces an output artifact.
-//  5. Assert that the artifact appears in fake-S3.
+//  3. Submit a pipeline that produces an output artifact.
+//  4. Assert that the artifact appears in fake-S3.
 //
-// If the bug regresses (worker reads S3 from a pre-built piper instance instead
-// of from viper in RunE), r.s3 will be nil and step 5 will fail.
-func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
+// If the bug regresses (the server reads S3 config from a pre-built Config
+// instead of from viper after initConfig() runs), the storage client will be
+// nil/misconfigured and step 4 will fail.
+func TestBinaryE2E_ServerS3ConfigFromFile(t *testing.T) {
 	binary := requireBinary(t)
 
 	const bucket = "piper-binary-e2e"
 
-	// gofakes3 listens on a real TCP port so the worker subprocess can reach it.
+	// gofakes3 listens on a real TCP port so the server subprocess can reach it.
 	s3Srv := testutil.NewIPv4Server(t, gofakes3.New(s3mem.New()).Server())
 
 	s3Endpoint := strings.TrimPrefix(s3Srv.URL, "http://")
@@ -85,7 +89,7 @@ func TestBinaryE2E_WorkerS3ConfigFromFile(t *testing.T) {
 		t.Fatalf("create S3 bucket: %v", err)
 	}
 
-	// workDir becomes the CWD for both subprocesses.
+	// workDir becomes the CWD for the subprocess.
 	// The server's SQLite DB lands at workDir/piper-outputs/piper.db (default).
 	workDir := t.TempDir()
 	serverPort := freeLocalPort(t)
@@ -100,12 +104,11 @@ server:
   allow_insecure_dev_key: true
 storage:
   url: "s3://%s?endpoint=http://%s&s3ForcePathStyle=true&accessKey=test&secretKey=test"
-worker:
-  master_url: %q
-  baremetal: {}
-  capabilities:
-    pipeline: {}
-`, fmt.Sprintf("127.0.0.1:%d", serverPort), bucket, s3Endpoint, serverURL))
+runtime:
+  type: baremetal
+  baremetal:
+    concurrency: 2
+`, fmt.Sprintf("127.0.0.1:%d", serverPort), bucket, s3Endpoint))
 
 	// ── Server subprocess ─────────────────────────────────────────────────────
 	srvCmd := exec.Command(binary, "server", "--config", configPath)
@@ -121,21 +124,6 @@ worker:
 
 	// Create the default project before submitting runs.
 	binaryE2ECreateProject(t, serverURL, "e2e")
-
-	// ── Worker subprocess ─────────────────────────────────────────────────────
-	// The worker opens one outbound tunnel; S3 credentials come from the config file.
-	wrkCmd := exec.Command(binary, "worker", "--config", configPath)
-	wrkCmd.Dir = workDir
-	wrkCmd.Stdout = os.Stdout
-	wrkCmd.Stderr = os.Stderr
-	if err := wrkCmd.Start(); err != nil {
-		t.Fatalf("start worker: %v", err)
-	}
-	t.Cleanup(func() { _ = wrkCmd.Process.Kill() })
-
-	// Wait for the worker to register before submitting pipelines: in agent
-	// dispatch mode an unregistered worker causes immediate task failure.
-	waitBinaryE2EAgent(t, serverURL, "pipeline", 15*time.Second)
 
 	// ── Submit pipeline ───────────────────────────────────────────────────────
 	const pipelineYAML = `
@@ -156,7 +144,8 @@ spec:
 	binaryE2EWaitStatus(t, serverURL, runID, "success", 30*time.Second)
 
 	// ── Key regression check ──────────────────────────────────────────────────
-	// If the S3 config bug regresses, runner.s3 will be nil and no upload occurs.
+	// If the S3 config bug regresses, the server's store client is nil/empty
+	// and no upload occurs.
 	prefix := fmt.Sprintf("%s/train/model/", runID)
 	out, err := s3Client.ListObjectsV2(context.Background(), &s3sdk.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
@@ -167,7 +156,7 @@ spec:
 	}
 	if len(out.Contents) == 0 {
 		t.Errorf("no S3 objects found under %q\n"+
-			"this indicates the worker did not read S3 config from the config file\n"+
+			"this indicates the server did not read S3 config from the config file\n"+
 			"(regression: buildConfig() ran before initConfig() loaded the YAML)", prefix)
 	}
 }
@@ -190,33 +179,6 @@ func writeBinaryE2EFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// waitBinaryE2EAgent polls /api/workers until a worker with the given capability
-// appears, or fails the test after timeout.
-func waitBinaryE2EAgent(t *testing.T, serverURL, capability string, timeout time.Duration) {
-	t.Helper()
-	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(serverURL + "/api/workers") //nolint:noctx
-		if err == nil {
-			var agents []struct {
-				Capabilities []string `json:"capabilities"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&agents)
-			_ = resp.Body.Close()
-			for _, a := range agents {
-				for _, c := range a.Capabilities {
-					if c == capability {
-						return
-					}
-				}
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("no %q agent registered within %s", capability, timeout)
 }
 
 func waitHTTPReady(t *testing.T, url string, timeout time.Duration) {

@@ -451,6 +451,27 @@ func TestLegacyWorkerPollingMutationRoutesAreNotMounted(t *testing.T) {
 	}
 }
 
+// waitRunTerminal polls until runID reaches a terminal status (success,
+// failed, or canceled) or the timeout expires. Tests that call startRun
+// directly (bypassing the HTTP layer) must wait like this before returning —
+// otherwise t.Cleanup's Piper.Close() can race the still-in-flight
+// dispatch/queue goroutines.
+func waitRunTerminal(t *testing.T, p *Piper, projectID, runID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		got, err := p.repos.Run.Get(context.Background(), projectID, runID)
+		if err == nil {
+			switch got.Status {
+			case run.StatusSuccess, run.StatusFailed, run.StatusCanceled:
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("run %s did not reach a terminal status within %s", runID, timeout)
+}
+
 func TestStartRunPersistsExperiment(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	const projectID = "project-a"
@@ -477,6 +498,13 @@ func TestStartRunPersistsExperiment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// startRun only enqueues dispatch; wait for the background driver/queue
+	// machinery to actually finish before the test returns. Otherwise
+	// t.Cleanup's Piper.Close() races the still-running dispatch: the queue
+	// goroutine that persists the eventual step/run-finalize write keeps
+	// retrying against this test's already-closed DB pool (dbstore: "primary"
+	// not found) and pollutes unrelated later tests' log output.
+	waitRunTerminal(t, p, projectID, runID, 5*time.Second)
 
 	got, err := p.repos.Run.Get(context.Background(), projectID, runID)
 	if err != nil {
@@ -527,6 +555,9 @@ func TestBackfillScheduleCreatesRunsForCronRange(t *testing.T) {
 	if len(runIDs) != 3 {
 		t.Fatalf("runIDs = %v, want 3 runs", runIDs)
 	}
+	for _, id := range runIDs {
+		waitRunTerminal(t, p, projectID, id, 5*time.Second)
+	}
 	runs, err := p.repos.Run.List(context.Background(), projectID, run.RunFilter{ScheduleID: sc.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -576,6 +607,7 @@ func TestScheduleFiredCronClaimsAndCreatesRun(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("runs = %d, want 1", len(runs))
 	}
+	waitRunTerminal(t, p, projectID, runs[0].ID, 5*time.Second)
 	if runs[0].ScheduledAt == nil || !runs[0].ScheduledAt.Equal(plannedAt) {
 		t.Fatalf("ScheduledAt = %v, want %v", runs[0].ScheduledAt, plannedAt)
 	}

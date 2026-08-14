@@ -319,6 +319,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 		Store:        p.store,
 		StorageURL:   p.storageURL,
 		StorageToken: p.cfg.Storage.Token,
+		Workspace:    p.nbWorkspace,
 		Sched:        p.scheduler,
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)

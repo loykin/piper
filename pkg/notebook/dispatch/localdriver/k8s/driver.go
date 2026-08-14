@@ -7,11 +7,10 @@
 // interface docker/process share — it talks to kubernetes.Interface
 // directly, same split as pkg/notebook/worker/driver/{docker,process,k8s}.
 //
-// File browsing and snapshot capture (FSListFiles/FSUploadSnapshot) are not
-// covered here: notebook.Driver has no hook point for them at all. The
-// remote pkg/notebook/worker/driver/k8s.Worker still implements them over
-// the tunnel; switching a notebook to K8s direct-runtime trades that
-// capability away until a separate follow-up adds the missing interface.
+// Workspace file access (reading a running notebook's files for pipeline
+// template snapshotting) is handled by the separate WorkspaceReader in
+// workspace.go, using pod exec rather than the deleted remote worker's
+// tunnel-based volume_browser.go.
 //
 // Endpoint resolution assumes Piper itself runs with network reachability
 // to the target namespaces' cluster-internal service DNS (e.g. deployed as

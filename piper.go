@@ -87,7 +87,8 @@ type Piper struct {
 	queue           *queue.Queue
 	serving         servingBundle
 	notebookManager *notebook.Manager
-	store           storage.Store // nil when no artifact store configured
+	nbWorkspace     notebook.WorkspaceReader // reads a notebook volume's live workspace files, for pipeline template snapshotting
+	store           storage.Store            // nil when no artifact store configured
 	credentials     *credential.Store
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
@@ -263,6 +264,7 @@ func New(cfg Config) (*Piper, error) {
 	// run before New returns).
 	var nbMgr *notebook.Manager
 	var nbDriver notebook.Driver
+	var nbWorkspace notebook.WorkspaceReader
 	// nbK8sObserver is non-nil only in the RuntimeK8s case; its Observe
 	// loop is launched as its own background goroutine below (separate from
 	// runtimeObserver, which is Pipeline-specific) once p.ctx exists.
@@ -291,7 +293,13 @@ func New(cfg Config) (*Piper, error) {
 			return nil, fmt.Errorf("create notebook local driver: %w", err)
 		}
 		nbDriver = ld
+		nbWorkspace = notebook.LocalWorkspaceReader{}
 	case RuntimeK8s:
+		nbWorkspace = &notebookk8sdriver.WorkspaceReader{
+			Client:     cfg.Runtime.K8s.Client,
+			RestConfig: cfg.Runtime.K8s.RestConfig,
+			Namespaces: cfg.Runtime.K8s.Namespaces,
+		}
 		kd, err := notebookk8sdriver.New(notebookk8sdriver.Config{
 			WorkerID:   notebookK8sLocalWorkerID,
 			Namespaces: cfg.Runtime.K8s.Namespaces,
@@ -332,6 +340,7 @@ func New(cfg Config) (*Piper, error) {
 			proxy:   serving.NewProxy(repos.Serving),
 		},
 		notebookManager: nbMgr,
+		nbWorkspace:     nbWorkspace,
 		stopCtx:         stopFn,
 		events:          event.NewHub(),
 	}

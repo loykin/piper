@@ -11,6 +11,7 @@ import (
 	storemod "github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/security"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -83,11 +84,15 @@ type RuntimeConfig struct {
 }
 
 type K8sRuntimeConfig struct {
-	Client              kubernetes.Interface `yaml:"-" mapstructure:"-"`
-	Namespaces          []string             `yaml:"namespaces" mapstructure:"namespaces"`
-	PipelineRunnerImage string               `yaml:"pipeline_runner_image" mapstructure:"pipeline_runner_image"`
-	ImagePullPolicy     string               `yaml:"image_pull_policy" mapstructure:"image_pull_policy"`
-	TTLAfterFinished    *int32               `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
+	Client kubernetes.Interface `yaml:"-" mapstructure:"-"`
+	// RestConfig is required to exec into notebook pods for workspace file
+	// access (notebook.WorkspaceReader) — kubernetes.Interface alone can't
+	// build the SPDY executor that needs.
+	RestConfig          *rest.Config `yaml:"-" mapstructure:"-"`
+	Namespaces          []string     `yaml:"namespaces" mapstructure:"namespaces"`
+	PipelineRunnerImage string       `yaml:"pipeline_runner_image" mapstructure:"pipeline_runner_image"`
+	ImagePullPolicy     string       `yaml:"image_pull_policy" mapstructure:"image_pull_policy"`
+	TTLAfterFinished    *int32       `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
 	// WorkloadURL is the URL Kubernetes workloads use to reach Piper's built-in
 	// artifact endpoint when storage resolves to file://.
 	WorkloadURL string `yaml:"workload_url" mapstructure:"workload_url"`

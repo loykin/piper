@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -33,6 +32,9 @@ type HandlerDeps struct {
 	Store        storage.Store // nil when object storage is not configured
 	StorageURL   string
 	StorageToken string
+	// Workspace reads a notebook volume's live workspace files, for
+	// snapshotting local-source pipeline steps into object storage.
+	Workspace notebook.WorkspaceReader
 	// Sched keeps the in-memory Scheduler in sync when a deploy creates a schedule.
 	// If nil, the schedule is persisted to DB only.
 	Sched schedule.SchedulerAPI
@@ -126,10 +128,7 @@ func (h *Handler) submit(c *gin.Context) {
 			return
 		}
 
-		// Direct-runtime notebook volumes always live on the same host as
-		// Piper itself (see NotebookVolume.WorkerID's doc comment), so this
-		// is always a local upload.
-		uploadErr := h.uploadSnapshot(c.Request.Context(), snapshotID, vol.WorkDir, localPaths)
+		uploadErr := h.uploadSnapshot(c.Request.Context(), snapshotID, vol, localPaths)
 		// Upload local files to object storage
 		if uploadErr != nil {
 			// Rollback: delete snapshot prefix
@@ -381,33 +380,45 @@ func extractLocalPaths(pl *pipeline.Pipeline) []string {
 
 // uploadSnapshot copies local source files/directories into object storage under the snapshot prefix.
 // Files are stored at snapshots/{id}/{rel}; directories are walked and stored preserving structure.
-func (h *Handler) uploadSnapshot(ctx context.Context, snapshotID, workDir string, paths []string) error {
+func (h *Handler) uploadSnapshot(ctx context.Context, snapshotID string, vol *notebook.NotebookVolume, paths []string) error {
 	prefix := "snapshots/" + snapshotID
 	for _, rel := range paths {
 		rel = filepath.ToSlash(strings.TrimSpace(rel))
 		rel = strings.TrimSuffix(rel, "/")
-		local := filepath.Join(workDir, filepath.FromSlash(rel))
 
-		info, err := os.Stat(local)
+		isDir, size, err := h.deps.Workspace.Stat(ctx, vol, rel)
 		if err != nil {
 			return fmt.Errorf("stat %s: %w", rel, err)
 		}
 
-		if info.IsDir() {
-			if err := storage.UploadDir(ctx, h.deps.Store, local, prefix+"/"+rel); err != nil {
-				return fmt.Errorf("upload dir %s: %w", rel, err)
-			}
-		} else {
-			f, err := os.Open(local)
+		if isDir {
+			files, err := h.deps.Workspace.ListFiles(ctx, vol, rel)
 			if err != nil {
-				return fmt.Errorf("open %s: %w", rel, err)
+				return fmt.Errorf("list dir %s: %w", rel, err)
 			}
-			putErr := h.deps.Store.Put(ctx, prefix+"/"+rel, f, info.Size())
-			_ = f.Close()
-			if putErr != nil {
-				return fmt.Errorf("upload %s: %w", rel, putErr)
+			for _, wf := range files {
+				subPath := rel + "/" + wf.Rel
+				if err := h.uploadSnapshotFile(ctx, vol, subPath, prefix+"/"+subPath, wf.Size); err != nil {
+					return err
+				}
 			}
+			continue
 		}
+		if err := h.uploadSnapshotFile(ctx, vol, rel, prefix+"/"+rel, size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) uploadSnapshotFile(ctx context.Context, vol *notebook.NotebookVolume, path, key string, size int64) error {
+	f, err := h.deps.Workspace.Open(ctx, vol, path)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := h.deps.Store.Put(ctx, key, f, size); err != nil {
+		return fmt.Errorf("upload %s: %w", path, err)
 	}
 	return nil
 }

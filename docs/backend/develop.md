@@ -112,16 +112,34 @@ which federates *management* across separate Piper installations — see
   deployment mode for `runtime.type: k8s`, not a new constraint.
   `pkg/notebook/handler.go`'s `proxyNotebook` always reverse-proxies directly
   to `Endpoint` (mirroring `pkg/serving/proxy.go`) — there is no scheme
-  branching, since nothing produces a `tunnel://` endpoint anymore. File
-  browsing and snapshot capture (`FSListFiles`/`FSUploadSnapshot`) are **not**
-  implemented by this driver — `notebook.Driver` has no hook point for them
-  at all, so a notebook running under K8s direct-runtime cannot use the
-  volume file browser or template snapshot capture. There is currently no
-  fallback for this; it is an open gap, not a workaround. `NotebookVolume.WorkerID`
-  is left empty here too (same reasoning as docker/process), so
-  `listVolumeFiles`/template snapshot upload correctly skip straight to the
-  local-filesystem fallback — they just can't succeed there either, since the
-  volume lives on a PVC Piper's own host can't read directly.
+  branching, since nothing produces a `tunnel://` endpoint anymore.
+  `NotebookVolume.WorkerID` is left empty here too (same reasoning as
+  docker/process) — it can no longer be used to tell a K8s volume apart from
+  a local one, since it's empty for every direct-runtime infra type now.
+
+  Template snapshot capture (pipeline-template creation's local-source
+  upload, `pkg/template/handler.go`'s `uploadSnapshot`) reads a notebook
+  volume's live files through `notebook.WorkspaceReader`
+  (`pkg/notebook/workspace.go`), wired per `runtime.type` in `piper.go`:
+  `LocalWorkspaceReader` (plain host `os.Stat`/`os.Open`) for baremetal/
+  docker, and `pkg/notebook/dispatch/localdriver/k8s.WorkspaceReader` for
+  K8s — the latter execs into the volume's currently-running notebook pod
+  (`remotecommand`, kubectl-exec equivalent; requires the notebook to be
+  running, no stopped-notebook fallback), replacing the tunnel-based
+  `volume_browser.go` capability the deleted remote K8s worker used to
+  provide. The Role granting the `piper-server` ServiceAccount pod exec
+  access needs `pods/exec` (`create`) — see `deploy/k8s/rbac.yaml`.
+
+  The **separate** `GET /notebook-volumes/:id/files` volume file *browser*
+  endpoint (`pkg/notebook/handler.go`'s `listVolumeFiles`, used by the
+  frontend's local-source file picker) is **not** wired to `WorkspaceReader`
+  yet and still does a raw local-filesystem `WalkFiles` — it silently
+  returns nothing useful for a K8s-direct-runtime notebook's volume. This is
+  a known, still-open gap, not a workaround; fixing it is a smaller
+  follow-up (`WorkspaceReader.ListFiles` already exists) but was kept out of
+  the snapshot-capture fix to avoid touching the currently-working
+  baremetal/docker file-picker path's dotfile/symlink-exclusion behavior
+  without dedicated verification.
 - Serving also has a K8s direct-runtime path:
   `pkg/serving/dispatch/localdriver/k8s.Driver` implements `serving.Driver`
   directly against `kubernetes.Interface` (Deployment + Service), the same

@@ -17,9 +17,12 @@ import (
 	"github.com/loykin/piper/pkg/security"
 )
 
-func buildK8sClient(kubeconfig string, inCluster bool) (kubernetes.Interface, error) {
+// buildK8sClient also returns the *rest.Config used to build the client —
+// kubernetes.Interface alone can't build the SPDY executor pod-exec-based
+// workspace file access (see notebook.WorkspaceReader) needs.
+func buildK8sClient(kubeconfig string, inCluster bool) (kubernetes.Interface, *rest.Config, error) {
 	if inCluster && kubeconfig != "" {
-		return nil, fmt.Errorf("config: in_cluster and kubeconfig are mutually exclusive")
+		return nil, nil, fmt.Errorf("config: in_cluster and kubeconfig are mutually exclusive")
 	}
 	var cfg *rest.Config
 	var err error
@@ -27,18 +30,18 @@ func buildK8sClient(kubeconfig string, inCluster bool) (kubernetes.Interface, er
 		cfg, err = rest.InClusterConfig()
 	} else {
 		if kubeconfig == "" {
-			return nil, fmt.Errorf("config: kubeconfig is required when in_cluster=false")
+			return nil, nil, fmt.Errorf("config: kubeconfig is required when in_cluster=false")
 		}
 		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("k8s config: %w", err)
+		return nil, nil, fmt.Errorf("k8s config: %w", err)
 	}
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("k8s client: %w", err)
+		return nil, nil, fmt.Errorf("k8s client: %w", err)
 	}
-	return client, nil
+	return client, cfg, nil
 }
 
 // NewPiper builds the library-facing server config from the canonical CLI config.
@@ -64,7 +67,7 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 	var runtimeCfg piper.RuntimeConfig
 	switch root.Runtime.Type {
 	case cliconfig.InfrastructureK8s:
-		client, err := buildK8sClient(root.Runtime.Kubeconfig, root.Runtime.InCluster)
+		client, restCfg, err := buildK8sClient(root.Runtime.Kubeconfig, root.Runtime.InCluster)
 		if err != nil {
 			return nil, err
 		}
@@ -80,6 +83,7 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 			Type: piper.RuntimeK8s,
 			K8s: piper.K8sRuntimeConfig{
 				Client:              client,
+				RestConfig:          restCfg,
 				Namespaces:          append([]string(nil), root.Runtime.Namespaces...),
 				PipelineRunnerImage: runnerImage,
 				ImagePullPolicy:     pullPolicy,

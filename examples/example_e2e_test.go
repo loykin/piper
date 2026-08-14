@@ -24,12 +24,9 @@ import (
 	"time"
 
 	piper "github.com/loykin/piper"
-	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/notebook"
-	notebookworker "github.com/loykin/piper/pkg/notebook/worker"
 	"github.com/loykin/piper/pkg/pipeline"
-	worker "github.com/loykin/piper/pkg/pipeline/worker"
 	"gopkg.in/yaml.v3"
 )
 
@@ -79,37 +76,6 @@ func waitReady(t *testing.T, url string, timeout time.Duration) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("server at %s did not become ready within %s", url, timeout)
-}
-
-// waitAgentRegistered polls until a worker with the given id appears in /api/workers.
-// When id is empty, it waits for at least one agent of any id.
-func waitAgentRegistered(t *testing.T, serverURL, id string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + "/api/workers")
-		if err == nil {
-			var agents []struct {
-				ID string `json:"id"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&agents)
-			resp.Body.Close()
-			if id == "" && len(agents) > 0 {
-				return
-			}
-			for _, agent := range agents {
-				if agent.ID == id {
-					return
-				}
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	if id == "" {
-		t.Fatalf("no agent registered within %s", timeout)
-	} else {
-		t.Fatalf("agent %q did not register within %s", id, timeout)
-	}
 }
 
 func defaultProjectAPI(serverURL string) string {
@@ -195,13 +161,14 @@ func fetchStepLogs(t *testing.T, serverURL, runID, stepName string) string {
 	return out.String()
 }
 
-// startBareMetalFixture builds the server and worker binaries, starts them,
-// waits for readiness, and registers t.Cleanup to kill both.
-// Returns the server base URL.
+// startBareMetalFixture builds and starts the bare-metal server example
+// (runtime.type: baremetal — pipeline execution happens in-process on the
+// host, no separate worker binary or tunnel involved; see
+// examples/bare-metal/server), waits for readiness, and registers
+// t.Cleanup to kill it. Returns the server base URL.
 func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	serverBin := buildBinary(t, "./examples/bare-metal/server")
-	workerBin := buildBinary(t, "./examples/bare-metal/worker")
 
 	port := freePort(t)
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -220,22 +187,6 @@ func startBareMetalFixture(t *testing.T, ctx context.Context) string {
 	t.Cleanup(func() { _ = serverCmd.Process.Kill() })
 
 	waitReady(t, defaultProjectAPI(baseURL)+"/runs", 15*time.Second)
-
-	workerCmd := exec.CommandContext(ctx, workerBin,
-		"--master="+baseURL,
-		"--concurrency=4",
-		"--meta-dir="+filepath.Join(tmpDir, "piper-meta"),
-	)
-	workerCmd.Dir = tmpDir
-	workerCmd.Env = append(os.Environ(), "HOME="+tmpDir)
-	workerCmd.Stdout = os.Stdout
-	workerCmd.Stderr = os.Stderr
-	if err := workerCmd.Start(); err != nil {
-		t.Fatalf("start worker: %v", err)
-	}
-	t.Cleanup(func() { _ = workerCmd.Process.Kill() })
-
-	waitAgentRegistered(t, baseURL, "", 15*time.Second)
 	return baseURL
 }
 
@@ -258,9 +209,9 @@ func TestExampleLibrary(t *testing.T) {
 	t.Logf("output:\n%s", out)
 }
 
-// ─── Bare-metal server + worker: smoke test ───────────────────────────────────
+// ─── Bare-metal server: smoke test ────────────────────────────────────────────
 
-func TestExampleBareMetalServerWorker(t *testing.T) {
+func TestExampleBareMetalServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	baseURL := startBareMetalFixture(t, ctx)
@@ -283,10 +234,10 @@ spec:
 	}
 }
 
-// ─── Example pipeline execution via bare-metal server+worker ─────────────────
+// ─── Example pipeline execution via bare-metal server ────────────────────────
 
 // TestExamplePipelines_Run submits the example pipelines from basics/ against a
-// real bare-metal server+worker and verifies the expected terminal status.
+// real bare-metal server and verifies the expected terminal status.
 //
 // basics/retry.yaml deliberately exits 1 on every attempt, so its expected
 // status is "failed" — this verifies that the retry logic exhausts correctly.
@@ -327,14 +278,16 @@ func TestExamplePipelines_Run(t *testing.T) {
 	}
 }
 
-// ─── Artifact passing via in-process server + worker ─────────────────────────
+// ─── Artifact passing via in-process direct-runtime server ───────────────────
 
 // TestExampleArtifacts runs artifacts/pipeline.yaml through a real in-process
-// piper server + worker so that the full artifact upload/download path is
-// exercised without requiring an external S3 or storage service.
+// piper server (runtime.type: baremetal) so that the full artifact
+// upload/download path is exercised without requiring an external S3 or
+// storage service.
 //
 // The server's built-in HTTP store (served at /store/) acts as the artifact
-// backend.  The worker uploads step outputs there and downloads inputs from it.
+// backend — the direct-runtime driver uploads step outputs there and
+// downloads inputs from it, in-process.
 func TestExampleArtifacts(t *testing.T) {
 	root := moduleRoot(t)
 	data, err := os.ReadFile(filepath.Join(root, "examples", "artifacts", "pipeline.yaml"))
@@ -357,6 +310,10 @@ func TestExampleArtifacts(t *testing.T) {
 		Auth:      piper.AuthConfig{Trusted: true},
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port), AllowInsecureDevKey: true},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
+		Runtime: piper.RuntimeConfig{
+			Type:      piper.RuntimeBaremetal,
+			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: filepath.Join(tmpDir, "piper-meta")},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -368,24 +325,6 @@ func TestExampleArtifacts(t *testing.T) {
 
 	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
 	waitReady(t, defaultProjectAPI(serverURL)+"/runs", 10*time.Second)
-
-	w, err := worker.New(worker.Config{
-		Agent: worker.AgentConfig{
-			MasterURL:   serverURL,
-			Concurrency: 4,
-		},
-		Store: worker.StoreConfig{
-			OutputDir: filepath.Join(tmpDir, "worker-outputs"),
-		},
-		Baremetal: worker.BaremetalConfig{
-			MetaDir: filepath.Join(tmpDir, "piper-meta"),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() { _ = w.Run(ctx) }()
-	waitAgentRegistered(t, serverURL, "", 10*time.Second)
 
 	runID := submitPipeline(t, serverURL, string(data))
 	t.Logf("submitted run %s", runID)
@@ -439,6 +378,11 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 		Auth:      piper.AuthConfig{Trusted: true},
 		Server:    piper.ServerConfig{Addr: fmt.Sprintf(":%d", port), AllowInsecureDevKey: true},
 		Storage:   piper.StorageConfig{URL: "file://" + storeDir},
+		Runtime: piper.RuntimeConfig{
+			Type:      piper.RuntimeBaremetal,
+			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: filepath.Join(tmpDir, "piper-meta")},
+		},
+		NotebookWorker: piper.NotebookWorkerConfig{NotebooksRoot: tmpDir},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -466,25 +410,6 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	defer cancel()
 	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
 	waitReady(t, projectAPI+"/pipelines", 10*time.Second)
-
-	w, err := worker.New(worker.Config{
-		Agent: worker.AgentConfig{
-			MasterURL:    serverURL,
-			Concurrency:  2,
-			Capabilities: []string{iagent.CapabilityPipeline, iagent.CapabilityNotebook},
-		},
-		Store: worker.StoreConfig{
-			OutputDir: filepath.Join(tmpDir, "worker-outputs"),
-		},
-		Baremetal: worker.BaremetalConfig{
-			MetaDir: filepath.Join(tmpDir, "piper-meta"),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() { _ = w.Run(ctx) }()
-	waitAgentRegistered(t, serverURL, "", 10*time.Second)
 
 	templateID := submitPipelineTemplate(t, projectAPI, string(pipelineYAML), volumeID)
 	runID := runPipelineTemplate(t, projectAPI, templateID)
@@ -604,8 +529,9 @@ func TestExampleNotebookServerYAMLs(t *testing.T) {
 // ─── Baremetal notebook lifecycle e2e ────────────────────────────────────────
 
 // TestExampleNotebookBaremetal tests the full notebook lifecycle (create →
-// running → stop → restart → running → stop) through the AgentDriver baremetal
-// path using an in-process piper server and a real notebook worker.
+// running → stop → restart → running → stop) through the baremetal
+// direct-runtime path using an in-process piper server — no separate worker
+// process involved.
 func TestExampleNotebookBaremetal(t *testing.T) {
 	port := freePort(t)
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -615,6 +541,11 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 		DBPath: filepath.Join(tmpDir, "example-notebook.db"),
 		Auth:   piper.AuthConfig{Trusted: true},
 		Server: piper.ServerConfig{Addr: fmt.Sprintf(":%d", port), AllowInsecureDevKey: true},
+		Runtime: piper.RuntimeConfig{
+			Type:      piper.RuntimeBaremetal,
+			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: filepath.Join(tmpDir, "piper-meta")},
+		},
+		NotebookWorker: piper.NotebookWorkerConfig{NotebooksRoot: tmpDir},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -633,16 +564,6 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	waitReady(t, projectAPI+"/notebooks", 10*time.Second)
 
 	const nbName = "e2e-nb-baremetal"
-
-	nw := notebookworker.New(notebookworker.Config{
-		MasterURL:      serverURL,
-		NotebooksRoot:  tmpDir,
-		Hostname:       "fake-host",
-		ID:             "fake-bm-1",
-		Infrastructure: notebookworker.InfrastructureBaremetal,
-	})
-	go func() { _ = nw.Run(ctx) }()
-	waitAgentRegistered(t, serverURL, "fake-bm-1", 10*time.Second)
 
 	// Create notebook with baremetal spec.
 	const nbYAML = "metadata:\n  name: " + nbName + "\nspec:\n  process: {}\n"

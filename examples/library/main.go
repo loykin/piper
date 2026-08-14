@@ -60,6 +60,10 @@ func main() {
 		DBPath:    ":memory:",
 		OutputDir: os.TempDir() + "/piper-example-library",
 		Server:    piper.ServerConfig{AllowInsecureDevKey: true},
+		Runtime: piper.RuntimeConfig{
+			Type:      piper.RuntimeBaremetal,
+			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: os.TempDir() + "/piper-example-library-meta"},
+		},
 	})
 	if err != nil {
 		log.Fatal(err)

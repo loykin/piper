@@ -22,7 +22,9 @@ import (
 )
 
 // TestK8sE2E_SingleStepJobReportsSuccess is a real Kubernetes smoke test for
-// the server -> k8s-worker -> Job -> agent exec -> server report path.
+// the direct-runtime path: server -> Job -> agent exec -> server report, with
+// the server itself dispatching Jobs in-process (runtime.type: k8s) — there
+// is no separate worker process or tunnel involved.
 //
 // Prerequisites:
 //
@@ -39,11 +41,11 @@ import (
 // ready, port-forward then reports "connection refused"). Use `kind` (or push
 // the image through a registry the target cluster can actually pull from).
 //
-// Running the whole file together (no -run filter) takes >10 minutes across
-// all five TestK8sE2E_* tests, which exceeds `go test`'s default 10-minute
-// timeout and aborts with "panic: test timed out" partway through — pass
-// `-timeout 30m` (or run tests individually via -run) when running the full
-// k8s_e2e suite.
+// Running the whole file together (no -run filter) takes several minutes
+// across all five TestK8sE2E_* tests, which exceeds `go test`'s default
+// 10-minute timeout and aborts with "panic: test timed out" partway through —
+// pass `-timeout 30m` (or run tests individually via -run) when running the
+// full k8s_e2e suite.
 func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 	requireKubectlCluster(t)
 
@@ -62,9 +64,8 @@ func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 	})
 
-	applyK8sE2EAgentManifests(t, ns, image, "jupyter/minimal-notebook:latest")
+	applyK8sE2EServerManifests(t, ns, image)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -110,7 +111,8 @@ spec:
 	}
 }
 
-// TestK8sE2E_ExamplePipelines runs the example YAML files through k8s-worker against a real K8s cluster.
+// TestK8sE2E_ExamplePipelines runs the example YAML files through the
+// direct-runtime K8s dispatch path against a real K8s cluster.
 func TestK8sE2E_ExamplePipelines(t *testing.T) {
 	requireKubectlCluster(t)
 
@@ -169,9 +171,8 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 				_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 			})
 
-			applyK8sE2EAgentManifests(t, ns, image, "jupyter/minimal-notebook:latest")
+			applyK8sE2EServerManifests(t, ns, image)
 			waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
-			kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 			kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 			kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -189,7 +190,6 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 			serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 			waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 			k8sE2ECreateProject(t, serverURL)
-			waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"pipeline"}, 30*time.Second)
 
 			runID := k8sE2EPostRun(t, serverURL, k8sE2EPipelineYAML(t, yamlBytes, ns))
 			t.Logf("submitted run %s (want=%s)", runID, tc.wantStatus)
@@ -203,9 +203,12 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 	}
 }
 
-// TestK8sE2E_WorkerModeWorkloads verifies the outbound k8s-worker path for the
-// three K8s-backed workload families: pipeline, serving, and notebook.
-func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
+// TestK8sE2E_MultiDomainWorkloads verifies direct-runtime K8s dispatch across
+// all three workload families in one pass — pipeline, serving, and notebook —
+// and exercises the local-store artifact path that ties them together:
+// notebook PVC -> pipeline Job reading from it -> pipeline artifact upload to
+// the built-in HTTP store -> serving container downloading that artifact.
+func TestK8sE2E_MultiDomainWorkloads(t *testing.T) {
 	requireKubectlCluster(t)
 
 	piperImage := os.Getenv("PIPER_K8S_E2E_IMAGE")
@@ -217,7 +220,7 @@ func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
 		nbImage = "jupyter/minimal-notebook:latest"
 	}
 
-	ns := fmt.Sprintf("piper-agent-e2e-%d", time.Now().UnixNano())
+	ns := fmt.Sprintf("piper-multi-e2e-%d", time.Now().UnixNano())
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
@@ -228,9 +231,8 @@ func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
 		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 	})
 
-	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
+	applyK8sE2EServerManifests(t, ns, piperImage)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -248,11 +250,10 @@ func TestK8sE2E_WorkerModeWorkloads(t *testing.T) {
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 	k8sE2ECreateProject(t, serverURL)
-	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook", "serving", "pipeline"}, 30*time.Second)
 
 	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
 metadata:
-  name: k8s-worker-e2e
+  name: k8s-multi-e2e
 spec:
   defaults:
     driver:
@@ -264,21 +265,21 @@ spec:
   steps:
     - name: smoke
       run:
-        command: ["sh", "-c", "echo k8s-worker-e2e-ok"]
+        command: ["sh", "-c", "echo k8s-multi-e2e-ok"]
 `, ns))
 	if !waitK8sE2ERunStatus(t, serverURL, runID, "success", 2*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("worker-mode run %s did not reach success", runID)
+		t.Fatalf("pipeline run %s did not reach success", runID)
 	}
 	if out := kubectl(t, "-n", ns, "get", "jobs", "-l", "app.kubernetes.io/managed-by=piper,piper.io/step-name=smoke", "--no-headers"); strings.TrimSpace(out) == "" {
-		t.Fatalf("expected worker-created pipeline Job for step 'smoke', got:\n%s", out)
+		t.Fatalf("expected a direct-runtime pipeline Job for step 'smoke', got:\n%s", out)
 	}
 
 	k8sE2EPostService(t, serverURL, fmt.Sprintf(`
 apiVersion: piper/v1
 kind: ModelService
 metadata:
-  name: worker-serving
+  name: multi-serving
 spec:
   model:
     from_uri: s3://piper-artifacts/e2e-model
@@ -292,27 +293,27 @@ spec:
       image: alpine:3.20
       namespace: %s
 `, ns))
-	waitK8sE2EServingResources(t, ns, k8sE2EServingResourceName("worker-serving"), 2*time.Minute)
+	waitK8sE2EServingResources(t, ns, k8sE2EServingResourceName("multi-serving"), 2*time.Minute)
 
-	const nbName = "worker-notebook"
+	const nbName = "multi-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbName, nbImage, ns)
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("worker-mode notebook %s did not reach running", nbName)
+		t.Fatalf("notebook %s did not reach running", nbName)
 	}
 	if out := kubectl(t, "-n", ns, "get", "statefulset,svc,pvc", "--no-headers"); !strings.Contains(out, "piper-nb-"+k8sE2EProjectID+"-"+nbName) {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("expected worker-created notebook resources, got:\n%s", out)
+		t.Fatalf("expected notebook resources, got:\n%s", out)
 	}
 
-	// Exercise the local-store paths that require the worker tunnel:
-	// notebook PVC -> fs.upload_snapshot RPC -> master /store -> pipeline Job,
-	// then pipeline artifact -> serving init container -> /piper-model.
+	// Exercise the local-store path end to end: notebook PVC -> pipeline
+	// snapshot -> master /store -> pipeline Job reads it -> pipeline artifact
+	// -> serving container downloads it from /piper-model.
 	nb := k8sE2EGetNotebook(t, serverURL, nbName)
 	volumeID, _ := nb["volume_id"].(string)
 	if volumeID == "" {
-		t.Fatal("worker-mode notebook volume_id is empty")
+		t.Fatal("notebook volume_id is empty")
 	}
 	notebookPod := "piper-nb-" + k8sE2EProjectID + "-" + nbName + "-0"
 	kubectl(t, "-n", ns, "exec", notebookPod, "--", "sh", "-c",
@@ -436,7 +437,13 @@ func requireKubectlCluster(t *testing.T) {
 	}
 }
 
-func applyK8sE2EAgentManifests(t *testing.T, ns, piperImage, nbImage string) {
+// applyK8sE2EServerManifests deploys a single piper-server Deployment
+// configured with runtime.type: k8s (direct, in-process K8s dispatch — the
+// server itself creates/watches Jobs, Deployments, and StatefulSets in this
+// namespace; there is no separate worker Deployment or tunnel), plus a
+// SeaweedFS-backed S3 store the server's runtime.workload_url points pods
+// back at for artifact upload/download.
+func applyK8sE2EServerManifests(t *testing.T, ns, piperImage string) {
 	t.Helper()
 	manifest := fmt.Sprintf(`
 apiVersion: v1
@@ -445,16 +452,10 @@ metadata:
   name: piper-server
   namespace: %[1]s
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: piper-k8s-worker
-  namespace: %[1]s
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: piper-k8s-worker
+  name: piper-server
   namespace: %[1]s
 rules:
   - apiGroups: ["apps"]
@@ -469,23 +470,23 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["create", "delete", "get", "list", "update", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["create", "delete", "get", "update"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: piper-k8s-worker
+  name: piper-server
   namespace: %[1]s
 subjects:
   - kind: ServiceAccount
-    name: piper-k8s-worker
+    name: piper-server
     namespace: %[1]s
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: piper-k8s-worker
+  name: piper-server
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -500,22 +501,17 @@ data:
       data_dir: /tmp/piper-outputs
       allow_insecure_trusted_mode: true
       allow_insecure_dev_key: true
-    worker:
-      master_url: http://piper-server.%[1]s.svc.cluster.local:8080
-      state_dir: /tmp/piper-worker-state
-      k8s:
-        cluster: agent-e2e
-        namespaces: [%[1]s]
-        in_cluster: true
-        pipeline_runner:
-          image: %[2]q
-          image_pull_policy: IfNotPresent
-        notebook_volume_browser:
-          image: %[2]q
-      capabilities:
-        pipeline: {}
-        notebook: {}
-        serving: {}
+      db:
+        driver: sqlite
+        path: /var/lib/piper/piper.db
+    runtime:
+      type: k8s
+      namespaces: [%[1]s]
+      in_cluster: true
+      workload_url: http://piper-server.%[1]s.svc.cluster.local:8080
+      pipeline_runner:
+        image: %[2]q
+        image_pull_policy: IfNotPresent
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -543,59 +539,26 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/piper
+            - name: data
+              mountPath: /var/lib/piper
       volumes:
         - name: config
           configMap:
             name: piper-config
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: piper-k8s-worker
-  namespace: %[1]s
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      app: piper-k8s-worker
-  template:
-    metadata:
-      labels:
-        app: piper-k8s-worker
-    spec:
-      serviceAccountName: piper-k8s-worker
-      containers:
-        - name: agent
-          image: %[2]q
-          imagePullPolicy: IfNotPresent
-          args:
-            - --config=/etc/piper/piper.yaml
-            - worker
-          volumeMounts:
-            - name: config
-              mountPath: /etc/piper
-            - name: worker-state
-              mountPath: /tmp/piper-worker-state
-      volumes:
-        - name: config
-          configMap:
-            name: piper-config
-        - name: worker-state
+        - name: data
           persistentVolumeClaim:
-            claimName: piper-worker-state
+            claimName: piper-server-data
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: piper-worker-state
+  name: piper-server-data
   namespace: %[1]s
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
-      storage: 64Mi
+      storage: 200Mi
 ---
 apiVersion: v1
 kind: Service
@@ -672,7 +635,7 @@ spec:
               value: anypassword
             - name: AWS_DEFAULT_REGION
               value: us-east-1
-`, ns, piperImage, nbImage)
+`, ns, piperImage)
 	kubectlInput(t, manifest, "apply", "-f", "-")
 }
 
@@ -730,43 +693,6 @@ func waitK8sE2EHTTP(t *testing.T, url string, timeout time.Duration) {
 	t.Fatalf("%s not ready within %s", url, timeout)
 }
 
-func waitK8sE2EAgentRegistered(t *testing.T, serverURL, cluster string, capabilities []string, timeout time.Duration) {
-	t.Helper()
-	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(serverURL + "/api/workers") //nolint:noctx
-		if err == nil {
-			var agents []struct {
-				ClusterName  string   `json:"cluster_name"`
-				Capabilities []string `json:"capabilities"`
-			}
-			_ = json.NewDecoder(resp.Body).Decode(&agents)
-			resp.Body.Close()
-			for _, agent := range agents {
-				if agent.ClusterName == cluster && hasK8sE2ECapabilities(agent.Capabilities, capabilities) {
-					return
-				}
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("agent for cluster %q with capabilities %v not registered within %s", cluster, capabilities, timeout)
-}
-
-func hasK8sE2ECapabilities(got, want []string) bool {
-	set := make(map[string]bool, len(got))
-	for _, capability := range got {
-		set[capability] = true
-	}
-	for _, capability := range want {
-		if !set[capability] {
-			return false
-		}
-	}
-	return true
-}
-
 func k8sE2EPipelineYAML(t *testing.T, raw []byte, namespace string) string {
 	t.Helper()
 	var pl pipeline.Pipeline
@@ -784,6 +710,16 @@ func k8sE2EPipelineYAML(t *testing.T, raw []byte, namespace string) string {
 		pl.Spec.Defaults.Driver.K8s.Image = "alpine:3.20"
 	}
 	pl.Spec.Defaults.Driver.K8s.Namespace = namespace
+	// Some example pipelines (e.g. examples/kubernetes/pipeline.yaml) hardcode
+	// a step-level driver.k8s.namespace to document a real deployment's fixed
+	// namespace — that value always loses to defaults.driver.k8s.namespace, so
+	// normalize it here too, or the step would target a namespace this test's
+	// disposable cluster never created.
+	for i := range pl.Spec.Steps {
+		if pl.Spec.Steps[i].Driver.K8s != nil && pl.Spec.Steps[i].Driver.K8s.Namespace != "" {
+			pl.Spec.Steps[i].Driver.K8s.Namespace = namespace
+		}
+	}
 
 	out, err := yaml.Marshal(&pl)
 	if err != nil {
@@ -886,8 +822,6 @@ func dumpK8sE2EDebug(t *testing.T, ns string) {
 		{"-n", ns, "get", "pods,jobs", "-o", "wide"},
 		{"-n", ns, "describe", "pods"},
 		{"-n", ns, "logs", "-l", "app=piper-server", "--tail=200"},
-		{"-n", ns, "logs", "-l", "app=piper-k8s-worker", "--tail=200"},
-		{"-n", ns, "logs", "deployment/piper-k8s-worker", "--all-containers=true", "--tail=200"},
 		{"-n", ns, "logs", "-l", "app.kubernetes.io/managed-by=piper", "--all-containers=true", "--tail=200"},
 	} {
 		out, err := kubectlContext(context.Background(), nil, args...)
@@ -923,6 +857,10 @@ func waitK8sE2EDeployment(t *testing.T, ns, name string, timeout time.Duration) 
 
 // TestK8sE2E_NotebookLifecycle verifies the full notebook lifecycle against a
 // real K8s cluster: create → running → stop → restart → delete → purge PVC.
+// It also verifies that restarting piper-server itself (the sole owner of
+// direct-runtime dispatch) does not disturb a running notebook's StatefulSet
+// — the notebook Pod is a real, independently-owned K8s resource, not
+// something the server keeps alive by staying connected to it.
 //
 // Prerequisites (in addition to TestK8sE2E_SingleStepJobReportsSuccess):
 //
@@ -953,15 +891,13 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 	})
 
-	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
+	applyK8sE2EServerManifests(t, ns, piperImage)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
 	localPort := freeK8sE2EPort(t)
 	pfCtx, pfCancel := context.WithCancel(ctx)
-	defer pfCancel()
 	pf := exec.CommandContext(pfCtx, "kubectl", "-n", ns, "port-forward", "svc/piper-server", fmt.Sprintf("%d:8080", localPort))
 	pf.Stdout = os.Stderr
 	pf.Stderr = os.Stderr
@@ -973,7 +909,6 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 	k8sE2ECreateProject(t, serverURL)
-	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
 	const nbName = "e2e-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbName, nbImage, ns)
@@ -995,24 +930,41 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 		t.Fatal("notebook volume_id is empty")
 	}
 
-	// Restart only the worker. The notebook StatefulSet belongs to Kubernetes,
-	// so worker reconnect must not recreate or terminate the notebook pod.
+	// Restart piper-server itself. The notebook StatefulSet belongs to
+	// Kubernetes, so the server coming back up must not recreate or
+	// terminate the notebook pod — only re-observe its existing state.
 	podName := "piper-nb-" + k8sE2EProjectID + "-" + nbName + "-0"
 	podUID := strings.TrimSpace(kubectl(t, "-n", ns, "get", "pod", podName, "-o", "jsonpath={.metadata.uid}"))
-	kubectl(t, "-n", ns, "rollout", "restart", "deployment/piper-k8s-worker")
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
-	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
-	podUIDAfterWorkerRestart := strings.TrimSpace(kubectl(t, "-n", ns, "get", "pod", podName, "-o", "jsonpath={.metadata.uid}"))
-	if podUIDAfterWorkerRestart != podUID {
-		t.Fatalf("notebook pod changed after worker restart: before=%s after=%s", podUID, podUIDAfterWorkerRestart)
+	kubectl(t, "-n", ns, "rollout", "restart", "deployment/piper-server")
+	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
+
+	// kubectl port-forward svc/X binds to whichever pod backed the service
+	// at the moment it started; a rollout restart replaces that pod out from
+	// under the tunnel ("lost connection to pod"), so it must be torn down
+	// and re-established against the new pod before polling health again.
+	pfCancel()
+	_ = pf.Wait()
+	pfCtx, pfCancel = context.WithCancel(ctx)
+	pf = exec.CommandContext(pfCtx, "kubectl", "-n", ns, "port-forward", "svc/piper-server", fmt.Sprintf("%d:8080", localPort))
+	pf.Stdout = os.Stderr
+	pf.Stderr = os.Stderr
+	if err := pf.Start(); err != nil {
+		t.Fatalf("restart port-forward: %v", err)
+	}
+	t.Cleanup(func() { pfCancel(); _ = pf.Wait() })
+
+	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	podUIDAfterServerRestart := strings.TrimSpace(kubectl(t, "-n", ns, "get", "pod", podName, "-o", "jsonpath={.metadata.uid}"))
+	if podUIDAfterServerRestart != podUID {
+		t.Fatalf("notebook pod changed after server restart: before=%s after=%s", podUID, podUIDAfterServerRestart)
 	}
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", 2*time.Minute) {
 		dumpK8sE2EDebug(t, ns)
-		t.Fatalf("notebook %s did not remain running after worker restart", nbName)
+		t.Fatalf("notebook %s did not remain running after server restart", nbName)
 	}
 
-	// Crash the notebook pod itself. StatefulSet must replace it and the worker
-	// must report the recovered observed state to the master.
+	// Crash the notebook pod itself. StatefulSet must replace it and the
+	// server must report the recovered observed state on its next poll.
 	kubectl(t, "-n", ns, "delete", "pod", podName, "--wait=false")
 	deadline := time.Now().Add(3 * time.Minute)
 	replacementUID := ""
@@ -1092,9 +1044,8 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
 	})
 
-	applyK8sE2EAgentManifests(t, ns, piperImage, nbImage)
+	applyK8sE2EServerManifests(t, ns, piperImage)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
-	kubectl(t, "-n", ns, "rollout", "status", "deployment/piper-k8s-worker", "--timeout=90s")
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
 	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
 
@@ -1112,7 +1063,6 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 	k8sE2ECreateProject(t, serverURL)
-	waitK8sE2EAgentRegistered(t, serverURL, "agent-e2e", []string{"notebook"}, 30*time.Second)
 
 	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbImage, ns)
 	k8sE2EPostNotebook(t, serverURL, nb1YAML, "")

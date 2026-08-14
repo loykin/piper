@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,8 +32,9 @@ import (
 
 func TestMemberTunnelProjectAPIRelayEndToEnd(t *testing.T) {
 	const projectID = "project-relay"
+	memberOutput := t.TempDir()
 	memberP := newTestPiper(t, Config{
-		OutputDir: t.TempDir(), DBPath: filepath.Join(t.TempDir(), "member.db"),
+		OutputDir: memberOutput, DBPath: filepath.Join(t.TempDir(), "member.db"),
 		Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal},
 	})
 	homeP := newTestPiper(t, Config{
@@ -99,6 +101,24 @@ func TestMemberTunnelProjectAPIRelayEndToEnd(t *testing.T) {
 	homeTemplates, err := homeP.repos.PipelineTemplate.List(context.Background(), projectID, template.Filter{})
 	if err != nil || len(homeTemplates) != 0 {
 		t.Fatalf("template leaked into Home: templates=%+v err=%v", homeTemplates, err)
+	}
+
+	wantArtifact := bytes.Repeat([]byte("federated-artifact-"), 70000)
+	artifactDir := filepath.Join(memberOutput, "run-1", "step-1")
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(artifactDir, "result.bin"), wantArtifact, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	artifactReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/runs/run-1/artifacts/step-1/result.bin", nil)
+	artifactRec := httptest.NewRecorder()
+	router.ServeHTTP(artifactRec, artifactReq)
+	if artifactRec.Code != http.StatusOK {
+		t.Fatalf("artifact status=%d body=%s", artifactRec.Code, artifactRec.Body.String())
+	}
+	if !bytes.Equal(artifactRec.Body.Bytes(), wantArtifact) {
+		t.Fatalf("artifact bytes=%d, want %d", artifactRec.Body.Len(), len(wantArtifact))
 	}
 }
 

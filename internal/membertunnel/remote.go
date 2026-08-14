@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +30,7 @@ type remoteMemberClient struct {
 
 	mu      sync.Mutex
 	pending map[string]chan *agentpb.MemberRPCResponse
+	streams map[string]chan *agentpb.MemberHTTPStreamData
 	closed  bool
 }
 
@@ -59,6 +63,10 @@ func (r *remoteMemberClient) closeAll() {
 	for id, ch := range r.pending {
 		close(ch)
 		delete(r.pending, id)
+	}
+	for id, ch := range r.streams {
+		close(ch)
+		delete(r.streams, id)
 	}
 }
 
@@ -180,14 +188,64 @@ func (r *remoteMemberClient) DoProjectRequest(ctx context.Context, auth membercl
 	return call[projectclient.Request, projectclient.Response](ctx, r, MethodProjectRequest, auth, ref, req)
 }
 
-// ServeArtifact streams bytes directly and has no RPC-command shape yet —
-// a remote Member needs a separate multiplexed data channel for this
-// (analogous in spirit to the worker tunnel's ProxyData framing, but
-// scoped to the Member's own artifacts rather than an arbitrary target).
-// Deliberately deferred; not exercised by the run vertical slice this pass
-// verifies.
-func (r *remoteMemberClient) ServeArtifact(_ context.Context, _ memberclient.AuthContext, _ project.ProjectRef, w http.ResponseWriter, _ *http.Request, _, _, _ string) {
-	http.Error(w, "artifact download over a remote Member tunnel is not yet supported", http.StatusNotImplemented)
+const artifactChunkSize int64 = 512 << 10
+
+func (r *remoteMemberClient) ServeArtifact(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, w http.ResponseWriter, request *http.Request, runID, step, artifactPath string) {
+	path := "/runs/" + url.PathEscape(runID) + "/artifacts/" + url.PathEscape(step)
+	for _, segment := range strings.Split(artifactPath, "/") {
+		if segment != "" {
+			path += "/" + url.PathEscape(segment)
+		}
+	}
+	requestedRange := request.Header.Get("Range")
+	var offset int64
+	for {
+		rangeValue := requestedRange
+		if rangeValue == "" {
+			rangeValue = fmt.Sprintf("bytes=%d-%d", offset, offset+artifactChunkSize-1)
+		}
+		response, err := r.DoProjectRequest(ctx, auth, ref, projectclient.Request{
+			Method: http.MethodGet, Path: path, Header: http.Header{"Range": []string{rangeValue}},
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if offset == 0 {
+			for _, name := range []string{"Accept-Ranges", "Content-Disposition", "Content-Type", "ETag", "Last-Modified"} {
+				for _, value := range http.Header(response.Header).Values(name) {
+					w.Header().Add(name, value)
+				}
+			}
+			status := response.Status
+			if requestedRange == "" && status == http.StatusPartialContent {
+				status = http.StatusOK
+			}
+			w.WriteHeader(status)
+		}
+		if len(response.Body) > 0 {
+			if _, err := w.Write(response.Body); err != nil {
+				return
+			}
+		}
+		if requestedRange != "" || response.Status != http.StatusPartialContent {
+			return
+		}
+		total, ok := contentRangeTotal(http.Header(response.Header).Get("Content-Range"))
+		offset += int64(len(response.Body))
+		if !ok || offset >= total || len(response.Body) == 0 {
+			return
+		}
+	}
+}
+
+func contentRangeTotal(value string) (int64, bool) {
+	slash := strings.LastIndexByte(value, '/')
+	if slash < 0 || slash == len(value)-1 || value[slash+1:] == "*" {
+		return 0, false
+	}
+	total, err := strconv.ParseInt(value[slash+1:], 10, 64)
+	return total, err == nil && total >= 0
 }
 
 var _ memberclient.Client = (*remoteMemberClient)(nil)

@@ -252,7 +252,7 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 		})
 		return resp.RunID, err
 	})
-	proxyAPI := r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
+	proxyAPI := r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer), relayRemoteProjectHTTP(projectMember, projectRef))
 	memberHandlers.serving.RegisterProxyRoutes(proxyAPI)
 	memberHandlers.notebook.RegisterProxyRoutes(proxyAPI)
 	memberHandlers.viewer.RegisterProxyRoutes(proxyAPI)
@@ -281,6 +281,36 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	r.GET("/ui/*filepath", gin.WrapH(http.StripPrefix("/ui", ui.Handler())))
 
 	return r
+}
+
+func relayRemoteProjectHTTP(client projectclient.Client, resolveRef func(string) project.ProjectRef) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		projectContext, _ := project.FromContext(c.Request.Context())
+		if client == nil || resolveRef == nil || projectContext.OwnerMemberID == "" || projectContext.OwnerMemberID == project.LocalMemberID {
+			c.Next()
+			return
+		}
+		stream, ok := client.(projectclient.StreamClient)
+		if !ok {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "remote Member has no HTTP stream"})
+			c.Abort()
+			return
+		}
+		auth := memberclient.AuthContext{Role: projectContext.Role}
+		if identity, ok := security.IdentityFromContext(c.Request.Context()); ok && identity != nil {
+			auth.ActorID = identity.ID
+		}
+		ref := resolveRef(projectContext.ID)
+		ref.MemberID = projectContext.OwnerMemberID
+		if err := stream.ServeProjectHTTP(c.Request.Context(), auth, ref, c.Writer, c.Request); err != nil && !c.Writer.Written() {
+			status := http.StatusBadGateway
+			if errors.Is(err, memberclient.ErrMemberUnavailable) {
+				status = http.StatusServiceUnavailable
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+		}
+		c.Abort()
+	}
 }
 
 func prometheusHTTPMetrics() gin.HandlerFunc {

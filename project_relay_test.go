@@ -2,6 +2,7 @@ package piper
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,22 @@ import (
 	"github.com/loykin/piper/pkg/security"
 	"github.com/loykin/piper/pkg/template"
 )
+
+type streamProjectStub struct{ called bool }
+
+func (*streamProjectStub) DoProjectRequest(context.Context, memberclient.AuthContext, project.ProjectRef, projectclient.Request) (projectclient.Response, error) {
+	return projectclient.Response{}, nil
+}
+
+func (s *streamProjectStub) ServeProjectHTTP(_ context.Context, auth memberclient.AuthContext, ref project.ProjectRef, w http.ResponseWriter, req *http.Request) error {
+	s.called = true
+	if auth.Role != security.ProjectRoleAdmin || ref.MemberID != "member-1" || req.URL.Path != "/projects/project-1/notebooks/demo/proxy/api" {
+		return fmt.Errorf("unexpected stream auth=%+v ref=%+v path=%q", auth, ref, req.URL.Path)
+	}
+	w.Header().Set("X-Relayed-Member", ref.MemberID)
+	w.WriteHeader(http.StatusAccepted)
+	return nil
+}
 
 func TestRemoteProjectPipelineAPIWritesOnlyMemberRepository(t *testing.T) {
 	const (
@@ -87,5 +104,23 @@ func TestMemberProjectRouterRechecksDelegatedMutationRole(t *testing.T) {
 	}
 	if len(templates) != 0 {
 		t.Fatalf("viewer mutation reached repository: %+v", templates)
+	}
+}
+
+func TestRemoteBrowserProxyUsesProjectHTTPStream(t *testing.T) {
+	home := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}})
+	if err := home.repos.Project.Create(context.Background(), &project.Project{ID: "project-1", Name: "Remote", OwnerMemberID: "member-1"}); err != nil {
+		t.Fatal(err)
+	}
+	stream := &streamProjectStub{}
+	refFor := func(id string) project.ProjectRef {
+		return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
+	}
+	router := home.newRouterWithFederation(nil, nil, nil, stream, refFor, nil, "")
+	req := httptest.NewRequest(http.MethodGet, "/projects/project-1/notebooks/demo/proxy/api", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if !stream.called || rec.Code != http.StatusAccepted || rec.Header().Get("X-Relayed-Member") != "member-1" {
+		t.Fatalf("called=%v status=%d header=%q body=%s", stream.called, rec.Code, rec.Header().Get("X-Relayed-Member"), rec.Body.String())
 	}
 }

@@ -3,6 +3,8 @@ package membertunnel
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/loykin/piper/internal/memberclient"
@@ -12,7 +14,15 @@ import (
 )
 
 type fakeProjectClient struct {
-	doFn func(context.Context, memberclient.AuthContext, project.ProjectRef, projectclient.Request) (projectclient.Response, error)
+	doFn     func(context.Context, memberclient.AuthContext, project.ProjectRef, projectclient.Request) (projectclient.Response, error)
+	streamFn func(context.Context, memberclient.AuthContext, project.ProjectRef, http.ResponseWriter, *http.Request) error
+}
+
+func (f *fakeProjectClient) ServeProjectHTTP(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, w http.ResponseWriter, req *http.Request) error {
+	if f.streamFn == nil {
+		return fmt.Errorf("stream not configured")
+	}
+	return f.streamFn(ctx, auth, ref, w, req)
 }
 
 func (f *fakeProjectClient) DoProjectRequest(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req projectclient.Request) (projectclient.Response, error) {

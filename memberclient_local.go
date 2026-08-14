@@ -293,6 +293,26 @@ func (l *localMemberClient) DoProjectRequest(ctx context.Context, auth membercli
 	}, nil
 }
 
+func (l *localMemberClient) ServeProjectHTTP(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, w http.ResponseWriter, req *http.Request) error {
+	if err := l.ensureExecutionProject(ctx, ref.ProjectID); err != nil {
+		return err
+	}
+	clone := req.Clone(ctx)
+	urlCopy := *clone.URL
+	clone.URL = &urlCopy
+	if strings.HasPrefix(clone.URL.Path, "/api/projects/") {
+		clone.URL.Path = strings.TrimPrefix(clone.URL.Path, "/api")
+	}
+	projectCtx := project.Context{ID: ref.ProjectID, OwnerMemberID: project.LocalMemberID, Role: auth.Role}
+	httpCtx := project.WithContext(clone.Context(), projectCtx)
+	if auth.ActorID != "" {
+		httpCtx = security.WithIdentity(httpCtx, &security.Identity{ID: auth.ActorID})
+	}
+	clone = clone.WithContext(httpCtx)
+	l.projectHandler.ServeHTTP(w, clone)
+	return nil
+}
+
 func (l *localMemberClient) ensureExecutionProject(ctx context.Context, projectID string) error {
 	value, err := l.p.repos.Project.Get(ctx, projectID)
 	if err != nil {
@@ -316,3 +336,4 @@ func (l *localMemberClient) ensureExecutionProject(ctx context.Context, projectI
 
 var _ memberclient.Client = (*localMemberClient)(nil)
 var _ projectclient.Client = (*localMemberClient)(nil)
+var _ projectclient.StreamClient = (*localMemberClient)(nil)

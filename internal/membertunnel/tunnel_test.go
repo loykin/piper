@@ -1,8 +1,13 @@
 package membertunnel
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +147,98 @@ func TestTunnelEndToEndProjectRequest(t *testing.T) {
 	}
 	if response.Status != 200 || string(response.Body) != `[{"name":"remote"}]` {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestTunnelEndToEndProjectHTTPStream(t *testing.T) {
+	srv, addr := startTestServer(t, ServerConfig{HomeID: "home-1", Tokens: map[string]string{"member-1": "secret"}})
+	projectMember := &fakeProjectClient{streamFn: func(_ context.Context, auth memberclient.AuthContext, ref project.ProjectRef, w http.ResponseWriter, req *http.Request) error {
+		if auth.ActorID != "user-1" || ref.ProjectID != "project-1" || req.URL.Path != "/projects/project-1/notebooks/demo/proxy/api" {
+			t.Fatalf("auth=%+v ref=%+v path=%q", auth, ref, req.URL.Path)
+		}
+		if strings.EqualFold(req.Header.Get("Upgrade"), "websocket") {
+			conn, rw, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+			_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+			_ = rw.Flush()
+			payload := make([]byte, 4)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return err
+			}
+			_, err = conn.Write(payload)
+			return err
+		}
+		w.Header().Set("X-Member", "member-1")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(strings.Repeat("streamed-", 10000)))
+		return nil
+	}}
+	cli := NewClient(Config{HomeURL: "http://" + addr, HomeID: "home-1", MemberID: "member-1", Token: "secret"}, &fakeMember{}, projectMember)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = cli.Run(ctx) }()
+
+	var remote projectclient.StreamClient
+	if !waitUntilTunnel(2*time.Second, func() bool {
+		candidate, ok := srv.Client("member-1")
+		if !ok {
+			return false
+		}
+		remote, ok = candidate.(projectclient.StreamClient)
+		return ok
+	}) {
+		t.Fatal("HTTP stream client never became available")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/projects/project-1/notebooks/demo/proxy/api", nil)
+	rec := httptest.NewRecorder()
+	err := remote.ServeProjectHTTP(ctx, memberclient.AuthContext{ActorID: "user-1", Role: security.ProjectRoleViewer}, project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: "project-1"}, rec, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusCreated || rec.Header().Get("X-Member") != "member-1" || rec.Body.Len() != len("streamed-")*10000 {
+		t.Fatalf("status=%d header=%q bytes=%d", rec.Code, rec.Header().Get("X-Member"), rec.Body.Len())
+	}
+
+	homeListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	homeHTTP := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = remote.ServeProjectHTTP(req.Context(), memberclient.AuthContext{ActorID: "user-1", Role: security.ProjectRoleViewer}, project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: "project-1"}, w, req)
+	})}
+	go func() { _ = homeHTTP.Serve(homeListener) }()
+	t.Cleanup(func() { _ = homeHTTP.Close() })
+	browser, err := net.Dial("tcp", homeListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer browser.Close()
+	_, _ = io.WriteString(browser, "GET /projects/project-1/notebooks/demo/proxy/api HTTP/1.1\r\nHost: home\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+	reader := bufio.NewReader(browser)
+	var handshake strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		handshake.WriteString(line)
+		if line == "\r\n" {
+			break
+		}
+	}
+	if !strings.Contains(handshake.String(), "101 Switching Protocols") {
+		t.Fatalf("handshake=%q", handshake.String())
+	}
+	_, _ = browser.Write([]byte("ping"))
+	echo := make([]byte, 4)
+	if _, err := io.ReadFull(reader, echo); err != nil {
+		t.Fatal(err)
+	}
+	if string(echo) != "ping" {
+		t.Fatalf("websocket echo=%q", echo)
 	}
 }
 

@@ -4,6 +4,7 @@ package projectclient
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/project"
@@ -25,4 +26,10 @@ type Response struct {
 
 type Client interface {
 	DoProjectRequest(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req Request) (Response, error)
+}
+
+// StreamClient relays one project-scoped HTTP connection. Unlike Client's
+// buffered JSON contract it preserves streaming bodies and WebSocket upgrades.
+type StreamClient interface {
+	ServeProjectHTTP(context.Context, memberclient.AuthContext, project.ProjectRef, http.ResponseWriter, *http.Request) error
 }

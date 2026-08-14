@@ -32,12 +32,24 @@ func (p *Piper) newMemberProjectRouter() http.Handler {
 	r := gin.New()
 	r.Use(gin.Recovery(), limitRequestBody(maxRequestBodyBytes))
 	projectAPI := r.Group("/projects/:project_id")
+	projectAPI.GET("/runs/:id/artifacts/*path", func(c *gin.Context) {
+		fullPath := strings.TrimPrefix(c.Param("path"), "/")
+		parts := strings.SplitN(fullPath, "/", 2)
+		step, rest := parts[0], ""
+		if len(parts) == 2 {
+			rest = parts[1]
+		}
+		(&piperArtifacts{p: p}).ServeDownload(c.Writer, c.Request, c.Param("id"), step, rest)
+	})
 	viewerMgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
 	viewerMgr.RegisterDriver(viewertb.New())
 	viewerMgr.RegisterDriver(viewerhtml.New())
-	p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+	handlers := p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 		return p.startRunFromAPI(ctx, yaml, params, vars, experiment)
 	})
+	handlers.serving.RegisterProxyRoutes(projectAPI)
+	handlers.notebook.RegisterProxyRoutes(projectAPI)
+	handlers.viewer.RegisterProxyRoutes(projectAPI)
 	return r
 }
 

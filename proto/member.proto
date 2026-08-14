@@ -14,8 +14,9 @@ option go_package = "github.com/loykin/piper/internal/agentpb";
 //
 // The Member dials Connect() and keeps the stream open for its lifetime.
 // - First MemberMessage must be a MemberEnrollment (identifies the Member).
-// - Home sends HomeMessage to invoke a memberclient.Client method.
-// - Member replies with MemberRPCResponse per command.
+// - Home sends fixed project-domain RPC commands or opens a project-scoped
+//   virtual HTTP connection for browser proxy traffic.
+// - Member replies with RPC responses or multiplexed HTTP/WebSocket bytes.
 service MemberTunnelService {
   rpc Connect(stream MemberMessage) returns (stream HomeMessage);
 }
@@ -26,6 +27,7 @@ message MemberMessage {
   oneof payload {
     MemberEnrollment  enroll   = 1;
     MemberRPCResponse response = 2;
+    MemberHTTPStreamData http_stream = 3;
   }
 }
 
@@ -51,7 +53,25 @@ message MemberRPCResponse {
 message HomeMessage {
   oneof payload {
     MemberRPCCommand rpc_cmd = 1;
+    MemberHTTPStreamOpen http_open = 2;
+    MemberHTTPStreamData http_stream = 3;
   }
+}
+
+// MemberHTTPStreamOpen opens one project-scoped virtual HTTP connection.
+// payload is the same signed delegation envelope used by RPC commands; raw
+// HTTP bytes then flow only to the Member's private project router.
+message MemberHTTPStreamOpen {
+  string stream_id = 1;
+  bytes payload = 2;
+}
+
+// MemberHTTPStreamData multiplexes raw HTTP/WebSocket bytes over Connect.
+message MemberHTTPStreamData {
+  string stream_id = 1;
+  bytes data = 2;
+  bool end = 3;
+  string error = 4;
 }
 
 // MemberRPCCommand invokes one memberclient.Client method on the Member.

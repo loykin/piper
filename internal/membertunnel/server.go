@@ -123,6 +123,10 @@ func (s *Server) Connect(stream agentpb.MemberTunnelService_ConnectServer) error
 			return err
 		}
 		resp := msg.GetResponse()
+		if frame := msg.GetHttpStream(); frame != nil {
+			rc.deliverHTTP(frame)
+			continue
+		}
 		if resp == nil {
 			return fmt.Errorf("membertunnel: member %q sent an unexpected frame after enrollment", enroll.MemberId)
 		}

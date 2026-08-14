@@ -27,6 +27,7 @@ type MemberMessage struct {
 	//
 	//	*MemberMessage_Enroll
 	//	*MemberMessage_Response
+	//	*MemberMessage_HttpStream
 	Payload       isMemberMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -87,6 +88,15 @@ func (x *MemberMessage) GetResponse() *MemberRPCResponse {
 	return nil
 }
 
+func (x *MemberMessage) GetHttpStream() *MemberHTTPStreamData {
+	if x != nil {
+		if x, ok := x.Payload.(*MemberMessage_HttpStream); ok {
+			return x.HttpStream
+		}
+	}
+	return nil
+}
+
 type isMemberMessage_Payload interface {
 	isMemberMessage_Payload()
 }
@@ -99,9 +109,15 @@ type MemberMessage_Response struct {
 	Response *MemberRPCResponse `protobuf:"bytes,2,opt,name=response,proto3,oneof"`
 }
 
+type MemberMessage_HttpStream struct {
+	HttpStream *MemberHTTPStreamData `protobuf:"bytes,3,opt,name=http_stream,json=httpStream,proto3,oneof"`
+}
+
 func (*MemberMessage_Enroll) isMemberMessage_Payload() {}
 
 func (*MemberMessage_Response) isMemberMessage_Payload() {}
+
+func (*MemberMessage_HttpStream) isMemberMessage_Payload() {}
 
 // MemberEnrollment is the first message a Member sends after connecting.
 // token is a static per-Member shared secret configured on both sides.
@@ -233,6 +249,8 @@ type HomeMessage struct {
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*HomeMessage_RpcCmd
+	//	*HomeMessage_HttpOpen
+	//	*HomeMessage_HttpStream
 	Payload       isHomeMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -284,6 +302,24 @@ func (x *HomeMessage) GetRpcCmd() *MemberRPCCommand {
 	return nil
 }
 
+func (x *HomeMessage) GetHttpOpen() *MemberHTTPStreamOpen {
+	if x != nil {
+		if x, ok := x.Payload.(*HomeMessage_HttpOpen); ok {
+			return x.HttpOpen
+		}
+	}
+	return nil
+}
+
+func (x *HomeMessage) GetHttpStream() *MemberHTTPStreamData {
+	if x != nil {
+		if x, ok := x.Payload.(*HomeMessage_HttpStream); ok {
+			return x.HttpStream
+		}
+	}
+	return nil
+}
+
 type isHomeMessage_Payload interface {
 	isHomeMessage_Payload()
 }
@@ -292,7 +328,143 @@ type HomeMessage_RpcCmd struct {
 	RpcCmd *MemberRPCCommand `protobuf:"bytes,1,opt,name=rpc_cmd,json=rpcCmd,proto3,oneof"`
 }
 
+type HomeMessage_HttpOpen struct {
+	HttpOpen *MemberHTTPStreamOpen `protobuf:"bytes,2,opt,name=http_open,json=httpOpen,proto3,oneof"`
+}
+
+type HomeMessage_HttpStream struct {
+	HttpStream *MemberHTTPStreamData `protobuf:"bytes,3,opt,name=http_stream,json=httpStream,proto3,oneof"`
+}
+
 func (*HomeMessage_RpcCmd) isHomeMessage_Payload() {}
+
+func (*HomeMessage_HttpOpen) isHomeMessage_Payload() {}
+
+func (*HomeMessage_HttpStream) isHomeMessage_Payload() {}
+
+// MemberHTTPStreamOpen opens one project-scoped virtual HTTP connection.
+// payload is the same signed delegation envelope used by RPC commands; raw
+// HTTP bytes then flow only to the Member's private project router.
+type MemberHTTPStreamOpen struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StreamId      string                 `protobuf:"bytes,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MemberHTTPStreamOpen) Reset() {
+	*x = MemberHTTPStreamOpen{}
+	mi := &file_member_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemberHTTPStreamOpen) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemberHTTPStreamOpen) ProtoMessage() {}
+
+func (x *MemberHTTPStreamOpen) ProtoReflect() protoreflect.Message {
+	mi := &file_member_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemberHTTPStreamOpen.ProtoReflect.Descriptor instead.
+func (*MemberHTTPStreamOpen) Descriptor() ([]byte, []int) {
+	return file_member_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *MemberHTTPStreamOpen) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
+	}
+	return ""
+}
+
+func (x *MemberHTTPStreamOpen) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// MemberHTTPStreamData multiplexes raw HTTP/WebSocket bytes over Connect.
+type MemberHTTPStreamData struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StreamId      string                 `protobuf:"bytes,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	End           bool                   `protobuf:"varint,3,opt,name=end,proto3" json:"end,omitempty"`
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MemberHTTPStreamData) Reset() {
+	*x = MemberHTTPStreamData{}
+	mi := &file_member_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemberHTTPStreamData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemberHTTPStreamData) ProtoMessage() {}
+
+func (x *MemberHTTPStreamData) ProtoReflect() protoreflect.Message {
+	mi := &file_member_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemberHTTPStreamData.ProtoReflect.Descriptor instead.
+func (*MemberHTTPStreamData) Descriptor() ([]byte, []int) {
+	return file_member_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *MemberHTTPStreamData) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
+	}
+	return ""
+}
+
+func (x *MemberHTTPStreamData) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *MemberHTTPStreamData) GetEnd() bool {
+	if x != nil {
+		return x.End
+	}
+	return false
+}
+
+func (x *MemberHTTPStreamData) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
 
 // MemberRPCCommand invokes one memberclient.Client method on the Member.
 type MemberRPCCommand struct {
@@ -306,7 +478,7 @@ type MemberRPCCommand struct {
 
 func (x *MemberRPCCommand) Reset() {
 	*x = MemberRPCCommand{}
-	mi := &file_member_proto_msgTypes[4]
+	mi := &file_member_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -318,7 +490,7 @@ func (x *MemberRPCCommand) String() string {
 func (*MemberRPCCommand) ProtoMessage() {}
 
 func (x *MemberRPCCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_member_proto_msgTypes[4]
+	mi := &file_member_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -331,7 +503,7 @@ func (x *MemberRPCCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemberRPCCommand.ProtoReflect.Descriptor instead.
 func (*MemberRPCCommand) Descriptor() ([]byte, []int) {
-	return file_member_proto_rawDescGZIP(), []int{4}
+	return file_member_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *MemberRPCCommand) GetRequestId() string {
@@ -359,10 +531,12 @@ var File_member_proto protoreflect.FileDescriptor
 
 const file_member_proto_rawDesc = "" +
 	"\n" +
-	"\fmember.proto\x12\x0fpiper.member.v1\"\x99\x01\n" +
+	"\fmember.proto\x12\x0fpiper.member.v1\"\xe3\x01\n" +
 	"\rMemberMessage\x12;\n" +
 	"\x06enroll\x18\x01 \x01(\v2!.piper.member.v1.MemberEnrollmentH\x00R\x06enroll\x12@\n" +
-	"\bresponse\x18\x02 \x01(\v2\".piper.member.v1.MemberRPCResponseH\x00R\bresponseB\t\n" +
+	"\bresponse\x18\x02 \x01(\v2\".piper.member.v1.MemberRPCResponseH\x00R\bresponse\x12H\n" +
+	"\vhttp_stream\x18\x03 \x01(\v2%.piper.member.v1.MemberHTTPStreamDataH\x00R\n" +
+	"httpStreamB\t\n" +
 	"\apayload\"^\n" +
 	"\x10MemberEnrollment\x12\x17\n" +
 	"\ahome_id\x18\x01 \x01(\tR\x06homeId\x12\x1b\n" +
@@ -372,10 +546,21 @@ const file_member_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"V\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xe6\x01\n" +
 	"\vHomeMessage\x12<\n" +
-	"\arpc_cmd\x18\x01 \x01(\v2!.piper.member.v1.MemberRPCCommandH\x00R\x06rpcCmdB\t\n" +
-	"\apayload\"c\n" +
+	"\arpc_cmd\x18\x01 \x01(\v2!.piper.member.v1.MemberRPCCommandH\x00R\x06rpcCmd\x12D\n" +
+	"\thttp_open\x18\x02 \x01(\v2%.piper.member.v1.MemberHTTPStreamOpenH\x00R\bhttpOpen\x12H\n" +
+	"\vhttp_stream\x18\x03 \x01(\v2%.piper.member.v1.MemberHTTPStreamDataH\x00R\n" +
+	"httpStreamB\t\n" +
+	"\apayload\"M\n" +
+	"\x14MemberHTTPStreamOpen\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\"o\n" +
+	"\x14MemberHTTPStreamData\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\x12\x10\n" +
+	"\x03end\x18\x03 \x01(\bR\x03end\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"c\n" +
 	"\x10MemberRPCCommand\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x16\n" +
@@ -396,25 +581,30 @@ func file_member_proto_rawDescGZIP() []byte {
 	return file_member_proto_rawDescData
 }
 
-var file_member_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_member_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_member_proto_goTypes = []any{
-	(*MemberMessage)(nil),     // 0: piper.member.v1.MemberMessage
-	(*MemberEnrollment)(nil),  // 1: piper.member.v1.MemberEnrollment
-	(*MemberRPCResponse)(nil), // 2: piper.member.v1.MemberRPCResponse
-	(*HomeMessage)(nil),       // 3: piper.member.v1.HomeMessage
-	(*MemberRPCCommand)(nil),  // 4: piper.member.v1.MemberRPCCommand
+	(*MemberMessage)(nil),        // 0: piper.member.v1.MemberMessage
+	(*MemberEnrollment)(nil),     // 1: piper.member.v1.MemberEnrollment
+	(*MemberRPCResponse)(nil),    // 2: piper.member.v1.MemberRPCResponse
+	(*HomeMessage)(nil),          // 3: piper.member.v1.HomeMessage
+	(*MemberHTTPStreamOpen)(nil), // 4: piper.member.v1.MemberHTTPStreamOpen
+	(*MemberHTTPStreamData)(nil), // 5: piper.member.v1.MemberHTTPStreamData
+	(*MemberRPCCommand)(nil),     // 6: piper.member.v1.MemberRPCCommand
 }
 var file_member_proto_depIdxs = []int32{
 	1, // 0: piper.member.v1.MemberMessage.enroll:type_name -> piper.member.v1.MemberEnrollment
 	2, // 1: piper.member.v1.MemberMessage.response:type_name -> piper.member.v1.MemberRPCResponse
-	4, // 2: piper.member.v1.HomeMessage.rpc_cmd:type_name -> piper.member.v1.MemberRPCCommand
-	0, // 3: piper.member.v1.MemberTunnelService.Connect:input_type -> piper.member.v1.MemberMessage
-	3, // 4: piper.member.v1.MemberTunnelService.Connect:output_type -> piper.member.v1.HomeMessage
-	4, // [4:5] is the sub-list for method output_type
-	3, // [3:4] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	5, // 2: piper.member.v1.MemberMessage.http_stream:type_name -> piper.member.v1.MemberHTTPStreamData
+	6, // 3: piper.member.v1.HomeMessage.rpc_cmd:type_name -> piper.member.v1.MemberRPCCommand
+	4, // 4: piper.member.v1.HomeMessage.http_open:type_name -> piper.member.v1.MemberHTTPStreamOpen
+	5, // 5: piper.member.v1.HomeMessage.http_stream:type_name -> piper.member.v1.MemberHTTPStreamData
+	0, // 6: piper.member.v1.MemberTunnelService.Connect:input_type -> piper.member.v1.MemberMessage
+	3, // 7: piper.member.v1.MemberTunnelService.Connect:output_type -> piper.member.v1.HomeMessage
+	7, // [7:8] is the sub-list for method output_type
+	6, // [6:7] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_member_proto_init() }
@@ -425,9 +615,12 @@ func file_member_proto_init() {
 	file_member_proto_msgTypes[0].OneofWrappers = []any{
 		(*MemberMessage_Enroll)(nil),
 		(*MemberMessage_Response)(nil),
+		(*MemberMessage_HttpStream)(nil),
 	}
 	file_member_proto_msgTypes[3].OneofWrappers = []any{
 		(*HomeMessage_RpcCmd)(nil),
+		(*HomeMessage_HttpOpen)(nil),
+		(*HomeMessage_HttpStream)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -435,7 +628,7 @@ func file_member_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_member_proto_rawDesc), len(file_member_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

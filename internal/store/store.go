@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/loykin/piper/internal/logstore"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/internal/store/postgres"
 	"github.com/loykin/piper/internal/store/sqlite"
 	"github.com/loykin/piper/pkg/credential"
@@ -32,6 +33,7 @@ type Repos struct {
 	Federation       federation.Repository
 	Run              run.Repository
 	Submission       run.SubmissionRepository
+	ProjectMutation  projectclient.MutationRepository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
 	Credential       credential.Repository
@@ -60,6 +62,7 @@ type ExternalReposConfig struct {
 	Federation       federation.Repository
 	Run              run.Repository
 	Submission       run.SubmissionRepository
+	ProjectMutation  projectclient.MutationRepository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
 	Credential       credential.Repository
@@ -191,6 +194,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Federation:       sqlite.NewFederationRepo(executor, PrimarySource),
 			Run:              sqlite.NewRunRepo(executor, PrimarySource),
 			Submission:       sqlite.NewSubmissionRepo(executor, PrimarySource),
+			ProjectMutation:  sqlite.NewProjectMutationRepo(executor, PrimarySource),
 			Step:             sqlite.NewStepRepo(executor, PrimarySource),
 			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
 			Credential:       sqlite.NewCredentialRepo(executor, PrimarySource),
@@ -212,6 +216,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Federation:       postgres.NewFederationRepo(executor, PrimarySource),
 			Run:              postgres.NewRunRepo(executor, PrimarySource),
 			Submission:       postgres.NewSubmissionRepo(executor, PrimarySource),
+			ProjectMutation:  postgres.NewProjectMutationRepo(executor, PrimarySource),
 			Step:             postgres.NewStepRepo(executor, PrimarySource),
 			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
 			Credential:       postgres.NewCredentialRepo(executor, PrimarySource),

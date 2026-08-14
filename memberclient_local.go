@@ -268,6 +268,34 @@ func (l *localMemberClient) DoProjectRequest(ctx context.Context, auth membercli
 	if err := l.ensureExecutionProject(ctx, ref.ProjectID); err != nil {
 		return projectclient.Response{}, err
 	}
+	var mutation *projectclient.Mutation
+	key := http.Header(req.Header).Get("Idempotency-Key")
+	if key != "" && req.Method != http.MethodGet && req.Method != http.MethodHead && l.p.repos.ProjectMutation != nil {
+		hashPayload, err := json.Marshal(struct {
+			Method, Path, Query string
+			Body                []byte
+		}{req.Method, req.Path, req.RawQuery, req.Body})
+		if err != nil {
+			return projectclient.Response{}, err
+		}
+		sum := sha256.Sum256(hashPayload)
+		mutation = &projectclient.Mutation{ProjectID: ref.ProjectID, Key: key, RequestHash: base64.RawURLEncoding.EncodeToString(sum[:]), CreatedAt: time.Now().UTC()}
+		existing, claimed, err := l.p.repos.ProjectMutation.Claim(ctx, mutation)
+		if err != nil {
+			return projectclient.Response{}, err
+		}
+		if existing.RequestHash != mutation.RequestHash {
+			return projectclient.Response{Status: http.StatusConflict, Body: []byte(`{"error":"idempotency key was already used for a different request"}`), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+		}
+		if !claimed {
+			if !existing.Completed {
+				return projectclient.Response{Status: http.StatusConflict, Body: []byte(`{"error":"request is already in progress or its outcome is unknown; retry later or reconcile before issuing a new mutation"}`), Header: http.Header{"Content-Type": []string{"application/json"}}}, nil
+			}
+			var headers http.Header
+			_ = json.Unmarshal(existing.HeaderJSON, &headers)
+			return projectclient.Response{Status: existing.Status, Header: headers, Body: existing.Body}, nil
+		}
+	}
 	target := "/projects/" + url.PathEscape(ref.ProjectID) + req.Path
 	if req.RawQuery != "" {
 		target += "?" + req.RawQuery
@@ -286,11 +314,23 @@ func (l *localMemberClient) DoProjectRequest(ctx context.Context, auth membercli
 	httpReq = httpReq.WithContext(httpCtx)
 	recorder := httptest.NewRecorder()
 	l.projectHandler.ServeHTTP(recorder, httpReq)
-	return projectclient.Response{
+	response := projectclient.Response{
 		Status: recorder.Code,
 		Header: recorder.Header().Clone(),
 		Body:   append([]byte(nil), recorder.Body.Bytes()...),
-	}, nil
+	}
+	if mutation != nil {
+		mutation.Status = response.Status
+		mutation.Body = append([]byte(nil), response.Body...)
+		mutation.Completed = true
+		mutation.HeaderJSON, _ = json.Marshal(response.Header)
+		completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := l.p.repos.ProjectMutation.Complete(completeCtx, mutation); err != nil {
+			return projectclient.Response{}, err
+		}
+	}
+	return response, nil
 }
 
 func (l *localMemberClient) ServeProjectHTTP(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, w http.ResponseWriter, req *http.Request) error {

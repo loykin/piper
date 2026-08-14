@@ -390,6 +390,12 @@ func relayRemoteProject(client projectclient.Client, resolveRef func(string) pro
 				headers[name] = append([]string(nil), values...)
 			}
 		}
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead && headers.Get("Idempotency-Key") == "" {
+			headers.Set("Idempotency-Key", uuid.NewString())
+		}
+		if key := headers.Get("Idempotency-Key"); key != "" {
+			c.Header("Idempotency-Key", key)
+		}
 		auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}
 		if identity, ok := security.IdentityFromContext(c.Request.Context()); ok && identity != nil {
 			auth.ActorID = identity.ID

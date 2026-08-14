@@ -85,6 +85,19 @@ func TestSubmissionRepo_SQLite(t *testing.T) {
 	repotest.SubmissionRepoSuite(t, repos.Submission, projectID)
 }
 
+func TestProjectMutationRepo_SQLite(t *testing.T) {
+	repos, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+	const projectID = "project-mutation-repo"
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.ProjectMutationRepoSuite(t, repos.ProjectMutation, projectID)
+}
+
 func TestStepRepo_SQLite(t *testing.T) {
 	repos, err := store.Open(":memory:")
 	if err != nil {

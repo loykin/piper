@@ -1,4 +1,4 @@
-.PHONY: build ui docker build-linux-native test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto check-deps
+.PHONY: build ui docker build-linux-native test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-pipeline-e2e test-docker-notebook-e2e test-k8s-e2e test-integration demo clean proto check-deps
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
@@ -69,6 +69,11 @@ test-process-notebook-e2e:
 	PIPER_NOTEBOOK_PROCESS_E2E=1 \
 	PIPER_NOTEBOOK_PROCESS_E2E_ENV=$(NOTEBOOK_PROCESS_ENV) \
 	go test ./pkg/notebook/worker/driver/process -run '^TestProcessRuntimeE2E_' -v -count=1 -timeout=6m
+
+test-docker-pipeline-e2e: build-linux-native
+	PIPER_DOCKER_AGENT_BINARY=$(CURDIR)/bin/piper-$(ARCH) \
+	PIPER_PIPELINE_DOCKER_E2E_IMAGE=alpine:3.20 \
+	go test ./pkg/pipeline/worker/driver/docker -run '^TestDockerRuntimeE2E_' -v -count=1 -timeout=6m
 
 test-docker-notebook-e2e:
 	PIPER_NOTEBOOK_DOCKER_E2E_IMAGE=$(NOTEBOOK_IMAGE) \

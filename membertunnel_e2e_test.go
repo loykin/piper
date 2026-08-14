@@ -89,10 +89,19 @@ func TestMemberTunnelProjectAPIRelayEndToEnd(t *testing.T) {
 	body := `{"yaml":"metadata:\n  name: tunneled-template\nspec:\n  steps:\n    - name: hello\n      run:\n        command: [\\\"echo\\\", \\\"hello\\\"]\n"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "tunneled-template-1")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
+	retryReq.Header.Set("Content-Type", "application/json")
+	retryReq.Header.Set("Idempotency-Key", "tunneled-template-1")
+	retryRec := httptest.NewRecorder()
+	router.ServeHTTP(retryRec, retryReq)
+	if retryRec.Code != http.StatusCreated || retryRec.Body.String() != rec.Body.String() {
+		t.Fatalf("retry status=%d body=%s first=%s", retryRec.Code, retryRec.Body.String(), rec.Body.String())
 	}
 	memberTemplates, err := memberP.repos.PipelineTemplate.List(context.Background(), projectID, template.Filter{})
 	if err != nil || len(memberTemplates) != 1 {

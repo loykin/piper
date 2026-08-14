@@ -80,6 +80,16 @@ func TestSubmissionRepo_Postgres(t *testing.T) {
 	repotest.SubmissionRepoSuite(t, repos.Submission, projectID)
 }
 
+func TestProjectMutationRepo_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+	const projectID = "project-mutation-repo"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.ProjectMutationRepoSuite(t, repos.ProjectMutation, projectID)
+}
+
 func TestStepRepo_Postgres(t *testing.T) {
 	ctx := context.Background()
 	repos := openPostgresRepos(t, ctx)

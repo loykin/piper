@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/pipeline/run"
@@ -89,6 +90,31 @@ func SubmissionRepoSuite(t *testing.T, repo run.SubmissionRepository, projectID 
 	_, claimed, err = repo.Claim(ctx, first)
 	if err != nil || !claimed {
 		t.Fatalf("Claim after Delete = %v, %v", claimed, err)
+	}
+}
+
+func ProjectMutationRepoSuite(t *testing.T, repo projectclient.MutationRepository, projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	first := &projectclient.Mutation{ProjectID: projectID, Key: "mutation-a", RequestHash: "hash-a", CreatedAt: time.Now().UTC()}
+	existing, claimed, err := repo.Claim(ctx, first)
+	if err != nil || !claimed || existing.Completed {
+		t.Fatalf("first Claim=%#v %v %v", existing, claimed, err)
+	}
+	existing, claimed, err = repo.Claim(ctx, &projectclient.Mutation{ProjectID: projectID, Key: "mutation-a", RequestHash: "other", CreatedAt: time.Now().UTC()})
+	if err != nil || claimed || existing.RequestHash != "hash-a" {
+		t.Fatalf("duplicate Claim=%#v %v %v", existing, claimed, err)
+	}
+	first.Status = 201
+	first.HeaderJSON = []byte(`{"X-Test":["yes"]}`)
+	first.Body = []byte("created")
+	first.Completed = true
+	if err := repo.Complete(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	existing, claimed, err = repo.Claim(ctx, first)
+	if err != nil || claimed || !existing.Completed || existing.Status != 201 || string(existing.Body) != "created" {
+		t.Fatalf("completed Claim=%#v %v %v", existing, claimed, err)
 	}
 }
 

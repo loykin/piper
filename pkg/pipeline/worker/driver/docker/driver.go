@@ -4,11 +4,13 @@ package dockerdriver
 
 import (
 	"context"
+	"debug/elf"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -58,9 +60,9 @@ type Driver struct {
 
 // New creates a DockerDriver connected to the local Docker daemon.
 func New(cfg Config) (*Driver, error) {
-	piperBin, err := os.Executable()
+	piperBin, err := resolvePiperBinary()
 	if err != nil {
-		return nil, fmt.Errorf("docker driver: resolve executable: %w", err)
+		return nil, fmt.Errorf("docker driver: resolve Linux agent executable: %w", err)
 	}
 	cli, err := dockerinfra.NewClient()
 	if err != nil {
@@ -76,6 +78,65 @@ func New(cfg Config) (*Driver, error) {
 		client:   cli,
 		active:   make(map[string]string),
 	}, nil
+}
+
+func resolvePiperBinary() (string, error) {
+	if configured := os.Getenv("PIPER_DOCKER_AGENT_BINARY"); configured != "" {
+		return validateLinuxBinary(configured)
+	}
+	if runtime.GOOS == "linux" {
+		executable, err := os.Executable()
+		if err != nil {
+			return "", err
+		}
+		return validateLinuxBinary(executable)
+	}
+	executable, executableErr := os.Executable()
+	candidates := []string{}
+	if executableErr == nil {
+		executableDir := filepath.Dir(executable)
+		candidates = append(candidates,
+			filepath.Join(executableDir, "piper-"+runtime.GOARCH),
+			filepath.Join(executableDir, "piper-agent"),
+		)
+	}
+	// Keep repository-relative candidates for `go run` and development builds,
+	// whose executable lives in a temporary directory rather than ./bin.
+	candidates = append(candidates,
+		filepath.Join("bin", "piper-"+runtime.GOARCH),
+		filepath.Join("bin", "piper-agent"),
+	)
+	for _, candidate := range candidates {
+		if resolved, err := validateLinuxBinary(candidate); err == nil {
+			return resolved, nil
+		}
+	}
+	return "", fmt.Errorf("no Linux/%s companion binary found; run `make build-linux-native` or set PIPER_DOCKER_AGENT_BINARY", runtime.GOARCH)
+}
+
+func validateLinuxBinary(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	file, err := elf.Open(abs)
+	if err != nil {
+		return "", fmt.Errorf("%s is not a Linux ELF executable: %w", abs, err)
+	}
+	defer file.Close()
+	var want elf.Machine
+	switch runtime.GOARCH {
+	case "amd64":
+		want = elf.EM_X86_64
+	case "arm64":
+		want = elf.EM_AARCH64
+	default:
+		return "", fmt.Errorf("Docker runtime is unsupported on host architecture %s", runtime.GOARCH)
+	}
+	if file.Machine != want {
+		return "", fmt.Errorf("%s has architecture %s, want %s", abs, file.Machine, want)
+	}
+	return abs, nil
 }
 
 // NewWithClient creates a Driver with an injected Docker client. Intended for testing.

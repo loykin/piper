@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/loykin/piper/internal/event"
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -61,6 +62,13 @@ type ServeOption struct {
 
 	// Addr overrides Config.Server.Addr when non-empty.
 	Addr string
+
+	// Member overrides the in-process Local Member for Run-domain requests.
+	// ProjectRef must also be set when requests may target remote Members.
+	Member memberclient.Client
+
+	// ProjectRef resolves a Home project ID to its execution owner.
+	ProjectRef func(projectID string) project.ProjectRef
 }
 
 // Serve runs the piper HTTP server.
@@ -89,7 +97,7 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		}
 	}()
 
-	handler := p.newRouter(opt.Extra, viewerMgr)
+	handler := p.newRouterWithMember(opt.Extra, viewerMgr, opt.Member, opt.ProjectRef)
 
 	// Apply middleware chain (Config.Hooks.Middleware)
 	for i := len(p.cfg.Hooks.Middleware) - 1; i >= 0; i-- {
@@ -153,6 +161,10 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 
 // newRouter builds the Gin router wired with all domain handlers.
 func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Handler {
+	return p.newRouterWithMember(extra, viewerMgr, nil, nil)
+}
+
+func (p *Piper) newRouterWithMember(extra http.Handler, viewerMgr *viewer.Manager, member memberclient.Client, projectRef func(string) project.ProjectRef) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -260,9 +272,15 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	// Run domain — Home reaches Member only through memberclient.Client
 	// (fed.md §11.3/§13.3); for the single-install case that Member is
 	// in-process (NewLocalMemberClient).
+	if member == nil {
+		member = NewLocalMemberClient(p)
+	}
+	if projectRef == nil {
+		projectRef = project.LocalRef
+	}
 	runHandler := run.NewHandler(run.HandlerDeps{
-		Member:     NewLocalMemberClient(p),
-		ProjectRef: project.LocalRef,
+		Member:     member,
+		ProjectRef: projectRef,
 		Hooks:      &piperRunHooks{p: p},
 	})
 	runHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
@@ -326,7 +344,15 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 			return p.Parse(yaml)
 		},
 		StartRun: func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-			return p.startRunFromAPI(ctx, yaml, params, vars, experiment)
+			projectContext, _ := project.FromContext(ctx)
+			auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}
+			if identity, ok := security.IdentityFromContext(ctx); ok && identity != nil {
+				auth.ActorID = identity.ID
+			}
+			resp, err := member.SubmitRun(ctx, auth, projectRef(projectContext.ID), memberclient.SubmitRunRequest{
+				YAML: yaml, Params: params, Experiment: experiment, Vars: vars,
+			})
+			return resp.RunID, err
 		},
 		NextTime: nextScheduleTime,
 		GenID:    genScheduleID,

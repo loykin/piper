@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -265,6 +266,10 @@ func (h *Handler) triggerRun(c *gin.Context) {
 
 	runID, err := h.deps.StartRun(c.Request.Context(), rewrittenYAML, req.Params, proto.BuiltinVars{}, "")
 	if err != nil {
+		if errors.Is(err, memberclient.ErrMemberUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

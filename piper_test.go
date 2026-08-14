@@ -19,6 +19,7 @@ import (
 	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/logstore"
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -27,7 +28,19 @@ import (
 	"github.com/loykin/piper/pkg/schedule"
 	"github.com/loykin/piper/pkg/security"
 	"github.com/loykin/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/template"
 )
+
+type templateRunMember struct {
+	memberclient.Client
+	ref project.ProjectRef
+	req memberclient.SubmitRunRequest
+}
+
+func (m *templateRunMember) SubmitRun(_ context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
+	m.ref, m.req = ref, req
+	return memberclient.SubmitRunResponse{RunID: "remote-run-1"}, nil
+}
 
 // testSecurityProvider implements the request authentication and authorization
 // capabilities used by router tests.
@@ -78,6 +91,40 @@ func newTestPiper(t *testing.T, cfg Config) *Piper {
 	}
 	t.Cleanup(func() { _ = p.Close() })
 	return p
+}
+
+func TestTemplateRunUsesConfiguredMemberRouting(t *testing.T) {
+	const projectID = "remote-project"
+	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal}})
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: "Remote Project"}); err != nil {
+		t.Fatal(err)
+	}
+	tpl := &template.Template{
+		ID: "template-1", ProjectID: projectID, Name: "federated-template", Version: 1,
+		YAML:      "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: federated-template\nspec:\n  steps:\n  - name: proof\n    run:\n      type: command\n      command: [\"echo\", \"remote\"]\n",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := p.repos.PipelineTemplate.Create(context.Background(), tpl); err != nil {
+		t.Fatal(err)
+	}
+	member := &templateRunMember{}
+	refFor := func(id string) project.ProjectRef {
+		return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
+	}
+	router := p.newRouterWithMember(nil, nil, member, refFor)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines/"+tpl.ID+"/run", strings.NewReader(`{"params":{"lr":0.1}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	if member.ref != refFor(projectID) {
+		t.Fatalf("ProjectRef = %#v", member.ref)
+	}
+	if member.req.Params["lr"] != 0.1 || !strings.Contains(member.req.YAML, "federated-template") {
+		t.Fatalf("SubmitRun request = %#v", member.req)
+	}
 }
 
 func TestNewRequiresCredentialEncryptionKeyUnlessDevOptIn(t *testing.T) {

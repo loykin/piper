@@ -2,7 +2,10 @@ package commands
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -10,8 +13,13 @@ import (
 
 	piper "github.com/loykin/piper"
 	cliconfig "github.com/loykin/piper/cmd/piper/config"
+	"github.com/loykin/piper/internal/agentpb"
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/membertunnel"
+	"github.com/loykin/piper/pkg/project"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command {
@@ -37,14 +45,84 @@ func newServerCmd(loader *cliconfig.Loader, factory PiperFactory) *cobra.Command
 				return runMemberMode(root, p)
 			}
 
-			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer cancel()
-
-			return p.Serve(ctx, piper.ServeOption{Addr: root.Server.HTTPAddr})
+			return runHomeMode(root, p)
 		},
 	}
 
 	return cmd
+}
+
+// runHomeMode serves the user-facing Home API. When tunnel_addr is set it
+// also accepts enrolled Member connections and routes Run requests according
+// to home.projects; projects absent from that map stay on the Local Member.
+func runHomeMode(root cliconfig.RootConfig, p *piper.Piper) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	opt := piper.ServeOption{Addr: root.Server.HTTPAddr}
+	if root.Home.TunnelAddr == "" {
+		return p.Serve(ctx, opt)
+	}
+
+	listener, err := net.Listen("tcp", root.Home.TunnelAddr)
+	if err != nil {
+		return fmt.Errorf("listen for member tunnel on %s: %w", root.Home.TunnelAddr, err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	tunnelServer := membertunnel.NewServer(membertunnel.ServerConfig{
+		HomeID: root.Home.ID,
+		Tokens: root.Home.Members,
+	})
+	var grpcOptions []grpc.ServerOption
+	if root.Server.TLS.Enabled {
+		certificate, err := tls.LoadX509KeyPair(root.Server.TLS.CertFile, root.Server.TLS.KeyFile)
+		if err != nil {
+			return fmt.Errorf("load member tunnel TLS certificate: %w", err)
+		}
+		grpcOptions = append(grpcOptions, grpc.Creds(credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			MinVersion:   tls.VersionTLS12,
+		})))
+	}
+	grpcServer := grpc.NewServer(grpcOptions...)
+	agentpb.RegisterMemberTunnelServiceServer(grpcServer, tunnelServer)
+
+	local := piper.NewLocalMemberClient(p)
+	opt.Member = &memberclient.RoutingClient{Resolve: func(ref project.ProjectRef) (memberclient.Client, error) {
+		if ref.MemberID == project.LocalMemberID {
+			return local, nil
+		}
+		if remote, ok := tunnelServer.Client(ref.MemberID); ok {
+			return remote, nil
+		}
+		return nil, fmt.Errorf("%w: member %q", memberclient.ErrMemberUnavailable, ref.MemberID)
+	}}
+	opt.ProjectRef = func(projectID string) project.ProjectRef {
+		memberID := root.Home.Projects[projectID]
+		if memberID == "" {
+			memberID = project.LocalMemberID
+		}
+		return project.ProjectRef{HomeID: root.Home.ID, MemberID: memberID, ProjectID: projectID}
+	}
+
+	errCh := make(chan error, 2)
+	go func() {
+		slog.Info("home mode: member tunnel listening", "addr", listener.Addr().String(), "home_id", root.Home.ID)
+		errCh <- grpcServer.Serve(listener)
+	}()
+	go func() { errCh <- p.Serve(ctx, opt) }()
+
+	firstErr := <-errCh
+	cancel()
+	grpcServer.Stop()
+	secondErr := <-errCh
+	for _, serveErr := range []error{firstErr, secondErr} {
+		if serveErr != nil && serveErr != grpc.ErrServerStopped {
+			return serveErr
+		}
+	}
+	return nil
 }
 
 // runMemberMode connects p to its configured Home over an outbound tunnel

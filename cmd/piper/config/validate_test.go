@@ -70,6 +70,18 @@ func TestValidateDeploymentMemberAccepted(t *testing.T) {
 	}
 }
 
+func TestValidateDeploymentMemberRejectsInvalidHomeURLScheme(t *testing.T) {
+	cfg := RootConfig{
+		Storage:    StorageConfig{Disabled: true},
+		Deployment: DeploymentConfig{Mode: DeploymentModeMember, MemberID: "member-1"},
+		Home:       HomeConfig{ID: "home-1", URL: "grpc://home.example.com", EnrollmentToken: "secret"},
+		Runtime:    RuntimeConfig{Type: InfrastructureBaremetal},
+	}
+	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "http or https") {
+		t.Fatalf("expected home.url scheme error, got: %v", err)
+	}
+}
+
 func TestValidateDeploymentRejectsUnknownMode(t *testing.T) {
 	cfg := RootConfig{
 		Runtime:    RuntimeConfig{Type: InfrastructureBaremetal},
@@ -77,6 +89,42 @@ func TestValidateDeploymentRejectsUnknownMode(t *testing.T) {
 	}
 	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "deployment.mode") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateDeploymentHomeFederation(t *testing.T) {
+	base := RootConfig{
+		Storage:    StorageConfig{Disabled: true},
+		Runtime:    RuntimeConfig{Type: InfrastructureBaremetal},
+		Deployment: DeploymentConfig{Mode: DeploymentModeHome},
+	}
+	base.Home.Members = map[string]string{"member-1": "token-1"}
+	if err := ValidateServer(base); err == nil || !strings.Contains(err.Error(), "home.tunnel_addr") {
+		t.Fatalf("expected tunnel_addr error, got: %v", err)
+	}
+	base.Home.TunnelAddr = ":9090"
+	if err := ValidateServer(base); err == nil || !strings.Contains(err.Error(), "home.id") {
+		t.Fatalf("expected home.id error, got: %v", err)
+	}
+	base.Home.ID = "home-1"
+	base.Home.Projects = map[string]string{"project-1": "unknown"}
+	if err := ValidateServer(base); err == nil || !strings.Contains(err.Error(), "unknown member") {
+		t.Fatalf("expected unknown member error, got: %v", err)
+	}
+	base.Home.Projects["project-1"] = "member-1"
+	if err := ValidateServer(base); err != nil {
+		t.Fatalf("valid home federation config rejected: %v", err)
+	}
+}
+
+func TestValidateDeploymentHomeTunnelRequiresMembers(t *testing.T) {
+	cfg := RootConfig{
+		Storage: StorageConfig{Disabled: true},
+		Runtime: RuntimeConfig{Type: InfrastructureBaremetal},
+		Home:    HomeConfig{ID: "home-1", TunnelAddr: ":9090"},
+	}
+	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "home.members") {
+		t.Fatalf("expected home.members error, got: %v", err)
 	}
 }
 

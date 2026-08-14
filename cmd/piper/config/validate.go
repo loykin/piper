@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -41,13 +42,17 @@ func ValidateServer(c RootConfig) error {
 func validateDeployment(c RootConfig) error {
 	switch c.Deployment.Mode {
 	case "", DeploymentModeHome:
-		return nil
+		return validateHomeFederation(c)
 	case DeploymentModeMember:
 		if c.Home.ID == "" {
 			return fmt.Errorf("config: home.id is required when deployment.mode is member")
 		}
 		if c.Home.URL == "" {
 			return fmt.Errorf("config: home.url is required when deployment.mode is member")
+		}
+		homeURL, err := url.Parse(c.Home.URL)
+		if err != nil || homeURL.Host == "" || (homeURL.Scheme != "http" && homeURL.Scheme != "https") {
+			return fmt.Errorf("config: home.url must be an http or https URL when deployment.mode is member")
 		}
 		if c.Home.EnrollmentToken == "" {
 			return fmt.Errorf("config: home.enrollment_token is required when deployment.mode is member")
@@ -56,6 +61,35 @@ func validateDeployment(c RootConfig) error {
 	default:
 		return fmt.Errorf("config: deployment.mode must be home, member, or empty")
 	}
+}
+
+func validateHomeFederation(c RootConfig) error {
+	if c.Home.TunnelAddr == "" {
+		if len(c.Home.Members) != 0 || len(c.Home.Projects) != 0 {
+			return fmt.Errorf("config: home.tunnel_addr is required when home.members or home.projects is configured")
+		}
+		return nil
+	}
+	if c.Home.ID == "" {
+		return fmt.Errorf("config: home.id is required when home.tunnel_addr is configured")
+	}
+	if len(c.Home.Members) == 0 {
+		return fmt.Errorf("config: home.members must contain at least one member when home.tunnel_addr is configured")
+	}
+	for memberID, token := range c.Home.Members {
+		if strings.TrimSpace(memberID) == "" || strings.TrimSpace(token) == "" {
+			return fmt.Errorf("config: home.members must contain non-empty member IDs and tokens")
+		}
+	}
+	for projectID, memberID := range c.Home.Projects {
+		if strings.TrimSpace(projectID) == "" || strings.TrimSpace(memberID) == "" {
+			return fmt.Errorf("config: home.projects must contain non-empty project and member IDs")
+		}
+		if _, ok := c.Home.Members[memberID]; !ok {
+			return fmt.Errorf("config: home.projects[%q] references unknown member %q", projectID, memberID)
+		}
+	}
+	return nil
 }
 
 // validateRuntime validates runtime.type — required; there is no

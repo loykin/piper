@@ -65,7 +65,7 @@ func TestTunnelEndToEndSubmitRun(t *testing.T) {
 		t.Fatal("member never enrolled")
 	}
 
-	resp, err := mc.SubmitRun(ctx, memberclient.AuthContext{}, project.ProjectRef{ProjectID: "proj-1"}, memberclient.SubmitRunRequest{YAML: "x", Experiment: "exp-1"})
+	resp, err := mc.SubmitRun(ctx, memberclient.AuthContext{}, project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: "proj-1"}, memberclient.SubmitRunRequest{YAML: "x", Experiment: "exp-1"})
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
 	}

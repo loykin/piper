@@ -11,7 +11,7 @@ import (
 )
 
 func TestCallRemovesPendingRequestOnContextCancellation(t *testing.T) {
-	r := newRemoteMemberClient("member-1", func(*agentpb.HomeMessage) error { return nil })
+	r := newRemoteMemberClient("member-1", "test-token", func(*agentpb.HomeMessage) error { return nil })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	_, err := call[string, memberclient.RunDetail](ctx, r, MethodGetRun, memberclient.AuthContext{}, project.ProjectRef{}, "run-1")

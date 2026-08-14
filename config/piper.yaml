@@ -104,3 +104,29 @@ runtime:
 notebook:
   notebooks_root: ./notebooks
   port_range: 8888-9900
+
+# Federation is optional. With no deployment block, this remains a standalone
+# Home whose projects execute on its in-process Local Member.
+#
+# Home example — tunnel TLS reuses server.tls when enabled. Projects omitted
+# from home.projects execute locally; mapped projects route Run-domain calls
+# to the named enrolled Member.
+# deployment:
+#   mode: home
+# home:
+#   id: home-prod
+#   tunnel_addr: ":9090"
+#   members:
+#     member-gpu: "replace-with-a-distinct-secret"
+#   projects:
+#     image-training: member-gpu
+#
+# Member example — exposes no HTTP/UI and dials Home outbound. Use https in
+# production when the Home tunnel is configured with server.tls.
+# deployment:
+#   mode: member
+#   member_id: member-gpu
+# home:
+#   id: home-prod
+#   url: https://home.example.com:9090
+#   enrollment_token: "replace-with-the-same-member-secret"

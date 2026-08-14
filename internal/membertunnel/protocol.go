@@ -15,6 +15,7 @@ package membertunnel
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/memberclient"
@@ -41,12 +42,9 @@ const (
 )
 
 // callEnvelope wraps a method's request DTO with the AuthContext/ProjectRef
-// Home resolved for this call. These travel as plain, unsigned JSON for
-// now — Member trusts what Home sends rather than verifying a signature,
-// since no credential-signing infrastructure exists yet (fed.md §13.4
-// follow-up; see the package doc). ProjectRef itself is not a secret, just
-// routing data (which project's data to operate on), so it always travels
-// regardless of the signing gap.
+// Home resolved for this call. Auth is signed and bound to Ref before it
+// crosses the tunnel; Member verifies both identity and expiry before
+// dispatch. ProjectRef itself is routing data rather than a secret.
 type callEnvelope[T any] struct {
 	Auth memberclient.AuthContext `json:"auth"`
 	Ref  project.ProjectRef       `json:"ref"`
@@ -90,6 +88,20 @@ type (
 // JSON bytes for a MemberRPCCommand payload. Used by remote.go (Home side).
 func encodeCall[Req any](auth memberclient.AuthContext, ref project.ProjectRef, req Req) ([]byte, error) {
 	return json.Marshal(callEnvelope[Req]{Auth: auth, Ref: ref, Req: req})
+}
+
+func verifyCall(payload []byte, key, homeID, memberID, method string, now time.Time) error {
+	var env callEnvelope[json.RawMessage]
+	if err := json.Unmarshal(payload, &env); err != nil {
+		return fmt.Errorf("membertunnel: decode authorization envelope: %w", err)
+	}
+	if env.Ref.HomeID != homeID || env.Ref.MemberID != memberID {
+		return fmt.Errorf("membertunnel: delegated project owner does not match this connection")
+	}
+	if err := memberclient.VerifyDelegation(env.Auth, env.Ref, method, env.Req, key, now); err != nil {
+		return fmt.Errorf("membertunnel: %w", err)
+	}
+	return nil
 }
 
 // decodeCall is the Member-side counterpart, used by dispatch.go.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -20,6 +21,7 @@ import (
 // awaiting the correlated response. Returned by Server.Client.
 type remoteMemberClient struct {
 	memberID string
+	token    string
 	send     func(*agentpb.HomeMessage) error
 
 	mu      sync.Mutex
@@ -27,9 +29,10 @@ type remoteMemberClient struct {
 	closed  bool
 }
 
-func newRemoteMemberClient(memberID string, send func(*agentpb.HomeMessage) error) *remoteMemberClient {
+func newRemoteMemberClient(memberID, token string, send func(*agentpb.HomeMessage) error) *remoteMemberClient {
 	return &remoteMemberClient{
 		memberID: memberID,
+		token:    token,
 		send:     send,
 		pending:  make(map[string]chan *agentpb.MemberRPCResponse),
 	}
@@ -60,6 +63,14 @@ func (r *remoteMemberClient) closeAll() {
 
 func call[Req, Resp any](ctx context.Context, r *remoteMemberClient, method string, auth memberclient.AuthContext, ref project.ProjectRef, req Req) (Resp, error) {
 	var zero Resp
+	requestPayload, err := json.Marshal(req)
+	if err != nil {
+		return zero, fmt.Errorf("membertunnel: encode request for delegation: %w", err)
+	}
+	auth, err = memberclient.SignDelegation(auth, ref, method, requestPayload, r.token, time.Now())
+	if err != nil {
+		return zero, err
+	}
 	payload, err := encodeCall(auth, ref, req)
 	if err != nil {
 		return zero, err
@@ -70,7 +81,7 @@ func call[Req, Resp any](ctx context.Context, r *remoteMemberClient, method stri
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
-		return zero, fmt.Errorf("membertunnel: member %q is not connected", r.memberID)
+		return zero, fmt.Errorf("%w: member %q is not connected", memberclient.ErrMemberUnavailable, r.memberID)
 	}
 	r.pending[requestID] = ch
 	r.mu.Unlock()
@@ -84,7 +95,7 @@ func call[Req, Resp any](ctx context.Context, r *remoteMemberClient, method stri
 		r.mu.Lock()
 		delete(r.pending, requestID)
 		r.mu.Unlock()
-		return zero, err
+		return zero, fmt.Errorf("%w: send to member %q: %v", memberclient.ErrMemberUnavailable, r.memberID, err)
 	}
 	defer func() {
 		r.mu.Lock()
@@ -97,7 +108,7 @@ func call[Req, Resp any](ctx context.Context, r *remoteMemberClient, method stri
 	select {
 	case resp, ok := <-ch:
 		if !ok {
-			return zero, fmt.Errorf("membertunnel: connection to member %q closed", r.memberID)
+			return zero, fmt.Errorf("%w: connection to member %q closed", memberclient.ErrMemberUnavailable, r.memberID)
 		}
 		if resp.Error != "" {
 			return zero, errors.New(resp.Error)

@@ -22,24 +22,32 @@ import (
 // resolve to an existing run.
 var ErrRunNotFound = errors.New("run not found")
 
+// ErrMemberUnavailable marks transport/routing failures where the owning
+// Member cannot currently serve a project. HTTP callers should surface this
+// as 503 rather than disguising it as a missing run or a generic 500.
+var ErrMemberUnavailable = errors.New("member unavailable")
+
 // AuthContext is the authorization context Home resolves once (via its
 // project-membership middleware) and hands to Member on every call, so
-// Member never looks up membership itself. Signature/Expiry fields belong
-// here once a real remote Member exists (fed.md §13.4/§10.10); for the
-// single-process Local Member this is unsigned, since there is no network
-// boundary to forge across yet.
+// Member never looks up membership itself. Remote calls bind the context to
+// a short lifetime, operation, payload, and ProjectRef with an HMAC signature;
+// the in-process Local Member does not need a network-bound signature.
 type AuthContext struct {
-	ActorID  string
-	Role     security.ProjectRole
-	IssuedAt time.Time
+	ActorID     string
+	Role        security.ProjectRole
+	IssuedAt    time.Time
+	ExpiresAt   time.Time
+	Operation   string
+	PayloadHash string
+	Signature   string
 }
 
 // Client is the Home-to-Member contract for the Run execution domain — the
 // first vertical slice migrated off direct repository access (fed.md
 // §11.3: "Home은 Member의 execution repository에 직접 접근하지 않는다").
 // The single-install Local Member implements this in-process
-// (root package's NewLocalMemberClient); a future remote Member implements
-// it over the tunnel using the same request/response shapes.
+// (root package's NewLocalMemberClient); remote Members implement it over
+// internal/membertunnel using the same request/response shapes.
 type Client interface {
 	SubmitRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, req SubmitRunRequest) (SubmitRunResponse, error)
 	SubmitSweep(ctx context.Context, auth AuthContext, ref project.ProjectRef, req SubmitSweepRequest) (SubmitSweepResponse, error)

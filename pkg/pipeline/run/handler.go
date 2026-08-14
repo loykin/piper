@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -67,6 +68,17 @@ func (h *Handler) ref(c *gin.Context) project.ProjectRef {
 	return h.deps.ProjectRef(projectID(c))
 }
 
+func writeMemberError(c *gin.Context, err error, fallbackStatus int, fallbackMessage string) {
+	if errors.Is(err, memberclient.ErrMemberUnavailable) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	if fallbackMessage == "" {
+		fallbackMessage = err.Error()
+	}
+	c.JSON(fallbackStatus, gin.H{"error": fallbackMessage})
+}
+
 // RegisterRoutes mounts all /runs routes onto the given router group.
 // Read routes are accessible to viewers; write routes require member role.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -127,7 +139,7 @@ func (h *Handler) listRuns(c *gin.Context) {
 
 	resp, err := h.deps.Member.ListRuns(c.Request.Context(), authFrom(c), h.ref(c), req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	if req.Limit > 0 {
@@ -173,7 +185,7 @@ func (h *Handler) createRun(c *gin.Context) {
 		YAML: body.YAML, Params: body.Params, Experiment: body.Experiment, Vars: body.Vars,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"run_id": resp.RunID})
@@ -208,7 +220,7 @@ func (h *Handler) createSweep(c *gin.Context) {
 		YAML: body.YAML, Experiment: body.Experiment, Runs: trials,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"experiment": resp.Experiment, "run_ids": resp.RunIDs})
@@ -219,7 +231,7 @@ func (h *Handler) getRun(c *gin.Context) {
 	runID := c.Param("id")
 	detail, err := h.deps.Member.GetRun(c.Request.Context(), authFrom(c), h.ref(c), runID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		writeMemberError(c, err, http.StatusNotFound, "run not found")
 		return
 	}
 	if h.deps.Hooks != nil {
@@ -239,7 +251,7 @@ func (h *Handler) cancelRun(c *gin.Context) {
 
 	detail, err := h.deps.Member.GetRun(ctx, auth, ref, runID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		writeMemberError(c, err, http.StatusNotFound, "run not found")
 		return
 	}
 	if h.deps.Hooks != nil {
@@ -254,7 +266,7 @@ func (h *Handler) cancelRun(c *gin.Context) {
 		return
 	}
 	if err := h.deps.Member.CancelRun(ctx, auth, ref, runID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": StatusCanceled})
@@ -271,7 +283,7 @@ func (h *Handler) rerunRun(c *gin.Context) {
 	_ = c.ShouldBindJSON(&body)
 
 	if _, err := h.deps.Member.GetRun(ctx, auth, ref, runID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		writeMemberError(c, err, http.StatusNotFound, "run not found")
 		return
 	}
 	if h.deps.Hooks != nil {
@@ -282,7 +294,7 @@ func (h *Handler) rerunRun(c *gin.Context) {
 	}
 	newRunID, err := h.deps.Member.RerunRun(ctx, auth, ref, runID, body.FailedOnly)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"run_id": newRunID})
@@ -296,7 +308,7 @@ func (h *Handler) deleteRun(c *gin.Context) {
 
 	detail, err := h.deps.Member.GetRun(ctx, auth, ref, runID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		writeMemberError(c, err, http.StatusNotFound, "run not found")
 		return
 	}
 	if h.deps.Hooks != nil {
@@ -310,7 +322,7 @@ func (h *Handler) deleteRun(c *gin.Context) {
 		return
 	}
 	if err := h.deps.Member.DeleteRun(ctx, auth, ref, runID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -320,7 +332,7 @@ func (h *Handler) deleteRun(c *gin.Context) {
 func (h *Handler) listSteps(c *gin.Context) {
 	steps, err := h.deps.Member.ListSteps(c.Request.Context(), authFrom(c), h.ref(c), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.JSON(http.StatusOK, steps)
@@ -334,7 +346,7 @@ func (h *Handler) retryStep(c *gin.Context) {
 	auth, ref := authFrom(c), h.ref(c)
 
 	if _, err := h.deps.Member.GetRun(ctx, auth, ref, runID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		writeMemberError(c, err, http.StatusNotFound, "run not found")
 		return
 	}
 	if h.deps.Hooks != nil {
@@ -345,7 +357,7 @@ func (h *Handler) retryStep(c *gin.Context) {
 	}
 	newRunID, err := h.deps.Member.RetryStep(ctx, auth, ref, runID, stepName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"run_id": newRunID})
@@ -364,7 +376,7 @@ func (h *Handler) getLogs(c *gin.Context) {
 	afterID, _ := strconv.ParseInt(c.Query("after"), 10, 64)
 	lines, err := h.deps.Member.QueryLogs(c.Request.Context(), authFrom(c), h.ref(c), runID, stepName, afterID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	c.JSON(http.StatusOK, lines)
@@ -428,7 +440,7 @@ func (h *Handler) streamLogs(c *gin.Context) {
 func (h *Handler) getMetrics(c *gin.Context) {
 	metrics, err := h.deps.Member.QueryMetrics(c.Request.Context(), authFrom(c), h.ref(c), c.Param("id"), c.Query("step"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
 	if metrics == nil {
@@ -443,6 +455,8 @@ func (h *Handler) listArtifacts(c *gin.Context) {
 	result, err := h.deps.Member.ListArtifacts(c.Request.Context(), authFrom(c), h.ref(c), c.Param("id"))
 	if err != nil {
 		slog.Warn("list artifacts failed", "run_id", c.Param("id"), "err", err)
+		writeMemberError(c, err, http.StatusInternalServerError, "")
+		return
 	}
 	if result == nil {
 		result = []any{}

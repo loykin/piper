@@ -75,7 +75,7 @@ func (s *Server) Connect(stream agentpb.MemberTunnelService_ConnectServer) error
 		defer sendMu.Unlock()
 		return stream.Send(msg)
 	}
-	rc := newRemoteMemberClient(enroll.MemberId, send)
+	rc := newRemoteMemberClient(enroll.MemberId, wantToken, send)
 
 	s.mu.Lock()
 	s.members[enroll.MemberId] = rc

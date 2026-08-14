@@ -14,12 +14,12 @@ type ProjectRef struct {
 // one Local Member in the same process, no enrollment. Real Home/Member
 // identifiers arrive with remote Member enrollment (fed.md §13.4).
 const (
-	localHomeID   = "home-local"
-	localMemberID = "member-local"
+	LocalHomeID   = "home-local"
+	LocalMemberID = "member-local"
 )
 
 // LocalRef builds the ProjectRef for the single-install case, where the Home
 // always routes to its one Local Member.
 func LocalRef(projectID string) ProjectRef {
-	return ProjectRef{HomeID: localHomeID, MemberID: localMemberID, ProjectID: projectID}
+	return ProjectRef{HomeID: LocalHomeID, MemberID: LocalMemberID, ProjectID: projectID}
 }

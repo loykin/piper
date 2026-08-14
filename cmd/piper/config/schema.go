@@ -33,12 +33,16 @@ type DeploymentConfig struct {
 	MemberID string `mapstructure:"member_id" yaml:"member_id"`
 }
 
-// HomeConfig is required when deployment.mode is "member": which Home to
-// dial and enroll with over the outbound tunnel (internal/membertunnel).
+// HomeConfig describes the federation edge. Member mode uses ID, URL, and
+// EnrollmentToken to dial Home. Home mode uses ID, TunnelAddr, Members, and
+// Projects to accept Members and route each project's Run execution owner.
 type HomeConfig struct {
-	ID              string `mapstructure:"id" yaml:"id"`
-	URL             string `mapstructure:"url" yaml:"url"`
-	EnrollmentToken string `mapstructure:"enrollment_token" yaml:"enrollment_token"`
+	ID              string            `mapstructure:"id" yaml:"id"`
+	URL             string            `mapstructure:"url" yaml:"url"`
+	EnrollmentToken string            `mapstructure:"enrollment_token" yaml:"enrollment_token"`
+	TunnelAddr      string            `mapstructure:"tunnel_addr" yaml:"tunnel_addr"`
+	Members         map[string]string `mapstructure:"members" yaml:"members"`
+	Projects        map[string]string `mapstructure:"projects" yaml:"projects"`
 }
 
 // RuntimeConfig selects execution owned directly by the Piper server —

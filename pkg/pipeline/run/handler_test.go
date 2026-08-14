@@ -156,6 +156,22 @@ func TestListRunsMetricFilterPassedToRepo(t *testing.T) {
 	}
 }
 
+func TestMemberUnavailableReturnsServiceUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	member := &memberclient.RoutingClient{Resolve: func(project.ProjectRef) (memberclient.Client, error) {
+		return nil, fmt.Errorf("member-1: %w", memberclient.ErrMemberUnavailable)
+	}}
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // ── sweep ─────────────────────────────────────────────────────────────────────
 
 func TestCreateSweep_Success(t *testing.T) {

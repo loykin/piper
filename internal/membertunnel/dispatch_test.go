@@ -6,9 +6,18 @@ import (
 	"testing"
 
 	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 )
+
+type fakeProjectClient struct {
+	doFn func(context.Context, memberclient.AuthContext, project.ProjectRef, projectclient.Request) (projectclient.Response, error)
+}
+
+func (f *fakeProjectClient) DoProjectRequest(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req projectclient.Request) (projectclient.Response, error) {
+	return f.doFn(ctx, auth, ref, req)
+}
 
 func TestDispatchSubmitRunRoundTrip(t *testing.T) {
 	var gotReq memberclient.SubmitRunRequest
@@ -110,5 +119,43 @@ func TestDispatchUnknownMethod(t *testing.T) {
 	_, err := dispatch(context.Background(), &fakeMember{}, "NoSuchMethod", []byte(`{}`))
 	if err == nil {
 		t.Fatal("expected error for unknown method")
+	}
+}
+
+func TestDispatchProjectRequestRoundTrip(t *testing.T) {
+	auth := memberclient.AuthContext{ActorID: "user-1", Role: security.ProjectRoleMember}
+	ref := project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: "project-1"}
+	req := projectclient.Request{Method: "POST", Path: "/schedules", Body: []byte(`{"name":"nightly"}`)}
+	payload, err := encodeCall(auth, ref, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectMember := &fakeProjectClient{doFn: func(_ context.Context, gotAuth memberclient.AuthContext, gotRef project.ProjectRef, gotReq projectclient.Request) (projectclient.Response, error) {
+		if gotAuth.ActorID != auth.ActorID || gotRef != ref || gotReq.Path != req.Path || string(gotReq.Body) != string(req.Body) {
+			t.Fatalf("project request auth=%+v ref=%+v req=%+v", gotAuth, gotRef, gotReq)
+		}
+		return projectclient.Response{Status: 201, Body: []byte(`{"id":"schedule-1"}`)}, nil
+	}}
+
+	responsePayload, err := dispatch(context.Background(), &fakeMember{}, MethodProjectRequest, payload, projectMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response projectclient.Response
+	if err := json.Unmarshal(responsePayload, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != 201 || string(response.Body) != `{"id":"schedule-1"}` {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestDispatchProjectRequestRequiresProjectClient(t *testing.T) {
+	payload, err := encodeCall(memberclient.AuthContext{}, project.ProjectRef{}, projectclient.Request{Path: "/schedules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatch(context.Background(), &fakeMember{}, MethodProjectRequest, payload); err == nil {
+		t.Fatal("expected unavailable project relay error")
 	}
 }

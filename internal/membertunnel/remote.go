@@ -13,6 +13,7 @@ import (
 
 	"github.com/loykin/piper/internal/agentpb"
 	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
 )
 
@@ -175,6 +176,10 @@ func (r *remoteMemberClient) ListArtifacts(ctx context.Context, auth memberclien
 	return call[string, []any](ctx, r, MethodListArtifacts, auth, ref, runID)
 }
 
+func (r *remoteMemberClient) DoProjectRequest(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req projectclient.Request) (projectclient.Response, error) {
+	return call[projectclient.Request, projectclient.Response](ctx, r, MethodProjectRequest, auth, ref, req)
+}
+
 // ServeArtifact streams bytes directly and has no RPC-command shape yet —
 // a remote Member needs a separate multiplexed data channel for this
 // (analogous in spirit to the worker tunnel's ProxyData framing, but
@@ -186,3 +191,4 @@ func (r *remoteMemberClient) ServeArtifact(_ context.Context, _ memberclient.Aut
 }
 
 var _ memberclient.Client = (*remoteMemberClient)(nil)
+var _ projectclient.Client = (*remoteMemberClient)(nil)

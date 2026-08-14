@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
 )
 
@@ -43,7 +44,7 @@ func callVoidMethod[Req any](ctx context.Context, payload []byte, fn func(contex
 
 // dispatch routes one MemberRPCCommand to the corresponding memberclient.Client
 // method on the Member's own local implementation (its NewLocalMemberClient).
-func dispatch(ctx context.Context, member memberclient.Client, method string, payload []byte) ([]byte, error) {
+func dispatch(ctx context.Context, member memberclient.Client, method string, payload []byte, projectClients ...projectclient.Client) ([]byte, error) {
 	switch method {
 	case MethodSubmitRun:
 		return callMethod(ctx, payload, member.SubmitRun)
@@ -69,6 +70,11 @@ func dispatch(ctx context.Context, member memberclient.Client, method string, pa
 		return callMethod(ctx, payload, adaptQueryMetrics(member))
 	case MethodListArtifacts:
 		return callMethod(ctx, payload, member.ListArtifacts)
+	case MethodProjectRequest:
+		if len(projectClients) == 0 || projectClients[0] == nil {
+			return nil, fmt.Errorf("membertunnel: project API relay is unavailable")
+		}
+		return callMethod(ctx, payload, projectClients[0].DoProjectRequest)
 	default:
 		return nil, fmt.Errorf("membertunnel: unknown method %q", method)
 	}

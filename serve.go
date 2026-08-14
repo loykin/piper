@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,17 +19,14 @@ import (
 
 	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
-	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
-	"github.com/loykin/piper/pkg/schedule"
 	"github.com/loykin/piper/pkg/security"
-	"github.com/loykin/piper/pkg/serving"
 	"github.com/loykin/piper/pkg/storage"
-	"github.com/loykin/piper/pkg/template"
 	"github.com/loykin/piper/pkg/ui"
 	"github.com/loykin/piper/pkg/viewer"
 	viewerhtml "github.com/loykin/piper/pkg/viewer/driver/html"
@@ -76,6 +74,10 @@ type ServeOption struct {
 	// project. Nil keeps standalone behavior (Local Member ownership).
 	ProjectOwner project.OwnerResolver
 
+	// ProjectMember relays non-Run Member-owned Project APIs. Run keeps its
+	// typed Member contract; streaming proxy routes use a separate channel.
+	ProjectMember projectclient.Client
+
 	// HomeID enables Home-owned federation directory endpoints. Empty keeps
 	// embedded/standalone servers free of federation control-plane routes.
 	HomeID string
@@ -107,7 +109,7 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		}
 	}()
 
-	handler := p.newRouterWithFederation(opt.Extra, viewerMgr, opt.Member, opt.ProjectRef, opt.ProjectOwner, opt.HomeID)
+	handler := p.newRouterWithFederation(opt.Extra, viewerMgr, opt.Member, opt.ProjectMember, opt.ProjectRef, opt.ProjectOwner, opt.HomeID)
 
 	// Apply middleware chain (Config.Hooks.Middleware)
 	for i := len(p.cfg.Hooks.Middleware) - 1; i >= 0; i-- {
@@ -175,10 +177,10 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 }
 
 func (p *Piper) newRouterWithMember(extra http.Handler, viewerMgr *viewer.Manager, member memberclient.Client, projectRef func(string) project.ProjectRef) http.Handler {
-	return p.newRouterWithFederation(extra, viewerMgr, member, projectRef, nil, "")
+	return p.newRouterWithFederation(extra, viewerMgr, member, nil, projectRef, nil, "")
 }
 
-func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Manager, member memberclient.Client, projectRef func(string) project.ProjectRef, projectOwner project.OwnerResolver, homeID string) http.Handler {
+func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Manager, member memberclient.Client, projectMember projectclient.Client, projectRef func(string) project.ProjectRef, projectOwner project.OwnerResolver, homeID string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -214,176 +216,46 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	if homeID != "" && p.repos.Federation != nil {
 		federation.NewHandler(p.repos.Federation, homeID, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
 	}
-	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-	// System-scoped credentials (e.g. the artifact-storage s3 credential).
-	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/system", p.requireSystemAdmin(), project.SystemContext()))
-	projectStorage := userAPI.Group("/projects/:project_id/storage", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
-	projectStorageMember := projectStorage.Group("", project.RequireRole(security.ProjectRoleMember))
-	projectStorageMember.POST("/object", func(c *gin.Context) {
-		file, header, err := c.Request.FormFile("file")
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing file"})
-			return
-		}
-		defer func() { _ = file.Close() }()
-		key := strings.TrimSpace(c.PostForm("key"))
-		if key == "" {
-			key = header.Filename
-		}
-		if err := p.UploadStorageObject(c.Request.Context(), key, file, header.Size); err != nil {
-			httpStatus := http.StatusInternalServerError
-			if p.store == nil {
-				httpStatus = http.StatusServiceUnavailable
-			}
-			c.JSON(httpStatus, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"key": key})
-	})
-	projectStorage.GET("/objects", func(c *gin.Context) {
-		prefix := c.Query("prefix")
-		objs, err := p.ListStorageObjects(c.Request.Context(), prefix)
-		if err != nil {
-			httpStatus := http.StatusInternalServerError
-			if p.store == nil {
-				httpStatus = http.StatusServiceUnavailable
-			}
-			c.JSON(httpStatus, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, objs)
-	})
-	projectStorage.GET("/object", func(c *gin.Context) {
-		key := strings.TrimSpace(c.Query("key"))
-		if key == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
-			return
-		}
-		rc, filename, err := p.OpenStorageObject(c.Request.Context(), key)
-		if err != nil {
-			httpStatus := http.StatusInternalServerError
-			if err == storage.ErrNotFound {
-				httpStatus = http.StatusNotFound
-			} else if p.store == nil {
-				httpStatus = http.StatusServiceUnavailable
-			}
-			c.JSON(httpStatus, gin.H{"error": err.Error()})
-			return
-		}
-		defer func() { _ = rc.Close() }()
-		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
-		c.Status(http.StatusOK)
-		_, _ = io.Copy(c.Writer, rc)
-	})
-	projectStorageMember.DELETE("/object", func(c *gin.Context) {
-		key := strings.TrimSpace(c.Query("key"))
-		if key == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
-			return
-		}
-		if err := p.DeleteStorageObject(c.Request.Context(), key); err != nil {
-			httpStatus := http.StatusInternalServerError
-			if p.store == nil {
-				httpStatus = http.StatusServiceUnavailable
-			}
-			c.JSON(httpStatus, gin.H{"error": err.Error()})
-			return
-		}
-		c.Status(http.StatusNoContent)
-	})
-
-	// Run domain — Home reaches Member only through memberclient.Client
-	// (fed.md §11.3/§13.3); for the single-install case that Member is
-	// in-process (NewLocalMemberClient).
 	if member == nil {
 		member = NewLocalMemberClient(p)
 	}
 	if projectRef == nil {
 		projectRef = project.LocalRef
 	}
+	projectAPI := userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
+	projectAPI.Use(relayRemoteProject(projectMember, projectRef))
+	// System-scoped credentials (e.g. the artifact-storage s3 credential).
+	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/system", p.requireSystemAdmin(), project.SystemContext()))
+
+	// Run domain — Home reaches Member only through memberclient.Client
+	// (fed.md §11.3/§13.3); for the single-install case that Member is
+	// in-process (NewLocalMemberClient).
 	runHandler := run.NewHandler(run.HandlerDeps{
 		Member:     member,
 		ProjectRef: projectRef,
 		Hooks:      &piperRunHooks{p: p},
 	})
-	runHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+	runHandler.RegisterRoutes(projectAPI)
 
-	// Schedule domain
-	schedule.NewHandler(schedule.HandlerDeps{
-		Schedules: p.repos.Schedule,
-		Runs:      p.repos.Run,
-		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
-			return p.Parse(yaml)
-		},
-		Sched:    p.scheduler,
-		NextTime: nextScheduleTime,
-		Backfill: p.BackfillSchedule,
-		GenID:    genScheduleID,
-	}).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-
-	// Serving domain (JSON API + browser predict proxy)
-	servingHandler := serving.NewHandler(serving.HandlerDeps{
-		Services: p.repos.Serving,
-		Deploy:   p.DeployService,
-		Stop:     p.StopService,
-		Restart:  p.RestartService,
-		Proxy:    p.serving.proxy,
+	memberHandlers := p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+		projectContext, _ := project.FromContext(ctx)
+		auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}
+		if identity, ok := security.IdentityFromContext(ctx); ok && identity != nil {
+			auth.ActorID = identity.ID
+		}
+		ref := projectRef(projectContext.ID)
+		if projectContext.OwnerMemberID != "" {
+			ref.MemberID = projectContext.OwnerMemberID
+		}
+		resp, err := member.SubmitRun(ctx, auth, ref, memberclient.SubmitRunRequest{
+			IdempotencyKey: uuid.NewString(), YAML: yaml, Params: params, Experiment: experiment, Vars: vars,
+		})
+		return resp.RunID, err
 	})
-	servingHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-	servingHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-
-	// Notebook domain (JSON API + browser proxy)
-	notebookHandler := notebook.NewHandler(notebook.HandlerDeps{
-		Notebooks:        p.repos.Notebook,
-		Volumes:          p.repos.NotebookVolume,
-		Workspace:        p.nbWorkspace,
-		Create:           p.notebookManager.Create,
-		CreateWithVolume: p.notebookManager.CreateWithVolume,
-		Stop:             p.notebookManager.Stop,
-		Restart:          p.notebookManager.Restart,
-		Delete:           p.notebookManager.Delete,
-		PurgeVolume:      p.notebookManager.PurgeVolume,
-	})
-	notebookHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-	notebookHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-
-	// Viewer domain (artifact viewer: TensorBoard, HTML, etc.)
-	viewerHandler := viewer.NewHandler(viewerMgr, p.repos.Viewer)
-	viewerHandler.RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-	viewerHandler.RegisterProxyRoutes(r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
-
-	// Pipeline template domain
-	template.NewHandler(template.HandlerDeps{
-		Templates:    p.repos.PipelineTemplate,
-		Volumes:      p.repos.NotebookVolume,
-		Notebooks:    p.repos.Notebook,
-		Schedules:    p.repos.Schedule,
-		Store:        p.store,
-		StorageURL:   p.storageURL,
-		StorageToken: p.cfg.Storage.Token,
-		Workspace:    p.nbWorkspace,
-		Sched:        p.scheduler,
-		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
-			return p.Parse(yaml)
-		},
-		StartRun: func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-			projectContext, _ := project.FromContext(ctx)
-			auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}
-			if identity, ok := security.IdentityFromContext(ctx); ok && identity != nil {
-				auth.ActorID = identity.ID
-			}
-			ref := projectRef(projectContext.ID)
-			if projectContext.OwnerMemberID != "" {
-				ref.MemberID = projectContext.OwnerMemberID
-			}
-			resp, err := member.SubmitRun(ctx, auth, ref, memberclient.SubmitRunRequest{
-				IdempotencyKey: uuid.NewString(), YAML: yaml, Params: params, Experiment: experiment, Vars: vars,
-			})
-			return resp.RunID, err
-		},
-		NextTime: nextScheduleTime,
-		GenID:    genScheduleID,
-	}).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
+	proxyAPI := r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
+	memberHandlers.serving.RegisterProxyRoutes(proxyAPI)
+	memberHandlers.notebook.RegisterProxyRoutes(proxyAPI)
+	memberHandlers.viewer.RegisterProxyRoutes(proxyAPI)
 
 	// Built-in file server: expose /store/* routes only when using a LocalStore.
 	// K8s pods and Docker containers reach the store via HTTP using
@@ -438,6 +310,90 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 			}
 		}
 		c.Next()
+	}
+}
+
+var relayedProjectPrefixes = map[string]struct{}{
+	"credentials":      {},
+	"storage":          {},
+	"schedules":        {},
+	"serving":          {},
+	"notebooks":        {},
+	"notebook-volumes": {},
+	"viewers":          {},
+	"pipelines":        {},
+}
+
+func relayRemoteProject(client projectclient.Client, resolveRef func(string) project.ProjectRef) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if client == nil || resolveRef == nil {
+			c.Next()
+			return
+		}
+		projectContext, _ := project.FromContext(c.Request.Context())
+		if projectContext.OwnerMemberID == "" || projectContext.OwnerMemberID == project.LocalMemberID {
+			c.Next()
+			return
+		}
+		path := strings.TrimPrefix(c.Request.URL.Path, "/api/projects/"+projectContext.ID)
+		segment := strings.TrimPrefix(path, "/")
+		if slash := strings.IndexByte(segment, '/'); slash >= 0 {
+			segment = segment[:slash]
+		}
+		_, relay := relayedProjectPrefixes[segment]
+		if !relay && segment == "runs" && strings.HasSuffix(path, "/view") {
+			relay = true
+		}
+		if !relay {
+			c.Next()
+			return
+		}
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "read request body failed"})
+			c.Abort()
+			return
+		}
+		headers := make(http.Header)
+		for _, name := range []string{"Accept", "Content-Type", "If-Match", "If-None-Match", "Idempotency-Key", "Range"} {
+			if values := c.Request.Header.Values(name); len(values) > 0 {
+				headers[name] = append([]string(nil), values...)
+			}
+		}
+		auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}
+		if identity, ok := security.IdentityFromContext(c.Request.Context()); ok && identity != nil {
+			auth.ActorID = identity.ID
+		}
+		ref := resolveRef(projectContext.ID)
+		ref.MemberID = projectContext.OwnerMemberID
+		resp, err := client.DoProjectRequest(c.Request.Context(), auth, ref, projectclient.Request{
+			Method: c.Request.Method, Path: path, RawQuery: c.Request.URL.RawQuery,
+			Header: headers, Body: body,
+		})
+		if err != nil {
+			status := http.StatusBadGateway
+			if errors.Is(err, memberclient.ErrMemberUnavailable) {
+				status = http.StatusServiceUnavailable
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			c.Abort()
+			return
+		}
+		responseHeader := http.Header(resp.Header)
+		for _, name := range []string{"Cache-Control", "Content-Disposition", "Content-Type", "ETag", "Last-Modified", "Location", "X-Total-Count"} {
+			for _, value := range responseHeader.Values(name) {
+				c.Writer.Header().Add(name, value)
+			}
+		}
+		status := resp.Status
+		if status < 100 || status > 599 {
+			status = http.StatusBadGateway
+		}
+		c.Status(status)
+		if len(resp.Body) > 0 {
+			_, _ = c.Writer.Write(resp.Body)
+		}
+		c.Abort()
 	}
 }
 

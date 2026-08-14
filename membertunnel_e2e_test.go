@@ -9,7 +9,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,11 +21,86 @@ import (
 	"github.com/loykin/piper/internal/agentpb"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/membertunnel"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/internal/testutil"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/template"
 )
+
+func TestMemberTunnelProjectAPIRelayEndToEnd(t *testing.T) {
+	const projectID = "project-relay"
+	memberP := newTestPiper(t, Config{
+		OutputDir: t.TempDir(), DBPath: filepath.Join(t.TempDir(), "member.db"),
+		Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal},
+	})
+	homeP := newTestPiper(t, Config{
+		OutputDir: t.TempDir(), DBPath: filepath.Join(t.TempDir(), "home.db"),
+		Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal},
+	})
+	if err := homeP.repos.Project.Create(context.Background(), &project.Project{
+		ID: projectID, Name: projectID, OwnerMemberID: "member-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tunnelSrv := membertunnel.NewServer(membertunnel.ServerConfig{
+		HomeID: "home-1", Tokens: map[string]string{"member-1": "secret"},
+	})
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcServer := grpc.NewServer()
+	agentpb.RegisterMemberTunnelServiceServer(grpcServer, tunnelSrv)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	local := NewLocalMemberClient(memberP)
+	client := membertunnel.NewClient(membertunnel.Config{
+		HomeURL: "http://" + lis.Addr().String(), HomeID: "home-1", MemberID: "member-1", Token: "secret",
+	}, local, local)
+	go func() { _ = client.Run(ctx) }()
+
+	var remoteMember memberclient.Client
+	var remoteProject projectclient.Client
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if candidate, ok := tunnelSrv.Client("member-1"); ok {
+			if projectCandidate, projectOK := candidate.(projectclient.Client); projectOK {
+				remoteMember, remoteProject = candidate, projectCandidate
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if remoteProject == nil {
+		t.Fatal("remote project client never became available")
+	}
+	refFor := func(id string) project.ProjectRef {
+		return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
+	}
+	router := homeP.newRouterWithFederation(nil, nil, remoteMember, remoteProject, refFor, nil, "")
+	body := `{"yaml":"metadata:\n  name: tunneled-template\nspec:\n  steps:\n    - name: hello\n      run:\n        command: [\\\"echo\\\", \\\"hello\\\"]\n"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	memberTemplates, err := memberP.repos.PipelineTemplate.List(context.Background(), projectID, template.Filter{})
+	if err != nil || len(memberTemplates) != 1 {
+		t.Fatalf("member templates=%+v err=%v", memberTemplates, err)
+	}
+	homeTemplates, err := homeP.repos.PipelineTemplate.List(context.Background(), projectID, template.Filter{})
+	if err != nil || len(homeTemplates) != 0 {
+		t.Fatalf("template leaked into Home: templates=%+v err=%v", homeTemplates, err)
+	}
+}
 
 // TestMemberTunnelSubmitRunEndToEnd proves fed.md §13.4's minimal slice:
 // two independent *Piper processes (a Home and a remote Member, each with
@@ -33,13 +110,9 @@ import (
 // tunnel to Home's HTTP API — without Home ever touching the Member's
 // execution repository directly.
 //
-// serve.go/production routing is untouched by this test: Home's real
-// server still wires NewLocalMemberClient (see memberclient_local.go).
-// Here we build a small standalone router for just the /runs domain, wired
-// to membertunnel's RemoteMemberClient instead, specifically to prove the
-// tunnel path in isolation — see fed.md §13.4's plan for why wiring this
-// into serve.go is deferred until a real Project-to-Member routing table
-// exists.
+// This test keeps the HTTP surface intentionally narrow (only /runs), while
+// using the same ownership-aware ProjectRef and remote Member client as the
+// production Home composition root.
 func TestMemberTunnelSubmitRunEndToEnd(t *testing.T) {
 	const projectID = "proj-1"
 
@@ -78,7 +151,7 @@ func TestMemberTunnelSubmitRunEndToEnd(t *testing.T) {
 		t.Fatalf("new home piper: %v", err)
 	}
 	t.Cleanup(func() { _ = homeP.Close() })
-	if err := homeP.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+	if err := homeP.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID, OwnerMemberID: "member-1"}); err != nil {
 		t.Fatalf("create project on home: %v", err)
 	}
 
@@ -124,8 +197,10 @@ func TestMemberTunnelSubmitRunEndToEnd(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	runHandler := run.NewHandler(run.HandlerDeps{
-		Member:     remoteMember,
-		ProjectRef: project.LocalRef,
+		Member: remoteMember,
+		ProjectRef: func(id string) project.ProjectRef {
+			return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
+		},
 	})
 	runHandler.RegisterRoutes(router.Group("/projects/:project_id",
 		project.Require(homeP.repos.Project, nil, security.ProjectRoleViewer)))
@@ -239,7 +314,7 @@ func TestMemberTunnelCancelRunEndToEnd(t *testing.T) {
 		t.Fatalf("new home piper: %v", err)
 	}
 	t.Cleanup(func() { _ = homeP.Close() })
-	if err := homeP.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+	if err := homeP.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID, OwnerMemberID: "member-1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -282,8 +357,10 @@ func TestMemberTunnelCancelRunEndToEnd(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	run.NewHandler(run.HandlerDeps{
-		Member:     remoteMember,
-		ProjectRef: project.LocalRef,
+		Member: remoteMember,
+		ProjectRef: func(id string) project.ProjectRef {
+			return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
+		},
 	}).RegisterRoutes(router.Group("/projects/:project_id",
 		project.Require(homeP.repos.Project, nil, security.ProjectRoleViewer)))
 	homeSrv := testutil.NewIPv4Server(t, router)

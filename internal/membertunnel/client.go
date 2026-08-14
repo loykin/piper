@@ -16,6 +16,7 @@ import (
 
 	"github.com/loykin/piper/internal/agentpb"
 	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/internal/projectclient"
 )
 
 // Config configures a Member's outbound tunnel to its Home.
@@ -36,14 +37,19 @@ type Config struct {
 // method calls, so there is no proxy multiplexing or priority-lane queue
 // to reuse from the worker tunnel (and, per fed.md §13.4, must not gain one).
 type Client struct {
-	cfg    Config
-	member memberclient.Client
+	cfg     Config
+	member  memberclient.Client
+	project projectclient.Client
 }
 
 // NewClient creates a Member-side tunnel client serving member's methods
 // to whatever Home it enrolls with.
-func NewClient(cfg Config, member memberclient.Client) *Client {
-	return &Client{cfg: cfg, member: member}
+func NewClient(cfg Config, member memberclient.Client, projectClients ...projectclient.Client) *Client {
+	var projectClient projectclient.Client
+	if len(projectClients) > 0 {
+		projectClient = projectClients[0]
+	}
+	return &Client{cfg: cfg, member: member, project: projectClient}
 }
 
 // Run connects to Home and serves RPC commands, reconnecting on disconnect.
@@ -151,7 +157,7 @@ func (c *Client) handle(ctx context.Context, cmd *agentpb.MemberRPCCommand) *age
 		resp.Error = err.Error()
 		return resp
 	}
-	payload, err := dispatch(ctx, c.member, cmd.Method, cmd.Payload)
+	payload, err := dispatch(ctx, c.member, cmd.Method, cmd.Payload, c.project)
 	if err != nil {
 		resp.Error = err.Error()
 		return resp

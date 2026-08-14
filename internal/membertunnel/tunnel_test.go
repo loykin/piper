@@ -10,7 +10,9 @@ import (
 
 	"github.com/loykin/piper/internal/agentpb"
 	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/security"
 )
 
 func startTestServer(t *testing.T, cfg ServerConfig) (*Server, string) {
@@ -94,6 +96,52 @@ func TestTunnelEndToEndSubmitRun(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("disconnect lifecycle callback was not called")
+	}
+}
+
+func TestTunnelEndToEndProjectRequest(t *testing.T) {
+	srv, addr := startTestServer(t, ServerConfig{
+		HomeID: "home-1",
+		Tokens: map[string]string{"member-1": "secret"},
+	})
+	projectMember := &fakeProjectClient{doFn: func(_ context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req projectclient.Request) (projectclient.Response, error) {
+		if auth.ActorID != "user-1" || auth.Role != security.ProjectRoleMember {
+			t.Fatalf("delegated auth = %+v", auth)
+		}
+		if ref.ProjectID != "project-1" || req.Path != "/pipelines" || req.Method != "GET" {
+			t.Fatalf("ref=%+v request=%+v", ref, req)
+		}
+		return projectclient.Response{Status: 200, Body: []byte(`[{"name":"remote"}]`)}, nil
+	}}
+	cli := NewClient(
+		Config{HomeURL: "http://" + addr, HomeID: "home-1", MemberID: "member-1", Token: "secret"},
+		&fakeMember{}, projectMember,
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = cli.Run(ctx) }()
+
+	var remote projectclient.Client
+	if !waitUntilTunnel(2*time.Second, func() bool {
+		member, ok := srv.Client("member-1")
+		if !ok {
+			return false
+		}
+		remote, ok = member.(projectclient.Client)
+		return ok
+	}) {
+		t.Fatal("project client never became available")
+	}
+	response, err := remote.DoProjectRequest(ctx,
+		memberclient.AuthContext{ActorID: "user-1", Role: security.ProjectRoleMember},
+		project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: "project-1"},
+		projectclient.Request{Method: "GET", Path: "/pipelines"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != 200 || string(response.Body) != `[{"name":"remote"}]` {
+		t.Fatalf("response = %+v", response)
 	}
 }
 

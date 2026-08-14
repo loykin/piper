@@ -1,18 +1,24 @@
 package piper
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // localMemberClient implements memberclient.Client for the single-install
@@ -21,12 +27,20 @@ import (
 // execution logic itself is not duplicated or relocated, only reached
 // through the new Client boundary instead of directly.
 type localMemberClient struct {
-	p *Piper
+	p              *Piper
+	projectHandler http.Handler
+}
+
+type LocalMemberClient interface {
+	memberclient.Client
+	projectclient.Client
 }
 
 // NewLocalMemberClient wraps p to satisfy memberclient.Client in-process.
-func NewLocalMemberClient(p *Piper) memberclient.Client {
-	return &localMemberClient{p: p}
+func NewLocalMemberClient(p *Piper) LocalMemberClient {
+	client := &localMemberClient{p: p}
+	client.projectHandler = p.newMemberProjectRouter()
+	return client
 }
 
 // withProjectContext pins ctx's project.Context to exactly what Home
@@ -246,3 +260,59 @@ func (l *localMemberClient) ServeArtifact(ctx context.Context, auth memberclient
 	r = r.WithContext(ctx)
 	(&piperArtifacts{p: l.p}).ServeDownload(w, r, runID, step, path)
 }
+
+func (l *localMemberClient) DoProjectRequest(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req projectclient.Request) (projectclient.Response, error) {
+	if req.Path == "" || !strings.HasPrefix(req.Path, "/") || strings.Contains(req.Path, "..") {
+		return projectclient.Response{}, fmt.Errorf("projectclient: invalid project-relative path %q", req.Path)
+	}
+	if err := l.ensureExecutionProject(ctx, ref.ProjectID); err != nil {
+		return projectclient.Response{}, err
+	}
+	target := "/projects/" + url.PathEscape(ref.ProjectID) + req.Path
+	if req.RawQuery != "" {
+		target += "?" + req.RawQuery
+	}
+	httpReq := httptest.NewRequestWithContext(ctx, req.Method, target, bytes.NewReader(req.Body))
+	for name, values := range req.Header {
+		for _, value := range values {
+			httpReq.Header.Add(name, value)
+		}
+	}
+	projectCtx := project.Context{ID: ref.ProjectID, OwnerMemberID: project.LocalMemberID, Role: auth.Role}
+	httpCtx := project.WithContext(httpReq.Context(), projectCtx)
+	if auth.ActorID != "" {
+		httpCtx = security.WithIdentity(httpCtx, &security.Identity{ID: auth.ActorID})
+	}
+	httpReq = httpReq.WithContext(httpCtx)
+	recorder := httptest.NewRecorder()
+	l.projectHandler.ServeHTTP(recorder, httpReq)
+	return projectclient.Response{
+		Status: recorder.Code,
+		Header: recorder.Header().Clone(),
+		Body:   append([]byte(nil), recorder.Body.Bytes()...),
+	}, nil
+}
+
+func (l *localMemberClient) ensureExecutionProject(ctx context.Context, projectID string) error {
+	value, err := l.p.repos.Project.Get(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if value != nil {
+		return nil
+	}
+	err = l.p.repos.Project.Create(ctx, &project.Project{
+		ID: projectID, Name: projectID, OwnerMemberID: project.LocalMemberID,
+	})
+	if err == nil {
+		return nil
+	}
+	value, getErr := l.p.repos.Project.Get(ctx, projectID)
+	if getErr == nil && value != nil {
+		return nil
+	}
+	return err
+}
+
+var _ memberclient.Client = (*localMemberClient)(nil)
+var _ projectclient.Client = (*localMemberClient)(nil)

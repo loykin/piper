@@ -26,18 +26,19 @@ import (
 // memberclient.Client method 1:1. ServeArtifact has no entry: it streams
 // bytes directly and is not yet supported over the tunnel (see remote.go).
 const (
-	MethodSubmitRun     = "SubmitRun"
-	MethodSubmitSweep   = "SubmitSweep"
-	MethodListRuns      = "ListRuns"
-	MethodGetRun        = "GetRun"
-	MethodCancelRun     = "CancelRun"
-	MethodRerunRun      = "RerunRun"
-	MethodDeleteRun     = "DeleteRun"
-	MethodListSteps     = "ListSteps"
-	MethodRetryStep     = "RetryStep"
-	MethodQueryLogs     = "QueryLogs"
-	MethodQueryMetrics  = "QueryMetrics"
-	MethodListArtifacts = "ListArtifacts"
+	MethodSubmitRun      = "SubmitRun"
+	MethodSubmitSweep    = "SubmitSweep"
+	MethodListRuns       = "ListRuns"
+	MethodGetRun         = "GetRun"
+	MethodCancelRun      = "CancelRun"
+	MethodRerunRun       = "RerunRun"
+	MethodDeleteRun      = "DeleteRun"
+	MethodListSteps      = "ListSteps"
+	MethodRetryStep      = "RetryStep"
+	MethodQueryLogs      = "QueryLogs"
+	MethodQueryMetrics   = "QueryMetrics"
+	MethodListArtifacts  = "ListArtifacts"
+	MethodProjectRequest = "ProjectRequest"
 )
 
 // callEnvelope wraps a method's request DTO with the AuthContext/ProjectRef

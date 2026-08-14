@@ -16,6 +16,7 @@ import (
 	"github.com/loykin/piper/internal/agentpb"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/membertunnel"
+	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -114,6 +115,17 @@ func runHomeMode(root cliconfig.RootConfig, p *piper.Piper) error {
 		}
 		return nil, fmt.Errorf("%w: member %q", memberclient.ErrMemberUnavailable, ref.MemberID)
 	}}
+	opt.ProjectMember = &projectclient.RoutingClient{Resolve: func(ref project.ProjectRef) (projectclient.Client, error) {
+		if ref.MemberID == project.LocalMemberID {
+			return local, nil
+		}
+		if remote, ok := tunnelServer.Client(ref.MemberID); ok {
+			if projectRemote, ok := remote.(projectclient.Client); ok {
+				return projectRemote, nil
+			}
+		}
+		return nil, fmt.Errorf("%w: member %q", memberclient.ErrMemberUnavailable, ref.MemberID)
+	}}
 	opt.ProjectOwner = func(projectID, requested string) (string, error) {
 		memberID := requested
 		if memberID == "" {
@@ -164,12 +176,13 @@ func runMemberMode(root cliconfig.RootConfig, p *piper.Piper) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	local := piper.NewLocalMemberClient(p)
 	cli := membertunnel.NewClient(membertunnel.Config{
 		HomeURL:  root.Home.URL,
 		HomeID:   root.Home.ID,
 		MemberID: memberID,
 		Token:    root.Home.EnrollmentToken,
-	}, piper.NewLocalMemberClient(p))
+	}, local, local)
 
 	slog.Info("member mode: connecting to home", "home_url", root.Home.URL, "home_id", root.Home.ID, "member_id", memberID)
 	return cli.Run(ctx)

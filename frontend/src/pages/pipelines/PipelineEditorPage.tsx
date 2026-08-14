@@ -20,8 +20,8 @@ import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
 import { useCredentials } from '@/features/credentials/hooks'
-import { createPipeline } from '@/features/pipelines/api'
 import { getPipeline } from '@/features/pipelines/api'
+import { useCreatePipeline } from '@/features/pipelines/hooks'
 import { useSystemSettings } from '@/features/system/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import {
@@ -358,6 +358,7 @@ function ArtifactSection({
 export default function PipelineEditorPage() {
   const navigate = useNavigate()
   const projectId = useProjectId()
+  const { mutateAsync: createPipeline } = useCreatePipeline()
   const initialDraft = useMemo(() => defaultPipelineDraft(), [])
 
   const [searchParams, setSearchParams] = useSearchParams()
@@ -710,7 +711,7 @@ export default function PipelineEditorPage() {
     setError('')
     try {
       const yaml = buildPipelineDraftYaml({ name: draft.name, steps: draft.steps, source: pipelineSource, defaults: draft.defaults })
-      await createPipeline(projectId, {
+      await createPipeline({
         yaml,
         volume_id: submitVolumeId || undefined,
       })

@@ -87,11 +87,10 @@ which federates *management* across separate Piper installations — see
   `localdriver.Driver.ArtifactTarget()` returns `artifact.TargetLocal`, so
   Piper's existing artifact resolver (`service_api.go`) fully resolves the
   model to a local host path *before* `Deploy` is ever called — s3/http(s)
-  downloads happen there, not in this driver. Direct-mode Docker serving has
-  a known pre-existing gap: `PIPER_MODEL_DIR` is passed as a container env
-  var pointing at a host path with no bind mount, so it is not actually
-  readable from inside the container. That gap was not fixed — §13.1 froze
-  current behavior rather than redesigning it in passing.
+  downloads happen there, not in this driver. Direct-mode Docker serving
+  bind-mounts that resolved directory read-only at `/piper/model` and sets
+  `PIPER_MODEL_DIR` to the container path; a host path in an environment
+  variable alone is not reachable from inside the container.
 - Notebook additionally has a K8s direct-runtime path:
   `pkg/notebook/dispatch/localdriver/k8s.Driver` implements `notebook.Driver`
   directly against `kubernetes.Interface` (StatefulSet + PVC + headless
@@ -130,16 +129,13 @@ which federates *management* across separate Piper installations — see
   provide. The Role granting the `piper-server` ServiceAccount pod exec
   access needs `pods/exec` (`create`) — see `deploy/k8s/rbac.yaml`.
 
-  The **separate** `GET /notebook-volumes/:id/files` volume file *browser*
+  The **separate** `GET /notebook-volumes/:id/files` volume file browser
   endpoint (`pkg/notebook/handler.go`'s `listVolumeFiles`, used by the
-  frontend's local-source file picker) is **not** wired to `WorkspaceReader`
-  yet and still does a raw local-filesystem `WalkFiles` — it silently
-  returns nothing useful for a K8s-direct-runtime notebook's volume. This is
-  a known, still-open gap, not a workaround; fixing it is a smaller
-  follow-up (`WorkspaceReader.ListFiles` already exists) but was kept out of
-  the snapshot-capture fix to avoid touching the currently-working
-  baremetal/docker file-picker path's dotfile/symlink-exclusion behavior
-  without dedicated verification.
+  frontend's local-source file picker) uses the same `WorkspaceReader`, so a
+  K8s volume is listed through the running notebook pod rather than treating
+  its container path as a host path. Workspace-relative paths are validated
+  before either local filesystem access or pod exec, and local reads reject
+  symlink escapes outside the volume.
 - Serving also has a K8s direct-runtime path:
   `pkg/serving/dispatch/localdriver/k8s.Driver` implements `serving.Driver`
   directly against `kubernetes.Interface` (Deployment + Service), the same

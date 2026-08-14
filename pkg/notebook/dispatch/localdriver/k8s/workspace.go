@@ -43,7 +43,10 @@ func (w *WorkspaceReader) Stat(ctx context.Context, vol *notebook.NotebookVolume
 	if err != nil {
 		return false, 0, err
 	}
-	full := containerPath(vol, p)
+	full, err := containerPath(vol, p)
+	if err != nil {
+		return false, 0, err
+	}
 	script := `p="$1"; if [ -d "$p" ]; then echo DIR; elif [ -f "$p" ]; then wc -c < "$p"; else exit 2; fi`
 	var stdout, stderr bytes.Buffer
 	if err := w.exec(ctx, ns, pod, []string{"sh", "-c", script, "sh", full}, nil, &stdout, &stderr); err != nil {
@@ -65,7 +68,10 @@ func (w *WorkspaceReader) Open(ctx context.Context, vol *notebook.NotebookVolume
 	if err != nil {
 		return nil, err
 	}
-	full := containerPath(vol, p)
+	full, err := containerPath(vol, p)
+	if err != nil {
+		return nil, err
+	}
 	pr, pw := io.Pipe()
 	go func() {
 		var stderr bytes.Buffer
@@ -83,7 +89,10 @@ func (w *WorkspaceReader) ListFiles(ctx context.Context, vol *notebook.NotebookV
 	if err != nil {
 		return nil, err
 	}
-	full := containerPath(vol, p)
+	full, err := containerPath(vol, p)
+	if err != nil {
+		return nil, err
+	}
 	script := `p="$1"; find "$p" -type f -exec wc -c {} \;`
 	var stdout, stderr bytes.Buffer
 	if err := w.exec(ctx, ns, pod, []string{"sh", "-c", script, "sh", full}, nil, &stdout, &stderr); err != nil {
@@ -157,10 +166,14 @@ func (w *WorkspaceReader) exec(ctx context.Context, ns, pod string, command []st
 // containerPath resolves p (relative to the notebook's workspace root) to
 // an absolute path inside the notebook container, using the POSIX join
 // rules of the container's filesystem regardless of Piper's own host OS.
-func containerPath(vol *notebook.NotebookVolume, p string) string {
+func containerPath(vol *notebook.NotebookVolume, p string) (string, error) {
+	clean, err := notebook.CleanWorkspacePath(p)
+	if err != nil {
+		return "", err
+	}
 	base := vol.WorkDir
 	if base == "" {
 		base = notebook.ContainerWorkDir
 	}
-	return path.Join(base, p)
+	return path.Join(base, clean), nil
 }

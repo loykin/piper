@@ -321,6 +321,43 @@ func TestPiperCleanupOrphanArtifacts_ExcludesResultsAndBaremetalMetaDir(t *testi
 	}
 }
 
+// TestPiperCleanupOrphanArtifacts_ExcludesNotebookRoot prevents the orphan
+// run sweep from deleting persistent notebook volumes when notebooks_root is
+// nested under output_dir. A live QA notebook exposed this as both data loss
+// and a tight log-tailer retry loop after its directory disappeared.
+func TestPiperCleanupOrphanArtifacts_ExcludesNotebookRoot(t *testing.T) {
+	outputDir := t.TempDir()
+	notebooksRoot := filepath.Join(outputDir, "notebooks")
+	p := newTestPiper(t, Config{
+		OutputDir: outputDir,
+		NotebookWorker: NotebookWorkerConfig{
+			NotebooksRoot: notebooksRoot,
+		},
+	})
+
+	old := time.Now().Add(-time.Hour)
+	for _, dir := range []string{notebooksRoot, filepath.Join(outputDir, "run-orphan")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(notebooksRoot, "volume-data.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p.cleanupOrphanArtifacts(context.Background())
+
+	if _, err := os.Stat(filepath.Join(notebooksRoot, "volume-data.txt")); err != nil {
+		t.Fatalf("notebook volume content should survive the sweep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "run-orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphaned workspace directory should still be removed, err=%v", err)
+	}
+}
+
 // ─── deleteArtifactsFromStore / deleteRunWorkspace (fed.md §13.6) ──────────
 
 // TestDeleteRunWorkspace_IndependentOfStore is a regression test: before the

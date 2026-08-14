@@ -15,6 +15,26 @@ import (
 	"github.com/loykin/piper/pkg/project"
 )
 
+type recordingWorkspaceReader struct {
+	listedPath string
+	files      []WorkspaceFile
+	listCalls  int
+}
+
+func (r *recordingWorkspaceReader) Stat(context.Context, *NotebookVolume, string) (bool, int64, error) {
+	return false, 0, nil
+}
+
+func (r *recordingWorkspaceReader) Open(context.Context, *NotebookVolume, string) (io.ReadCloser, error) {
+	return nil, os.ErrNotExist
+}
+
+func (r *recordingWorkspaceReader) ListFiles(_ context.Context, _ *NotebookVolume, path string) ([]WorkspaceFile, error) {
+	r.listCalls++
+	r.listedPath = path
+	return r.files, nil
+}
+
 // TestProxyNotebookReverseProxiesDirectRuntimeEndpoint is a regression test:
 // direct-runtime notebooks (docker/baremetal, see
 // pkg/notebook/dispatch/localdriver) report a plain http:// Endpoint, not a
@@ -114,5 +134,61 @@ func TestListVolumeFilesUsesLocalFilesystemWhenWorkerIDEmpty(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("files = %v, want to contain hello.txt", files)
+	}
+}
+
+func TestListVolumeFilesUsesConfiguredWorkspaceReader(t *testing.T) {
+	vols := newFakeVols()
+	if err := vols.Create(context.Background(), &NotebookVolume{ID: "vol-1", ProjectID: "proj", WorkDir: ContainerWorkDir}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := &recordingWorkspaceReader{files: []WorkspaceFile{{Rel: "model.py", Size: 10}, {Rel: "notes.txt", Size: 4}}}
+	h := NewHandler(HandlerDeps{Volumes: vols, Notebooks: newFakeRepo(), Workspace: workspace})
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodGet, "/notebook-volumes/vol-1/files?path=src&ext=.py", nil)
+	ctx := project.WithContext(req.Context(), project.Context{ID: "proj"})
+	c.Request = req.WithContext(ctx)
+	c.Params = gin.Params{{Key: "id", Value: "vol-1"}}
+	c.Request.URL.RawQuery = "path=src&ext=.py"
+
+	h.listVolumeFiles(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if workspace.listedPath != "src" {
+		t.Fatalf("listed path = %q, want src", workspace.listedPath)
+	}
+	var files []string
+	if err := json.Unmarshal(w.Body.Bytes(), &files); err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "src/model.py" {
+		t.Fatalf("files = %v, want [src/model.py]", files)
+	}
+}
+
+func TestListVolumeFilesRejectsTraversalBeforeReader(t *testing.T) {
+	vols := newFakeVols()
+	if err := vols.Create(context.Background(), &NotebookVolume{ID: "vol-1", ProjectID: "proj", WorkDir: ContainerWorkDir}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := &recordingWorkspaceReader{}
+	h := NewHandler(HandlerDeps{Volumes: vols, Notebooks: newFakeRepo(), Workspace: workspace})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodGet, "/notebook-volumes/vol-1/files?path=../secret", nil)
+	ctx := project.WithContext(req.Context(), project.Context{ID: "proj"})
+	c.Request = req.WithContext(ctx)
+	c.Params = gin.Params{{Key: "id", Value: "vol-1"}}
+	c.Request.URL.RawQuery = "path=../secret"
+	h.listVolumeFiles(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if workspace.listCalls != 0 {
+		t.Fatalf("workspace reader was called %d times", workspace.listCalls)
 	}
 }

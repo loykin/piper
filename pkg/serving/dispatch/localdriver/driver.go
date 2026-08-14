@@ -121,13 +121,6 @@ func runtimeName(projectID, name string) string {
 // model to a local host path before Deploy is ever called — s3/http(s)
 // downloads happen there, not in this driver. This mirrors "bare-metal
 // drivers return TargetLocal" from pkg/serving/driver.go's doc comment.
-//
-// Docker direct-runtime uses the same target and therefore the same
-// PIPER_MODEL_DIR-as-env-var handoff the existing (remote) docker serving
-// driver already uses — that driver does not bind-mount the model directory
-// into the container. That is a pre-existing limitation of
-// pkg/serving/worker/driver/docker, not something introduced or fixed here;
-// §13.1 froze current behavior rather than redesigning it.
 func (d *Driver) ArtifactTarget() artifact.Target { return artifact.TargetLocal }
 
 // Deploy reserves the service slot and starts the runtime, then launches a
@@ -175,8 +168,14 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		gpus = spec.Spec.Driver.Process.GPUs
 	}
 
-	// Merge: base system vars <- plain options.env <- pre-resolved secrets (highest precedence).
-	deployEnv := map[string]string{"PIPER_MODEL_DIR": modelDir, "PIPER_SERVICE_NAME": name}
+	// Merge: base system vars <- plain options.env <- pre-resolved secrets
+	// (highest precedence). Docker sees the read-only container mount path;
+	// baremetal sees the original host path.
+	modelEnvDir := modelDir
+	if d.cfg.Infrastructure == "docker" {
+		modelEnvDir = servingdriver.ContainerModelDir
+	}
+	deployEnv := map[string]string{"PIPER_MODEL_DIR": modelEnvDir, "PIPER_SERVICE_NAME": name}
 	for _, e := range spec.Spec.Options.Env {
 		if e.ValueFrom == nil && e.Name != "" && e.Value != "" {
 			deployEnv[e.Name] = e.Value
@@ -211,6 +210,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		Docker:      dockerSpec,
 		Command:     rt.Command,
 		Env:         deployEnv,
+		ModelDir:    modelDir,
 		Port:        rt.Port,
 		HealthPath:  rt.HealthPath,
 		GPUs:        gpus,

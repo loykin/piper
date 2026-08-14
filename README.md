@@ -20,7 +20,9 @@ not need a full platform such as Kubeflow.
 - Long-running model service deployment
 - Local or S3-compatible artifact storage
 - Project membership, local users, and credential management
-- Federated Home/Member management across separate Piper installations
+- Experimental Home/Member tunnel primitives (the production Home listener,
+  project routing, delegated authorization, and federation recovery flow are
+  not wired into the server yet)
 - An embeddable Go API
 
 Piper is not a feature store, distributed training framework, Kubernetes

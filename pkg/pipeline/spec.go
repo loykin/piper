@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"fmt"
+	"path"
+	"strings"
 
 	"github.com/loykin/piper/pkg/manifest"
 )
@@ -26,6 +28,9 @@ func (p *Pipeline) Validate() error {
 		if s.Name == "" {
 			return fmt.Errorf("step name is required")
 		}
+		if err := validatePathComponent("step name", s.Name); err != nil {
+			return err
+		}
 		if names[s.Name] {
 			return fmt.Errorf("duplicate step name: %s", s.Name)
 		}
@@ -40,6 +45,41 @@ func (p *Pipeline) Validate() error {
 		for i, command := range s.Run.Prepare {
 			if len(command) == 0 {
 				return fmt.Errorf("step %q prepare[%d] command is empty", s.Name, i)
+			}
+		}
+		for field, value := range map[string]string{
+			"run.path": s.Run.Path, "run.notebook": s.Run.Notebook, "run.dir": s.Run.Dir,
+		} {
+			if err := validateRelativePath(fmt.Sprintf("step %q %s", s.Name, field), value, true); err != nil {
+				return err
+			}
+		}
+		for i, dep := range s.Run.Deps {
+			if err := validateRelativePath(fmt.Sprintf("step %q run.deps[%d]", s.Name, i), dep, false); err != nil {
+				return err
+			}
+		}
+		for i, input := range s.Inputs {
+			if err := validatePathComponent(fmt.Sprintf("step %q inputs[%d].name", s.Name, i), input.Name); err != nil {
+				return err
+			}
+			parts := strings.Split(input.From, "/")
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return fmt.Errorf("step %q inputs[%d].from must be stepName/artifactName", s.Name, i)
+			}
+			if !names[parts[0]] {
+				return fmt.Errorf("step %q inputs[%d] references unknown step %q", s.Name, i, parts[0])
+			}
+			if err := validatePathComponent(fmt.Sprintf("step %q inputs[%d] artifact", s.Name, i), parts[1]); err != nil {
+				return err
+			}
+		}
+		for i, output := range s.Outputs {
+			if err := validatePathComponent(fmt.Sprintf("step %q outputs[%d].name", s.Name, i), output.Name); err != nil {
+				return err
+			}
+			if err := validateRelativePath(fmt.Sprintf("step %q outputs[%d].path", s.Name, i), output.Path, false); err != nil {
+				return err
 			}
 		}
 	}
@@ -61,6 +101,38 @@ func (p *Pipeline) Validate() error {
 		default:
 			return fmt.Errorf("step %q: unsupported driver.placement.runtime %q", s.Name, s.Driver.Placement.Runtime)
 		}
+	}
+	return nil
+}
+
+func validatePathComponent(label, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", label)
+	}
+	if value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
+		return fmt.Errorf("%s must be a single path-safe name", label)
+	}
+	return nil
+}
+
+func validateRelativePath(label, value string, allowEmpty bool) error {
+	if value == "" {
+		if allowEmpty {
+			return nil
+		}
+		return fmt.Errorf("%s is required", label)
+	}
+	normalized := strings.ReplaceAll(value, `\`, "/")
+	if strings.HasPrefix(normalized, "/") {
+		return fmt.Errorf("%s must be relative", label)
+	}
+	for _, part := range strings.Split(normalized, "/") {
+		if part == ".." {
+			return fmt.Errorf("%s must not escape its workspace", label)
+		}
+	}
+	if path.Clean(normalized) == ".." || strings.HasPrefix(path.Clean(normalized), "../") {
+		return fmt.Errorf("%s must not escape its workspace", label)
 	}
 	return nil
 }

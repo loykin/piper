@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -148,6 +149,32 @@ func TestDeployAppliesProcessGPUSelectorWhenDockerHasNoDeviceRequests(t *testing
 	}
 	if len(cli.create.HostConfig.Resources.DeviceRequests) != 1 || cli.create.HostConfig.Resources.DeviceRequests[0].Count != -1 {
 		t.Fatalf("DeviceRequests = %#v", cli.create.HostConfig.Resources.DeviceRequests)
+	}
+}
+
+func TestDeployMountsModelDirectoryReadOnly(t *testing.T) {
+	cli := &deployClient{}
+	d, err := NewWithClient(Config{WorkerID: "worker-1"}, cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelDir := t.TempDir()
+	_, err = d.Deploy(context.Background(), servingdriver.DeployRequest{
+		ProjectID: "project-a", Name: "demo", RuntimeName: "project-a__demo",
+		Image: "model:test", Command: []string{"serve"}, Port: 18080,
+		ModelDir: modelDir,
+		Env:      map[string]string{"PIPER_MODEL_DIR": servingdriver.ContainerModelDir},
+	})
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	mounts := cli.create.HostConfig.Mounts
+	if len(mounts) != 1 {
+		t.Fatalf("mounts = %#v", mounts)
+	}
+	wantSource, _ := filepath.Abs(modelDir)
+	if mounts[0].Source != wantSource || mounts[0].Target != servingdriver.ContainerModelDir || !mounts[0].ReadOnly {
+		t.Fatalf("model mount = %#v", mounts[0])
 	}
 }
 

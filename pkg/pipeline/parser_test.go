@@ -213,6 +213,46 @@ spec:
 	}
 }
 
+func TestParseRejectsWorkspacePathTraversal(t *testing.T) {
+	for _, body := range []string{
+		`name: ../escape
+      run: {type: command, command: [echo]}`,
+		`name: safe
+      run: {type: python, path: ../secret.py}`,
+		`name: safe
+      run: {type: command, command: [echo]}
+      outputs: [{name: model, path: ../../secret}]`,
+		`name: safe
+      run: {type: command, command: [echo]}
+      outputs: [{name: ../model, path: model.bin}]`,
+	} {
+		yaml := "metadata:\n  name: unsafe\nspec:\n  steps:\n    - " + body + "\n"
+		if _, err := Parse([]byte(yaml)); err == nil {
+			t.Fatalf("Parse accepted unsafe pipeline:\n%s", yaml)
+		}
+	}
+}
+
+func TestParseRejectsIncompleteArtifacts(t *testing.T) {
+	for _, body := range []string{
+		"outputs: [{name: model}]",
+		"outputs: [{path: model.bin}]",
+		"inputs: [{name: model}]",
+		"inputs: [{name: model, from: missing/model}]",
+	} {
+		yaml := `metadata:
+  name: invalid-artifact
+spec:
+  steps:
+    - name: safe
+      run: {type: command, command: [echo]}
+      ` + body + "\n"
+		if _, err := Parse([]byte(yaml)); err == nil {
+			t.Fatalf("Parse accepted incomplete artifact:\n%s", yaml)
+		}
+	}
+}
+
 func TestParseFile_valid(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "pipe.yaml")
 	if err := os.WriteFile(f, []byte(validYAML), 0644); err != nil {

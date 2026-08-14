@@ -61,6 +61,11 @@ const fakeAgentCrashBody = `exit 1`
 // mechanics expect to address the right process.
 const fakeAgentSleepBody = `exec sleep 5`
 
+// Full `go test ./...` runs many process-heavy packages in parallel. Give the
+// real subprocess supervisor enough wall-clock headroom under that load while
+// still failing promptly if an exit event is genuinely lost.
+const terminalWaitTimeout = 15 * time.Second
+
 func pollUntil(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -94,7 +99,7 @@ func TestBaremetalDriverStartWaitTerminalCompletion(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), terminalWaitTimeout)
 	defer cancel()
 	exit, err := d.Wait(ctx, handle)
 	if err != nil {
@@ -130,7 +135,7 @@ func TestBaremetalDriverStartWaitInfraFailureWithoutResultFile(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), terminalWaitTimeout)
 	defer cancel()
 	exit, err := d.Wait(ctx, handle)
 	if err != nil {

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +18,7 @@ import (
 type HandlerDeps struct {
 	Notebooks        Repository
 	Volumes          VolumeRepository
+	Workspace        WorkspaceReader
 	Create           func(ctx context.Context, projectID string, spec Notebook, yamlStr string) (*NotebookServer, error)
 	CreateWithVolume func(ctx context.Context, projectID string, spec Notebook, volumeID, yamlStr string) (*NotebookServer, error)
 	Stop             func(ctx context.Context, projectID, name string) error
@@ -193,12 +194,10 @@ func (h *Handler) listVolumes(c *gin.Context) {
 	c.JSON(http.StatusOK, vols)
 }
 
-// GET /notebook-volumes/:id/files — list files inside the volume's work_dir.
+// GET /notebook-volumes/:id/files — list files inside the volume's workspace.
 // Query params: ext (comma-separated extensions), path (subpath within volume).
-// Direct-runtime notebooks (all infra types) always live on the same host as
-// Piper itself, so this is always a local filesystem walk — see
-// NotebookVolume.WorkerID's doc comment and localdriver's ProvisionVolume
-// for why WorkerID is never set to a real routing target anymore.
+// WorkspaceReader abstracts the runtime boundary: baremetal/docker read the
+// host directory, while K8s execs into the currently-running notebook pod.
 func (h *Handler) listVolumeFiles(c *gin.Context) {
 	id := c.Param("id")
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
@@ -211,40 +210,61 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
 		return
 	}
-	if vol.WorkDir == "" {
-		c.Header("X-Piper-Files-Truncated", "false")
-		c.JSON(http.StatusOK, []string{})
-		return
-	}
-
 	extFilter := c.Query("ext")
-	var extList []string
+	extAllowed := map[string]bool{}
 	if extFilter != "" {
 		for _, e := range strings.Split(extFilter, ",") {
 			if e = strings.TrimSpace(e); e != "" {
-				extList = append(extList, e)
+				extAllowed[e] = true
 			}
 		}
 	}
 
-	walkRoot := vol.WorkDir
-	subPath := c.Query("path")
-	if subPath != "" {
-		// Check raw input before path.Clean removes .. elements.
-		if strings.Contains(subPath, "..") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
-			return
-		}
-		walkRoot = filepath.Join(vol.WorkDir, filepath.FromSlash(path.Clean("/"+subPath)))
+	subPath, err := CleanWorkspacePath(c.Query("path"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
 	}
-	files, truncated := WalkFiles(walkRoot, extList, 500)
-	if subPath != "" {
-		prefix := path.Clean(subPath)
-		for i, f := range files {
-			files[i] = prefix + "/" + f
+	reader := h.deps.Workspace
+	if reader == nil {
+		reader = LocalWorkspaceReader{}
+	}
+	workspaceFiles, err := reader.ListFiles(c.Request.Context(), vol, subPath)
+	if err != nil {
+		h.writeFilesResponse(c, UnavailableResponse(err.Error()))
+		return
+	}
+
+	files := make([]string, 0, min(len(workspaceFiles), 500))
+	truncated := false
+	for _, wf := range workspaceFiles {
+		rel, cleanErr := CleanWorkspacePath(wf.Rel)
+		if cleanErr != nil || rel == "" || workspacePathHidden(rel) {
+			continue
+		}
+		if len(extAllowed) > 0 && !extAllowed[path.Ext(rel)] {
+			continue
+		}
+		if subPath != "" {
+			rel = subPath + "/" + rel
+		}
+		files = append(files, rel)
+		if len(files) == 500 {
+			truncated = true
+			break
 		}
 	}
+	sort.Strings(files)
 	h.writeFilesResponse(c, ReadyResponse(files, truncated))
+}
+
+func workspacePathHidden(p string) bool {
+	for _, part := range strings.Split(p, "/") {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) writeFilesResponse(c *gin.Context, resp *FSListFilesResponse) {

@@ -6,10 +6,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	network_ "github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
 
@@ -134,6 +136,22 @@ func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint
 		}
 		resources.Resources.DeviceRequests = append(resources.Resources.DeviceRequests, gpuRequest)
 	}
+	var mounts []mount.Mount
+	if req.ModelDir != "" {
+		modelDir, absErr := filepath.Abs(req.ModelDir)
+		if absErr != nil {
+			if req.LogSink != nil {
+				req.LogSink.Stop()
+			}
+			return "", fmt.Errorf("docker serving: resolve model directory: %w", absErr)
+		}
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   modelDir,
+			Target:   driver.ContainerModelDir,
+			ReadOnly: true,
+		})
+	}
 
 	created, createErr := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
 		Name: containerName(req.RuntimeName),
@@ -150,6 +168,7 @@ func (d *Driver) Deploy(ctx context.Context, req driver.DeployRequest) (endpoint
 			PortBindings: network_.PortMap{exposedPort: []network_.PortBinding{{HostPort: fmt.Sprintf("%d", req.Port)}}},
 			Resources:    resources.Resources,
 			ShmSize:      resources.ShmSize,
+			Mounts:       mounts,
 		},
 	})
 	if createErr != nil {

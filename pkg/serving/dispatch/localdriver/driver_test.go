@@ -150,6 +150,23 @@ func TestDeployRejectsMismatchedPlacementRuntime(t *testing.T) {
 	}
 }
 
+func TestDockerDeployUsesContainerModelPath(t *testing.T) {
+	rt := &fakeRuntime{}
+	d, _ := newTestDriver(t, rt, 10*time.Millisecond)
+	d.cfg.Infrastructure = "docker"
+	model := artifactResolved()
+	if _, err := d.Deploy(context.Background(), testSpec("proj", "svc", 8080), model, ""); err != nil {
+		t.Fatal(err)
+	}
+	req := rt.lastRequest()
+	if req.ModelDir != model.LocalPath {
+		t.Fatalf("ModelDir = %q, want %q", req.ModelDir, model.LocalPath)
+	}
+	if got := req.Env["PIPER_MODEL_DIR"]; got != servingdriver.ContainerModelDir {
+		t.Fatalf("PIPER_MODEL_DIR = %q", got)
+	}
+}
+
 func TestDeployReturnsFastWithStartingThenReportsRunning(t *testing.T) {
 	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

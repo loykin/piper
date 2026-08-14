@@ -71,7 +71,7 @@ func validateRuntime(c RootConfig) error {
 	case InfrastructureBaremetal:
 		return validateBaremetalDirectRuntime(c)
 	default:
-		return fmt.Errorf("config: runtime.type must be k8s, docker, baremetal, or empty")
+		return fmt.Errorf("config: runtime.type must be k8s, docker, or baremetal")
 	}
 }
 

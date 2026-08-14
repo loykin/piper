@@ -295,6 +295,7 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 	notebookHandler := notebook.NewHandler(notebook.HandlerDeps{
 		Notebooks:        p.repos.Notebook,
 		Volumes:          p.repos.NotebookVolume,
+		Workspace:        p.nbWorkspace,
 		Create:           p.notebookManager.Create,
 		CreateWithVolume: p.notebookManager.CreateWithVolume,
 		Stop:             p.notebookManager.Stop,

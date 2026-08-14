@@ -614,6 +614,8 @@ const artifactCacheDirName = "artifact-cache"
 //   - runtime.baremetal.meta_dir, when the operator configured it as a
 //     subdirectory of outputDir — it holds the baremetal driver's process
 //     registry, not a run's workspace.
+//   - notebook.notebooks_root, when configured under outputDir — it contains
+//     persistent notebook volumes and live process state, not run workspaces.
 //
 // Excluding a directory requires comparing it against outputDir; both sides
 // are resolved to absolute paths first, since outputDir is commonly a
@@ -649,6 +651,7 @@ func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
 	if p.cfg.Runtime.Type == RuntimeBaremetal {
 		excludeUnderOutputDir(p.cfg.Runtime.Baremetal.MetaDir)
 	}
+	excludeUnderOutputDir(p.cfg.NotebookWorker.NotebooksRoot)
 	cleanupOrphanArtifacts(ctx, p.repos.Run, p.cfg.OutputDir, exclude...)
 }
 

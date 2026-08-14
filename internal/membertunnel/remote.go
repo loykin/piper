@@ -86,6 +86,13 @@ func call[Req, Resp any](ctx context.Context, r *remoteMemberClient, method stri
 		r.mu.Unlock()
 		return zero, err
 	}
+	defer func() {
+		r.mu.Lock()
+		if r.pending[requestID] == ch {
+			delete(r.pending, requestID)
+		}
+		r.mu.Unlock()
+	}()
 
 	select {
 	case resp, ok := <-ch:

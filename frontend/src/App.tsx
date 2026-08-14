@@ -406,7 +406,7 @@ function RootRedirect() {
 
 function ProjectScopedFallback() {
   const { projectId } = useProjectContext()
-  return <NotFoundPage homeTo={projectId ? `/projects/${projectId}/schedules` : '/'} />
+  return <RedirectTo to={projectId ? `/projects/${projectId}/schedules` : '/'} />
 }
 
 function NotFoundPage({ homeTo }: { homeTo: string }) {

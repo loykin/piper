@@ -5,20 +5,98 @@ package repotest
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 )
+
+func FederationRepoSuite(t *testing.T, repo federation.Repository) {
+	t.Helper()
+	ctx := context.Background()
+	configuredAt := time.Now().UTC().Truncate(time.Millisecond)
+	if err := repo.SyncConfiguredMembers(ctx, "home-a", []string{"member-a", "member-b"}, configuredAt); err != nil {
+		t.Fatalf("SyncConfiguredMembers: %v", err)
+	}
+	members, err := repo.ListMembers(ctx, "home-a")
+	if err != nil || len(members) != 2 {
+		t.Fatalf("ListMembers = %#v, %v", members, err)
+	}
+	connectedAt := configuredAt.Add(time.Second)
+	if err := repo.SetMemberConnected(ctx, "home-a", "member-a", true, connectedAt); err != nil {
+		t.Fatalf("connect member: %v", err)
+	}
+	if err := repo.SetMemberConnected(ctx, "home-a", "member-a", false, connectedAt.Add(time.Second)); err != nil {
+		t.Fatalf("disconnect member: %v", err)
+	}
+	events, err := repo.ListAuditEvents(ctx, "home-a", 10)
+	if err != nil || len(events) != 2 || events[0].Type != federation.AuditMemberDisconnected || events[1].Type != federation.AuditMemberConnected {
+		t.Fatalf("audit events = %#v, %v", events, err)
+	}
+	if err := repo.SetMemberConnected(ctx, "home-a", "unknown", true, connectedAt); !errors.Is(err, federation.ErrMemberNotConfigured) {
+		t.Fatalf("unknown member error = %v", err)
+	}
+	projectValue := &project.Project{ID: "federation-" + uuid.NewString(), Name: "federated", OwnerMemberID: "member-a"}
+	if err := repo.CreateProject(ctx, "home-a", projectValue, "admin-a"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := repo.SetProjectOwner(ctx, "home-a", projectValue.ID, "member-b", "admin-b", connectedAt.Add(3*time.Second)); err != nil {
+		t.Fatalf("SetProjectOwner: %v", err)
+	}
+	events, err = repo.ListAuditEvents(ctx, "home-a", 10)
+	createdFound := false
+	for _, event := range events {
+		createdFound = createdFound || event.Type == federation.AuditProjectCreated
+	}
+	if err != nil || len(events) != 4 || events[0].Type != federation.AuditProjectOwnerSet || events[0].Detail != "member-a" || !createdFound {
+		t.Fatalf("project audit events = %#v, %v", events, err)
+	}
+	if err := repo.SyncConfiguredMembers(ctx, "home-a", []string{"member-a"}, connectedAt.Add(4*time.Second)); err != nil {
+		t.Fatalf("resync members: %v", err)
+	}
+	members, err = repo.ListMembers(ctx, "home-a")
+	if err != nil || len(members) != 2 || !members[0].Enabled || members[1].Enabled {
+		t.Fatalf("members after resync = %#v, %v", members, err)
+	}
+}
+
+func SubmissionRepoSuite(t *testing.T, repo run.SubmissionRepository, projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	first := &run.Submission{
+		ProjectID: projectID, Key: "request-a", RequestHash: "hash-a",
+		RunID: "run-a", CreatedAt: time.Now().UTC(),
+	}
+	existing, claimed, err := repo.Claim(ctx, first)
+	if err != nil || !claimed || existing.RunID != "run-a" {
+		t.Fatalf("first Claim = %#v, %v, %v", existing, claimed, err)
+	}
+	existing, claimed, err = repo.Claim(ctx, &run.Submission{
+		ProjectID: projectID, Key: "request-a", RequestHash: "different",
+		RunID: "run-b", CreatedAt: time.Now().UTC(),
+	})
+	if err != nil || claimed || existing.RunID != "run-a" || existing.RequestHash != "hash-a" {
+		t.Fatalf("duplicate Claim = %#v, %v, %v", existing, claimed, err)
+	}
+	if err := repo.Delete(ctx, projectID, "request-a"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	_, claimed, err = repo.Claim(ctx, first)
+	if err != nil || !claimed {
+		t.Fatalf("Claim after Delete = %v, %v", claimed, err)
+	}
+}
 
 func ProjectRepoSuite(t *testing.T, repo project.Repository) {
 	t.Helper()
 	ctx := context.Background()
 
-	first := &project.Project{ID: uuid.NewString(), Name: "alpha", Description: "first"}
+	first := &project.Project{ID: uuid.NewString(), Name: "alpha", Description: "first", OwnerMemberID: "member-a"}
 	second := &project.Project{ID: uuid.NewString(), Name: "beta", Description: "second"}
 	if err := repo.Create(ctx, first); err != nil {
 		t.Fatalf("Create first project: %v", err)
@@ -31,8 +109,15 @@ func ProjectRepoSuite(t *testing.T, repo project.Repository) {
 	if err != nil {
 		t.Fatalf("Get project: %v", err)
 	}
-	if got == nil || got.ID != first.ID || got.Name != first.Name {
+	if got == nil || got.ID != first.ID || got.Name != first.Name || got.OwnerMemberID != "member-a" {
 		t.Fatalf("Get project = %#v, want %#v", got, first)
+	}
+	if err := repo.SetOwner(ctx, first.ID, "member-b"); err != nil {
+		t.Fatalf("SetOwner: %v", err)
+	}
+	got, err = repo.Get(ctx, first.ID)
+	if err != nil || got == nil || got.OwnerMemberID != "member-b" {
+		t.Fatalf("owner after SetOwner = %#v, %v", got, err)
 	}
 
 	projects, err := repo.List(ctx)

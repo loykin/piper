@@ -11,9 +11,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,41 +25,24 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import { useCreateProject, useDeleteProject } from '@/features/projects/hooks'
+import { useDeleteProject } from '@/features/projects/hooks'
+import { useAuth } from '@/features/auth/context'
 import { useProjectContext } from '@/lib/projectContext'
 
 export function ProjectSelector() {
   const { projectId, projects, loading } = useProjectContext()
-  const createProject = useCreateProject()
+  const { user, capabilities } = useAuth()
   const deleteProject = useDeleteProject()
   const navigate = useNavigate()
 
-  const [open, setOpen] = useState(false)
-  const [newId, setNewId] = useState('')
-  const [newName, setNewName] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteError, setDeleteError] = useState('')
 
   const currentProject = projects.find(p => p.id === projectId)
+  const canManageProjects = !capabilities?.authentication || user?.system_admin === true
 
   const handleSelect = (id: string) => {
     navigate(`/projects/${id}/schedules`, { replace: true })
-  }
-
-  const handleCreate = async () => {
-    if (!newId.trim() || !newName.trim()) return
-    const p = await createProject.mutateAsync({ id: newId.trim(), name: newName.trim() })
-    navigate(`/projects/${p.id}/schedules`, { replace: true })
-    setOpen(false)
-    setNewId('')
-    setNewName('')
   }
 
   const handleDelete = async () => {
@@ -127,14 +107,16 @@ export function ProjectSelector() {
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setOpen(true)} className="gap-2 p-2">
-                <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
-                  <Plus className="size-3.5" />
-                </div>
-                <span className="font-medium text-muted-foreground">Create project</span>
-              </DropdownMenuItem>
-              {currentProject && currentProject.id !== 'default' && projects.length > 1 && (
+              {canManageProjects && <DropdownMenuSeparator />}
+              {canManageProjects && (
+                <DropdownMenuItem onClick={() => navigate('/projects/new')} className="gap-2 p-2">
+                  <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
+                    <Plus className="size-3.5" />
+                  </div>
+                  <span className="font-medium text-muted-foreground">Create project</span>
+                </DropdownMenuItem>
+              )}
+              {canManageProjects && currentProject && currentProject.id !== 'default' && projects.length > 1 && (
                 <DropdownMenuItem
                   onClick={() => setDeleteOpen(true)}
                   className="gap-2 p-2 text-destructive"
@@ -149,44 +131,6 @@ export function ProjectSelector() {
           </DropdownMenu>
         </SidebarMenuItem>
       </SidebarMenu>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Create project</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3 py-2">
-            <div className="grid gap-1.5">
-              <Label htmlFor="proj-id">ID</Label>
-              <Input
-                id="proj-id"
-                placeholder="my-project"
-                value={newId}
-                onChange={e => setNewId(e.target.value)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="proj-name">Name</Label>
-              <Input
-                id="proj-name"
-                placeholder="My Project"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && void handleCreate()}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button
-              onClick={() => void handleCreate()}
-              disabled={!newId.trim() || !newName.trim() || createProject.isPending}
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>

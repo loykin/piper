@@ -63,6 +63,28 @@ func TestProjectRepo_SQLite(t *testing.T) {
 	repotest.ProjectRepoSuite(t, repos.Project)
 }
 
+func TestFederationRepo_SQLite(t *testing.T) {
+	repos, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+	repotest.FederationRepoSuite(t, repos.Federation)
+}
+
+func TestSubmissionRepo_SQLite(t *testing.T) {
+	repos, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+	const projectID = "submission-repo"
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.SubmissionRepoSuite(t, repos.Submission, projectID)
+}
+
 func TestStepRepo_SQLite(t *testing.T) {
 	repos, err := store.Open(":memory:")
 	if err != nil {

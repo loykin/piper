@@ -44,7 +44,18 @@ func waitUntilTunnel(timeout time.Duration, cond func() bool) bool {
 // memberclient.Client, and the response decodes correctly back on the Home
 // side.
 func TestTunnelEndToEndSubmitRun(t *testing.T) {
-	srv, addr := startTestServer(t, ServerConfig{HomeID: "home-1", Tokens: map[string]string{"member-1": "secret"}})
+	states := make(chan bool, 2)
+	srv, addr := startTestServer(t, ServerConfig{
+		HomeID: "home-1",
+		Tokens: map[string]string{"member-1": "secret"},
+		OnConnectionChanged: func(_ context.Context, homeID, memberID string, connected bool) error {
+			if homeID != "home-1" || memberID != "member-1" {
+				t.Errorf("connection callback identity = %q/%q", homeID, memberID)
+			}
+			states <- connected
+			return nil
+		},
+	})
 
 	member := &fakeMember{
 		submitRunFn: func(_ context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
@@ -71,6 +82,18 @@ func TestTunnelEndToEndSubmitRun(t *testing.T) {
 	}
 	if resp.RunID != "run-proj-1-exp-1" {
 		t.Fatalf("RunID = %q, want run-proj-1-exp-1", resp.RunID)
+	}
+	if connected := <-states; !connected {
+		t.Fatal("first lifecycle callback was not connected")
+	}
+	cancel()
+	select {
+	case connected := <-states:
+		if connected {
+			t.Fatal("disconnect lifecycle callback reported connected")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("disconnect lifecycle callback was not called")
 	}
 }
 

@@ -18,6 +18,7 @@ type fakeProjectRepo struct {
 }
 
 func (r *fakeProjectRepo) Create(context.Context, *project.Project) error { return nil }
+func (r *fakeProjectRepo) SetOwner(context.Context, string, string) error { return nil }
 func (r *fakeProjectRepo) Get(_ context.Context, id string) (*project.Project, error) {
 	for _, p := range r.projects {
 		if p.ID == id {

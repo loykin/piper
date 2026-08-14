@@ -61,6 +61,7 @@ const UsersPage              = lazyRouteComponent(() => import('@/pages/system/U
 const UserCreatePage         = lazyRouteComponent(() => import('@/pages/system/UserCreatePage'))
 const MembersPage            = lazyRouteComponent(() => import('@/pages/projects/MembersPage'))
 const MemberCreatePage       = lazyRouteComponent(() => import('@/pages/projects/MemberCreatePage'))
+const ProjectCreatePage      = lazyRouteComponent(() => import('@/pages/projects/ProjectCreatePage'))
 
 type NavSubItem = {
   id: string
@@ -498,6 +499,7 @@ const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: 'login', component: LoginPage }),
   appLayoutRoute.addChildren([
     indexRoute,
+    createRoute({ getParentRoute: () => appLayoutRoute, path: 'projects/new', component: ProjectCreatePage }),
     projectRoute.addChildren(projectRoutes),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'users', component: UsersPage }),
     createRoute({ getParentRoute: () => appLayoutRoute, path: 'users/new', component: UserCreatePage }),

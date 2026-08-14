@@ -10,8 +10,9 @@ import (
 
 // Context carries the resolved project and the caller's role within it.
 type Context struct {
-	ID   string
-	Role security.ProjectRole
+	ID            string
+	OwnerMemberID string
+	Role          security.ProjectRole
 }
 
 type contextKey struct{}
@@ -81,7 +82,7 @@ func Require(repo Repository, authorizer security.Authorizer, minRole security.P
 			role = resolvedRole
 		}
 
-		ctx := WithContext(c.Request.Context(), Context{ID: p.ID, Role: role})
+		ctx := WithContext(c.Request.Context(), Context{ID: p.ID, OwnerMemberID: p.OwnerMemberID, Role: role})
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}

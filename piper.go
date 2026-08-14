@@ -97,6 +97,7 @@ type Piper struct {
 	events          *event.Hub
 	scheduler       *ischeduler.Scheduler
 	startedAt       time.Time // wall-clock when New() ran; used for misfire detection
+	submissionMu    sync.Mutex
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 	wg      sync.WaitGroup
@@ -525,6 +526,55 @@ func ensureSystemProject(ctx context.Context, repo project.Repository) error {
 		Name:        "System",
 		Description: "Reserved project for system-scoped credentials",
 	})
+}
+
+// SetProjectOwner updates Home's authoritative Project directory and audit
+// trail atomically. It returns false when the Project does not exist yet;
+// creation can subsequently apply the same owner through project.OwnerResolver.
+func (p *Piper) SetProjectOwner(ctx context.Context, homeID, projectID, memberID, actorID string) (bool, error) {
+	projectRecord, err := p.repos.Project.Get(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	if projectRecord == nil {
+		return false, nil
+	}
+	if memberID == "" {
+		memberID = project.LocalMemberID
+	}
+	if projectRecord.OwnerMemberID == memberID {
+		return true, nil
+	}
+	if p.repos.Federation == nil {
+		return true, fmt.Errorf("federation repository is unavailable")
+	}
+	return true, p.repos.Federation.SetProjectOwner(ctx, homeID, projectID, memberID, actorID, time.Now().UTC())
+}
+
+func (p *Piper) createFederatedProject(ctx context.Context, homeID string, value *project.Project, actorID string) error {
+	if p.repos.Federation == nil {
+		return fmt.Errorf("federation repository is unavailable")
+	}
+	return p.repos.Federation.CreateProject(ctx, homeID, value, actorID)
+}
+
+// SyncFederationMembers reconciles Home's non-secret Member directory with
+// the configured enrollment identities. Previously configured Members remain
+// as disabled history records; all connections start offline after restart.
+func (p *Piper) SyncFederationMembers(ctx context.Context, homeID string, memberIDs []string) error {
+	if p.repos.Federation == nil {
+		return fmt.Errorf("federation repository is unavailable")
+	}
+	return p.repos.Federation.SyncConfiguredMembers(ctx, homeID, memberIDs, time.Now().UTC())
+}
+
+// SetFederationMemberConnected atomically updates the Member directory and
+// appends its connection audit event.
+func (p *Piper) SetFederationMemberConnected(ctx context.Context, homeID, memberID string, connected bool) error {
+	if p.repos.Federation == nil {
+		return fmt.Errorf("federation repository is unavailable")
+	}
+	return p.repos.Federation.SetMemberConnected(ctx, homeID, memberID, connected, time.Now().UTC())
 }
 
 // handleRunSuccess is called (in a goroutine) when a queued run completes successfully.
@@ -1103,6 +1153,7 @@ func (p *Piper) buildRunResult(ctx context.Context, projectID, runID string) (*p
 
 // StartRunOptions holds parameters for enqueuing a new distributed run.
 type StartRunOptions struct {
+	RunID      string
 	ProjectID  string
 	ScheduleID string
 	Experiment string
@@ -1115,7 +1166,10 @@ type StartRunOptions struct {
 // Both the HTTP API and the scheduler go through here.
 // It creates the DB record, initialises step rows, enqueues the DAG, and fires OnRunStart.
 func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DAG, opts StartRunOptions) (string, error) {
-	runID := genRunID()
+	runID := opts.RunID
+	if runID == "" {
+		runID = genRunID()
+	}
 	outputDir := filepath.Join(p.cfg.OutputDir, runID)
 	now := time.Now().UTC()
 	if opts.Vars.RunStartedAt == nil {

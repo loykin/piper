@@ -1,9 +1,11 @@
 package membertunnel
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,6 +22,10 @@ type ServerConfig struct {
 	// WorkerToken) — see the package doc for why rotation/revocation isn't
 	// built yet.
 	Tokens map[string]string
+	// OnConnectionChanged persists Home-owned lifecycle state. It is invoked
+	// only for the active connection of a Member; a superseded connection
+	// cannot incorrectly mark a replacement offline.
+	OnConnectionChanged func(ctx context.Context, homeID, memberID string, connected bool) error
 }
 
 // Server is the Home-side MemberTunnelService implementation: it accepts
@@ -80,14 +86,34 @@ func (s *Server) Connect(stream agentpb.MemberTunnelService_ConnectServer) error
 	s.mu.Lock()
 	s.members[enroll.MemberId] = rc
 	s.mu.Unlock()
+	if s.cfg.OnConnectionChanged != nil {
+		if err := s.cfg.OnConnectionChanged(stream.Context(), enroll.HomeId, enroll.MemberId, true); err != nil {
+			s.mu.Lock()
+			if s.members[enroll.MemberId] == rc {
+				delete(s.members, enroll.MemberId)
+			}
+			s.mu.Unlock()
+			rc.closeAll()
+			return status.Errorf(codes.Internal, "membertunnel: persist enrollment: %v", err)
+		}
+	}
 	slog.Info("member enrolled", "member_id", enroll.MemberId, "home_id", enroll.HomeId)
 	defer func() {
+		removed := false
 		s.mu.Lock()
 		if s.members[enroll.MemberId] == rc {
 			delete(s.members, enroll.MemberId)
+			removed = true
 		}
 		s.mu.Unlock()
 		rc.closeAll()
+		if removed && s.cfg.OnConnectionChanged != nil {
+			disconnectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := s.cfg.OnConnectionChanged(disconnectCtx, enroll.HomeId, enroll.MemberId, false); err != nil {
+				slog.Error("persist member disconnect failed", "member_id", enroll.MemberId, "err", err)
+			}
+		}
 		slog.Info("member disconnected", "member_id", enroll.MemberId)
 	}()
 

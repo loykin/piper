@@ -2,8 +2,12 @@ package memberclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/pkg/project"
@@ -31,11 +35,45 @@ func (c *RoutingClient) resolve(ref project.ProjectRef) (Client, error) {
 }
 
 func (c *RoutingClient) SubmitRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, req SubmitRunRequest) (SubmitRunResponse, error) {
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = uuid.NewString()
+	}
 	m, err := c.resolve(ref)
 	if err != nil {
 		return SubmitRunResponse{}, err
 	}
-	return m.SubmitRun(ctx, auth, ref, req)
+	resp, err := m.SubmitRun(ctx, auth, ref, req)
+	if !errors.Is(err, ErrMemberUnavailable) {
+		return resp, err
+	}
+
+	// The request may already have committed on Member before its response
+	// was lost. Re-resolve across a short reconnect window and retry with the
+	// same durable idempotency key.
+	deadline := time.NewTimer(6 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	lastErr := err
+	for {
+		select {
+		case <-ctx.Done():
+			return SubmitRunResponse{}, ctx.Err()
+		case <-deadline.C:
+			return SubmitRunResponse{}, lastErr
+		case <-ticker.C:
+			m, resolveErr := c.resolve(ref)
+			if resolveErr != nil {
+				lastErr = resolveErr
+				continue
+			}
+			resp, callErr := m.SubmitRun(ctx, auth, ref, req)
+			if callErr == nil || !errors.Is(callErr, ErrMemberUnavailable) {
+				return resp, callErr
+			}
+			lastErr = callErr
+		}
+	}
 }
 func (c *RoutingClient) SubmitSweep(ctx context.Context, auth AuthContext, ref project.ProjectRef, req SubmitSweepRequest) (SubmitSweepResponse, error) {
 	m, err := c.resolve(ref)

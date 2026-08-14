@@ -34,6 +34,13 @@ func (r *memoryRepo) List(context.Context) ([]*Project, error) {
 	return out, nil
 }
 
+func (r *memoryRepo) SetOwner(_ context.Context, id, memberID string) error {
+	if p := r.projects[id]; p != nil {
+		p.OwnerMemberID = memberID
+	}
+	return nil
+}
+
 func (r *memoryRepo) Delete(_ context.Context, id string) error {
 	delete(r.projects, id)
 	return nil
@@ -64,6 +71,46 @@ func TestProjectCRUD(t *testing.T) {
 	router.ServeHTTP(deleteRec, httptest.NewRequest(http.MethodDelete, "/api/projects/team-a", nil))
 	if deleteRec.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+}
+
+func TestProjectCreateResolvesOwnerMember(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &memoryRepo{projects: map[string]*Project{DefaultID: {ID: DefaultID, Name: "Default"}}}
+	router := gin.New()
+	NewHandlerWithOwner(repo, nil, func(projectID, requested string) (string, error) {
+		if projectID != "team-gpu" || requested != "member-gpu" {
+			t.Fatalf("owner resolver args = %q, %q", projectID, requested)
+		}
+		return requested, nil
+	}).RegisterRoutes(router.Group("/api"))
+	body := []byte(`{"id":"team-gpu","name":"GPU","owner_member_id":"member-gpu"}`)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := repo.projects["team-gpu"].OwnerMemberID; got != "member-gpu" {
+		t.Fatalf("OwnerMemberID = %q", got)
+	}
+}
+
+func TestProjectCreateUsesDirectoryCreator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &memoryRepo{projects: map[string]*Project{DefaultID: {ID: DefaultID, Name: "Default"}}}
+	router := gin.New()
+	created := false
+	NewHandlerWithDirectory(repo, nil, nil, func(ctx context.Context, value *Project, actorID string) error {
+		created = true
+		if value.ID != "team-a" || value.OwnerMemberID != LocalMemberID || actorID != "" {
+			t.Fatalf("directory create value=%#v actor=%q", value, actorID)
+		}
+		return repo.Create(ctx, value)
+	}).RegisterRoutes(router.Group("/api"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewReader([]byte(`{"id":"team-a","name":"Team A"}`))))
+	if rec.Code != http.StatusCreated || !created {
+		t.Fatalf("status=%d created=%v body=%s", rec.Code, created, rec.Body.String())
 	}
 }
 

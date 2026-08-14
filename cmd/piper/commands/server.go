@@ -59,7 +59,20 @@ func runHomeMode(root cliconfig.RootConfig, p *piper.Piper) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	opt := piper.ServeOption{Addr: root.Server.HTTPAddr}
+	homeID := root.Home.ID
+	if homeID == "" {
+		homeID = project.LocalHomeID
+	}
+	memberIDs := make([]string, 0, len(root.Home.Members)+1)
+	memberIDs = append(memberIDs, project.LocalMemberID)
+	for memberID := range root.Home.Members {
+		memberIDs = append(memberIDs, memberID)
+	}
+	if err := p.SyncFederationMembers(ctx, homeID, memberIDs); err != nil {
+		return fmt.Errorf("sync federation members: %w", err)
+	}
+
+	opt := piper.ServeOption{Addr: root.Server.HTTPAddr, HomeID: homeID}
 	if root.Home.TunnelAddr == "" {
 		return p.Serve(ctx, opt)
 	}
@@ -73,6 +86,9 @@ func runHomeMode(root cliconfig.RootConfig, p *piper.Piper) error {
 	tunnelServer := membertunnel.NewServer(membertunnel.ServerConfig{
 		HomeID: root.Home.ID,
 		Tokens: root.Home.Members,
+		OnConnectionChanged: func(ctx context.Context, homeID, memberID string, connected bool) error {
+			return p.SetFederationMemberConnected(ctx, homeID, memberID, connected)
+		},
 	})
 	var grpcOptions []grpc.ServerOption
 	if root.Server.TLS.Enabled {
@@ -98,12 +114,26 @@ func runHomeMode(root cliconfig.RootConfig, p *piper.Piper) error {
 		}
 		return nil, fmt.Errorf("%w: member %q", memberclient.ErrMemberUnavailable, ref.MemberID)
 	}}
-	opt.ProjectRef = func(projectID string) project.ProjectRef {
-		memberID := root.Home.Projects[projectID]
+	opt.ProjectOwner = func(projectID, requested string) (string, error) {
+		memberID := requested
 		if memberID == "" {
-			memberID = project.LocalMemberID
+			memberID = root.Home.Projects[projectID]
 		}
-		return project.ProjectRef{HomeID: root.Home.ID, MemberID: memberID, ProjectID: projectID}
+		if memberID == "" || memberID == project.LocalMemberID {
+			return project.LocalMemberID, nil
+		}
+		if _, ok := root.Home.Members[memberID]; !ok {
+			return "", fmt.Errorf("unknown Owner Member %q", memberID)
+		}
+		return memberID, nil
+	}
+	opt.ProjectRef = func(projectID string) project.ProjectRef {
+		return project.ProjectRef{HomeID: root.Home.ID, MemberID: project.LocalMemberID, ProjectID: projectID}
+	}
+	for projectID, memberID := range root.Home.Projects {
+		if _, err := p.SetProjectOwner(ctx, homeID, projectID, memberID, "config"); err != nil {
+			return fmt.Errorf("configure owner for project %q: %w", projectID, err)
+		}
 	}
 
 	errCh := make(chan error, 2)

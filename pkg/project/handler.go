@@ -1,6 +1,8 @@
 package project
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -14,12 +16,38 @@ var validProjectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 type Handler struct {
 	repo       Repository
 	authorizer security.Authorizer
+	owner      OwnerResolver
+	creator    Creator
 }
+
+// OwnerResolver validates and resolves the Owner Member assigned when a Home
+// creates a Project. requested is the optional owner_member_id from the API.
+type OwnerResolver func(projectID, requested string) (string, error)
+
+// Creator lets a Home persist a Project and its directory audit event in one
+// transaction. Standalone handlers use Repository.Create directly.
+type Creator func(ctx context.Context, value *Project, actorID string) error
 
 // NewHandler creates a project Handler.
 // authorizer may be nil only in trusted mode.
 func NewHandler(repo Repository, authorizer security.Authorizer) *Handler {
-	return &Handler{repo: repo, authorizer: authorizer}
+	return NewHandlerWithOwner(repo, authorizer, nil)
+}
+
+func NewHandlerWithOwner(repo Repository, authorizer security.Authorizer, owner OwnerResolver) *Handler {
+	return NewHandlerWithDirectory(repo, authorizer, owner, nil)
+}
+
+func NewHandlerWithDirectory(repo Repository, authorizer security.Authorizer, owner OwnerResolver, creator Creator) *Handler {
+	if owner == nil {
+		owner = func(_, requested string) (string, error) {
+			if requested == "" || requested == LocalMemberID {
+				return LocalMemberID, nil
+			}
+			return "", fmt.Errorf("remote Owner Member %q is not available in standalone mode", requested)
+		}
+	}
+	return &Handler{repo: repo, authorizer: authorizer, owner: owner, creator: creator}
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -111,9 +139,10 @@ func visibleProjects(projects []*Project) []*Project {
 
 func (h *Handler) create(c *gin.Context) {
 	var req struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		Description   string `json:"description"`
+		OwnerMemberID string `json:"owner_member_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -133,8 +162,21 @@ func (h *Handler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 		return
 	}
-	p := &Project{ID: req.ID, Name: req.Name, Description: strings.TrimSpace(req.Description)}
-	if err := h.repo.Create(c.Request.Context(), p); err != nil {
+	ownerMemberID, err := h.owner(req.ID, strings.TrimSpace(req.OwnerMemberID))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	p := &Project{ID: req.ID, Name: req.Name, Description: strings.TrimSpace(req.Description), OwnerMemberID: ownerMemberID}
+	actorID := ""
+	if identity, ok := security.IdentityFromContext(c.Request.Context()); ok && identity != nil {
+		actorID = identity.ID
+	}
+	create := h.repo.Create
+	if h.creator != nil {
+		create = func(ctx context.Context, value *Project) error { return h.creator(ctx, value, actorID) }
+	}
+	if err := create(c.Request.Context(), p); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}

@@ -3,6 +3,7 @@ package memberclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/loykin/piper/pkg/project"
@@ -12,11 +13,36 @@ type routingStub struct {
 	Client
 	runID string
 	refs  []project.ProjectRef
+	err   error
+	keys  []string
 }
 
-func (s *routingStub) SubmitRun(_ context.Context, _ AuthContext, ref project.ProjectRef, _ SubmitRunRequest) (SubmitRunResponse, error) {
+func (s *routingStub) SubmitRun(_ context.Context, _ AuthContext, ref project.ProjectRef, req SubmitRunRequest) (SubmitRunResponse, error) {
 	s.refs = append(s.refs, ref)
-	return SubmitRunResponse{RunID: s.runID}, nil
+	s.keys = append(s.keys, req.IdempotencyKey)
+	return SubmitRunResponse{RunID: s.runID}, s.err
+}
+
+func TestRoutingClientRetriesAmbiguousSubmitWithSameKey(t *testing.T) {
+	first := &routingStub{err: fmt.Errorf("%w: disconnected", ErrMemberUnavailable)}
+	second := &routingStub{runID: "same-run"}
+	current := Client(first)
+	resolveCount := 0
+	router := &RoutingClient{Resolve: func(project.ProjectRef) (Client, error) {
+		resolveCount++
+		if resolveCount > 1 {
+			current = second
+		}
+		return current, nil
+	}}
+	req := SubmitRunRequest{IdempotencyKey: "submission-a"}
+	got, err := router.SubmitRun(context.Background(), AuthContext{}, project.LocalRef("project-a"), req)
+	if err != nil || got.RunID != "same-run" {
+		t.Fatalf("SubmitRun = %#v, %v", got, err)
+	}
+	if len(first.keys) != 1 || len(second.keys) != 1 || first.keys[0] != second.keys[0] {
+		t.Fatalf("retry keys first=%v second=%v", first.keys, second.keys)
+	}
 }
 
 func TestRoutingClientResolvesEveryRequest(t *testing.T) {

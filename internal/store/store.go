@@ -15,6 +15,7 @@ import (
 	"github.com/loykin/piper/internal/store/postgres"
 	"github.com/loykin/piper/internal/store/sqlite"
 	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
@@ -28,7 +29,9 @@ import (
 // Add new drivers by implementing each Repository interface and registering here.
 type Repos struct {
 	Project          project.Repository
+	Federation       federation.Repository
 	Run              run.Repository
+	Submission       run.SubmissionRepository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
 	Credential       credential.Repository
@@ -54,7 +57,9 @@ type Repos struct {
 // Use this when embedding piper in an application that already manages its own database.
 type ExternalReposConfig struct {
 	Project          project.Repository
+	Federation       federation.Repository
 	Run              run.Repository
+	Submission       run.SubmissionRepository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
 	Credential       credential.Repository
@@ -183,7 +188,9 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 	case "sqlite", "sqlite3", "":
 		return &Repos{
 			Project:          sqlite.NewProjectRepo(executor, PrimarySource),
+			Federation:       sqlite.NewFederationRepo(executor, PrimarySource),
 			Run:              sqlite.NewRunRepo(executor, PrimarySource),
+			Submission:       sqlite.NewSubmissionRepo(executor, PrimarySource),
 			Step:             sqlite.NewStepRepo(executor, PrimarySource),
 			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
 			Credential:       sqlite.NewCredentialRepo(executor, PrimarySource),
@@ -202,7 +209,9 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 	case "postgres", "postgresql":
 		return &Repos{
 			Project:          postgres.NewProjectRepo(executor, PrimarySource),
+			Federation:       postgres.NewFederationRepo(executor, PrimarySource),
 			Run:              postgres.NewRunRepo(executor, PrimarySource),
+			Submission:       postgres.NewSubmissionRepo(executor, PrimarySource),
 			Step:             postgres.NewStepRepo(executor, PrimarySource),
 			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
 			Credential:       postgres.NewCredentialRepo(executor, PrimarySource),

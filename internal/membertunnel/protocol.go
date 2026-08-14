@@ -6,10 +6,9 @@
 // Deliberately excluded from this package, with a documented reattachment
 // point for later: per-Member credential rotation/revocation (today: one
 // static token per Member, compared for equality — see server.go),
-// idempotency keys for mutation calls (a retried SubmitRun/CancelRun over a
-// flaky tunnel is not yet deduplicated), and Home HA (exactly one Home
-// process is assumed). See the design doc (fed.md §13.4) for why these are
-// deferred rather than skipped.
+// idempotency coverage for mutations other than SubmitRun, and Home HA
+// (exactly one Home process is assumed). SubmitRun is durably deduplicated
+// by the owning Member and can be retried across a reconnect.
 package membertunnel
 
 import (

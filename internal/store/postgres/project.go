@@ -22,10 +22,13 @@ func (r *projectRepo) Create(ctx context.Context, p *project.Project) error {
 		p.CreatedAt = now
 	}
 	p.UpdatedAt = now
+	if p.OwnerMemberID == "" {
+		p.OwnerMemberID = project.LocalMemberID
+	}
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.NamedExecContext(ctx,
-			`INSERT INTO projects (id, name, description, created_at, updated_at)
-			 VALUES (:id, :name, :description, :created_at, :updated_at)`,
+			`INSERT INTO projects (id, name, description, owner_member_id, created_at, updated_at)
+			 VALUES (:id, :name, :description, :owner_member_id, :created_at, :updated_at)`,
 			p)
 		return err
 	})
@@ -34,7 +37,7 @@ func (r *projectRepo) Create(ctx context.Context, p *project.Project) error {
 func (r *projectRepo) Get(ctx context.Context, id string) (*project.Project, error) {
 	var p project.Project
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT id, name, description, created_at, updated_at FROM projects WHERE id=?`)
+		q := db.Rebind(`SELECT id, name, description, owner_member_id, created_at, updated_at FROM projects WHERE id=?`)
 		return db.GetContext(ctx, &p, q, id)
 	})
 	if err == sql.ErrNoRows {
@@ -50,12 +53,20 @@ func (r *projectRepo) List(ctx context.Context) ([]*project.Project, error) {
 	var projects []*project.Project
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		return db.SelectContext(ctx, &projects,
-			`SELECT id, name, description, created_at, updated_at FROM projects ORDER BY created_at ASC`)
+			`SELECT id, name, description, owner_member_id, created_at, updated_at FROM projects ORDER BY created_at ASC`)
 	})
 	if projects == nil {
 		projects = []*project.Project{}
 	}
 	return projects, err
+}
+
+func (r *projectRepo) SetOwner(ctx context.Context, id, memberID string) error {
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`UPDATE projects SET owner_member_id=?, updated_at=? WHERE id=?`)
+		_, err := db.ExecContext(ctx, q, memberID, time.Now().UTC(), id)
+		return err
+	})
 }
 
 func (r *projectRepo) Delete(ctx context.Context, id string) error {

@@ -96,7 +96,7 @@ func newTestPiper(t *testing.T, cfg Config) *Piper {
 func TestTemplateRunUsesConfiguredMemberRouting(t *testing.T) {
 	const projectID = "remote-project"
 	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal}})
-	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: "Remote Project"}); err != nil {
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: "Remote Project", OwnerMemberID: "member-1"}); err != nil {
 		t.Fatal(err)
 	}
 	tpl := &template.Template{
@@ -124,6 +124,36 @@ func TestTemplateRunUsesConfiguredMemberRouting(t *testing.T) {
 	}
 	if member.req.Params["lr"] != 0.1 || !strings.Contains(member.req.YAML, "federated-template") {
 		t.Fatalf("SubmitRun request = %#v", member.req)
+	}
+}
+
+func TestLocalMemberSubmitRunIsDurablyIdempotent(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal}})
+	member := NewLocalMemberClient(p)
+	scheduledAt := time.Now().UTC().Add(time.Hour)
+	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: idempotent\nspec:\n  steps:\n  - name: proof\n    run:\n      type: command\n      command: [\"echo\", \"ok\"]\n"
+	req := memberclient.SubmitRunRequest{
+		IdempotencyKey: "request-a", YAML: yaml, Vars: BuiltinVars{ScheduledAt: &scheduledAt},
+	}
+	ref := project.LocalRef(project.DefaultID)
+	first, err := member.SubmitRun(context.Background(), memberclient.AuthContext{}, ref, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := member.SubmitRun(context.Background(), memberclient.AuthContext{}, ref, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.RunID != second.RunID {
+		t.Fatalf("duplicate submission run IDs = %q, %q", first.RunID, second.RunID)
+	}
+	runs, err := p.repos.Run.List(context.Background(), project.DefaultID, run.RunFilter{})
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs = %#v, %v", runs, err)
+	}
+	req.YAML = strings.Replace(req.YAML, "idempotent", "different", 1)
+	if _, err := member.SubmitRun(context.Background(), memberclient.AuthContext{}, ref, req); err == nil || !strings.Contains(err.Error(), "different Run request") {
+		t.Fatalf("key reuse error = %v", err)
 	}
 }
 

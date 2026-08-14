@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
@@ -69,6 +71,14 @@ type ServeOption struct {
 
 	// ProjectRef resolves a Home project ID to its execution owner.
 	ProjectRef func(projectID string) project.ProjectRef
+
+	// ProjectOwner validates the Owner Member selected when creating a Home
+	// project. Nil keeps standalone behavior (Local Member ownership).
+	ProjectOwner project.OwnerResolver
+
+	// HomeID enables Home-owned federation directory endpoints. Empty keeps
+	// embedded/standalone servers free of federation control-plane routes.
+	HomeID string
 }
 
 // Serve runs the piper HTTP server.
@@ -97,7 +107,7 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 		}
 	}()
 
-	handler := p.newRouterWithMember(opt.Extra, viewerMgr, opt.Member, opt.ProjectRef)
+	handler := p.newRouterWithFederation(opt.Extra, viewerMgr, opt.Member, opt.ProjectRef, opt.ProjectOwner, opt.HomeID)
 
 	// Apply middleware chain (Config.Hooks.Middleware)
 	for i := len(p.cfg.Hooks.Middleware) - 1; i >= 0; i-- {
@@ -165,6 +175,10 @@ func (p *Piper) newRouter(extra http.Handler, viewerMgr *viewer.Manager) http.Ha
 }
 
 func (p *Piper) newRouterWithMember(extra http.Handler, viewerMgr *viewer.Manager, member memberclient.Client, projectRef func(string) project.ProjectRef) http.Handler {
+	return p.newRouterWithFederation(extra, viewerMgr, member, projectRef, nil, "")
+}
+
+func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Manager, member memberclient.Client, projectRef func(string) project.ProjectRef, projectOwner project.OwnerResolver, homeID string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -190,7 +204,16 @@ func (p *Piper) newRouterWithMember(extra http.Handler, viewerMgr *viewer.Manage
 	p.registerAdminRoutes(userAPI)
 
 	// Project management — logged-in users can list; create/delete is system-admin.
-	project.NewHandler(p.repos.Project, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
+	var projectCreator project.Creator
+	if homeID != "" && p.repos.Federation != nil {
+		projectCreator = func(ctx context.Context, value *project.Project, actorID string) error {
+			return p.createFederatedProject(ctx, homeID, value, actorID)
+		}
+	}
+	project.NewHandlerWithDirectory(p.repos.Project, p.cfg.Auth.Authorizer, projectOwner, projectCreator).RegisterRoutes(userAPI)
+	if homeID != "" && p.repos.Federation != nil {
+		federation.NewHandler(p.repos.Federation, homeID, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
+	}
 	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer)))
 	// System-scoped credentials (e.g. the artifact-storage s3 credential).
 	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/system", p.requireSystemAdmin(), project.SystemContext()))
@@ -349,8 +372,12 @@ func (p *Piper) newRouterWithMember(extra http.Handler, viewerMgr *viewer.Manage
 			if identity, ok := security.IdentityFromContext(ctx); ok && identity != nil {
 				auth.ActorID = identity.ID
 			}
-			resp, err := member.SubmitRun(ctx, auth, projectRef(projectContext.ID), memberclient.SubmitRunRequest{
-				YAML: yaml, Params: params, Experiment: experiment, Vars: vars,
+			ref := projectRef(projectContext.ID)
+			if projectContext.OwnerMemberID != "" {
+				ref.MemberID = projectContext.OwnerMemberID
+			}
+			resp, err := member.SubmitRun(ctx, auth, ref, memberclient.SubmitRunRequest{
+				IdempotencyKey: uuid.NewString(), YAML: yaml, Params: params, Experiment: experiment, Vars: vars,
 			})
 			return resp.RunID, err
 		},
@@ -667,6 +694,10 @@ func genScheduleID() string {
 // startRunFromAPI handles creating a run from the HTTP API, including
 // future-scheduled runs and immediate dispatch.
 func (p *Piper) startRunFromAPI(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+	return p.startRunFromAPIWithID(ctx, "", yaml, params, vars, experiment)
+}
+
+func (p *Piper) startRunFromAPIWithID(ctx context.Context, runID, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 	projectContext, _ := project.FromContext(ctx)
 
 	pl, err := p.Parse([]byte(yaml))
@@ -682,7 +713,9 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml string, params map[str
 	// Future-scheduled runs are stored but not enqueued yet.
 	now := time.Now().UTC()
 	if vars.ScheduledAt != nil && vars.ScheduledAt.After(now) {
-		runID := genRunID()
+		if runID == "" {
+			runID = genRunID()
+		}
 		newRun := &run.Run{
 			ID:           runID,
 			ProjectID:    projectContext.ID,
@@ -704,6 +737,7 @@ func (p *Piper) startRunFromAPI(ctx context.Context, yaml string, params map[str
 	}
 
 	return p.startRun(ctx, pl, dag, StartRunOptions{
+		RunID:      runID,
 		ProjectID:  projectContext.ID,
 		Experiment: experiment,
 		Params:     params,

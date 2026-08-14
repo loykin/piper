@@ -45,10 +45,11 @@ type RunDetail struct {
 }
 
 type SubmitRunRequest struct {
-	YAML       string
-	Params     map[string]any
-	Experiment string
-	Vars       proto.BuiltinVars
+	IdempotencyKey string
+	YAML           string
+	Params         map[string]any
+	Experiment     string
+	Vars           proto.BuiltinVars
 }
 
 type SubmitRunResponse struct {

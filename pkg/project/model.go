@@ -14,9 +14,10 @@ const SystemID = "system"
 func Reserved(id string) bool { return id == SystemID }
 
 type Project struct {
-	ID          string    `json:"id"          db:"id"`
-	Name        string    `json:"name"        db:"name"`
-	Description string    `json:"description" db:"description"`
-	CreatedAt   time.Time `json:"created_at"  db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"  db:"updated_at"`
+	ID            string    `json:"id"              db:"id"`
+	Name          string    `json:"name"            db:"name"`
+	Description   string    `json:"description"     db:"description"`
+	OwnerMemberID string    `json:"owner_member_id" db:"owner_member_id"`
+	CreatedAt     time.Time `json:"created_at"      db:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"      db:"updated_at"`
 }

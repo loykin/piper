@@ -2,7 +2,12 @@ package piper
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/memberclient"
@@ -77,8 +82,47 @@ func toStepSummaries(steps []*run.Step) []memberclient.StepSummary {
 
 func (l *localMemberClient) SubmitRun(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
 	ctx = withProjectContext(ctx, auth, ref)
-	runID, err := l.p.startRunFromAPI(ctx, req.YAML, req.Params, req.Vars, req.Experiment)
+	if req.IdempotencyKey == "" || l.p.repos.Submission == nil {
+		runID, err := l.p.startRunFromAPI(ctx, req.YAML, req.Params, req.Vars, req.Experiment)
+		if err != nil {
+			return memberclient.SubmitRunResponse{}, err
+		}
+		return memberclient.SubmitRunResponse{RunID: runID}, nil
+	}
+
+	l.p.submissionMu.Lock()
+	defer l.p.submissionMu.Unlock()
+	payload, err := json.Marshal(struct {
+		YAML       string
+		Params     map[string]any
+		Experiment string
+		Vars       BuiltinVars
+	}{req.YAML, req.Params, req.Experiment, req.Vars})
 	if err != nil {
+		return memberclient.SubmitRunResponse{}, fmt.Errorf("encode idempotent submission: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	requestHash := base64.RawURLEncoding.EncodeToString(sum[:])
+	submission, _, err := l.p.repos.Submission.Claim(ctx, &run.Submission{
+		ProjectID: ref.ProjectID, Key: req.IdempotencyKey, RequestHash: requestHash,
+		RunID: genRunID(), CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return memberclient.SubmitRunResponse{}, err
+	}
+	if submission.RequestHash != requestHash {
+		return memberclient.SubmitRunResponse{}, fmt.Errorf("idempotency key was already used for a different Run request")
+	}
+	if existing, err := l.p.repos.Run.Get(ctx, ref.ProjectID, submission.RunID); err != nil {
+		return memberclient.SubmitRunResponse{}, err
+	} else if existing != nil {
+		return memberclient.SubmitRunResponse{RunID: submission.RunID}, nil
+	}
+	runID, err := l.p.startRunFromAPIWithID(ctx, submission.RunID, req.YAML, req.Params, req.Vars, req.Experiment)
+	if err != nil {
+		if existing, getErr := l.p.repos.Run.Get(ctx, ref.ProjectID, submission.RunID); getErr == nil && existing == nil {
+			_ = l.p.repos.Submission.Delete(ctx, ref.ProjectID, req.IdempotencyKey)
+		}
 		return memberclient.SubmitRunResponse{}, err
 	}
 	return memberclient.SubmitRunResponse{RunID: runID}, nil

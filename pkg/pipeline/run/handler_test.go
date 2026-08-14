@@ -328,11 +328,13 @@ func TestListRunsDefaultOmitsSteps(t *testing.T) {
 func TestCreateRunPassesExperiment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var gotExperiment string
+	var gotIdempotencyKey string
 	router := gin.New()
 	NewHandler(HandlerDeps{
 		Member: &fakeMemberClient{
 			submitRunFn: func(_ context.Context, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
 				gotExperiment = req.Experiment
+				gotIdempotencyKey = req.IdempotencyKey
 				return memberclient.SubmitRunResponse{RunID: "run-1"}, nil
 			},
 		},
@@ -341,6 +343,7 @@ func TestCreateRunPassesExperiment(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/runs", strings.NewReader(`{"yaml":"metadata:\n  name: train\n","experiment":"exp-v2"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "request-123")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -349,6 +352,9 @@ func TestCreateRunPassesExperiment(t *testing.T) {
 	}
 	if gotExperiment != "exp-v2" {
 		t.Fatalf("experiment = %q, want exp-v2", gotExperiment)
+	}
+	if gotIdempotencyKey != "request-123" || rec.Header().Get("Idempotency-Key") != "request-123" {
+		t.Fatalf("idempotency key request=%q response=%q", gotIdempotencyKey, rec.Header().Get("Idempotency-Key"))
 	}
 }
 

@@ -64,6 +64,22 @@ func TestProjectRepo_Postgres(t *testing.T) {
 	repotest.ProjectRepoSuite(t, repos.Project)
 }
 
+func TestFederationRepo_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+	repotest.FederationRepoSuite(t, repos.Federation)
+}
+
+func TestSubmissionRepo_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+	const projectID = "submission-repo"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.SubmissionRepoSuite(t, repos.Submission, projectID)
+}
+
 func TestStepRepo_Postgres(t *testing.T) {
 	ctx := context.Background()
 	repos := openPostgresRepos(t, ctx)

@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/project"
@@ -65,7 +67,12 @@ func authFrom(c *gin.Context) memberclient.AuthContext {
 }
 
 func (h *Handler) ref(c *gin.Context) project.ProjectRef {
-	return h.deps.ProjectRef(projectID(c))
+	projectContext, _ := project.FromContext(c.Request.Context())
+	ref := h.deps.ProjectRef(projectContext.ID)
+	if projectContext.OwnerMemberID != "" {
+		ref.MemberID = projectContext.OwnerMemberID
+	}
+	return ref
 }
 
 func writeMemberError(c *gin.Context, err error, fallbackStatus int, fallbackMessage string) {
@@ -180,14 +187,23 @@ func (h *Handler) createRun(c *gin.Context) {
 			return
 		}
 	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if len(idempotencyKey) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Idempotency-Key must be at most 128 characters"})
+		return
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = uuid.NewString()
+	}
 
 	resp, err := h.deps.Member.SubmitRun(c.Request.Context(), authFrom(c), h.ref(c), memberclient.SubmitRunRequest{
-		YAML: body.YAML, Params: body.Params, Experiment: body.Experiment, Vars: body.Vars,
+		IdempotencyKey: idempotencyKey, YAML: body.YAML, Params: body.Params, Experiment: body.Experiment, Vars: body.Vars,
 	})
 	if err != nil {
 		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
+	c.Header("Idempotency-Key", idempotencyKey)
 	c.JSON(http.StatusOK, gin.H{"run_id": resp.RunID})
 }
 

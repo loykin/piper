@@ -52,11 +52,11 @@ spec:
                 secretKeyRef:
                   name: piper-server-secrets
                   key: secret_encryption_key
-            - name: PIPER_SERVER_WORKER_TOKEN
+            - name: PIPER_SERVER_WORKLOAD_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: piper-server-secrets
-                  key: worker_token
+                  key: workload_token
             # Artifact storage is configured once here. Direct Kubernetes
             # pipeline Jobs receive the effective URL per task.
             - name: PIPER_STORAGE_URL

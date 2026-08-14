@@ -29,18 +29,15 @@ import (
 )
 
 // EnvResolver resolves manifest.EnvVar entries (including credentialRef)
-// into "KEY=value" strings. Mirrors pkg/notebook/dispatch.EnvResolver,
-// redefined locally so this package has no dependency on the remote-dispatch
-// package.
+// into "KEY=value" strings. It stays at this direct-runtime boundary to avoid
+// coupling the notebook domain to a transport or another workload domain.
 type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvVar) ([]string, error)
 
 // Config configures a direct, in-process notebook driver.
 type Config struct {
-	// WorkerID is a fixed local identity used to populate NotebookServer/
-	// NotebookVolume.WorkerID. A real per-worker ID is meaningless once
-	// dispatch is in-process (there is only ever one owner), but the field
-	// stays populated so Manager's existing ownership-check code
-	// (UpdateStatus comparing nb.WorkerID) keeps working unchanged.
+	// WorkerID is the low-level driver's historical name for the fixed runtime
+	// identity used to populate NotebookServer.RuntimeID and namespace recovery
+	// metadata. It does not identify a separate process.
 	WorkerID string
 	// Infrastructure selects the underlying notebookdriver.Driver: must be
 	// notebookworkerdriver.ModeDocker or notebookworkerdriver.ModeProcess
@@ -141,7 +138,7 @@ func (d *Driver) volumeDir(volumeID string) string {
 
 // ProvisionVolume creates the host work directory backing vol.
 //
-// vol.WorkerID is deliberately left empty rather than set to cfg.WorkerID.
+// vol.RuntimeID is deliberately left empty rather than set to cfg.WorkerID.
 // pkg/notebook/handler.go's listVolumeFiles and pkg/template/handler.go's
 // Direct-runtime volumes are owned by the Piper installation rather than by
 // a separately addressable worker, so no worker identity is persisted. File
@@ -241,10 +238,10 @@ func (d *Driver) Start(_ context.Context, spec notebook.Notebook, vol *notebook.
 	go d.startAsync(spec, projectID, name, key, gen, workDir, port, token, baseURL, endpoint, yamlStr)
 
 	return &notebook.NotebookServer{
-		WorkerID: d.cfg.WorkerID,
-		Token:    token,
-		WorkDir:  workDir,
-		Endpoint: endpoint,
+		RuntimeID: d.cfg.WorkerID,
+		Token:     token,
+		WorkDir:   workDir,
+		Endpoint:  endpoint,
 	}, nil
 }
 

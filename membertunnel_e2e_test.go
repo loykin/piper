@@ -86,7 +86,7 @@ func TestMemberTunnelProjectAPIRelayEndToEnd(t *testing.T) {
 		return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
 	}
 	router := homeP.newRouterWithFederation(nil, nil, remoteMember, remoteProject, refFor, nil, "")
-	body := `{"yaml":"metadata:\n  name: tunneled-template\nspec:\n  steps:\n    - name: hello\n      run:\n        command: [\\\"echo\\\", \\\"hello\\\"]\n"}`
+	body := `{"yaml":"apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: tunneled-template\nspec:\n  steps:\n    - name: hello\n      run:\n        command: [\\\"echo\\\", \\\"hello\\\"]\n"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "tunneled-template-1")
@@ -237,6 +237,8 @@ func TestMemberTunnelSubmitRunEndToEnd(t *testing.T) {
 
 	// Submit a run through Home's real HTTP API.
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: member-tunnel-e2e
 spec:
@@ -395,6 +397,8 @@ func TestMemberTunnelCancelRunEndToEnd(t *testing.T) {
 	homeSrv := testutil.NewIPv4Server(t, router)
 
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: member-tunnel-cancel
 spec:

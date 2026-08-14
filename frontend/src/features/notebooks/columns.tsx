@@ -112,12 +112,12 @@ export function getNotebookVolumeColumns(
       ),
     },
     {
-      accessorKey: 'worker_id',
-      header: 'Node',
+      accessorKey: 'runtime_id',
+      header: 'Runtime',
       meta: { minWidth: 140 },
       cell: ({ row }) => {
-        const workerID = row.original.worker_id
-        return <span className="text-xs text-muted-foreground">{workerID || '—'}</span>
+        const runtimeID = row.original.runtime_id
+        return <span className="text-xs text-muted-foreground">{runtimeID || '—'}</span>
       },
     },
     {

@@ -22,7 +22,7 @@ type NotebookServer struct {
 	PID       int       `json:"pid"        db:"pid"`
 	WorkDir   string    `json:"work_dir"   db:"work_dir"`
 	Token     string    `json:"token"      db:"token"`
-	WorkerID  string    `json:"worker_id"  db:"worker_id"`
+	RuntimeID string    `json:"runtime_id" db:"worker_id"`
 	VolumeID  string    `json:"volume_id"  db:"volume_id"`
 	Image     string    `json:"image"      db:"image"`
 	YAML      string    `json:"yaml"       db:"yaml"`

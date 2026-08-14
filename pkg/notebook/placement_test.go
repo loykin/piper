@@ -18,8 +18,6 @@ func TestValidateDirectPlacement(t *testing.T) {
 	}{
 		{"empty placement ok", base(manifest.PlacementSpec{}), "docker", false},
 		{"matching runtime ok", base(manifest.PlacementSpec{Runtime: "docker"}), "docker", false},
-		{"worker rejected", base(manifest.PlacementSpec{Worker: "old-worker"}), "docker", true},
-		{"label rejected", base(manifest.PlacementSpec{Label: "gpu"}), "docker", true},
 		{"mismatched runtime rejected", base(manifest.PlacementSpec{Runtime: "k8s"}), "docker", true},
 	}
 	for _, tc := range cases {

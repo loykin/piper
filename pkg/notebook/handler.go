@@ -2,6 +2,7 @@ package notebook
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"path"
@@ -12,7 +13,6 @@ import (
 	"github.com/loykin/piper/internal/tunnelproxy"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
-	"gopkg.in/yaml.v3"
 )
 
 type HandlerDeps struct {
@@ -97,29 +97,34 @@ func (h *Handler) createNotebook(c *gin.Context) {
 		return
 	}
 
-	var spec Notebook
-	if err := yaml.Unmarshal([]byte(req.YAML), &spec); err != nil {
+	spec, err := Parse([]byte(req.YAML))
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid YAML: " + err.Error()})
 		return
 	}
 
 	var nb *NotebookServer
-	var err error
 	if req.VolumeID != "" {
 		if h.deps.CreateWithVolume == nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "CreateWithVolume not configured"})
 			return
 		}
-		nb, err = h.deps.CreateWithVolume(c.Request.Context(), currentProjectID(c), spec, req.VolumeID, req.YAML)
+		nb, err = h.deps.CreateWithVolume(c.Request.Context(), currentProjectID(c), *spec, req.VolumeID, req.YAML)
 	} else {
 		if h.deps.Create == nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Create not configured"})
 			return
 		}
-		nb, err = h.deps.Create(c.Request.Context(), currentProjectID(c), spec, req.YAML)
+		nb, err = h.deps.Create(c.Request.Context(), currentProjectID(c), *spec, req.YAML)
 	}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, ErrConflict) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, nb)
@@ -129,7 +134,11 @@ func (h *Handler) createNotebook(c *gin.Context) {
 func (h *Handler) getNotebook(c *gin.Context) {
 	name := c.Param("name")
 	nb, err := h.deps.Notebooks.Get(c.Request.Context(), currentProjectID(c), name)
-	if err != nil || nb == nil {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if nb == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "notebook not found"})
 		return
 	}
@@ -144,7 +153,7 @@ func (h *Handler) stopNotebook(c *gin.Context) {
 		return
 	}
 	if err := h.deps.Stop(c.Request.Context(), currentProjectID(c), name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeLifecycleError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -158,15 +167,10 @@ func (h *Handler) startNotebook(c *gin.Context) {
 		return
 	}
 	if err := h.deps.Restart(c.Request.Context(), currentProjectID(c), name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeLifecycleError(c, err)
 		return
 	}
-	nb, _ := h.deps.Notebooks.Get(c.Request.Context(), currentProjectID(c), name)
-	if nb != nil {
-		c.JSON(http.StatusOK, nb)
-	} else {
-		c.Status(http.StatusNoContent)
-	}
+	c.Status(http.StatusNoContent)
 }
 
 // DELETE /notebooks/:name — removes the server record and releases the backing volume.
@@ -178,10 +182,20 @@ func (h *Handler) deleteNotebook(c *gin.Context) {
 		return
 	}
 	if err := h.deps.Delete(c.Request.Context(), currentProjectID(c), name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeLifecycleError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func writeLifecycleError(c *gin.Context, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, ErrNotFound) {
+		status = http.StatusNotFound
+	} else if errors.Is(err, ErrConflict) {
+		status = http.StatusConflict
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }
 
 // GET /notebook-volumes — list all volumes for the current project.
@@ -201,7 +215,11 @@ func (h *Handler) listVolumes(c *gin.Context) {
 func (h *Handler) listVolumeFiles(c *gin.Context) {
 	id := c.Param("id")
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
-	if err != nil || vol == nil {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if vol == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
 		return
 	}

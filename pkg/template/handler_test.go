@@ -17,6 +17,8 @@ import (
 
 func TestRewriteLocalSourcesSkipsPureCommandSteps(t *testing.T) {
 	input := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: original
 spec:

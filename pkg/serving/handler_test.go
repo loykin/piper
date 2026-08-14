@@ -119,7 +119,7 @@ func TestCreateService(t *testing.T) {
 		},
 	})
 
-	body := `{"yaml":"apiVersion: piper/v1\nkind: ModelService\n"}`
+	body := `{"yaml":"apiVersion: piper/v1\nkind: ModelService\nmetadata:\n  name: my-model\nspec:\n  model:\n    from_uri: file:///model\n  run:\n    command: [serve]\n    port: 8080\n  driver: {}\n"}`
 	req := httptest.NewRequest(http.MethodPost, "/services", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

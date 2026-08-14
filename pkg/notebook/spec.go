@@ -9,6 +9,12 @@ import (
 )
 
 func (n Notebook) Validate() error {
+	if err := manifest.ValidateTypeMeta(n.TypeMeta, "Notebook"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(n.Metadata.Name) == "" {
+		return fmt.Errorf("metadata.name is required")
+	}
 	switch n.Spec.Driver.Placement.Runtime {
 	case "baremetal":
 	case "docker":
@@ -45,9 +51,6 @@ type Notebook struct {
 // Name returns the notebook name from metadata.
 func (n Notebook) Name() string { return n.Metadata.Name }
 
-// WorkerID returns the placement worker ID, or empty string if unset.
-func (n Notebook) WorkerID() string { return n.Spec.Driver.Placement.Worker }
-
 // StorageSize returns the PVC storage size from the volume spec, or empty if unset.
 func (n Notebook) StorageSize() string {
 	if n.Spec.Volume != nil {
@@ -71,7 +74,7 @@ func (n Notebook) K8sNamespace() string {
 }
 
 // GPURequest returns a GPU device-ID selector string used to route the notebook
-// to a worker that holds those specific GPUs.
+// to the configured runtime.
 //
 // For process: driver.process.gpus field (e.g. "0,1" or "all").
 // For docker: device_ids of the first gpu-capable device, or empty if only count is set.

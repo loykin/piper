@@ -12,20 +12,35 @@ import (
 // Manager handles the lifecycle of ModelService deployments.
 // It delegates actual process/pod management to a Driver.
 type Manager struct {
-	repo   Repository
-	driver Driver
-	events event.Publisher // nil means no event publishing
+	repo    Repository
+	driver  Driver
+	status  *StatusSink
+	runtime string
+	events  event.Publisher // nil means no event publishing
 }
+
+// SetRuntime sets the one runtime accepted at lifecycle boundaries.
+func (m *Manager) SetRuntime(runtime string) { m.runtime = runtime }
 
 // SetEventPublisher wires an event publisher so the manager can emit service lifecycle events.
 func (m *Manager) SetEventPublisher(p event.Publisher) {
 	m.events = p
+	m.status.SetEventPublisher(p)
 }
 
 // New creates a Manager with the given driver.
 // driver must not be nil.
 func New(repo Repository, driver Driver) *Manager {
-	return &Manager{repo: repo, driver: driver}
+	return NewWithStatusSink(repo, driver, NewStatusSink(repo))
+}
+
+// NewWithStatusSink creates a Manager sharing the sink used by runtime
+// drivers for observed status updates.
+func NewWithStatusSink(repo Repository, driver Driver, status *StatusSink) *Manager {
+	if status == nil {
+		status = NewStatusSink(repo)
+	}
+	return &Manager{repo: repo, driver: driver, status: status}
 }
 
 // ArtifactTarget returns the artifact delivery mode expected by the underlying driver.
@@ -34,6 +49,9 @@ func (m *Manager) ArtifactTarget() artifact.Target { return m.driver.ArtifactTar
 // Deploy starts a ModelService. Artifact resolution must happen before calling Deploy.
 func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) error {
 	if err := svc.Validate(); err != nil {
+		return fmt.Errorf("serving: %w", err)
+	}
+	if err := ValidateDirectPlacement(svc, m.runtime); err != nil {
 		return fmt.Errorf("serving: %w", err)
 	}
 	if projectID == "" {
@@ -75,6 +93,32 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 	return nil
 }
 
+// Replace stops an existing service, deploys the replacement, and returns the
+// single record persisted by Deploy. It is the application-level redeploy
+// boundary; callers must resolve the artifact before entering it.
+func (m *Manager) Replace(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) (*Service, error) {
+	existing, err := m.repo.Get(ctx, projectID, svc.Metadata.Name)
+	if err != nil {
+		return nil, fmt.Errorf("get existing service: %w", err)
+	}
+	if existing != nil {
+		if err := m.Stop(ctx, projectID, svc.Metadata.Name); err != nil {
+			return nil, err
+		}
+	}
+	if err := m.Deploy(ctx, projectID, svc, art, yamlStr); err != nil {
+		return nil, err
+	}
+	rec, err := m.repo.Get(ctx, projectID, svc.Metadata.Name)
+	if err != nil {
+		return nil, fmt.Errorf("get deployed service: %w", err)
+	}
+	if rec == nil {
+		return nil, fmt.Errorf("deployed service %q was not persisted", svc.Metadata.Name)
+	}
+	return rec, nil
+}
+
 // Stop terminates a running service.
 func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	if projectID == "" {
@@ -108,8 +152,8 @@ func (m *Manager) Restart(ctx context.Context, projectID string, svc ModelServic
 	if projectID == "" {
 		return fmt.Errorf("serving: project ID is required")
 	}
-	_ = m.Stop(ctx, projectID, svc.Metadata.Name)
-	return m.Deploy(ctx, projectID, svc, art, yamlStr)
+	_, err := m.Replace(ctx, projectID, svc, art, yamlStr)
+	return err
 }
 
 // SetYAML stores the original YAML on the service record.
@@ -125,30 +169,9 @@ func (m *Manager) SetYAML(ctx context.Context, projectID, name, yaml string) err
 	return m.repo.Update(ctx, svc)
 }
 
-// UpdateStatus applies backend-observed state from the owning worker.
-func (m *Manager) UpdateStatus(ctx context.Context, projectID, agentID, name, status, endpoint string) error {
-	if projectID == "" {
-		return fmt.Errorf("serving: project ID is required")
-	}
-	svc, err := m.repo.Get(ctx, projectID, name)
-	if err != nil || svc == nil {
-		return fmt.Errorf("service %q not found", name)
-	}
-	if agentID != "" && svc.WorkerID != "" && svc.WorkerID != agentID {
-		return fmt.Errorf("service %q owned by worker %q, push from %q rejected", name, svc.WorkerID, agentID)
-	}
-	previousStatus := svc.Status
-	if status == "" {
-		status = previousStatus
-	}
-	if err := m.repo.SetStatusEndpoint(ctx, projectID, name, status, endpoint); err != nil {
-		return err
-	}
-	if status == previousStatus {
-		return nil
-	}
-	m.emit(projectID, "service.status", map[string]any{"name": name, "status": status})
-	return nil
+// UpdateStatus applies backend-observed state through the shared runtime sink.
+func (m *Manager) UpdateStatus(ctx context.Context, projectID, runtimeID, name, status, endpoint string) error {
+	return m.status.Update(ctx, projectID, runtimeID, name, status, endpoint)
 }
 
 func (m *Manager) emit(projectID, eventType string, fields map[string]any) {

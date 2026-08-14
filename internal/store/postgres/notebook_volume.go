@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -27,7 +29,7 @@ func (r *notebookVolumeRepo) Create(ctx context.Context, v *notebook.NotebookVol
 			`INSERT INTO notebook_volumes (project_id, id, label, work_dir, status, worker_id, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 		_, err := db.ExecContext(ctx, q,
-			v.ProjectID, v.ID, v.Label, v.WorkDir, v.Status, v.WorkerID, v.CreatedAt, v.UpdatedAt)
+			v.ProjectID, v.ID, v.Label, v.WorkDir, v.Status, v.RuntimeID, v.CreatedAt, v.UpdatedAt)
 		return err
 	})
 }
@@ -38,6 +40,9 @@ func (r *notebookVolumeRepo) Get(ctx context.Context, id string) (*notebook.Note
 		q := db.Rebind(`SELECT ` + pgVolumeCols + ` FROM notebook_volumes WHERE id=?`)
 		return db.GetContext(ctx, &v, q, id)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +65,7 @@ func (r *notebookVolumeRepo) Update(ctx context.Context, v *notebook.NotebookVol
 	v.UpdatedAt = time.Now()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		q := db.Rebind(`UPDATE notebook_volumes SET label=?, work_dir=?, status=?, worker_id=?, updated_at=? WHERE id=?`)
-		_, err := db.ExecContext(ctx, q, v.Label, v.WorkDir, v.Status, v.WorkerID, v.UpdatedAt, v.ID)
+		_, err := db.ExecContext(ctx, q, v.Label, v.WorkDir, v.Status, v.RuntimeID, v.UpdatedAt, v.ID)
 		return err
 	})
 }

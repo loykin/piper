@@ -98,7 +98,7 @@ func TestDeployWithRemoteURIArtifactCreatesDeploymentAndService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
 	}
-	if svc.Status != serving.StatusStarting || svc.WorkerID != "test-k8s-worker" || svc.YAML != "yaml-body" {
+	if svc.Status != serving.StatusStarting || svc.RuntimeID != "test-k8s-worker" || svc.YAML != "yaml-body" {
 		t.Fatalf("unexpected service: %+v", svc)
 	}
 	wantEndpoint := "http://" + servingResourceName("proj", "svc") + ".svc-ns.svc.cluster.local:8080"
@@ -189,16 +189,6 @@ func TestDeployRejectsDisallowedNamespace(t *testing.T) {
 	art := artifact.Resolved{RemoteURI: "http://x"}
 	if _, err := d.Deploy(context.Background(), spec, art, ""); err == nil {
 		t.Fatal("expected error for disallowed namespace")
-	}
-}
-
-func TestDeployRejectsPlacementWorker(t *testing.T) {
-	d, _ := newTestDriver(t, fake.NewSimpleClientset(), time.Second)
-	spec := testSpec("proj", "svc")
-	spec.Spec.Driver.Placement.Worker = "old-worker"
-	art := artifact.Resolved{RemoteURI: "http://x"}
-	if _, err := d.Deploy(context.Background(), spec, art, ""); err == nil {
-		t.Fatal("expected placement.worker rejection")
 	}
 }
 

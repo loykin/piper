@@ -8,6 +8,7 @@ export interface Service {
   endpoint: string
   namespace?: string
   pid: number
+  runtime_id?: string
   yaml: string
   created_at: string
   updated_at: string

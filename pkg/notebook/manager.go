@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 
 	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/pkg/security"
@@ -15,20 +14,33 @@ import (
 // Manager handles the lifecycle of NotebookServer instances.
 // It delegates process and volume management to a Driver.
 type Manager struct {
-	repo   Repository
-	vols   VolumeRepository
-	driver Driver
-	events event.Publisher
+	repo    Repository
+	vols    VolumeRepository
+	driver  Driver
+	status  *StatusSink
+	runtime string
+	events  event.Publisher
 }
+
+// SetRuntime sets the one runtime accepted at lifecycle boundaries.
+func (m *Manager) SetRuntime(runtime string) { m.runtime = runtime }
 
 // New creates a Manager backed by the given repositories and driver.
 func New(repo Repository, vols VolumeRepository, driver Driver) *Manager {
-	return &Manager{repo: repo, vols: vols, driver: driver}
+	return NewWithStatusSink(repo, vols, driver, NewStatusSink(repo, vols))
+}
+
+func NewWithStatusSink(repo Repository, vols VolumeRepository, driver Driver, status *StatusSink) *Manager {
+	if status == nil {
+		status = NewStatusSink(repo, vols)
+	}
+	return &Manager{repo: repo, vols: vols, driver: driver, status: status}
 }
 
 // SetEventPublisher wires an event publisher for notebook lifecycle events.
 func (m *Manager) SetEventPublisher(p event.Publisher) {
 	m.events = p
+	m.status.SetEventPublisher(p)
 }
 
 // Create provisions new storage and launches a new notebook server asynchronously.
@@ -46,11 +58,18 @@ func (m *Manager) Create(ctx context.Context, projectID string, spec Notebook, y
 	if err := spec.Validate(); err != nil {
 		return nil, fmt.Errorf("notebook: %w", err)
 	}
+	if err := ValidateDirectPlacement(spec, m.runtime); err != nil {
+		return nil, fmt.Errorf("notebook: %w", err)
+	}
 	if err := spec.Spec.Prepare.Validate(); err != nil {
 		return nil, fmt.Errorf("notebook: invalid prepare spec: %w", err)
 	}
-	if existing, _ := m.repo.Get(ctx, projectID, name); existing != nil {
-		return nil, fmt.Errorf("notebook %q already exists (status: %s)", name, existing.Status)
+	existing, err := m.repo.Get(ctx, projectID, name)
+	if err != nil {
+		return nil, fmt.Errorf("notebook: check existing server: %w", err)
+	}
+	if existing != nil {
+		return nil, fmt.Errorf("%w: notebook %q already exists (status: %s)", ErrConflict, name, existing.Status)
 	}
 
 	vol := &NotebookVolume{
@@ -124,8 +143,8 @@ func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *
 		return
 	}
 	if nb != nil {
-		if fresh.WorkerID != "" {
-			nb.WorkerID = fresh.WorkerID
+		if fresh.RuntimeID != "" {
+			nb.RuntimeID = fresh.RuntimeID
 		}
 		if fresh.Token != "" {
 			nb.Token = fresh.Token
@@ -155,21 +174,34 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
 	}
+	if err := spec.Validate(); err != nil {
+		return nil, fmt.Errorf("notebook: %w", err)
+	}
+	if err := ValidateDirectPlacement(spec, m.runtime); err != nil {
+		return nil, fmt.Errorf("notebook: %w", err)
+	}
 	if err := spec.Spec.Prepare.Validate(); err != nil {
 		return nil, fmt.Errorf("notebook: invalid prepare spec: %w", err)
 	}
 	vol, err := m.vols.Get(ctx, volumeID)
-	if err != nil || vol == nil {
-		return nil, fmt.Errorf("notebook: volume %q not found", volumeID)
+	if err != nil {
+		return nil, fmt.Errorf("notebook: get volume: %w", err)
+	}
+	if vol == nil {
+		return nil, fmt.Errorf("%w: volume %q", ErrNotFound, volumeID)
 	}
 	if vol.ProjectID != projectID {
-		return nil, fmt.Errorf("notebook: volume %q not found", volumeID)
+		return nil, fmt.Errorf("%w: volume %q", ErrNotFound, volumeID)
 	}
 	if vol.Status != VolumeStatusReleased {
-		return nil, fmt.Errorf("notebook: volume %q is not released (status: %s)", volumeID, vol.Status)
+		return nil, fmt.Errorf("%w: volume %q is not released (status: %s)", ErrConflict, volumeID, vol.Status)
 	}
-	if existing, _ := m.repo.Get(ctx, projectID, name); existing != nil {
-		return nil, fmt.Errorf("notebook %q already exists (status: %s)", name, existing.Status)
+	existing, err := m.repo.Get(ctx, projectID, name)
+	if err != nil {
+		return nil, fmt.Errorf("notebook: check existing server: %w", err)
+	}
+	if existing != nil {
+		return nil, fmt.Errorf("%w: notebook %q already exists (status: %s)", ErrConflict, name, existing.Status)
 	}
 
 	if err := m.vols.SetStatus(ctx, vol.ID, VolumeStatusBound); err != nil {
@@ -205,9 +237,9 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 		}
 		if nb, err := m.repo.Get(bgCtx, projectID, name); err == nil && nb != nil {
 			volCopy.Status = VolumeStatusBound
-			if fresh.WorkerID != "" {
-				nb.WorkerID = fresh.WorkerID
-				volCopy.WorkerID = fresh.WorkerID
+			if fresh.RuntimeID != "" {
+				nb.RuntimeID = fresh.RuntimeID
+				volCopy.RuntimeID = fresh.RuntimeID
 			}
 			if fresh.Token != "" {
 				nb.Token = fresh.Token
@@ -237,8 +269,11 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 		return fmt.Errorf("notebook: project ID is required")
 	}
 	nb, err := m.repo.Get(ctx, projectID, name)
-	if err != nil || nb == nil {
-		return fmt.Errorf("notebook %q not found", name)
+	if err != nil {
+		return fmt.Errorf("notebook: get server: %w", err)
+	}
+	if nb == nil {
+		return fmt.Errorf("%w: notebook %q", ErrNotFound, name)
 	}
 	if nb.Status == StatusStopped || nb.Status == StatusStopping {
 		return nil
@@ -265,8 +300,11 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 		return fmt.Errorf("notebook: project ID is required")
 	}
 	nb, err := m.repo.Get(ctx, projectID, name)
-	if err != nil || nb == nil {
-		return fmt.Errorf("notebook %q not found", name)
+	if err != nil {
+		return fmt.Errorf("notebook: get server: %w", err)
+	}
+	if nb == nil {
+		return fmt.Errorf("%w: notebook %q", ErrNotFound, name)
 	}
 	if nb.Status == StatusRunning || nb.Status == StatusStarting || nb.Status == StatusProvisioning {
 		return nil // already starting/running
@@ -287,7 +325,14 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 	spec := Notebook{}
 	spec.Metadata.Name = nb.Name
 	if nb.YAML != "" {
-		_ = parseYAML(nb.YAML, &spec)
+		parsed, err := Parse([]byte(nb.YAML))
+		if err != nil {
+			return fmt.Errorf("notebook: parse stored manifest: %w", err)
+		}
+		spec = *parsed
+	}
+	if err := ValidateDirectPlacement(spec, m.runtime); err != nil {
+		return fmt.Errorf("notebook: %w", err)
 	}
 	if err := spec.Spec.Prepare.Validate(); err != nil {
 		return fmt.Errorf("notebook: invalid prepare spec: %w", err)
@@ -310,9 +355,9 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 		}
 		if nb, err := m.repo.Get(bgCtx, projectID, name); err == nil && nb != nil {
 			volCopy.Status = VolumeStatusBound
-			if fresh.WorkerID != "" {
-				nb.WorkerID = fresh.WorkerID
-				volCopy.WorkerID = fresh.WorkerID
+			if fresh.RuntimeID != "" {
+				nb.RuntimeID = fresh.RuntimeID
+				volCopy.RuntimeID = fresh.RuntimeID
 			}
 			if fresh.Token != "" {
 				nb.Token = fresh.Token
@@ -341,8 +386,11 @@ func (m *Manager) Delete(ctx context.Context, projectID, name string) error {
 		return fmt.Errorf("notebook: project ID is required")
 	}
 	nb, err := m.repo.Get(ctx, projectID, name)
-	if err != nil || nb == nil {
-		return fmt.Errorf("notebook %q not found", name)
+	if err != nil {
+		return fmt.Errorf("notebook: get server: %w", err)
+	}
+	if nb == nil {
+		return fmt.Errorf("%w: notebook %q", ErrNotFound, name)
 	}
 
 	if nb.Status == StatusRunning {
@@ -374,14 +422,17 @@ func (m *Manager) PurgeVolume(ctx context.Context, projectID, volumeID string) e
 		return fmt.Errorf("notebook: project ID is required")
 	}
 	vol, err := m.vols.Get(ctx, volumeID)
-	if err != nil || vol == nil {
-		return fmt.Errorf("notebook: volume %q not found", volumeID)
+	if err != nil {
+		return fmt.Errorf("notebook: get volume: %w", err)
+	}
+	if vol == nil {
+		return fmt.Errorf("%w: volume %q", ErrNotFound, volumeID)
 	}
 	if vol.ProjectID != projectID {
-		return fmt.Errorf("notebook: volume %q not found", volumeID)
+		return fmt.Errorf("%w: volume %q", ErrNotFound, volumeID)
 	}
 	if vol.Status != VolumeStatusReleased {
-		return fmt.Errorf("notebook: volume %q is not released (status: %s); delete the server first", volumeID, vol.Status)
+		return fmt.Errorf("%w: volume %q is not released (status: %s); delete the server first", ErrConflict, volumeID, vol.Status)
 	}
 
 	if err := m.driver.DeprovisionVolume(ctx, vol); err != nil {
@@ -395,75 +446,13 @@ func (m *Manager) PurgeVolume(ctx context.Context, projectID, volumeID string) e
 	return nil
 }
 
-// UpdateStatus applies a project-scoped status update from a worker agent.
-func (m *Manager) UpdateStatus(ctx context.Context, projectID, agentID, name, status, endpoint, workDir, token string, pid int, env string) error {
-	if projectID == "" {
-		return fmt.Errorf("notebook: project ID is required")
-	}
-	nb, err := m.repo.Get(ctx, projectID, name)
-	if err != nil || nb == nil {
-		return fmt.Errorf("notebook %q not found", name)
-	}
-	if agentID != "" && nb.WorkerID != "" && nb.WorkerID != agentID {
-		return fmt.Errorf("notebook %q owned by worker %q, push from %q rejected", name, nb.WorkerID, agentID)
-	}
-	previousStatus := nb.Status
-	if status != "" {
-		nb.Status = status
-	}
-	if endpoint != "" {
-		nb.Endpoint = endpoint
-	}
-	if workDir != "" {
-		nb.WorkDir = workDir
-	}
-	if token != "" {
-		nb.Token = token
-	}
-	if pid != 0 {
-		nb.PID = pid
-	}
-	if env != "" {
-		nb.Env = env
-	}
-	if status == StatusStopped || status == StatusFailed {
-		nb.Endpoint = ""
-		nb.PID = 0
-		nb.Token = ""
-	}
-
-	if workDir != "" && nb.VolumeID != "" {
-		if vol, err := m.vols.Get(ctx, nb.VolumeID); err == nil && vol != nil && vol.WorkDir != workDir {
-			vol.WorkDir = workDir
-			_ = m.vols.Update(ctx, vol)
-		}
-	}
-
-	if err := m.repo.Update(ctx, nb); err != nil {
-		return fmt.Errorf("notebook: update: %w", err)
-	}
-	if status == "" || status == previousStatus {
-		return nil
-	}
-	switch status {
-	case StatusRunning:
-		m.emit(projectID, "notebook.running", map[string]any{"name": name})
-	case StatusStopped:
-		m.emit(projectID, "notebook.stopped", map[string]any{"name": name})
-	case StatusFailed:
-		m.emit(projectID, "notebook.failed", map[string]any{"name": name})
-	default:
-		m.emit(projectID, "notebook.status", map[string]any{"name": name, "status": status})
-	}
-	return nil
+// UpdateStatus applies runtime-observed state through the shared status sink.
+func (m *Manager) UpdateStatus(ctx context.Context, projectID, runtimeID, name, status, endpoint, workDir, token string, pid int, env string) error {
+	return m.status.Update(ctx, projectID, runtimeID, name, status, endpoint, workDir, token, pid, env)
 }
 
 func (m *Manager) emit(projectID, eventType string, fields map[string]any) {
 	if m.events != nil {
 		m.events.Publish(event.New(projectID, eventType, fields))
 	}
-}
-
-func parseYAML(src string, dst any) error {
-	return yaml.Unmarshal([]byte(src), dst)
 }

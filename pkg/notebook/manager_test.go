@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 // errDriverUnavailable is a stand-in error for tests exercising the "driver
@@ -293,12 +295,31 @@ func (d *fakeDriver) waitProvision(t *testing.T) {
 
 // ─── Create tests ─────────────────────────────────────────────────────────────
 
+func TestManagerCreateRejectsRuntimeMismatchBeforePersistence(t *testing.T) {
+	repo := newFakeRepo()
+	vols := newFakeVols()
+	m := New(repo, vols, newFakeDriver())
+	m.SetRuntime("docker")
+	spec := Notebook{}
+	spec.Metadata.Name = "wrong-runtime"
+	spec.Spec.Driver.Placement.Runtime = "k8s"
+	spec.Spec.Driver.K8s = &manifest.DriverK8sSpec{Image: "notebook:test", Namespace: "notebooks"}
+	spec.Spec.Volume = &VolumeSpec{Size: "1Gi"}
+
+	if _, err := m.Create(context.Background(), "project-a", spec, ""); err == nil {
+		t.Fatal("Create() accepted a manifest for another runtime")
+	}
+	if got, _ := repo.Get(context.Background(), "project-a", "wrong-runtime"); got != nil {
+		t.Fatal("runtime mismatch created a notebook record")
+	}
+}
+
 func TestManager_Create_HappyPath(t *testing.T) {
 	repo := newFakeRepo()
 	vols := newFakeVols()
 	drv := newFakeDriver()
-	drv.provisionWork = func(vol *NotebookVolume) { vol.WorkDir = "/work/vol1"; vol.WorkerID = "w-1" }
-	drv.startResult = &NotebookServer{WorkerID: "w-1", Token: "tok-abc", WorkDir: "/work/vol1"}
+	drv.provisionWork = func(vol *NotebookVolume) { vol.WorkDir = "/work/vol1"; vol.RuntimeID = "w-1" }
+	drv.startResult = &NotebookServer{RuntimeID: "w-1", Token: "tok-abc", WorkDir: "/work/vol1"}
 
 	m := New(repo, vols, drv)
 	spec := Notebook{}
@@ -326,8 +347,8 @@ func TestManager_Create_HappyPath(t *testing.T) {
 	if stored == nil {
 		t.Fatal("server record not found after Create()")
 	}
-	if stored.WorkerID != "w-1" {
-		t.Errorf("WorkerID = %q, want %q", stored.WorkerID, "w-1")
+	if stored.RuntimeID != "w-1" {
+		t.Errorf("RuntimeID = %q, want %q", stored.RuntimeID, "w-1")
 	}
 	if stored.Token != "tok-abc" {
 		t.Errorf("Token = %q, want %q", stored.Token, "tok-abc")
@@ -452,7 +473,7 @@ func TestManager_CreateWithVolume_HappyPath(t *testing.T) {
 	repo := newFakeRepo()
 	vols := newFakeVols()
 	drv := newFakeDriver()
-	drv.startResult = &NotebookServer{WorkerID: "w-2", Token: "tok-vol"}
+	drv.startResult = &NotebookServer{RuntimeID: "w-2", Token: "tok-vol"}
 
 	m := New(repo, vols, drv)
 	ctx := context.Background()
@@ -623,7 +644,7 @@ func TestManager_Restart_StoppedServer(t *testing.T) {
 	repo := newFakeRepo()
 	vols := newFakeVols()
 	drv := newFakeDriver()
-	drv.startResult = &NotebookServer{WorkerID: "w-rst", Token: "tok-rst"}
+	drv.startResult = &NotebookServer{RuntimeID: "w-rst", Token: "tok-rst"}
 
 	m := New(repo, vols, drv)
 	ctx := context.Background()
@@ -646,8 +667,8 @@ func TestManager_Restart_StoppedServer(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	nb = requireNotebook(t, repo, "nb-rst")
-	if nb.WorkerID != "w-rst" {
-		t.Errorf("WorkerID = %q, want %q", nb.WorkerID, "w-rst")
+	if nb.RuntimeID != "w-rst" {
+		t.Errorf("RuntimeID = %q, want %q", nb.RuntimeID, "w-rst")
 	}
 }
 
@@ -848,7 +869,7 @@ func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
 	repo := newFakeRepo()
 	m := New(repo, newFakeVols(), newFakeDriver())
 	ctx := context.Background()
-	_ = repo.Create(ctx, &NotebookServer{Name: "nb-owned", WorkerID: "worker-a", Status: StatusRunning})
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-owned", RuntimeID: "worker-a", Status: StatusRunning})
 
 	err := m.UpdateStatus(ctx, "project-a", "worker-b", "nb-owned", StatusStopped, "", "", "", 0, "")
 	if err == nil {

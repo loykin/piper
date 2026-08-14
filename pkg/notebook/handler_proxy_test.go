@@ -90,14 +90,14 @@ func TestProxyNotebookReverseProxiesDirectRuntimeEndpoint(t *testing.T) {
 	}
 }
 
-// TestListVolumeFilesUsesLocalFilesystemWhenWorkerIDEmpty is a regression
+// TestListVolumeFilesUsesLocalFilesystemWhenRuntimeIDEmpty is a regression
 // test: direct-runtime notebook volumes (see
 // pkg/notebook/dispatch/localdriver.Driver.ProvisionVolume) deliberately
-// leave NotebookVolume.WorkerID empty, matching its documented "no specific
+// leave NotebookVolume.RuntimeID empty, matching its documented "no specific
 // worker owns it" meaning. listVolumeFiles must take the local-filesystem
 // walk in that case rather than RPCing a worker ID that has no real
 // connection registered for it.
-func TestListVolumeFilesUsesLocalFilesystemWhenWorkerIDEmpty(t *testing.T) {
+func TestListVolumeFilesUsesLocalFilesystemWhenRuntimeIDEmpty(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hi"), 0644); err != nil {
 		t.Fatal(err)

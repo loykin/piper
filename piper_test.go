@@ -607,7 +607,7 @@ func TestBackfillScheduleCreatesRunsForCronRange(t *testing.T) {
 	}
 	from := time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC)
 	to := from.Add(2 * time.Minute)
-	yaml := "metadata:\n  name: train\nspec:\n  steps:\n    - name: step\n      run:\n        command: [\"true\"]\n"
+	yaml := testScheduleYAML()
 	sc := &schedule.Schedule{
 		ID:           "sch-backfill",
 		ProjectID:    projectID,
@@ -799,7 +799,7 @@ func TestScheduleFiredMisfireSkipAdvancesWithoutRun(t *testing.T) {
 }
 
 func testScheduleYAML() string {
-	return "metadata:\n  name: train\nspec:\n  steps:\n    - name: step\n      run:\n        command: [\"true\"]\n"
+	return "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: train\nspec:\n  steps:\n    - name: step\n      run:\n        command: [\"true\"]\n"
 }
 
 func hasRoute(router *gin.Engine, method, path string) bool {

@@ -40,7 +40,7 @@ func TestJupyterArgsConformance(t *testing.T) {
 }
 
 func TestNotebookValidateRequiresManifestOwnedK8sValues(t *testing.T) {
-	n := Notebook{Spec: NotebookSpec{Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Runtime: "k8s"}, K8s: &manifest.DriverK8sSpec{Image: "jupyter:test", Namespace: "notebooks"}}}}
+	n := Notebook{Metadata: manifest.ObjectMeta{Name: "notebook"}, Spec: NotebookSpec{Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Runtime: "k8s"}, K8s: &manifest.DriverK8sSpec{Image: "jupyter:test", Namespace: "notebooks"}}}}
 	if err := n.Validate(); err == nil {
 		t.Fatal("expected missing volume size error")
 	}
@@ -88,7 +88,7 @@ func TestNotebookValidateRuntimeBranches(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := (Notebook{Spec: NotebookSpec{Driver: tt.driver}}).Validate()
+			err := (Notebook{Metadata: manifest.ObjectMeta{Name: "notebook"}, Spec: NotebookSpec{Driver: tt.driver}}).Validate()
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}

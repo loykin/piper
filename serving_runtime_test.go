@@ -99,8 +99,8 @@ spec:
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if svc.WorkerID != servingLocalWorkerID {
-		t.Fatalf("WorkerID = %q, want %q (direct-runtime local identity, not a remote worker)", svc.WorkerID, servingLocalWorkerID)
+	if svc.RuntimeID != servingLocalWorkerID {
+		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", svc.RuntimeID, servingLocalWorkerID)
 	}
 	if !strings.HasPrefix(svc.Endpoint, "http://localhost:") && !strings.HasPrefix(svc.Endpoint, "http://127.0.0.1:") {
 		t.Fatalf("Endpoint = %q, want a local endpoint (no tunnel:// scheme in direct mode)", svc.Endpoint)

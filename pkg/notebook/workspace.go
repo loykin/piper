@@ -20,7 +20,7 @@ type WorkspaceFile struct {
 // WorkspaceReader reads files out of a notebook volume's live workspace.
 // vol.WorkDir alone isn't enough to locate those files: it is a real host
 // path only when the volume has local (non-network) affinity; for network
-// volumes (K8s CSI — see NotebookVolume.WorkerID's doc comment) it is a path
+// volumes (K8s CSI — see NotebookVolume.RuntimeID's doc comment) it is a path
 // inside a remote pod's container filesystem. Implementations resolve that
 // difference; callers must go through this interface rather than touching
 // vol.WorkDir directly.
@@ -37,7 +37,7 @@ type WorkspaceReader interface {
 
 // LocalWorkspaceReader reads directly from vol.WorkDir on the local host —
 // correct whenever the notebook volume is a real host directory (baremetal
-// and docker direct-runtime, where WorkerID is set).
+// and docker direct-runtime, where RuntimeID is set).
 type LocalWorkspaceReader struct{}
 
 func (LocalWorkspaceReader) Stat(_ context.Context, vol *NotebookVolume, path string) (bool, int64, error) {

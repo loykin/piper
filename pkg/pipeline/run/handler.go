@@ -313,7 +313,7 @@ func (h *Handler) rerunRun(c *gin.Context) {
 		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"run_id": newRunID})
+	c.JSON(http.StatusCreated, gin.H{"run_id": newRunID})
 }
 
 // DELETE /runs/:id
@@ -376,7 +376,7 @@ func (h *Handler) retryStep(c *gin.Context) {
 		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"run_id": newRunID})
+	c.JSON(http.StatusCreated, gin.H{"run_id": newRunID})
 }
 
 // GET /runs/:id/steps/:step/logs

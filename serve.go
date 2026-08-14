@@ -188,7 +188,7 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	r.Use(prometheusHTTPMetrics())
 
 	// Caller-provided routes run before Piper routes. Authentication is applied
-	// only to user-facing groups below; worker routes have a separate credential.
+	// only to user-facing groups below; workload routes use a separate credential.
 	r.Use(func(c *gin.Context) {
 		if extra != nil {
 			rw := &responseRecorder{ResponseWriter: c.Writer}
@@ -456,14 +456,14 @@ func (rw *responseRecorder) Write(b []byte) (int, error) {
 // ── built-in file server ──────────────────────────────────────────────────────
 
 // registerStoreRoutes mounts /store/* routes when using the built-in LocalStore.
-// K8s pods and remote workers can upload/download artifacts over HTTP without MinIO.
+// K8s pods and Docker workloads can upload/download artifacts over HTTP without MinIO.
 func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 	ls, ok := p.store.(*storage.LocalStore)
 	if !ok {
 		return // external store (S3, HTTP) — no need for built-in server routes
 	}
-	// Built-in store is accessed by workers only; protect with the worker token.
-	rg := r.Group("/store", p.workerTokenMiddleware())
+	// Built-in store is accessed by workloads only; protect with the workload token.
+	rg := r.Group("/store", p.workloadTokenMiddleware())
 	rg.PUT("/*key", func(c *gin.Context) {
 		key := strings.TrimPrefix(c.Param("key"), "/")
 		if err := ls.Put(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength); err != nil {
@@ -555,19 +555,19 @@ func (p *Piper) requireSystemAdmin() gin.HandlerFunc {
 	}
 }
 
-// workerTokenMiddleware returns a Gin middleware that requires the request to
-// carry the configured worker token. When WorkerToken is empty the check is
+// workloadTokenMiddleware returns a Gin middleware that requires the request to
+// carry the configured workload token. When WorkloadToken is empty the check is
 // skipped for trusted/dev mode.
-func (p *Piper) workerTokenMiddleware() gin.HandlerFunc {
+func (p *Piper) workloadTokenMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := p.cfg.Server.WorkerToken
+		token := p.cfg.Server.WorkloadToken
 		if token == "" {
 			c.Next()
 			return
 		}
 		auth := c.Request.Header.Get("Authorization")
 		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid worker token"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid workload token"})
 			c.Abort()
 			return
 		}
@@ -575,12 +575,12 @@ func (p *Piper) workerTokenMiddleware() gin.HandlerFunc {
 	}
 }
 
-// metricsAuth accepts the scrape bearer token used by workers, or an
+// metricsAuth accepts the scrape bearer token used by workloads, or an
 // authenticated system-admin session. This keeps metrics on the existing
 // server endpoint while making ordinary Prometheus bearer-token scraping work.
 func (p *Piper) metricsAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if token := p.cfg.Server.WorkerToken; token != "" {
+		if token := p.cfg.Server.WorkloadToken; token != "" {
 			if auth := c.GetHeader("Authorization"); auth == "Bearer "+token {
 				c.Next()
 				return

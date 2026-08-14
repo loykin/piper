@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -26,7 +28,7 @@ func (r *notebookVolumeRepo) Create(ctx context.Context, v *notebook.NotebookVol
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO notebook_volumes (project_id, id, label, work_dir, status, worker_id, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			v.ProjectID, v.ID, v.Label, v.WorkDir, v.Status, v.WorkerID, v.CreatedAt, v.UpdatedAt)
+			v.ProjectID, v.ID, v.Label, v.WorkDir, v.Status, v.RuntimeID, v.CreatedAt, v.UpdatedAt)
 		return err
 	})
 }
@@ -36,6 +38,9 @@ func (r *notebookVolumeRepo) Get(ctx context.Context, id string) (*notebook.Note
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		return db.GetContext(ctx, &v, `SELECT `+volumeCols+` FROM notebook_volumes WHERE id=?`, id)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +64,7 @@ func (r *notebookVolumeRepo) Update(ctx context.Context, v *notebook.NotebookVol
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
 			`UPDATE notebook_volumes SET label=?, work_dir=?, status=?, worker_id=?, updated_at=? WHERE id=?`,
-			v.Label, v.WorkDir, v.Status, v.WorkerID, v.UpdatedAt, v.ID)
+			v.Label, v.WorkDir, v.Status, v.RuntimeID, v.UpdatedAt, v.ID)
 		return err
 	})
 }

@@ -81,6 +81,10 @@ func (h *Handler) createService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Deploy not configured"})
 		return
 	}
+	if _, err := Parse([]byte(req.YAML)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	svc, err := h.deps.Deploy(c.Request.Context(), currentProjectID(c), []byte(req.YAML))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -103,7 +107,11 @@ func (h *Handler) listServiceHistory(c *gin.Context) {
 func (h *Handler) getService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
-	if err != nil || svc == nil {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if svc == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 		return
 	}
@@ -114,7 +122,11 @@ func (h *Handler) getService(c *gin.Context) {
 func (h *Handler) deleteService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
-	if err != nil || svc == nil {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if svc == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 		return
 	}
@@ -135,7 +147,11 @@ func (h *Handler) deleteService(c *gin.Context) {
 func (h *Handler) restartService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
-	if err != nil || svc == nil {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if svc == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 		return
 	}

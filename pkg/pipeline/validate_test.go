@@ -62,3 +62,13 @@ func TestPipelineValidateDriverRuntimeBranches(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRuntimeRejectsStepOwnedByAnotherRuntime(t *testing.T) {
+	pl := &Pipeline{Spec: PipelineSpec{Steps: []Step{{
+		Name:   "train",
+		Driver: manifest.DriverSpec{Placement: manifest.PlacementSpec{Runtime: "k8s"}},
+	}}}}
+	if err := ValidateRuntime(pl, "docker"); err == nil || !strings.Contains(err.Error(), `step "train"`) {
+		t.Fatalf("ValidateRuntime() error = %v, want step-scoped mismatch", err)
+	}
+}

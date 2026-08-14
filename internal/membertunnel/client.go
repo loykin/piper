@@ -33,10 +33,9 @@ type Config struct {
 
 // Client manages the Member-side gRPC tunnel lifecycle: connect → enroll →
 // dispatch incoming RPC commands to a local memberclient.Client →
-// reconnect on disconnect. Mirrors internal/grpcagent.Client's shape at a
+// reconnect on disconnect. It keeps the federation transport lifecycle at a
 // much smaller scale. HTTP stream frames are constrained to the Member's
-// private project router; unlike the worker tunnel they cannot name or dial
-// an arbitrary target host.
+// private project router and cannot name or dial an arbitrary target host.
 type Client struct {
 	cfg     Config
 	member  memberclient.Client

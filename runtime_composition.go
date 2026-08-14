@@ -37,8 +37,8 @@ type servingRuntime struct {
 
 func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *credential.Store) (servingRuntime, error) {
 	var result servingRuntime
-	var manager *serving.Manager
 	var driver serving.Driver
+	statusSink := serving.NewStatusSink(repos.Serving)
 
 	switch cfg.Runtime.Type {
 	case RuntimeDocker, RuntimeBaremetal:
@@ -49,7 +49,7 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 			LogClient:      localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			EnvResolver:    credentials.ResolveEnv,
 			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return manager.UpdateStatus(context.Background(), projectID, servingLocalWorkerID, name, status, endpoint)
+				return statusSink.Update(context.Background(), projectID, servingLocalWorkerID, name, status, endpoint)
 			},
 		})
 		if err != nil {
@@ -64,10 +64,10 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 			ArtifactFetcherImage: cfg.Runtime.K8s.PipelineRunnerImage,
 			ArtifactPullPolicy:   corev1.PullPolicy(cfg.Runtime.K8s.ImagePullPolicy),
 			WorkloadURL:          cfg.Runtime.K8s.WorkloadURL,
-			WorkerToken:          cfg.Server.WorkerToken,
+			WorkloadToken:        cfg.Server.WorkloadToken,
 			LogClient:            localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return manager.UpdateStatus(context.Background(), projectID, servingK8sLocalWorkerID, name, status, endpoint)
+				return statusSink.Update(context.Background(), projectID, servingK8sLocalWorkerID, name, status, endpoint)
 			},
 		})
 		if err != nil {
@@ -80,7 +80,8 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 		return result, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
 	}
 
-	manager = serving.New(repos.Serving, driver)
+	manager := serving.NewWithStatusSink(repos.Serving, driver, statusSink)
+	manager.SetRuntime(cfg.Runtime.Type)
 	result.manager = manager
 	return result, nil
 }
@@ -93,8 +94,8 @@ type notebookRuntime struct {
 
 func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *credential.Store) (notebookRuntime, error) {
 	var result notebookRuntime
-	var manager *notebook.Manager
 	var driver notebook.Driver
+	statusSink := notebook.NewStatusSink(repos.Notebook, repos.NotebookVolume)
 
 	switch cfg.Runtime.Type {
 	case RuntimeDocker, RuntimeBaremetal:
@@ -107,12 +108,12 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 			Infrastructure:   infrastructure,
 			PlacementRuntime: cfg.Runtime.Type,
 			Docker:           notebookdocker.Config{Network: cfg.Runtime.Docker.Network},
-			NotebooksRoot:    cfg.NotebookWorker.NotebooksRoot,
-			PortRange:        cfg.NotebookWorker.PortRange,
+			NotebooksRoot:    cfg.Notebook.NotebooksRoot,
+			PortRange:        cfg.Notebook.PortRange,
 			LogClient:        localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			EnvResolver:      credentials.ResolveEnv,
 			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return manager.UpdateStatus(context.Background(), projectID, notebookLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
+				return statusSink.Update(context.Background(), projectID, notebookLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
 			},
 		})
 		if err != nil {
@@ -128,7 +129,7 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 			WorkerID: notebookK8sLocalWorkerID, Namespaces: cfg.Runtime.K8s.Namespaces,
 			Client: cfg.Runtime.K8s.Client, LogClient: localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return manager.UpdateStatus(context.Background(), projectID, notebookK8sLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
+				return statusSink.Update(context.Background(), projectID, notebookK8sLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
 			},
 		})
 		if err != nil {
@@ -140,7 +141,8 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 		return result, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
 	}
 
-	manager = notebook.New(repos.Notebook, repos.NotebookVolume, driver)
+	manager := notebook.NewWithStatusSink(repos.Notebook, repos.NotebookVolume, driver, statusSink)
+	manager.SetRuntime(cfg.Runtime.Type)
 	result.manager = manager
 	return result, nil
 }
@@ -158,7 +160,7 @@ func composePipelineRuntime(cfg Config, ctx context.Context, repos *storemod.Rep
 			Context: ctx, Client: cfg.Runtime.K8s.Client, Namespaces: cfg.Runtime.K8s.Namespaces,
 			PipelineRunnerImage: cfg.Runtime.K8s.PipelineRunnerImage, ImagePullPolicy: cfg.Runtime.K8s.ImagePullPolicy,
 			TTLAfterFinished: cfg.Runtime.K8s.TTLAfterFinished, MasterURL: cfg.Runtime.K8s.WorkloadURL,
-			WorkerToken: cfg.Server.WorkerToken, LogClient: logClient, Complete: complete, RenewLeases: q.RenewLeases,
+			WorkloadToken: cfg.Server.WorkloadToken, LogClient: logClient, Complete: complete, RenewLeases: q.RenewLeases,
 		})
 		return backend, backend, err
 	case RuntimeDocker:
@@ -168,7 +170,7 @@ func composePipelineRuntime(cfg Config, ctx context.Context, repos *storemod.Rep
 		}
 		backend, err := pipelinedispatch.NewDockerBackend(pipelinedispatch.DockerBackendConfig{
 			Network: cfg.Runtime.Docker.Network, OutputDir: cfg.OutputDir, Concurrency: concurrency,
-			MasterURL: cfg.Runtime.Docker.WorkloadURL, WorkerToken: cfg.Server.WorkerToken,
+			MasterURL: cfg.Runtime.Docker.WorkloadURL, WorkloadToken: cfg.Server.WorkloadToken,
 			LogClient: logClient, Complete: complete, RenewLeases: q.RenewLeases,
 		})
 		return backend, backend, err

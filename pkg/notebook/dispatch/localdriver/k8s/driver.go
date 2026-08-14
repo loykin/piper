@@ -51,7 +51,7 @@ const piperDataVolume = "piper-data"
 // Config configures a direct, in-process K8s notebook driver.
 type Config struct {
 	// WorkerID is a fixed local identity used to populate
-	// NotebookServer.WorkerID and as the ReportStatus agentID.
+	// NotebookServer.RuntimeID and as the ReportStatus runtime identity.
 	WorkerID string
 	// ClusterName is an informational label only (piper.io/cluster) — not
 	// used in any selector, so it's safe to leave empty.
@@ -341,10 +341,10 @@ func (d *Driver) Start(ctx context.Context, spec notebook.Notebook, vol *noteboo
 	// have cluster-internal network reachability to ns (see package doc).
 	endpoint := fmt.Sprintf("http://%s.%s.svc.cluster.local:8888", resourceName, ns)
 	return &notebook.NotebookServer{
-		WorkerID: d.cfg.WorkerID,
-		Token:    token,
-		WorkDir:  workDir,
-		Endpoint: endpoint,
+		RuntimeID: d.cfg.WorkerID,
+		Token:     token,
+		WorkDir:   workDir,
+		Endpoint:  endpoint,
 	}, nil
 }
 

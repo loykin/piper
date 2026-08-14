@@ -132,15 +132,6 @@ func TestDeployRejectsMissingPort(t *testing.T) {
 	}
 }
 
-func TestDeployRejectsPlacementWorker(t *testing.T) {
-	d, _ := newTestDriver(t, &fakeRuntime{}, time.Second)
-	spec := testSpec("proj", "svc", 8080)
-	spec.Spec.Driver.Placement.Worker = "old-worker"
-	if _, err := d.Deploy(context.Background(), spec, artifactResolved(), ""); err == nil {
-		t.Fatal("expected placement.worker rejection")
-	}
-}
-
 func TestDeployRejectsMismatchedPlacementRuntime(t *testing.T) {
 	d, _ := newTestDriver(t, &fakeRuntime{}, time.Second)
 	spec := testSpec("proj", "svc", 8080)
@@ -183,7 +174,7 @@ func TestDeployReturnsFastWithStartingThenReportsRunning(t *testing.T) {
 	if svc.Status != serving.StatusStarting {
 		t.Fatalf("Status = %q, want starting", svc.Status)
 	}
-	if svc.WorkerID != "test-worker" || svc.Endpoint == "" || svc.YAML != "yaml-body" {
+	if svc.RuntimeID != "test-worker" || svc.Endpoint == "" || svc.YAML != "yaml-body" {
 		t.Fatalf("unexpected placeholder service: %+v", svc)
 	}
 

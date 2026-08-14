@@ -26,7 +26,7 @@ import (
 // counterpart to the tunnel-based FSListFiles/FSUploadSnapshot the deleted
 // remote K8s worker (pkg/notebook/worker/driver/k8s/volume_browser.go) used
 // to provide. A K8s notebook volume has no meaning outside of a pod mounting
-// it (see NotebookVolume.WorkerID's doc comment), so this requires the
+// it (see NotebookVolume.RuntimeID's doc comment), so this requires the
 // notebook to be running; there is no fallback for a stopped notebook.
 type WorkspaceReader struct {
 	Client kubernetes.Interface

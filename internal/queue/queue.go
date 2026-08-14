@@ -341,13 +341,6 @@ func (q *Queue) addWithEnvLocked(ctx context.Context, projectID string, pl *pipe
 			WorkDir:   workDir,
 			OutputDir: outputDir,
 			CreatedAt: time.Now(),
-			Label:     s.Driver.Placement.Label,
-			WorkerID: func() string {
-				if pl.Spec.Defaults != nil {
-					return pl.Spec.Defaults.Driver.Placement.Worker
-				}
-				return ""
-			}(),
 			Vars:      vars,
 			RunParams: runParams,
 			Env:       append([]string{}, envByStep[s.Name]...),
@@ -419,13 +412,6 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 			WorkDir:   workDir,
 			OutputDir: outputDir,
 			CreatedAt: time.Now(),
-			Label:     s.Driver.Placement.Label,
-			WorkerID: func() string {
-				if pl.Spec.Defaults != nil {
-					return pl.Spec.Defaults.Driver.Placement.Worker
-				}
-				return ""
-			}(),
 			Vars:      vars,
 			RunParams: runParams,
 			Env:       append([]string{}, envByStep[s.Name]...),

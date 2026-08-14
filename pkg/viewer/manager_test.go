@@ -130,7 +130,7 @@ func TestOpen_UpdateStatusFails_CleansTempDir(t *testing.T) {
 	mgrLocal := NewManager(repo, nil, tmpRoot)
 	mgrLocal.RegisterDriver(drv)
 
-	_, err := mgrLocal.Open(context.Background(), "proj", "run-1", "train", "tb", "fake")
+	_, _, err := mgrLocal.Open(context.Background(), "proj", "run-1", "train", "tb", "fake")
 	if err == nil {
 		t.Fatal("expected error from UpdateStatus, got nil")
 	}
@@ -168,7 +168,7 @@ func TestOpen_UpdateStatusFails_RemovesTempDirFromObjectStore(t *testing.T) {
 	// return before UpdateStatus runs.
 	repo.updateErr = errors.New("db error")
 
-	_, err := mgr.Open(context.Background(), "proj", "run-1", "train", "tb", "fake")
+	_, _, err := mgr.Open(context.Background(), "proj", "run-1", "train", "tb", "fake")
 	if err == nil {
 		t.Fatal("expected error")
 	}

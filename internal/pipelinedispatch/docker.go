@@ -25,14 +25,14 @@ type DockerBackendConfig struct {
 	Network     string
 	OutputDir   string
 	Concurrency int
-	// MasterURL/WorkerToken: file:// artifact storage is rewritten to this
+	// MasterURL/WorkloadToken: file:// artifact storage is rewritten to this
 	// HTTP endpoint — a Docker container cannot reach the host's local
 	// filesystem directly, the same boundary problem k8s Job pods have.
-	MasterURL   string
-	WorkerToken string
-	LogClient   logsink.PushClient
-	Complete    func(proto.TaskResult) error
-	RenewLeases func(workerID string, taskIDs []string)
+	MasterURL     string
+	WorkloadToken string
+	LogClient     logsink.PushClient
+	Complete      func(proto.TaskResult) error
+	RenewLeases   func(workerID string, taskIDs []string)
 
 	// Driver overrides the constructed dockerdriver.Driver. Test-only; nil
 	// in production builds the real driver via dockerdriver.New.
@@ -75,7 +75,7 @@ func NewDockerBackend(cfg DockerBackendConfig) (*DockerBackend, error) {
 			return pdriver.ResolveImage(task, "docker")
 		},
 		ResolveStorage: func(task *proto.Task) (string, string) {
-			return taskStorageForDirectRuntime(task, cfg.MasterURL, cfg.WorkerToken)
+			return taskStorageForDirectRuntime(task, cfg.MasterURL, cfg.WorkloadToken)
 		},
 		LogClient:    cfg.LogClient,
 		ReportResult: cfg.Complete,

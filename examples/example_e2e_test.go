@@ -382,7 +382,7 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 			Type:      piper.RuntimeBaremetal,
 			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: filepath.Join(tmpDir, "piper-meta")},
 		},
-		NotebookWorker: piper.NotebookWorkerConfig{NotebooksRoot: tmpDir},
+		Notebook: piper.NotebookRuntimeConfig{NotebooksRoot: tmpDir},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -545,7 +545,7 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 			Type:      piper.RuntimeBaremetal,
 			Baremetal: piper.BaremetalRuntimeConfig{MetaDir: filepath.Join(tmpDir, "piper-meta")},
 		},
-		NotebookWorker: piper.NotebookWorkerConfig{NotebooksRoot: tmpDir},
+		Notebook: piper.NotebookRuntimeConfig{NotebooksRoot: tmpDir},
 	})
 	if err != nil {
 		t.Fatal(err)

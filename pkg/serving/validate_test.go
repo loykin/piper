@@ -42,7 +42,14 @@ func TestModelServiceValidateDriverRuntimeBranches(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := (ModelService{Spec: ModelServiceSpec{Driver: tt.driver}}).Validate()
+			err := (ModelService{
+				Metadata: manifest.ObjectMeta{Name: "service"},
+				Spec: ModelServiceSpec{
+					Model:  ModelRef{FromURI: "file:///model"},
+					Run:    ModelServiceRun{Command: []string{"serve"}, Port: 8080},
+					Driver: tt.driver,
+				},
+			}).Validate()
 			if tt.wantErr == "" && err != nil {
 				t.Fatal(err)
 			}

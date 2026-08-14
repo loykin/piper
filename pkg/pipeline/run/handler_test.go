@@ -408,11 +408,38 @@ func TestRerunUsesRerunDependency(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
 	}
 	if gotRunID != "run-1" || gotFailedOnly {
 		t.Fatalf("rerun args = %q, %v; want run-1, false", gotRunID, gotFailedOnly)
+	}
+}
+
+func TestRetryStepCreatesRun(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var gotRunID, gotStep string
+	router := gin.New()
+	NewHandler(HandlerDeps{
+		Member: &fakeMemberClient{
+			runOK: true,
+			run:   memberclient.RunSummary{ID: "run-1", Status: StatusFailed},
+			retryStepFn: func(_ context.Context, runID, step string) (string, error) {
+				gotRunID, gotStep = runID, step
+				return "run-2", nil
+			},
+		},
+		ProjectRef: project.LocalRef,
+	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	req := httptest.NewRequest(http.MethodPost, "/runs/run-1/steps/train/retry", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if gotRunID != "run-1" || gotStep != "train" {
+		t.Fatalf("retry args = %q, %q", gotRunID, gotStep)
 	}
 }
 

@@ -18,7 +18,7 @@ type NotebookVolume struct {
 	Label     string    `json:"label"      db:"label"`
 	WorkDir   string    `json:"work_dir"   db:"work_dir"`
 	Status    string    `json:"status"     db:"status"`
-	WorkerID  string    `json:"worker_id"  db:"worker_id"` // node affinity; empty for network storage (e.g. K8s CSI)
+	RuntimeID string    `json:"runtime_id" db:"worker_id"` // execution ownership; empty for network storage (e.g. K8s CSI)
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }

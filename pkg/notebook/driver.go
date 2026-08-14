@@ -10,7 +10,7 @@ import (
 // Docker, or Kubernetes details for the installation's configured runtime.
 type Driver interface {
 	// ProvisionVolume allocates backing storage for vol.
-	// Bare-metal: creates a host work directory and sets vol.WorkDir/vol.WorkerID.
+	// Bare-metal: creates a host work directory and sets vol.WorkDir.
 	// K8s: creates a PersistentVolumeClaim and reports the notebook container work dir.
 	ProvisionVolume(ctx context.Context, vol *NotebookVolume, spec Notebook) error
 

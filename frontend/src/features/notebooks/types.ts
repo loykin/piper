@@ -9,7 +9,7 @@ export interface NotebookServer {
   pid: number
   work_dir: string
   token: string
-  worker_id?: string
+  runtime_id?: string
   volume_id: string
   yaml: string
   created_at: string
@@ -21,7 +21,7 @@ export interface NotebookVolume {
   label: string
   work_dir: string
   status: 'bound' | 'released'
-  worker_id: string
+  runtime_id: string
   created_at: string
   updated_at: string
 }

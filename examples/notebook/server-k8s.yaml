@@ -1,5 +1,5 @@
 apiVersion: piper/v1
-kind: NotebookServer
+kind: Notebook
 
 metadata:
   name: my-notebook

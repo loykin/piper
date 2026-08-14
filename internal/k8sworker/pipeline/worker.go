@@ -22,8 +22,8 @@ import (
 // StoreConfig holds the master connection and artifact store settings
 // forwarded to K8s Job pods via piper agent exec arguments.
 type StoreConfig struct {
-	MasterURL   string
-	WorkerToken string
+	MasterURL     string
+	WorkloadToken string
 }
 
 // K8sConfig holds Kubernetes-specific driver and placement options.
@@ -151,7 +151,7 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		return fmt.Errorf("k8s pipeline worker: namespace %q is not in the allowed list", namespace)
 	}
 
-	storageURL, storageToken := taskStorageForK8sWorker(task, a.cfg.Store.MasterURL, a.cfg.Store.WorkerToken)
+	storageURL, storageToken := taskStorageForK8sWorker(task, a.cfg.Store.MasterURL, a.cfg.Store.WorkloadToken)
 	execEnv := append([]string{}, task.Env...)
 	spec := pdriver.ExecSpec{
 		RuntimeKey:   pdriver.RuntimeKey(a.cfg.WorkerID, task.RunID, task.StepName, task.Attempt),

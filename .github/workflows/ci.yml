@@ -288,12 +288,10 @@ jobs:
           kubectl -n piper create secret generic piper-server-secrets \
             --from-literal=auth_signing_key=test-auth-signing-key \
             --from-literal=secret_encryption_key=pbkdf2:test-secret-encryption-key \
-            --from-literal=worker_token=test-worker-token
+            --from-literal=workload_token=test-workload-token
           kubectl apply -k deploy/k8s
           kubectl -n piper set image deployment/piper-server piper=piper/piper:e2e
-          kubectl -n piper set image deployment/piper-k8s-worker worker=piper/piper:e2e
           kubectl -n piper rollout status deployment/piper-server --timeout=120s
-          kubectl -n piper rollout status deployment/piper-k8s-worker --timeout=120s
 
       - name: Run K8s E2E tests
         # PIPER_K8S_E2E_IMAGE can be overridden to test the published GHCR image:

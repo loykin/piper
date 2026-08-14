@@ -34,10 +34,10 @@ type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvV
 
 // Config configures a direct, in-process serving driver.
 type Config struct {
-	// WorkerID is a fixed local identity used to populate Service.WorkerID.
+	// WorkerID is a fixed low-level identity used to populate Service.RuntimeID.
 	// A real per-worker ID is meaningless once dispatch is in-process (there
 	// is only ever one owner), but the field stays populated so Manager's
-	// existing ownership-check code (UpdateStatus comparing svc.WorkerID)
+	// existing ownership-check code (UpdateStatus comparing svc.RuntimeID)
 	// keeps working unchanged.
 	WorkerID string
 	// Infrastructure selects the underlying servingdriver.Driver: "docker" or "baremetal".
@@ -268,7 +268,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		Artifact:  artifactLabel(spec),
 		Status:    serving.StatusStarting,
 		Endpoint:  endpoint,
-		WorkerID:  d.cfg.WorkerID,
+		RuntimeID: d.cfg.WorkerID,
 		YAML:      yamlStr,
 	}, nil
 }

@@ -116,8 +116,8 @@ func TestProvisionVolumeCreatesWorkDir(t *testing.T) {
 	// WorkerID is deliberately left empty so notebook/template handler code
 	// takes the local-filesystem path instead of RPCing a worker ID with no
 	// real connection registered for it (see ProvisionVolume's doc comment).
-	if vol.WorkerID != "" {
-		t.Fatalf("WorkerID = %q, want empty", vol.WorkerID)
+	if vol.RuntimeID != "" {
+		t.Fatalf("RuntimeID = %q, want empty", vol.RuntimeID)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestStartReturnsFastThenReportsRunningAsync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if srv.WorkerID != "test-worker" || srv.Token == "" || srv.Endpoint == "" {
+	if srv.RuntimeID != "test-worker" || srv.Token == "" || srv.Endpoint == "" {
 		t.Fatalf("unexpected placeholder server: %+v", srv)
 	}
 
@@ -189,16 +189,6 @@ func TestStartRejectsDuplicateActiveNotebook(t *testing.T) {
 		t.Fatal("expected duplicate-start rejection")
 	}
 	close(rt.block)
-}
-
-func TestStartRejectsPlacementWorker(t *testing.T) {
-	d, _ := newTestDriver(t, &fakeRuntime{})
-	spec := testSpec("proj", "nb")
-	spec.Spec.Driver.Placement.Worker = "old-worker"
-	vol := &notebook.NotebookVolume{ID: "vol-1", WorkDir: t.TempDir()}
-	if _, err := d.Start(context.Background(), spec, vol, ""); err == nil {
-		t.Fatal("expected placement.worker rejection")
-	}
 }
 
 func TestStartRejectsMismatchedPlacementRuntime(t *testing.T) {

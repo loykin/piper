@@ -50,7 +50,7 @@ func (h *Handler) openViewer(c *gin.Context) {
 		return
 	}
 
-	v, err := h.mgr.Open(c.Request.Context(), projectID, runID, stepName, artifact, req.Type)
+	v, created, err := h.mgr.Open(c.Request.Context(), projectID, runID, stepName, artifact, req.Type)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "unsupported viewer type") {
@@ -64,7 +64,11 @@ func (h *Handler) openViewer(c *gin.Context) {
 		*Viewer
 		URL string `json:"url"`
 	}
-	c.JSON(http.StatusOK, response{
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	c.JSON(status, response{
 		Viewer: v,
 		URL:    v.ProxyURL(projectID),
 	})

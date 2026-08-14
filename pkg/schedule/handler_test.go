@@ -416,6 +416,24 @@ func TestBackfillSchedule_InvalidRange(t *testing.T) {
 	}
 }
 
+func TestBackfillSchedule_CreatesRuns(t *testing.T) {
+	repo := newStubScheduleRepo()
+	repo.schedules["sch-1"] = &Schedule{ID: "sch-1"}
+	router := newTestRouter(repo, func(d *HandlerDeps) {
+		d.Backfill = func(_ context.Context, _ string, _, _ time.Time) ([]string, error) {
+			return []string{"run-1", "run-2"}, nil
+		}
+	})
+	now := time.Now().UTC()
+	rec := doJSON(router, http.MethodPost, "/schedules/sch-1/backfill", map[string]any{
+		"from": now.Format(time.RFC3339),
+		"to":   now.Add(time.Hour).Format(time.RFC3339),
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+}
+
 func TestListScheduleRuns(t *testing.T) {
 	repo := newStubScheduleRepo()
 	repo.schedules["sch-1"] = &Schedule{ID: "sch-1"}

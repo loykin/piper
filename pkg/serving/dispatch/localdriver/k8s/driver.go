@@ -59,11 +59,11 @@ type Config struct {
 	// reach the host's local filesystem directly. Matches
 	// cfg.Runtime.K8s.WorkloadURL, the same field Pipeline's K8s runtime uses.
 	WorkloadURL string
-	// WorkerToken is used as the storage token fallback when rewriting a
+	// WorkloadToken is used as the storage token fallback when rewriting a
 	// file:// storage URL to WorkloadURL/store and no token was already
 	// set — mirrors internal/k8sworker/pipeline's taskStorageForK8sWorker.
-	WorkerToken string
-	LogClient   logsink.PushClient
+	WorkloadToken string
+	LogClient     logsink.PushClient
 	// ObserveInterval controls how often Observe polls Deployment status.
 	// Zero means 2s, matching pkg/serving/worker/driver/k8s/worker.go's Observe.
 	ObserveInterval time.Duration
@@ -226,7 +226,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		if strings.HasPrefix(storageURL, "file://") && d.cfg.WorkloadURL != "" {
 			storageURL = strings.TrimRight(d.cfg.WorkloadURL, "/") + "/store"
 			if storageToken == "" {
-				storageToken = d.cfg.WorkerToken
+				storageToken = d.cfg.WorkloadToken
 			}
 		}
 		if storageURL == "" {
@@ -314,7 +314,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		Artifact:  artifactLabel(spec),
 		Status:    serving.StatusStarting,
 		Endpoint:  fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", resourceName, ns, rt.Port),
-		WorkerID:  d.cfg.WorkerID,
+		RuntimeID: d.cfg.WorkerID,
 		YAML:      yamlStr,
 		Namespace: ns,
 	}, nil

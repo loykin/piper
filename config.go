@@ -68,11 +68,10 @@ type Config struct {
 	// Serving — model serving configuration.
 	Serving ServingConfig `yaml:"serving" mapstructure:"serving"`
 
-	// NotebookWorker — embedded bare-metal notebook worker configuration.
-	NotebookWorker NotebookWorkerConfig `yaml:"notebook_worker" mapstructure:"notebook_worker"`
+	// Notebook configures direct-runtime workspace and port allocation.
+	Notebook NotebookRuntimeConfig `yaml:"notebook" mapstructure:"notebook"`
 
-	// Runtime selects an in-process execution backend. Empty keeps the legacy
-	// remote-worker dispatch model for backward compatibility.
+	// Runtime selects the required in-process execution backend.
 	Runtime RuntimeConfig `yaml:"runtime" mapstructure:"runtime"`
 }
 
@@ -193,7 +192,7 @@ type AuthFactory func(AuthDependencies) (AuthConfig, error)
 
 type ServerConfig struct {
 	Addr                string    `yaml:"addr"                   mapstructure:"addr"`
-	WorkerToken         string    `yaml:"worker_token"           mapstructure:"worker_token"` // guards the built-in /store endpoint for Docker/K8s workload access
+	WorkloadToken       string    `yaml:"workload_token"         mapstructure:"workload_token"` // guards the built-in /store endpoint for Docker/K8s workload access
 	SecretEncryptionKey string    `yaml:"secret_encryption_key"  mapstructure:"secret_encryption_key"`
 	AllowInsecureDevKey bool      `yaml:"allow_insecure_dev_key" mapstructure:"allow_insecure_dev_key"`
 	TLS                 TLSConfig `yaml:"tls"                    mapstructure:"tls"`
@@ -220,8 +219,8 @@ type QueueConfig struct {
 	// RetryDelay is the delay before a retried step becomes ready again.
 	RetryDelay time.Duration `yaml:"retry_delay"    mapstructure:"retry_delay"`
 	// RecoveryGrace is how long a step that was "running" when the server
-	// crashed waits for its owning worker to reconnect and renew its lease
-	// before being failed or retried. Zero/unset means a built-in default.
+	// crashed waits for the owned runtime to recover it before being failed or
+	// retried. Zero/unset means a built-in default.
 	RecoveryGrace time.Duration `yaml:"recovery_grace" mapstructure:"recovery_grace"`
 }
 
@@ -240,8 +239,8 @@ type ServingConfig struct {
 	ModelDir string `yaml:"model_dir" mapstructure:"model_dir"`
 }
 
-// NotebookWorkerConfig holds paths for the embedded bare-metal notebook worker.
-type NotebookWorkerConfig struct {
+// NotebookRuntimeConfig holds paths for direct-runtime notebooks.
+type NotebookRuntimeConfig struct {
 	// NotebooksRoot is the base directory under which per-notebook work directories are created.
 	// Each notebook runs in {notebooks_root}/{name}. Defaults to "./notebooks".
 	NotebooksRoot string `yaml:"notebooks_root" mapstructure:"notebooks_root"`

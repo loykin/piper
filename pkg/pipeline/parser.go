@@ -1,10 +1,10 @@
 package pipeline
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 
+	"github.com/loykin/piper/pkg/manifest"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,10 +18,11 @@ func ParseFile(path string) (*Pipeline, error) {
 
 func Parse(data []byte) (*Pipeline, error) {
 	var p Pipeline
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-	if err := dec.Decode(&p); err != nil {
+	if err := manifest.DecodeStrict(data, &p); err != nil {
 		return nil, fmt.Errorf("failed to parse pipeline yaml: %w", err)
+	}
+	if err := manifest.RequireTypeMeta(p.TypeMeta, "Pipeline"); err != nil {
+		return nil, err
 	}
 	if err := p.Validate(); err != nil {
 		return nil, err
@@ -31,5 +32,16 @@ func Parse(data []byte) (*Pipeline, error) {
 
 // Marshal serialises a Pipeline back to YAML bytes.
 func Marshal(pl *Pipeline) ([]byte, error) {
-	return yaml.Marshal(pl)
+	if pl == nil {
+		return nil, fmt.Errorf("pipeline is required")
+	}
+	cp := *pl
+	if cp.APIVersion == "" && cp.Kind == "" {
+		cp.APIVersion = manifest.APIVersionV1
+		cp.Kind = "Pipeline"
+	}
+	if err := manifest.RequireTypeMeta(cp.TypeMeta, "Pipeline"); err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(&cp)
 }

@@ -89,6 +89,8 @@ func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 	k8sE2ECreateProject(t, serverURL)
 
 	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: k8s-e2e-smoke
 spec:
@@ -252,6 +254,8 @@ func TestK8sE2E_MultiDomainWorkloads(t *testing.T) {
 	k8sE2ECreateProject(t, serverURL)
 
 	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: k8s-multi-e2e
 spec:
@@ -297,7 +301,7 @@ spec:
 	t.Log("initial serving resources created")
 
 	const nbName = "multi-notebook"
-	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbName, nbImage, ns)
+	nbYAML := fmt.Sprintf("apiVersion: piper/v1\nkind: Notebook\nmetadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbName, nbImage, ns)
 	t.Log("creating multi-domain notebook")
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", k8sE2ENotebookReadyTimeout) {
@@ -324,6 +328,8 @@ spec:
 	templateBody, _ := json.Marshal(map[string]any{
 		"volume_id": volumeID,
 		"yaml": fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: local-store-snapshot
 spec:
@@ -913,7 +919,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 	k8sE2ECreateProject(t, serverURL)
 
 	const nbName = "e2e-notebook"
-	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbName, nbImage, ns)
+	nbYAML := fmt.Sprintf("apiVersion: piper/v1\nkind: Notebook\nmetadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbName, nbImage, ns)
 
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	t.Logf("notebook %s created, waiting for running...", nbName)
@@ -1066,7 +1072,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
 	k8sE2ECreateProject(t, serverURL)
 
-	nb1YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-1\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbImage, ns)
+	nb1YAML := fmt.Sprintf("apiVersion: piper/v1\nkind: Notebook\nmetadata:\n  name: e2e-nb-1\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbImage, ns)
 	k8sE2EPostNotebook(t, serverURL, nb1YAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-1", "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
@@ -1090,7 +1096,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	t.Logf("first notebook deleted, volume %s released", volID)
 
 	// Second notebook reuses the same PVC.
-	nb2YAML := fmt.Sprintf("metadata:\n  name: e2e-nb-2\nspec:\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbImage, ns)
+	nb2YAML := fmt.Sprintf("apiVersion: piper/v1\nkind: Notebook\nmetadata:\n  name: e2e-nb-2\nspec:\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbImage, ns)
 	k8sE2EPostNotebook(t, serverURL, nb2YAML, volID)
 	if !waitK8sE2ENotebookStatus(t, serverURL, "e2e-nb-2", "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)

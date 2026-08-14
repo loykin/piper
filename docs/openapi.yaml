@@ -158,8 +158,8 @@ paths:
               required: [yaml]
               properties:
                 yaml: { type: string }
-                owner_id: { type: string }
                 params: { type: object, additionalProperties: true }
+                experiment: { type: string }
                 vars: { type: object, additionalProperties: true }
       responses:
         "201":
@@ -203,6 +203,42 @@ paths:
       responses:
         "200":
           description: Run canceled.
+  /api/projects/{project_id}/runs/{id}/rerun:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "201":
+          description: Replacement run created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id: { type: string }
+  /api/projects/{project_id}/runs/{id}/steps/{step}/retry:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: step
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "201":
+          description: Retry run created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id: { type: string }
   /api/projects/{project_id}/runs/{id}/artifacts:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -264,8 +300,8 @@ paths:
                 type: { type: string, enum: [immediate, once, cron] }
                 cron: { type: string }
                 run_at: { type: string, format: date-time }
-                owner_id: { type: string }
                 params: { type: object, additionalProperties: true }
+                max_runs: { type: integer, minimum: 0 }
       responses:
         "201":
           description: Created schedule id.
@@ -309,6 +345,146 @@ paths:
       responses:
         "204":
           description: Deleted.
+  /api/projects/{project_id}/schedules/{id}/backfill:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ScheduleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from: { type: string, format: date-time }
+                to: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Backfill runs created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run_ids]
+                properties:
+                  run_ids:
+                    type: array
+                    items: { type: string }
+  /api/projects/{project_id}/pipelines:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      responses:
+        "200":
+          description: Versioned pipeline templates.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PipelineTemplate" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [yaml]
+              properties:
+                yaml: { type: string }
+                volume_id: { type: string }
+      responses:
+        "201":
+          description: Pipeline template version created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineTemplate" }
+  /api/projects/{project_id}/pipelines/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Pipeline template version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineTemplate" }
+    delete:
+      responses:
+        "204": { description: Pipeline template version deleted. }
+  /api/projects/{project_id}/notebooks:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      responses:
+        "200":
+          description: Notebook servers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotebookServer" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [yaml]
+              properties:
+                yaml: { type: string }
+                volume_id: { type: string }
+      responses:
+        "201":
+          description: Notebook server created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotebookServer" }
+  /api/projects/{project_id}/notebooks/{name}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Notebook server.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotebookServer" }
+    delete:
+      responses:
+        "204": { description: Notebook server deleted and volume released. }
+  /api/projects/{project_id}/notebooks/{name}/start:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204": { description: Notebook start requested. }
+  /api/projects/{project_id}/notebooks/{name}/stop:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204": { description: Notebook stop requested. }
   /api/projects/{project_id}/services:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -373,6 +549,39 @@ paths:
       responses:
         "204":
           description: Restarted.
+  /api/projects/{project_id}/runs/{id}/artifacts/{step}/{artifact}/view:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - $ref: "#/components/parameters/RunID"
+      - name: step
+        in: path
+        required: true
+        schema: { type: string }
+      - name: artifact
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string }
+      responses:
+        "201":
+          description: Viewer created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Viewer" }
+        "200":
+          description: Existing running viewer returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Viewer" }
 components:
   securitySchemes:
     bearerAuth:
@@ -451,14 +660,17 @@ components:
       type: object
       properties:
         id: { type: string }
+        project_id: { type: string }
         schedule_id: { type: string }
-        owner_id: { type: string }
+        experiment: { type: string }
         pipeline_name: { type: string }
         status: { type: string, enum: [scheduled, running, success, failed, canceled] }
         started_at: { type: string, format: date-time }
         ended_at: { type: string, format: date-time }
         scheduled_at: { type: string, format: date-time }
         pipeline_yaml: { type: string }
+        params_json: { type: string }
+        created_by: { type: string }
     RunWithSteps:
       allOf:
         - $ref: "#/components/schemas/Run"
@@ -481,12 +693,15 @@ components:
       type: object
       properties:
         id: { type: string }
+        project_id: { type: string }
         name: { type: string }
-        owner_id: { type: string }
         pipeline_yaml: { type: string }
+        template_version_id: { type: string }
         schedule_type: { type: string, enum: [immediate, once, cron] }
         cron_expr: { type: string }
         enabled: { type: boolean }
+        max_runs: { type: integer }
+        params_json: { type: string }
         last_run_at: { type: string, format: date-time }
         next_run_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
@@ -494,16 +709,64 @@ components:
     Service:
       type: object
       properties:
+        project_id: { type: string }
         name: { type: string }
-        owner_id: { type: string }
         run_id: { type: string }
         artifact: { type: string }
-        status: { type: string, enum: [running, stopped, failed] }
+        status: { type: string, enum: [starting, running, stopping, stopped, failed] }
         endpoint: { type: string }
+        namespace: { type: string }
         pid: { type: integer }
+        runtime_id: { type: string }
         yaml: { type: string }
+        created_by: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    PipelineTemplate:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        version: { type: integer }
+        description: { type: string }
+        tags: { type: array, items: { type: string } }
+        yaml: { type: string }
+        snapshot_id: { type: string }
+        volume_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    NotebookServer:
+      type: object
+      properties:
+        project_id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [provisioning, starting, running, stopping, stopped, failed] }
+        env: { type: string }
+        image: { type: string }
+        endpoint: { type: string }
+        work_dir: { type: string }
+        runtime_id: { type: string }
+        volume_id: { type: string }
+        yaml: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Viewer:
+      type: object
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        type: { type: string }
+        run_id: { type: string }
+        step_name: { type: string }
+        artifact: { type: string }
+        status: { type: string, enum: [starting, running, failed, stopped] }
+        endpoint: { type: string }
+        url: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
     LogLine:
       type: object
       properties:

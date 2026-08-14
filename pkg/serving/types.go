@@ -2,6 +2,8 @@ package serving
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/loykin/piper/pkg/manifest"
 )
 
@@ -13,6 +15,21 @@ type ModelService struct {
 }
 
 func (s ModelService) Validate() error {
+	if err := manifest.ValidateTypeMeta(s.TypeMeta, "ModelService"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(s.Metadata.Name) == "" {
+		return fmt.Errorf("metadata.name is required")
+	}
+	if (s.Spec.Model.FromArtifact == nil) == (strings.TrimSpace(s.Spec.Model.FromURI) == "") {
+		return fmt.Errorf("exactly one of model.from_artifact or model.from_uri is required")
+	}
+	if len(s.Spec.Run.Command) == 0 {
+		return fmt.Errorf("run.command is required")
+	}
+	if s.Spec.Run.Port < 1 || s.Spec.Run.Port > 65535 {
+		return fmt.Errorf("run.port must be between 1 and 65535")
+	}
 	switch s.Spec.Driver.Placement.Runtime {
 	case "", "baremetal":
 	case "docker":

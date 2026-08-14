@@ -102,7 +102,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Runtime</dt>
-            <dd className="mt-0.5 text-xs">{notebook.worker_id || '—'}</dd>
+            <dd className="mt-0.5 text-xs">{notebook.runtime_id || '—'}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Endpoint</dt>

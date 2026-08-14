@@ -108,14 +108,12 @@ func TestDockerBackendDispatchesDirectlyAndCancels(t *testing.T) {
 	}
 }
 
-func TestDockerBackendRejectsRemotePlacement(t *testing.T) {
+func TestDockerBackendRejectsMismatchedRuntime(t *testing.T) {
 	tests := []struct {
 		name      string
 		placement manifest.PlacementSpec
 		want      string
 	}{
-		{name: "worker", placement: manifest.PlacementSpec{Worker: "remote-1", Runtime: "docker"}, want: "placement.worker is not supported"},
-		{name: "label", placement: manifest.PlacementSpec{Label: "gpu", Runtime: "docker"}, want: "placement.label is not supported"},
 		{name: "other runtime", placement: manifest.PlacementSpec{Runtime: "k8s"}, want: "placement.runtime must be docker or empty"},
 	}
 	for _, tt := range tests {

@@ -25,7 +25,7 @@ which federates *management* across separate Piper installations — see
 - Artifact storage is the one legitimate outbound exception: Kubernetes Job
   pods and Docker containers may need to reach Piper's own file-backed
   artifact store over HTTP (`runtime.workload_url` /
-  `runtime.docker.workload_url`), guarded by `ServerConfig.WorkerToken` and
+  `runtime.docker.workload_url`), guarded by `ServerConfig.WorkloadToken` and
   `workerTokenMiddleware` on the `/store` route group — this middleware name
   is a holdover from the pre-deletion architecture but the mechanism itself
   is still real and load-bearing; don't remove it while any runtime uses the
@@ -116,7 +116,7 @@ which federates *management* across separate Piper installations — see
   `pkg/notebook/handler.go`'s `proxyNotebook` always reverse-proxies directly
   to `Endpoint` (mirroring `pkg/serving/proxy.go`) — there is no scheme
   branching, since nothing produces a `tunnel://` endpoint anymore.
-  `NotebookVolume.WorkerID` is left empty here too (same reasoning as
+  `NotebookVolume.RuntimeID` is left empty here too (same reasoning as
   docker/process) — it can no longer be used to tell a K8s volume apart from
   a local one, since it's empty for every direct-runtime infra type now.
 
@@ -257,17 +257,17 @@ already-absolute `cfg.OutputDir` instead of re-deriving or re-validating it.
 - `pkg/manifest.TypeMeta` (`apiVersion`, `kind`) and `ObjectMeta` (`name`,
   `version`, `project_id`, `labels`, `description`, `tags`) are embedded by
   `pkg/pipeline.Pipeline`, `pkg/notebook.Notebook`, and
-  `pkg/serving.ModelService`. **`kind`/`apiVersion` are parsed but not
-  validated as a schema discriminator anywhere** — don't assume dispatch
-  logic branches on them without adding that check first.
+  `pkg/serving.ModelService`. Every accepted manifest uses `apiVersion: piper/v1` and
+  exactly one of `kind: Pipeline`, `kind: Notebook`, or
+  `kind: ModelService`. Missing, partial, or mismatched envelopes are rejected;
+  legacy envelope-less records must be migrated instead of silently accepted.
 - Shared `pkg/manifest.DriverSpec` (placement + per-runtime `k8s`/`docker`/
   `process` sub-specs) and `ResourceSpec` (cpu/memory/gpu) back
-  `spec.driver` on all three kinds. `PlacementSpec.Worker`/`.Label` still
-  exist as struct fields (parsed for backward YAML compatibility) but are
-  rejected by every domain's `ValidateDirectPlacement` — there is no runtime
-  that honors them anymore. Stored manifests from before this change can
-  still carry a non-empty `placement.worker`/`.label` in their saved YAML
-  text (Pipeline templates, Notebook records, ModelService records) —
+  `spec.driver` on all three kinds. Canonical `PlacementSpec` contains only
+  `runtime`; strict API parsing rejects the removed `worker` and `label`
+  fields. Stored manifests from before this change can still carry those
+  fields in their saved YAML text (Pipeline templates, Notebook records,
+  ModelService records) —
   `internal/manifestmigrate` (`piper manifest migrate [--apply]`, fed.md
   §13.6) scans and cleans those up. Notebook/ModelService are rewritten in
   place; Pipeline templates get a new version with the field removed rather
@@ -279,12 +279,17 @@ already-absolute `cfg.OutputDir` instead of re-deriving or re-validating it.
     must be `""`/`baremetal`/`docker`/`k8s`; `docker` requires
     `driver.docker.image`; `k8s` requires `driver.k8s.image` and
     `driver.k8s.namespace`.
-  - Notebook: same runtime/image/namespace rules, plus `k8s` additionally
+  - Notebook: `metadata.name` plus the same runtime/image/namespace rules,
+    with `k8s` additionally
     requires `spec.volume.size`. An empty `driver.placement.runtime` is
     allowed — it means "use whatever runtime this Piper installation is
     configured with," resolved at dispatch time, not "pick among candidates"
     (there is only ever one candidate: this installation).
-  - ModelService: same runtime/image/namespace rules as Pipeline.
+  - ModelService: `metadata.name`, exactly one model source, a non-empty run
+    command, a valid TCP port, and the same runtime/image/namespace rules as
+    Pipeline.
+- All user-submitted kinds use `manifest.DecodeStrict`: unknown fields,
+  multiple YAML documents, and removed placement fields are rejected.
 - `pkg/manifest/k8s` is a **separate, unrelated** helper package — just
   label/annotation constants (`LabelManagedBy`, `LabelWorkloadID`,
   `AnnotationRunID`, etc.) used to stamp and later select the real

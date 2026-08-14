@@ -39,7 +39,7 @@ func TestNotebookBaremetalDirectRuntimeLifecycle(t *testing.T) {
 			Type:      RuntimeBaremetal,
 			Baremetal: BaremetalRuntimeConfig{Concurrency: 2, MetaDir: t.TempDir()},
 		},
-		NotebookWorker: NotebookWorkerConfig{
+		Notebook: NotebookRuntimeConfig{
 			NotebooksRoot: t.TempDir(),
 			PortRange:     "19100-19110",
 		},
@@ -98,8 +98,8 @@ spec:
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if nb.WorkerID != notebookLocalWorkerID {
-		t.Fatalf("WorkerID = %q, want %q (direct-runtime local identity, not a remote worker)", nb.WorkerID, notebookLocalWorkerID)
+	if nb.RuntimeID != notebookLocalWorkerID {
+		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", nb.RuntimeID, notebookLocalWorkerID)
 	}
 	if !strings.HasPrefix(nb.Endpoint, "http://127.0.0.1:") {
 		t.Fatalf("Endpoint = %q, want http://127.0.0.1:<port> (no tunnel:// scheme in direct mode)", nb.Endpoint)

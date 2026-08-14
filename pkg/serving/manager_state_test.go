@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/loykin/piper/internal/artifact"
+	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/project"
 )
 
@@ -80,7 +81,7 @@ func (d *stateTestDriver) Restart(_ context.Context, _ ModelService, _ artifact.
 }
 
 func TestManagerStopRestoresObservedStateOnDriverFailure(t *testing.T) {
-	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, WorkerID: "worker-a"}}
+	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, RuntimeID: "worker-a"}}
 	stopErr := errors.New("worker unavailable")
 	m := New(repo, &stateTestDriver{stopErr: stopErr})
 
@@ -92,8 +93,8 @@ func TestManagerStopRestoresObservedStateOnDriverFailure(t *testing.T) {
 	}
 }
 
-func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
-	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, WorkerID: "worker-a"}}
+func TestManagerUpdateStatusRejectsDifferentRuntime(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, RuntimeID: "worker-a"}}
 	m := New(repo, &stateTestDriver{})
 
 	if err := m.UpdateStatus(context.Background(), "project-a", "worker-b", "demo", StatusStopped, ""); err == nil {
@@ -104,16 +105,36 @@ func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
 	}
 }
 
+func TestManagerReplaceDoesNotDeployWhenStopFails(t *testing.T) {
+	stopErr := errors.New("runtime unavailable")
+	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning}}
+	driver := &stateTestDriver{stopErr: stopErr, deployRec: &Service{Name: "demo"}}
+	m := New(repo, driver)
+	spec := ModelService{}
+	spec.Metadata.Name = "demo"
+	spec.Spec.Model.FromURI = "file:///model"
+	spec.Spec.Run = ModelServiceRun{Command: []string{"serve"}, Port: 8080}
+
+	if _, err := m.Replace(context.Background(), "project-a", spec, artifact.Resolved{}, "yaml"); !errors.Is(err, stopErr) {
+		t.Fatalf("Replace() error = %v, want %v", err, stopErr)
+	}
+	if driver.deploySpec.Metadata.Name != "" {
+		t.Fatal("Replace() deployed after stop failure")
+	}
+}
+
 func TestManagerDeployPersistsResolvedRunMetadata(t *testing.T) {
 	repo := &stateTestRepo{}
 	driver := &stateTestDriver{deployRec: &Service{
-		Name:     "demo",
-		Status:   StatusStarting,
-		WorkerID: "worker-a",
+		Name:      "demo",
+		Status:    StatusStarting,
+		RuntimeID: "worker-a",
 	}}
 	m := New(repo, driver)
 	spec := ModelService{}
 	spec.Metadata.Name = "demo"
+	spec.Spec.Model.FromURI = "file:///model"
+	spec.Spec.Run = ModelServiceRun{Command: []string{"serve"}, Port: 8080}
 
 	ctx := project.WithContext(context.Background(), project.Context{ID: "project-a"})
 	if err := m.Deploy(ctx, "project-a", spec, artifact.Resolved{RunID: "run-1"}, "service-yaml"); err != nil {
@@ -133,15 +154,35 @@ func TestManagerDeployPersistsResolvedRunMetadata(t *testing.T) {
 	}
 }
 
+func TestManagerDeployRejectsRuntimeMismatchBeforeDriver(t *testing.T) {
+	repo := &stateTestRepo{}
+	driver := &stateTestDriver{deployRec: &Service{Name: "demo"}}
+	m := New(repo, driver)
+	m.SetRuntime("docker")
+	spec := ModelService{}
+	spec.Metadata.Name = "demo"
+	spec.Spec.Model.FromURI = "file:///model"
+	spec.Spec.Run = ModelServiceRun{Command: []string{"serve"}, Port: 8080}
+	spec.Spec.Driver.Placement = manifest.PlacementSpec{Runtime: "k8s"}
+	spec.Spec.Driver.K8s = &manifest.DriverK8sSpec{Image: "serving:test", Namespace: "serving"}
+
+	if err := m.Deploy(context.Background(), "project-a", spec, artifact.Resolved{}, "yaml"); err == nil {
+		t.Fatal("Deploy() accepted a manifest for another runtime")
+	}
+	if driver.deploySpec.Metadata.Name != "" || repo.service != nil {
+		t.Fatal("runtime mismatch reached driver or persistence")
+	}
+}
+
 func TestManagerUpdateStatusPreservesDeploymentMetadata(t *testing.T) {
 	repo := &stateTestRepo{service: &Service{
-		Name:     "demo",
-		RunID:    "run-1",
-		YAML:     "service-yaml",
-		Status:   StatusStarting,
-		Endpoint: "http://old",
-		PID:      42,
-		WorkerID: "worker-a",
+		Name:      "demo",
+		RunID:     "run-1",
+		YAML:      "service-yaml",
+		Status:    StatusStarting,
+		Endpoint:  "http://old",
+		PID:       42,
+		RuntimeID: "worker-a",
 	}}
 	m := New(repo, &stateTestDriver{})
 
@@ -158,10 +199,10 @@ func TestManagerUpdateStatusPreservesDeploymentMetadata(t *testing.T) {
 
 func TestManagerStatusOnlySyncPreservesEndpoint(t *testing.T) {
 	repo := &stateTestRepo{service: &Service{
-		Name:     "demo",
-		Status:   StatusStarting,
-		Endpoint: "http://worker:8080",
-		WorkerID: "worker-a",
+		Name:      "demo",
+		Status:    StatusStarting,
+		Endpoint:  "http://worker:8080",
+		RuntimeID: "worker-a",
 	}}
 	m := New(repo, &stateTestDriver{})
 

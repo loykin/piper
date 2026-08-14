@@ -155,7 +155,7 @@ func TestStartCreatesStatefulSetAndService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if srv.WorkerID != "test-k8s-worker" || srv.Token == "" {
+	if srv.RuntimeID != "test-k8s-worker" || srv.Token == "" {
 		t.Fatalf("unexpected server: %+v", srv)
 	}
 	wantEndpoint := "http://" + notebookWorkloadName("proj", "nb") + ".nb-ns.svc.cluster.local:8888"
@@ -185,16 +185,6 @@ func TestStartRejectsMissingImage(t *testing.T) {
 	vol := &notebook.NotebookVolume{ID: "vol-1", WorkDir: notebook.ContainerWorkDir}
 	if _, err := d.Start(context.Background(), spec, vol, ""); err == nil {
 		t.Fatal("expected error for missing image")
-	}
-}
-
-func TestStartRejectsPlacementWorker(t *testing.T) {
-	d, _ := newTestDriver(t, fake.NewSimpleClientset(), time.Second)
-	spec := testSpec("proj", "nb")
-	spec.Spec.Driver.Placement.Worker = "old-worker"
-	vol := &notebook.NotebookVolume{ID: "vol-1", WorkDir: notebook.ContainerWorkDir}
-	if _, err := d.Start(context.Background(), spec, vol, ""); err == nil {
-		t.Fatal("expected placement.worker rejection")
 	}
 }
 

@@ -39,7 +39,7 @@ server:
   # Optional shared secret required on the built-in /store HTTP endpoint —
   # relevant when runtime.workload_url points K8s pods or Docker containers
   # back at Piper's own file-based artifact store.
-  # worker_token: ""
+  # workload_token: ""
 
   # Enable when Piper terminates TLS itself. When TLS terminates at an ingress
   # or reverse proxy, leave this disabled.

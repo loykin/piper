@@ -19,7 +19,7 @@ type ServerConfig struct {
 	HomeID string
 	// Tokens maps MemberID to its static enrollment secret. One token per
 	// Member (not a single shared secret like the worker tunnel's
-	// WorkerToken) — see the package doc for why rotation/revocation isn't
+	// WorkloadToken) — see the package doc for why rotation/revocation isn't
 	// built yet.
 	Tokens map[string]string
 	// OnConnectionChanged persists Home-owned lifecycle state. It is invoked

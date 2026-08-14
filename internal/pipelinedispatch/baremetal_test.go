@@ -79,14 +79,12 @@ func TestBaremetalBackendDispatchesDirectlyAndCancels(t *testing.T) {
 	}
 }
 
-func TestBaremetalBackendRejectsRemotePlacement(t *testing.T) {
+func TestBaremetalBackendRejectsMismatchedRuntime(t *testing.T) {
 	tests := []struct {
 		name      string
 		placement manifest.PlacementSpec
 		want      string
 	}{
-		{name: "worker", placement: manifest.PlacementSpec{Worker: "remote-1", Runtime: "baremetal"}, want: "placement.worker is not supported"},
-		{name: "label", placement: manifest.PlacementSpec{Label: "gpu", Runtime: "baremetal"}, want: "placement.label is not supported"},
 		{name: "other runtime", placement: manifest.PlacementSpec{Runtime: "k8s"}, want: "placement.runtime must be baremetal or empty"},
 	}
 	for _, tt := range tests {

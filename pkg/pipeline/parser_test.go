@@ -3,7 +3,10 @@ package pipeline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/loykin/piper/pkg/manifest"
 )
 
 const validYAML = `
@@ -40,8 +43,21 @@ func TestParse_valid(t *testing.T) {
 	}
 }
 
+func TestMarshalAddsCanonicalEnvelopeToInProcessPipeline(t *testing.T) {
+	pl := &Pipeline{Metadata: manifest.ObjectMeta{Name: "demo"}}
+	b, err := Marshal(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "apiVersion: piper/v1") || !strings.Contains(string(b), "kind: Pipeline") {
+		t.Fatalf("Marshal() omitted canonical envelope:\n%s", b)
+	}
+}
+
 func TestParseRejectsIncompleteK8sDriver(t *testing.T) {
 	_, err := Parse([]byte(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: invalid
 spec:
@@ -68,6 +84,8 @@ func TestParse_invalidYAML(t *testing.T) {
 
 func TestParseRuntimeSpecificImages(t *testing.T) {
 	p, err := Parse([]byte(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: runtime-images
 spec:
@@ -96,6 +114,8 @@ spec:
 
 func TestParseRejectsLegacyCommonImage(t *testing.T) {
 	_, err := Parse([]byte(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: legacy-image
 spec:
@@ -114,6 +134,8 @@ spec:
 
 func TestParse_missingName(t *testing.T) {
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: ""
 spec:
@@ -131,6 +153,8 @@ spec:
 
 func TestParse_noSteps(t *testing.T) {
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: empty
 spec:
@@ -144,6 +168,8 @@ spec:
 
 func TestParse_duplicateStepName(t *testing.T) {
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: dup
 spec:
@@ -163,6 +189,8 @@ spec:
 
 func TestParse_unknownDependency(t *testing.T) {
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: bad-dep
 spec:
@@ -180,6 +208,8 @@ spec:
 
 func TestParse_emptyPrepareCommand(t *testing.T) {
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: bad-prepare
 spec:
@@ -199,6 +229,8 @@ spec:
 
 func TestParse_emptyStepName(t *testing.T) {
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: p
 spec:

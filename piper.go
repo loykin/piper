@@ -398,8 +398,8 @@ func (p *Piper) handleRunSuccess(ctx context.Context, runID string, pl *pipeline
 		return
 	}
 	// Re-deploy with the new run's artifact
-	var ms serving.ModelService
-	if err := yaml.Unmarshal([]byte(svc.YAML), &ms); err != nil {
+	ms, err := serving.Parse([]byte(svc.YAML))
+	if err != nil {
 		return
 	}
 	if ms.Spec.Model.FromArtifact != nil {
@@ -506,7 +506,7 @@ func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
 	if p.cfg.Runtime.Type == RuntimeBaremetal {
 		excludeUnderOutputDir(p.cfg.Runtime.Baremetal.MetaDir)
 	}
-	excludeUnderOutputDir(p.cfg.NotebookWorker.NotebooksRoot)
+	excludeUnderOutputDir(p.cfg.Notebook.NotebooksRoot)
 	cleanupOrphanArtifacts(ctx, p.repos.Run, p.cfg.OutputDir, exclude...)
 }
 
@@ -971,6 +971,9 @@ type StartRunOptions struct {
 // Both the HTTP API and the scheduler go through here.
 // It creates the DB record, initialises step rows, enqueues the DAG, and fires OnRunStart.
 func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DAG, opts StartRunOptions) (string, error) {
+	if err := pipeline.ValidateRuntime(pl, p.cfg.Runtime.Type); err != nil {
+		return "", err
+	}
 	runID := opts.RunID
 	if runID == "" {
 		runID = genRunID()

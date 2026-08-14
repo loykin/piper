@@ -36,15 +36,15 @@ func (m *Manager) RegisterDriver(d Driver) {
 }
 
 // Open finds an existing running viewer or starts a new one.
-func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact, typ string) (*Viewer, error) {
+func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact, typ string) (*Viewer, bool, error) {
 	existing, err := m.repo.FindRunning(ctx, projectID, runID, stepName, artifact, typ)
 	if err == nil && existing != nil {
-		return existing, nil
+		return existing, false, nil
 	}
 
 	d, ok := m.drivers[typ]
 	if !ok {
-		return nil, fmt.Errorf("unsupported viewer type %q", typ)
+		return nil, false, fmt.Errorf("unsupported viewer type %q", typ)
 	}
 
 	now := time.Now().UTC()
@@ -63,13 +63,13 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 	}
 
 	if err := m.repo.Create(ctx, v); err != nil {
-		return nil, fmt.Errorf("create viewer record: %w", err)
+		return nil, false, fmt.Errorf("create viewer record: %w", err)
 	}
 
 	localPath, tempDir, err := m.materialize(ctx, v)
 	if err != nil {
 		_ = m.repo.UpdateStatus(ctx, v.ID, StatusFailed, "", 0, "")
-		return nil, fmt.Errorf("materialize artifact: %w", err)
+		return nil, false, fmt.Errorf("materialize artifact: %w", err)
 	}
 	v.WorkDir = tempDir // temp dir to clean up on stop (empty for local storage)
 
@@ -78,7 +78,7 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 			_ = os.RemoveAll(tempDir)
 		}
 		_ = m.repo.UpdateStatus(ctx, v.ID, StatusFailed, "", 0, "")
-		return nil, fmt.Errorf("start viewer: %w", err)
+		return nil, false, fmt.Errorf("start viewer: %w", err)
 	}
 
 	if err := m.repo.UpdateStatus(ctx, v.ID, StatusRunning, v.Endpoint, v.PID, v.WorkDir); err != nil {
@@ -88,10 +88,10 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 		if tempDir != "" {
 			_ = os.RemoveAll(tempDir)
 		}
-		return nil, err
+		return nil, false, err
 	}
 	v.Status = StatusRunning
-	return v, nil
+	return v, true, nil
 }
 
 // Stop kills the viewer process and cleans up resources.

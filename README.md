@@ -191,7 +191,7 @@ permissions. Explicit configuration or environment values take precedence.
 For production:
 
 - keep generated keys on persistent storage or inject them from a secret manager
-- set `server.worker_token` when Kubernetes pods or Docker containers reach
+- set `server.workload_token` when Kubernetes pods or Docker containers reach
   back into Piper's own built-in artifact store over `/store`
 - terminate TLS at Piper or a trusted ingress/reverse proxy
 - back up the database, artifact storage, and encryption keys together
@@ -543,7 +543,7 @@ kubectl -n piper port-forward service/piper-server 8080:8080
 
 The installer creates `piper-server-secrets` once and preserves it on later
 runs. It contains the authentication signing key, credential-encryption key,
-and the `worker_token` shared secret that guards Piper's built-in `/store`
+and the `workload_token` shared secret that guards Piper's built-in `/store`
 endpoint.
 
 The base deployment uses the built-in artifact store. For production, configure

@@ -25,7 +25,7 @@ type K8sBackendConfig struct {
 	ImagePullPolicy     string
 	TTLAfterFinished    *int32
 	MasterURL           string
-	WorkerToken         string
+	WorkloadToken       string
 	LogClient           logsink.PushClient
 	Complete            func(proto.TaskResult) error
 	RenewLeases         func(workerID string, taskIDs []string)
@@ -47,8 +47,8 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		WorkerID: localK8sWorkerID,
 		Context:  cfg.Context,
 		Store: pipelineworker.StoreConfig{
-			MasterURL:   cfg.MasterURL,
-			WorkerToken: cfg.WorkerToken,
+			MasterURL:     cfg.MasterURL,
+			WorkloadToken: cfg.WorkloadToken,
 		},
 		K8s: pipelineworker.K8sConfig{
 			Client:               cfg.Client,

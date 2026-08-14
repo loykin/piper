@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"bytes"
+	"fmt"
 
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
@@ -17,20 +18,24 @@ type DriverSpec struct {
 	Process   *DriverProcessSpec `yaml:"process,omitempty"  json:"process,omitempty"`
 }
 
-// PlacementSpec controls which worker handles the workload and which runtime to use.
-//
-// Design invariant: one run executes on one worker. All steps in a run are
-// dispatched to the same worker agent. Within K8s, node selection (GPU, CPU)
-// is handled by driver.k8s.pod_template.spec.nodeSelector — not by placement.
-// Multi-cluster routing is out of scope: run separate pipelines per cluster.
+// PlacementSpec selects the execution runtime. Each Piper installation owns
+// exactly one runtime; a non-empty value must match that configured runtime.
 type PlacementSpec struct {
-	// Label routes to any worker registered with this label (e.g. "gpu", "prod").
-	// Workers register their label via --label flag.
-	Label string `yaml:"label,omitempty"   json:"label,omitempty"`
-	// Worker pins the run to a specific worker ID. Takes precedence over Label.
-	Worker string `yaml:"worker,omitempty"  json:"worker,omitempty"`
 	// Runtime selects the execution environment: baremetal | docker | k8s.
 	Runtime string `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+}
+
+// ValidateRuntimePlacement requires an explicit manifest runtime to match the
+// single runtime owned by this Piper installation. Empty means use that owned
+// runtime.
+func ValidateRuntimePlacement(p PlacementSpec, ownedRuntime string) error {
+	if ownedRuntime == "" {
+		return nil
+	}
+	if p.Runtime != "" && p.Runtime != ownedRuntime {
+		return fmt.Errorf("placement.runtime must be %q or empty", ownedRuntime)
+	}
+	return nil
 }
 
 // ResourceSpec is a Kubernetes resource hint.
@@ -63,6 +68,18 @@ type driverK8sAlias struct {
 }
 
 func (s *DriverK8sSpec) UnmarshalYAML(value *yaml.Node) error {
+	allowed := map[string]struct{}{
+		"image": {}, "namespace": {}, "replicas": {}, "image_pull_policy": {},
+		"resources": {}, "pod_template": {},
+	}
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			key := value.Content[i].Value
+			if _, ok := allowed[key]; !ok {
+				return fmt.Errorf("field %s not found in type manifest.DriverK8sSpec", key)
+			}
+		}
+	}
 	var a driverK8sAlias
 	if err := value.Decode(&a); err != nil {
 		return err

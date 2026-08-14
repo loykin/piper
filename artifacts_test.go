@@ -330,7 +330,7 @@ func TestPiperCleanupOrphanArtifacts_ExcludesNotebookRoot(t *testing.T) {
 	notebooksRoot := filepath.Join(outputDir, "notebooks")
 	p := newTestPiper(t, Config{
 		OutputDir: outputDir,
-		NotebookWorker: NotebookWorkerConfig{
+		Notebook: NotebookRuntimeConfig{
 			NotebooksRoot: notebooksRoot,
 		},
 	})

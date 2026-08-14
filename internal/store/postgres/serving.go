@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -25,7 +27,7 @@ func (r *servingRepo) Create(ctx context.Context, svc *serving.Service) error {
 		q := db.Rebind(`INSERT INTO services (project_id, name, run_id, artifact, status, endpoint, namespace, pid, worker_id, yaml, created_by, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		_, err := db.ExecContext(ctx, q,
-			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.WorkerID, svc.YAML, svc.CreatedBy, svc.CreatedAt, svc.UpdatedAt)
+			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, svc.CreatedAt, svc.UpdatedAt)
 		return err
 	})
 }
@@ -36,6 +38,9 @@ func (r *servingRepo) Get(ctx context.Context, projectID, name string) (*serving
 		q := db.Rebind(`SELECT ` + serviceSelectCols + ` FROM services WHERE project_id=? AND name=?`)
 		return db.GetContext(ctx, &svc, q, projectID, name)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +52,7 @@ func (r *servingRepo) Update(ctx context.Context, svc *serving.Service) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		q := db.Rebind(`UPDATE services SET run_id=?, artifact=?, status=?, endpoint=?, namespace=?, pid=?, worker_id=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`)
 		_, err := db.ExecContext(ctx, q,
-			svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.WorkerID, svc.YAML, svc.UpdatedAt, svc.ProjectID, svc.Name)
+			svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.UpdatedAt, svc.ProjectID, svc.Name)
 		return err
 	})
 }
@@ -63,7 +68,7 @@ func (r *servingRepo) Upsert(ctx context.Context, svc *serving.Service) error {
 				endpoint=EXCLUDED.endpoint, namespace=EXCLUDED.namespace, pid=EXCLUDED.pid, worker_id=EXCLUDED.worker_id, yaml=EXCLUDED.yaml,
 				created_by=EXCLUDED.created_by, updated_at=EXCLUDED.updated_at`)
 		_, err := db.ExecContext(ctx, q,
-			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.WorkerID, svc.YAML, svc.CreatedBy, now, now)
+			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, now, now)
 		return err
 	})
 }

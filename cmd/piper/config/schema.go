@@ -29,7 +29,7 @@ type NotebookConfig struct {
 type DeploymentConfig struct {
 	Mode string `mapstructure:"mode" yaml:"mode"` // "" | "home" | "member"
 	// MemberID is this installation's stable identity when mode is
-	// "member". Auto-generated from hostname (worker.NewID) if empty.
+	// "member". Auto-generated from hostname when empty.
 	MemberID string `mapstructure:"member_id" yaml:"member_id"`
 }
 
@@ -46,7 +46,7 @@ type HomeConfig struct {
 }
 
 // RuntimeConfig selects execution owned directly by the Piper server —
-// required; there is no remote-worker fallback. The Namespaces through
+// required; there is no remote execution fallback. The Namespaces through
 // PipelineRunner fields are k8s-only; Docker/Baremetal carry their own
 // runtime-specific fields in their own sub-structs.
 type RuntimeConfig struct {
@@ -98,7 +98,7 @@ type GitConfig struct {
 
 type ServerConfig struct {
 	HTTPAddr                 string          `mapstructure:"http_addr" yaml:"http_addr"`
-	WorkerToken              string          `mapstructure:"worker_token" yaml:"worker_token"`
+	WorkloadToken            string          `mapstructure:"workload_token" yaml:"workload_token"`
 	AuthSigningKey           string          `mapstructure:"auth_signing_key" yaml:"auth_signing_key"`
 	AllowInsecureTrustedMode bool            `mapstructure:"allow_insecure_trusted_mode" yaml:"allow_insecure_trusted_mode"`
 	SecretEncryptionKey      string          `mapstructure:"secret_encryption_key" yaml:"secret_encryption_key"`

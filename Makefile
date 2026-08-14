@@ -47,7 +47,7 @@ ui:
 	cp -r frontend/dist pkg/ui/dist
 	@echo "UI built. Commit pkg/ui/dist/ to include in go install."
 
-# Build Docker image (serves as both server and K8s agent)
+# Build Docker image used by the server and direct-runtime workload Jobs.
 docker: build-linux-native
 	docker build --build-arg TARGETARCH=$(ARCH) -t $(IMAGE) .
 
@@ -56,7 +56,7 @@ test:
 	go test ./...
 
 test-notebook-conformance:
-	go test ./pkg/notebook ./pkg/notebook/worker/driver/process ./pkg/notebook/worker/driver/docker ./pkg/notebook/worker/driver/k8s ./pkg/notebook/dispatch ./internal/grpcagent
+	go test ./pkg/notebook ./pkg/notebook/worker/driver/process ./pkg/notebook/worker/driver/docker ./pkg/notebook/dispatch/localdriver ./pkg/notebook/dispatch/localdriver/k8s
 
 # E2E tests (fully hermetic, no external infra required)
 test-e2e:

@@ -498,13 +498,13 @@ func normalizeDockerConfig(cfg Config) (Config, error) {
 		cfg.Network = "bridge"
 	}
 	if cfg.Network != "bridge" && cfg.Network != "none" {
-		return cfg, fmt.Errorf("notebook_worker.docker.network must be bridge or none")
+		return cfg, fmt.Errorf("runtime.docker.network must be bridge or none")
 	}
 	seenNames := map[string]bool{}
 	seenTargets := map[string]bool{notebook.ContainerWorkDir: true}
 	for i, vol := range cfg.Volumes {
 		if vol.Name == "" {
-			return cfg, fmt.Errorf("notebook_worker.docker.volumes[%d].name is required", i)
+			return cfg, fmt.Errorf("runtime.docker.volumes[%d].name is required", i)
 		}
 		if seenNames[vol.Name] {
 			return cfg, fmt.Errorf("duplicate docker volume name %q", vol.Name)

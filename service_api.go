@@ -13,7 +13,6 @@ import (
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/serving"
 	"github.com/loykin/piper/pkg/storage"
-	"gopkg.in/yaml.v3"
 )
 
 // DeployService parses a ModelService YAML and deploys it.
@@ -26,36 +25,20 @@ func (p *Piper) DeployService(ctx context.Context, projectID string, yamlBytes [
 }
 
 func (p *Piper) deployService(ctx context.Context, projectID string, yamlBytes []byte) (*serving.Service, error) {
-	var svc serving.ModelService
-	if err := yaml.Unmarshal(yamlBytes, &svc); err != nil {
-		return nil, fmt.Errorf("parse ModelService YAML: %w", err)
-	}
-	if svc.Metadata.Name == "" {
-		return nil, fmt.Errorf("ModelService metadata.name is required")
-	}
-
-	resolved, artifactLabel, err := p.resolveServiceModel(ctx, svc, p.serving.manager.ArtifactTarget())
+	svc, err := serving.Parse(yamlBytes)
 	if err != nil {
 		return nil, err
 	}
 
-	_ = p.serving.manager.Stop(ctx, projectID, svc.Metadata.Name)
-	if err := p.serving.manager.Deploy(ctx, projectID, svc, resolved, string(yamlBytes)); err != nil {
-		_ = p.repos.Serving.SetStatus(ctx, projectID, svc.Metadata.Name, serving.StatusFailed)
-		return nil, fmt.Errorf("deploy service: %w", err)
+	resolved, _, err := p.resolveServiceModel(ctx, *svc, p.serving.manager.ArtifactTarget())
+	if err != nil {
+		return nil, err
 	}
 
-	rec, err := p.repos.Serving.Get(ctx, projectID, svc.Metadata.Name)
-	if err != nil || rec == nil {
-		return nil, fmt.Errorf("get service after deploy: %w", err)
-	}
-	rec.YAML = string(yamlBytes)
-	rec.RunID = resolved.RunID
-	if artifactLabel != "" {
-		rec.Artifact = artifactLabel
-	}
-	if err := p.repos.Serving.Update(ctx, rec); err != nil {
-		return nil, fmt.Errorf("update service record: %w", err)
+	rec, err := p.serving.manager.Replace(ctx, projectID, *svc, resolved, string(yamlBytes))
+	if err != nil {
+		_ = p.repos.Serving.SetStatus(ctx, projectID, svc.Metadata.Name, serving.StatusFailed)
+		return nil, fmt.Errorf("deploy service: %w", err)
 	}
 	return rec, nil
 }

@@ -17,6 +17,9 @@ type Pipeline struct {
 
 // Validate checks that the pipeline definition is structurally correct.
 func (p *Pipeline) Validate() error {
+	if err := manifest.ValidateTypeMeta(p.TypeMeta, "Pipeline"); err != nil {
+		return err
+	}
 	if p.Metadata.Name == "" {
 		return fmt.Errorf("pipeline name is required")
 	}
@@ -216,12 +219,6 @@ func (p *Pipeline) ApplyDefaults() *Pipeline {
 
 // mergeDriverSpec returns a DriverSpec where base fields fill in zero values of override.
 func mergeDriverSpec(base, override manifest.DriverSpec) manifest.DriverSpec {
-	if override.Placement.Label == "" {
-		override.Placement.Label = base.Placement.Label
-	}
-	if override.Placement.Worker == "" {
-		override.Placement.Worker = base.Placement.Worker
-	}
 	if override.Placement.Runtime == "" {
 		override.Placement.Runtime = base.Placement.Runtime
 	}

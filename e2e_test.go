@@ -300,6 +300,8 @@ func TestE2E_ExecutesPipeline(t *testing.T) {
 	_, srv := newE2EServer(t)
 
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-hello
 spec:
@@ -345,6 +347,8 @@ func TestE2E_GenericCredentialEnvRef(t *testing.T) {
 	})
 
 	runID := postRun(t, srv.URL, `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-generic-env-ref
 spec:
@@ -379,6 +383,8 @@ func TestE2E_RunCancellation(t *testing.T) {
 	_, srv := newE2EServer(t)
 
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-cancel
 spec:
@@ -411,6 +417,8 @@ func TestE2E_StepMetrics(t *testing.T) {
 	_, srv := newE2EServer(t)
 
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-metrics
 spec:
@@ -469,6 +477,8 @@ func TestE2E_S3Artifacts(t *testing.T) {
 	_, srv := newE2EServerWithDirAndStorage(t, t.TempDir(), s3URL)
 
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-s3
 spec:
@@ -503,6 +513,8 @@ func TestE2E_MultiStepParallel(t *testing.T) {
 	_, srv := newE2EServer(t)
 
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-parallel
 spec:
@@ -662,6 +674,8 @@ func TestE2E_OnSuccessDeployTriggersRedeploy(t *testing.T) {
 
 	// Pipeline YAML with on_success.deploy wired to our service.
 	pipelineYAML := fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: %s
 spec:
@@ -730,6 +744,8 @@ func TestE2E_ProcessGPUsFlowsToCUDA(t *testing.T) {
 	// The step writes $CUDA_VISIBLE_DEVICES to a file in $PIPER_OUTPUT_DIR.
 	// driver.process.gpus should inject "mock-0,mock-1" as CUDA_VISIBLE_DEVICES.
 	yaml := `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-gpu-env
 spec:
@@ -819,6 +835,8 @@ func TestE2E_GitSourceCredentialRef(t *testing.T) {
 	postE2EGitCredential(t, srv.URL, "gitea-cred", repoOrigin(repoURL), gitUser, gitToken)
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-git-connectionref
 spec:
@@ -859,6 +877,8 @@ func TestE2E_GitSourceAutoMatch(t *testing.T) {
 	postE2EGitCredential(t, srv.URL, "auto-cred", repoOrigin(repoURL), gitUser, gitToken)
 
 	runID := postRun(t, srv.URL, fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: e2e-git-automatch
 spec:
@@ -915,6 +935,8 @@ func TestE2E_GitSourcePipelineToServing(t *testing.T) {
 
 	const pipelineName = "e2e-git-train"
 	pipelineYAML := fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: %s
 spec:

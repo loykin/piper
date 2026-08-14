@@ -72,14 +72,12 @@ func TestK8sBackendDispatchesDirectlyAndCancels(t *testing.T) {
 	}
 }
 
-func TestK8sBackendRejectsRemotePlacement(t *testing.T) {
+func TestK8sBackendRejectsMismatchedRuntime(t *testing.T) {
 	tests := []struct {
 		name      string
 		placement manifest.PlacementSpec
 		want      string
 	}{
-		{name: "worker", placement: manifest.PlacementSpec{Worker: "remote-1", Runtime: "k8s"}, want: "placement.worker is not supported"},
-		{name: "label", placement: manifest.PlacementSpec{Label: "gpu", Runtime: "k8s"}, want: "placement.label is not supported"},
 		{name: "other runtime", placement: manifest.PlacementSpec{Runtime: "docker"}, want: "placement.runtime must be k8s or empty"},
 	}
 	for _, tt := range tests {

@@ -22,7 +22,7 @@ the initial administrator.
 
 The installer creates `piper-server-secrets` once and reuses it on later runs.
 It contains the authentication signing key, credential-encryption key, and the
-`worker_token` shared secret that guards Piper's built-in `/store` HTTP
+`workload_token` shared secret that guards Piper's built-in `/store` HTTP
 endpoint (used when Kubernetes pods fetch or write artifacts through Piper's
 own file-backed artifact store rather than an external S3-compatible one).
 Back up that Secret and the `piper-server-data` PVC together. Losing or rotating

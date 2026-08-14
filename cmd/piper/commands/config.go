@@ -120,13 +120,13 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 		OutputDir: root.Server.DataDir,
 		Git:       piper.GitConfig{User: root.Source.Git.User, Token: root.Source.Git.Token},
 		Storage:   piper.StorageConfig{URL: root.Storage.URL, Disabled: root.Storage.Disabled, Token: root.Storage.Token, CredentialRef: root.Storage.CredentialRef},
-		Server: piper.ServerConfig{Addr: root.Server.HTTPAddr, WorkerToken: root.Server.WorkerToken, SecretEncryptionKey: root.Server.SecretEncryptionKey, AllowInsecureDevKey: root.Server.AllowInsecureDevKey,
+		Server: piper.ServerConfig{Addr: root.Server.HTTPAddr, WorkloadToken: root.Server.WorkloadToken, SecretEncryptionKey: root.Server.SecretEncryptionKey, AllowInsecureDevKey: root.Server.AllowInsecureDevKey,
 			TLS: piper.TLSConfig{Enabled: root.Server.TLS.Enabled, CertFile: root.Server.TLS.CertFile, KeyFile: root.Server.TLS.KeyFile}},
 		Retention: piper.RetentionConfig{RunTTL: root.Server.Retention.RunTTL, ArtifactTTL: root.Server.Retention.ArtifactTTL},
 		Schedule:  piper.ScheduleConfig{MisfirePolicy: root.Server.Schedule.MisfirePolicy, MisfireGracePeriod: root.Server.Schedule.MisfireGracePeriod},
 		Serving:   piper.ServingConfig{ModelDir: root.Server.Serving.ModelDir},
 		DBDriver:  root.Server.DB.Driver, DBDSN: root.Server.DB.DSN, DBPath: root.Server.DB.Path,
-		NotebookWorker: piper.NotebookWorkerConfig{
+		Notebook: piper.NotebookRuntimeConfig{
 			NotebooksRoot: root.Notebook.NotebooksRoot,
 			PortRange:     root.Notebook.PortRange,
 		},

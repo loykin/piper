@@ -138,7 +138,7 @@ func (w *Worker) Dispatch(ctx context.Context, task *proto.Task) error {
 		StorageURL:   storageURL,
 	}
 	if w.cfg.LogClient != nil {
-		spec.LogSink = logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, w.cfg.LogClient), logsink.ValuesFromEnv(task.Env))
+		spec.LogSink = logsink.NewRedactingSink(logsink.NewBufferedLogSink(task.ProjectID, w.cfg.LogClient), logsink.ValuesFromEnv(task.Env))
 	}
 	if w.cfg.ResolveImage != nil {
 		image, err := w.cfg.ResolveImage(task)

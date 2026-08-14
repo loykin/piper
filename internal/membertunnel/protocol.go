@@ -5,10 +5,10 @@
 //
 // Deliberately excluded from this package, with a documented reattachment
 // point for later: per-Member credential rotation/revocation (today: one
-// static token per Member, compared for equality — see server.go),
-// idempotency coverage for mutations other than SubmitRun, and Home HA
-// (exactly one Home process is assumed). SubmitRun is durably deduplicated
-// by the owning Member and can be retried across a reconnect.
+// static token per Member, compared for equality — see server.go) and Home
+// HA (exactly one Home process is assumed). SubmitRun and generic project
+// mutations are durably deduplicated by the owning Member and can be retried
+// across a reconnect.
 package membertunnel
 
 import (
@@ -23,8 +23,8 @@ import (
 
 // Method names shared by the Member-side dispatch table (dispatch.go) and
 // the Home-side RemoteMemberClient callers (remote.go) — each must match a
-// memberclient.Client method 1:1. ServeArtifact has no entry: it streams
-// bytes directly and is not yet supported over the tunnel (see remote.go).
+// memberclient.Client method 1:1. ServeArtifact has no dedicated method: it
+// reads ranged chunks through MethodProjectRequest (see remote.go).
 const (
 	MethodSubmitRun      = "SubmitRun"
 	MethodSubmitSweep    = "SubmitSweep"

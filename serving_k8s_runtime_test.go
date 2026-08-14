@@ -65,12 +65,12 @@ spec:
       namespace: ` + namespace + `
 `
 	body, _ := json.Marshal(map[string]string{"yaml": yaml})
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/serving", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/services", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("deploy service status = %d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("deploy service status = %d, want 201: %s", rec.Code, rec.Body.String())
 	}
 
 	depName := ""
@@ -111,7 +111,7 @@ spec:
 	deadline = time.Now().Add(20 * time.Second)
 	var svc serving.Service
 	for {
-		getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/serving/k8s-svc", nil)
+		getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/services/k8s-svc", nil)
 		getRec := httptest.NewRecorder()
 		router.ServeHTTP(getRec, getReq)
 		if getRec.Code != http.StatusOK {
@@ -139,14 +139,14 @@ spec:
 		t.Fatalf("Endpoint = %q, want a plain cluster-DNS endpoint", svc.Endpoint)
 	}
 
-	delReq := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/serving/k8s-svc", nil)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/services/k8s-svc", nil)
 	delRec := httptest.NewRecorder()
 	router.ServeHTTP(delRec, delReq)
 	if delRec.Code != http.StatusNoContent {
 		t.Fatalf("delete service status = %d, want 204: %s", delRec.Code, delRec.Body.String())
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/serving/k8s-svc", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/services/k8s-svc", nil)
 	getRec := httptest.NewRecorder()
 	router.ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusNotFound {

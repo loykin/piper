@@ -3,10 +3,9 @@
 // involved, mirroring fed.md §13.2's Pipeline and the Notebook domain's
 // direct-runtime treatment (pkg/notebook/dispatch/localdriver).
 //
-// K8s is not covered here: pkg/serving/worker/driver/k8s doesn't implement
-// the shared servingdriver.Driver interface docker/process share, so it
-// needs its own adaptation as a separate follow-up rather than fitting this
-// package's shape.
+// K8s is implemented by the sibling localdriver/k8s package at the higher
+// serving.Driver boundary because Deployment/Service lifecycle does not fit
+// the docker/process driver's process-like contract.
 package localdriver
 
 import (
@@ -199,7 +198,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 	rn := runtimeName(projectID, name)
 	var sink logsink.LogSink
 	if d.cfg.LogClient != nil {
-		sink = logsink.NewRedactingSink(logsink.NewGRPCLogSink(projectID, d.cfg.LogClient), logsink.ValuesFromEnv(resolvedEnv))
+		sink = logsink.NewRedactingSink(logsink.NewBufferedLogSink(projectID, d.cfg.LogClient), logsink.ValuesFromEnv(resolvedEnv))
 	}
 
 	endpoint, err := d.driver.Deploy(ctx, servingdriver.DeployRequest{

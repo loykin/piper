@@ -42,7 +42,7 @@ type Client struct {
 	member  memberclient.Client
 	project projectclient.Client
 	httpMu  sync.Mutex
-	httpIn  map[string]*io.PipeWriter
+	httpIn  map[string]chan *agentpb.MemberHTTPStreamData
 }
 
 // NewClient creates a Member-side tunnel client serving member's methods
@@ -52,7 +52,7 @@ func NewClient(cfg Config, member memberclient.Client, projectClients ...project
 	if len(projectClients) > 0 {
 		projectClient = projectClients[0]
 	}
-	return &Client{cfg: cfg, member: member, project: projectClient, httpIn: make(map[string]*io.PipeWriter)}
+	return &Client{cfg: cfg, member: member, project: projectClient, httpIn: make(map[string]chan *agentpb.MemberHTTPStreamData)}
 }
 
 // Run connects to Home and serves RPC commands, reconnecting on disconnect.
@@ -111,8 +111,8 @@ type memberStream interface {
 func (c *Client) serve(ctx context.Context, stream memberStream) error {
 	defer func() {
 		c.httpMu.Lock()
-		for id, inbound := range c.httpIn {
-			_ = inbound.CloseWithError(memberclient.ErrMemberUnavailable)
+		for id, frames := range c.httpIn {
+			close(frames)
 			delete(c.httpIn, id)
 		}
 		c.httpMu.Unlock()
@@ -189,8 +189,9 @@ func (c *Client) handleHTTPOpen(ctx context.Context, open *agentpb.MemberHTTPStr
 		return
 	}
 	reader, inbound := io.Pipe()
+	frames := make(chan *agentpb.MemberHTTPStreamData, 128)
 	c.httpMu.Lock()
-	c.httpIn[open.StreamId] = inbound
+	c.httpIn[open.StreamId] = frames
 	c.httpMu.Unlock()
 	conn := &streamConn{reader: reader, closed: make(chan struct{}), send: func(data []byte, end bool) error {
 		return send(&agentpb.MemberMessage{Payload: &agentpb.MemberMessage_HttpStream{HttpStream: &agentpb.MemberHTTPStreamData{StreamId: open.StreamId, Data: data, End: end}}})
@@ -205,31 +206,50 @@ func (c *Client) handleHTTPOpen(ctx context.Context, open *agentpb.MemberHTTPStr
 		}
 	})
 	go func() {
+		defer func() {
+			c.httpMu.Lock()
+			if c.httpIn[open.StreamId] == frames {
+				delete(c.httpIn, open.StreamId)
+			}
+			c.httpMu.Unlock()
+			_ = inbound.Close()
+		}()
+		for frame := range frames {
+			if frame.Error != "" {
+				_ = inbound.CloseWithError(fmt.Errorf("%s", frame.Error))
+				return
+			}
+			if len(frame.Data) > 0 {
+				if _, err := inbound.Write(frame.Data); err != nil {
+					return
+				}
+			}
+			if frame.End {
+				return
+			}
+		}
+		_ = inbound.CloseWithError(memberclient.ErrMemberUnavailable)
+	}()
+	go func() {
 		_ = serveOneHTTP(conn, handler)
-		c.httpMu.Lock()
-		delete(c.httpIn, open.StreamId)
-		c.httpMu.Unlock()
-		_ = inbound.Close()
 		_ = conn.Close()
 	}()
 }
 
 func (c *Client) deliverHTTP(frame *agentpb.MemberHTTPStreamData) {
 	c.httpMu.Lock()
-	inbound := c.httpIn[frame.StreamId]
-	c.httpMu.Unlock()
-	if inbound == nil {
+	frames := c.httpIn[frame.StreamId]
+	if frames == nil {
+		c.httpMu.Unlock()
 		return
 	}
-	if frame.Error != "" {
-		_ = inbound.CloseWithError(fmt.Errorf("%s", frame.Error))
-		return
-	}
-	if len(frame.Data) > 0 {
-		_, _ = inbound.Write(frame.Data)
-	}
-	if frame.End {
-		_ = inbound.Close()
+	select {
+	case frames <- frame:
+		c.httpMu.Unlock()
+	default:
+		delete(c.httpIn, frame.StreamId)
+		close(frames)
+		c.httpMu.Unlock()
 	}
 }
 

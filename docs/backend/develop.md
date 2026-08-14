@@ -1,5 +1,9 @@
 # Piper — Backend Agent Guide
 
+HTTP handlers and clients must also follow
+[`docs/backend/api-conventions.md`](api-conventions.md); the concrete contract
+is [`docs/openapi.yaml`](../openapi.yaml).
+
 ## Execution Model — Direct, In-Process, No Worker Tunnel
 
 Piper owns pipeline, notebook, and serving execution directly and in-process.

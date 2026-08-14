@@ -274,7 +274,7 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	push := localLogPushClient{store: p.logs, metrics: p.metrics}
-	batch := logsink.LogAppendPush{ProjectID: projectID, RunID: "run-metric", StepName: "train", Lines: []logsink.LogLine{{Ts: time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC), Stream: "stdout", Text: "PIPER_METRIC loss=0.312"}}}
+	batch := logsink.LogBatch{ProjectID: projectID, RunID: "run-metric", StepName: "train", Lines: []logsink.LogLine{{Ts: time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC), Stream: "stdout", Text: "PIPER_METRIC loss=0.312"}}}
 	if err := push.SendPush(iagent.MethodLogAppend, batch); err != nil {
 		t.Fatal(err)
 	}

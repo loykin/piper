@@ -20,7 +20,6 @@ export default defineConfig({
       '/schedules': process.env.PIPER_BACKEND_URL ?? 'http://localhost:8080',
       '/api': process.env.PIPER_BACKEND_URL ?? 'http://localhost:8080',
       '/health': process.env.PIPER_BACKEND_URL ?? 'http://localhost:8080',
-      '/serving': process.env.PIPER_BACKEND_URL ?? 'http://localhost:8080',
       '/notebooks': { target: process.env.PIPER_BACKEND_URL ?? 'http://localhost:8080', ws: true },
       '/notebook-volumes': process.env.PIPER_BACKEND_URL ?? 'http://localhost:8080',
       '/services': process.env.PIPER_BACKEND_URL ?? 'http://localhost:8080',

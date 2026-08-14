@@ -251,7 +251,7 @@ spec:
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /runs status = %d: %s", resp.StatusCode, b)
 	}

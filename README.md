@@ -597,11 +597,11 @@ POST   /api/projects/{project_id}/runs
 GET    /api/projects/{project_id}/runs
 GET    /api/projects/{project_id}/runs/{run_id}
 
-GET    /api/projects/{project_id}/serving
-POST   /api/projects/{project_id}/serving
-GET    /api/projects/{project_id}/serving/{name}
-DELETE /api/projects/{project_id}/serving/{name}
-POST   /api/projects/{project_id}/serving/{name}/restart
+GET    /api/projects/{project_id}/services
+POST   /api/projects/{project_id}/services
+GET    /api/projects/{project_id}/services/{name}
+DELETE /api/projects/{project_id}/services/{name}
+POST   /api/projects/{project_id}/services/{name}/restart
 
 GET    /api/settings
 GET    /health

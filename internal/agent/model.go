@@ -24,7 +24,7 @@ func (e *BusyError) Error() string {
 }
 
 // MethodLogAppend tags a logsink.PushClient.SendPush call as a batch of log
-// lines. Used in-process by internal/logsink's GRPCLogSink implementations
+// lines. Used in-process by internal/logsink's BufferedLogSink
 // (despite the name, no gRPC is involved once dispatch is direct-runtime —
 // see piper.go's localLogPushClient).
 const MethodLogAppend = "log.append"

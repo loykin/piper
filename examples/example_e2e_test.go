@@ -91,7 +91,7 @@ func submitPipeline(t *testing.T, serverURL, yamlStr string) string {
 		t.Fatalf("POST default project run: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		payload, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST default project run returned %d: %s", resp.StatusCode, payload)
 	}
@@ -573,7 +573,7 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 		t.Fatalf("create notebook: %v", err)
 	}
 	createResp.Body.Close()
-	if createResp.StatusCode != http.StatusCreated && createResp.StatusCode != http.StatusOK {
+	if createResp.StatusCode != http.StatusCreated {
 		t.Fatalf("create notebook: status %d", createResp.StatusCode)
 	}
 	t.Logf("notebook %s created, waiting for running...", nbName)

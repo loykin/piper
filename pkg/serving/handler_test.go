@@ -90,7 +90,7 @@ func TestListServices(t *testing.T) {
 	repo := newStubServingRepo(&Service{Name: "fraud-detector", Status: StatusRunning})
 	router := newServingRouter(HandlerDeps{Services: repo})
 
-	req := httptest.NewRequest(http.MethodGet, "/serving", nil)
+	req := httptest.NewRequest(http.MethodGet, "/services", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -120,13 +120,13 @@ func TestCreateService(t *testing.T) {
 	})
 
 	body := `{"yaml":"apiVersion: piper/v1\nkind: ModelService\n"}`
-	req := httptest.NewRequest(http.MethodPost, "/serving", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/services", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 	if !deployed {
 		t.Fatal("Deploy was not called")
@@ -136,7 +136,7 @@ func TestCreateService(t *testing.T) {
 func TestGetServiceNotFound(t *testing.T) {
 	router := newServingRouter(HandlerDeps{Services: newStubServingRepo()})
 
-	req := httptest.NewRequest(http.MethodGet, "/serving/nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/services/nonexistent", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -149,7 +149,7 @@ func TestGetServiceFound(t *testing.T) {
 	repo := newStubServingRepo(&Service{Name: "model-v1", Status: StatusRunning, Endpoint: "http://localhost:8000"})
 	router := newServingRouter(HandlerDeps{Services: repo})
 
-	req := httptest.NewRequest(http.MethodGet, "/serving/model-v1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/services/model-v1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -176,7 +176,7 @@ func TestDeleteService(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/serving/old-model", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/services/old-model", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -202,12 +202,12 @@ func TestRestartService(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/serving/live-model/restart", nil)
+	req := httptest.NewRequest(http.MethodPost, "/services/live-model/restart", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
 	}
 	if restarted != "live-model" {
 		t.Fatalf("Restart called with %q, want live-model", restarted)

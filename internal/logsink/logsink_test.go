@@ -8,21 +8,21 @@ import (
 
 type mockPushClient struct {
 	mu     sync.Mutex
-	pushes []LogAppendPush
+	pushes []LogBatch
 }
 
 func (m *mockPushClient) SendPush(_ string, payload any) error {
-	p := payload.(LogAppendPush)
+	p := payload.(LogBatch)
 	m.mu.Lock()
 	m.pushes = append(m.pushes, p)
 	m.mu.Unlock()
 	return nil
 }
 
-func (m *mockPushClient) received() []LogAppendPush {
+func (m *mockPushClient) received() []LogBatch {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]LogAppendPush, len(m.pushes))
+	out := make([]LogBatch, len(m.pushes))
 	copy(out, m.pushes)
 	return out
 }
@@ -37,9 +37,9 @@ func (m *mockPushClient) totalLines() int {
 	return n
 }
 
-func TestGRPCLogSink_StopFlushesPendingLines(t *testing.T) {
+func TestBufferedLogSink_StopFlushesPendingLines(t *testing.T) {
 	client := &mockPushClient{}
-	sink := NewGRPCLogSink("proj-1", client)
+	sink := NewBufferedLogSink("proj-1", client)
 
 	now := time.Now()
 	sink.Append("run-1", "runtime", "stdout", "line1", now)
@@ -56,9 +56,9 @@ func TestGRPCLogSink_StopFlushesPendingLines(t *testing.T) {
 	}
 }
 
-func TestGRPCLogSink_FlushesOnTimer(t *testing.T) {
+func TestBufferedLogSink_FlushesOnTimer(t *testing.T) {
 	client := &mockPushClient{}
-	sink := NewGRPCLogSink("proj-2", client)
+	sink := NewBufferedLogSink("proj-2", client)
 	defer sink.Stop()
 
 	sink.Append("run-2", "runtime", "stdout", "hello", time.Now())
@@ -73,9 +73,9 @@ func TestGRPCLogSink_FlushesOnTimer(t *testing.T) {
 	t.Fatal("line was not flushed within 3s (expected flush timer to fire)")
 }
 
-func TestGRPCLogSink_GroupsByRunIDAndStep(t *testing.T) {
+func TestBufferedLogSink_GroupsByRunIDAndStep(t *testing.T) {
 	client := &mockPushClient{}
-	sink := NewGRPCLogSink("proj-3", client)
+	sink := NewBufferedLogSink("proj-3", client)
 
 	now := time.Now()
 	sink.Append("run-a", "step-1", "stdout", "a1", now)
@@ -99,17 +99,17 @@ func TestGRPCLogSink_GroupsByRunIDAndStep(t *testing.T) {
 	}
 }
 
-func TestGRPCLogSink_StopIsIdempotent(t *testing.T) {
+func TestBufferedLogSink_StopIsIdempotent(t *testing.T) {
 	client := &mockPushClient{}
-	sink := NewGRPCLogSink("proj-5", client)
+	sink := NewBufferedLogSink("proj-5", client)
 	sink.Append("run-5", "runtime", "stdout", "x", time.Now())
 	sink.Stop()
 	sink.Stop() // must not panic
 }
 
-func TestGRPCLogSink_AppendDoesNotBlockWhenFull(t *testing.T) {
+func TestBufferedLogSink_AppendDoesNotBlockWhenFull(t *testing.T) {
 	client := &mockPushClient{}
-	sink := NewGRPCLogSink("proj-4", client)
+	sink := NewBufferedLogSink("proj-4", client)
 	defer sink.Stop()
 
 	done := make(chan struct{})

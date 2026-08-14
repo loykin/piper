@@ -223,7 +223,6 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 		projectRef = project.LocalRef
 	}
 	projectAPI := userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
-	projectAPI.Use(relayRemoteProject(projectMember, projectRef))
 	// System-scoped credentials (e.g. the artifact-storage s3 credential).
 	credential.NewHandler(p.credentials).RegisterRoutes(userAPI.Group("/system", p.requireSystemAdmin(), project.SystemContext()))
 
@@ -237,7 +236,12 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	})
 	runHandler.RegisterRoutes(projectAPI)
 
-	memberHandlers := p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
+	// Every route registered by the Member-owned composition root is relayed
+	// for a remotely owned Project. Keeping the middleware on this group makes
+	// routing fail closed: a newly added Member API cannot silently fall through
+	// to Home merely because somebody forgot to extend a path allowlist.
+	memberProjectAPI := projectAPI.Group("", relayRemoteProject(projectMember, projectRef))
+	memberHandlers := p.registerMemberProjectRoutes(memberProjectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 		projectContext, _ := project.FromContext(ctx)
 		auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}
 		if identity, ok := security.IdentityFromContext(ctx); ok && identity != nil {
@@ -343,17 +347,6 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
-var relayedProjectPrefixes = map[string]struct{}{
-	"credentials":      {},
-	"storage":          {},
-	"schedules":        {},
-	"serving":          {},
-	"notebooks":        {},
-	"notebook-volumes": {},
-	"viewers":          {},
-	"pipelines":        {},
-}
-
 func relayRemoteProject(client projectclient.Client, resolveRef func(string) project.ProjectRef) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if client == nil || resolveRef == nil {
@@ -366,18 +359,6 @@ func relayRemoteProject(client projectclient.Client, resolveRef func(string) pro
 			return
 		}
 		path := strings.TrimPrefix(c.Request.URL.Path, "/api/projects/"+projectContext.ID)
-		segment := strings.TrimPrefix(path, "/")
-		if slash := strings.IndexByte(segment, '/'); slash >= 0 {
-			segment = segment[:slash]
-		}
-		_, relay := relayedProjectPrefixes[segment]
-		if !relay && segment == "runs" && strings.HasSuffix(path, "/view") {
-			relay = true
-		}
-		if !relay {
-			c.Next()
-			return
-		}
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "read request body failed"})

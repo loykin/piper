@@ -294,9 +294,11 @@ spec:
       namespace: %s
 `, ns))
 	waitK8sE2EServingResources(t, ns, k8sE2EServingResourceName("multi-serving"), 2*time.Minute)
+	t.Log("initial serving resources created")
 
 	const nbName = "multi-notebook"
 	nbYAML := fmt.Sprintf("metadata:\n  name: %s\nspec:\n  volume:\n    size: 1Gi\n  driver:\n    placement:\n      runtime: k8s\n    k8s:\n      image: %s\n      namespace: %s\n", nbName, nbImage, ns)
+	t.Log("creating multi-domain notebook")
 	k8sE2EPostNotebook(t, serverURL, nbYAML, "")
 	if !waitK8sE2ENotebookStatus(t, serverURL, nbName, "running", k8sE2ENotebookReadyTimeout) {
 		dumpK8sE2EDebug(t, ns)
@@ -759,7 +761,7 @@ func k8sE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /runs status=%d body=%s", resp.StatusCode, b)
 	}
@@ -778,14 +780,14 @@ func k8sE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 func k8sE2EPostService(t *testing.T, serverURL, serviceYAML string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": serviceYAML})
-	resp, err := http.Post(serverURL+k8sE2EProjectBase()+"/serving", "application/json", bytes.NewReader(body)) //nolint:noctx
+	resp, err := http.Post(serverURL+k8sE2EProjectBase()+"/services", "application/json", bytes.NewReader(body)) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("POST /serving status=%d body=%s", resp.StatusCode, b)
+		t.Fatalf("POST /services status=%d body=%s", resp.StatusCode, b)
 	}
 }
 
@@ -1111,7 +1113,7 @@ func k8sE2EPostNotebook(t *testing.T, serverURL, notebookYAML, volumeID string) 
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /notebooks status=%d: %s", resp.StatusCode, b)
 	}
@@ -1167,7 +1169,7 @@ func k8sE2ENotebookAction(t *testing.T, serverURL, name, action string) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if resp.StatusCode != http.StatusNoContent {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /notebooks/%s/%s status=%d: %s", name, action, resp.StatusCode, b)
 	}
@@ -1181,7 +1183,7 @@ func k8sE2EDeleteNotebook(t *testing.T, serverURL, name string) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode != http.StatusNoContent {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("DELETE /notebooks/%s status=%d: %s", name, resp.StatusCode, b)
 	}
@@ -1195,7 +1197,7 @@ func k8sE2EPurgeVolume(t *testing.T, serverURL, volumeID string) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode != http.StatusNoContent {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("DELETE /notebook-volumes/%s status=%d: %s", volumeID, resp.StatusCode, b)
 	}

@@ -464,7 +464,7 @@ func (d *Driver) ensureServingLogStream(ctx context.Context, projectID, name str
 	d.logCancels[key] = cancel
 	d.logMu.Unlock()
 
-	sink := logsink.NewGRPCLogSink(projectID, d.cfg.LogClient)
+	sink := logsink.NewBufferedLogSink(projectID, d.cfg.LogClient)
 	ns := deployment.Namespace
 	labelSelector := metav1.FormatLabelSelector(deployment.Spec.Selector)
 	runID := "svc:" + name

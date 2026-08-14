@@ -1,5 +1,5 @@
-// Package logsink provides the LogSink interface and gRPC-backed implementation
-// for streaming baremetal process logs to the master logstore.
+// Package logsink provides buffered, transport-neutral delivery of runtime
+// logs to Piper's log store.
 package logsink
 
 import (
@@ -18,20 +18,21 @@ type LogSink interface {
 	Stop()
 }
 
-// PushClient is the subset of grpcagent.Client used by GRPCLogSink.
+// PushClient is the delivery boundary used by BufferedLogSink. Direct runtimes
+// provide an in-process implementation.
 type PushClient interface {
 	SendPush(method string, payload any) error
 }
 
-// LogAppendPush is the gRPC push payload for MethodLogAppend.
-type LogAppendPush struct {
+// LogBatch is the batched payload for MethodLogAppend.
+type LogBatch struct {
 	ProjectID string    `json:"project_id"`
 	RunID     string    `json:"run_id"`
 	StepName  string    `json:"step_name"`
 	Lines     []LogLine `json:"lines"`
 }
 
-// LogLine is a single log entry within a LogAppendPush.
+// LogLine is a single log entry within a LogBatch.
 type LogLine struct {
 	Stream string    `json:"stream"`
 	Text   string    `json:"text"`
@@ -46,9 +47,9 @@ type pendingLine struct {
 	ts       time.Time
 }
 
-// GRPCLogSink buffers log lines and forwards them to the master via gRPC push.
+// BufferedLogSink buffers log lines and forwards them through PushClient.
 // Lines are flushed every 500 ms or when the internal buffer reaches 256 lines.
-type GRPCLogSink struct {
+type BufferedLogSink struct {
 	projectID string
 	client    PushClient
 	ch        chan pendingLine
@@ -63,9 +64,9 @@ const (
 	logSinkFlushInterval = 500 * time.Millisecond
 )
 
-// NewGRPCLogSink creates a GRPCLogSink and starts its background flush goroutine.
-func NewGRPCLogSink(projectID string, client PushClient) *GRPCLogSink {
-	s := &GRPCLogSink{
+// NewBufferedLogSink creates a BufferedLogSink and starts its background flush goroutine.
+func NewBufferedLogSink(projectID string, client PushClient) *BufferedLogSink {
+	s := &BufferedLogSink{
 		projectID: projectID,
 		client:    client,
 		ch:        make(chan pendingLine, logSinkBufSize),
@@ -78,7 +79,7 @@ func NewGRPCLogSink(projectID string, client PushClient) *GRPCLogSink {
 
 // Append enqueues a log line for delivery. Drops the line if the internal
 // channel is full to avoid blocking the caller.
-func (s *GRPCLogSink) Append(runID, stepName, stream, line string, ts time.Time) {
+func (s *BufferedLogSink) Append(runID, stepName, stream, line string, ts time.Time) {
 	select {
 	case s.ch <- pendingLine{runID: runID, stepName: stepName, stream: stream, text: line, ts: ts}:
 	default:
@@ -88,12 +89,12 @@ func (s *GRPCLogSink) Append(runID, stepName, stream, line string, ts time.Time)
 
 // Stop signals the background goroutine to flush remaining lines and waits
 // for it to finish. Safe to call more than once.
-func (s *GRPCLogSink) Stop() {
+func (s *BufferedLogSink) Stop() {
 	s.stopOnce.Do(func() { close(s.stopCh) })
 	s.wg.Wait()
 }
 
-func (s *GRPCLogSink) run() {
+func (s *BufferedLogSink) run() {
 	defer s.wg.Done()
 
 	ticker := time.NewTicker(logSinkFlushInterval)
@@ -134,7 +135,7 @@ func (s *GRPCLogSink) run() {
 }
 
 // send groups lines by (runID, stepName) and issues one push per group.
-func (s *GRPCLogSink) send(lines []pendingLine) {
+func (s *BufferedLogSink) send(lines []pendingLine) {
 	type key struct{ runID, stepName string }
 	groups := make(map[key][]LogLine, 2)
 	for _, l := range lines {
@@ -142,7 +143,7 @@ func (s *GRPCLogSink) send(lines []pendingLine) {
 		groups[k] = append(groups[k], LogLine{Stream: l.stream, Text: l.text, Ts: l.ts})
 	}
 	for k, ll := range groups {
-		payload := LogAppendPush{
+		payload := LogBatch{
 			ProjectID: s.projectID,
 			RunID:     k.runID,
 			StepName:  k.stepName,

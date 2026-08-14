@@ -477,7 +477,7 @@ func (d *Driver) ensureNotebookLogStream(ctx context.Context, projectID, name st
 
 	ns := sts.Namespace
 	podName := sts.Name + "-0" // StatefulSet pod naming convention
-	sink := logsink.NewGRPCLogSink(projectID, d.cfg.LogClient)
+	sink := logsink.NewBufferedLogSink(projectID, d.cfg.LogClient)
 	runID := "nb:" + name
 
 	go func() {

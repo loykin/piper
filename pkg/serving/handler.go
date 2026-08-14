@@ -36,25 +36,25 @@ func currentProjectID(c *gin.Context) string {
 // RegisterRoutes mounts the JSON API routes for serving.
 // The browser predict proxy is registered separately via RegisterProxyRoutes.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.GET("/serving", h.listServices)
-	rg.GET("/serving/history", h.listServiceHistory)
-	rg.GET("/serving/:name", h.getService)
+	rg.GET("/services", h.listServices)
+	rg.GET("/services/history", h.listServiceHistory)
+	rg.GET("/services/:name", h.getService)
 
 	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
-	member.POST("/serving", h.createService)
-	member.DELETE("/serving/:name", h.deleteService)
-	member.POST("/serving/:name/restart", h.restartService)
+	member.POST("/services", h.createService)
+	member.DELETE("/services/:name", h.deleteService)
+	member.POST("/services/:name/restart", h.restartService)
 }
 
 // RegisterProxyRoutes mounts the browser predict proxy at the given router group.
 // Expected group path: /projects/:project_id
 func (h *Handler) RegisterProxyRoutes(rg *gin.RouterGroup) {
 	if h.deps.Proxy != nil {
-		rg.Any("/serving/predict/*path", gin.WrapH(h.deps.Proxy))
+		rg.Any("/services/predict/*path", gin.WrapH(h.deps.Proxy))
 	}
 }
 
-// GET /serving
+// GET /services
 func (h *Handler) listServices(c *gin.Context) {
 	svcs, err := h.deps.Services.List(c.Request.Context(), currentProjectID(c))
 	if err != nil {
@@ -68,7 +68,7 @@ func (h *Handler) listServices(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// POST /serving
+// POST /services
 func (h *Handler) createService(c *gin.Context) {
 	var req struct {
 		YAML string `json:"yaml"`
@@ -86,10 +86,10 @@ func (h *Handler) createService(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, svc.Redact())
+	c.JSON(http.StatusCreated, svc.Redact())
 }
 
-// GET /serving/history
+// GET /services/history
 func (h *Handler) listServiceHistory(c *gin.Context) {
 	history, err := h.deps.Services.ListHistory(c.Request.Context(), currentProjectID(c))
 	if err != nil {
@@ -99,7 +99,7 @@ func (h *Handler) listServiceHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, history)
 }
 
-// GET /serving/:name
+// GET /services/:name
 func (h *Handler) getService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
@@ -110,7 +110,7 @@ func (h *Handler) getService(c *gin.Context) {
 	c.JSON(http.StatusOK, svc.Redact())
 }
 
-// DELETE /serving/:name
+// DELETE /services/:name
 func (h *Handler) deleteService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
@@ -131,7 +131,7 @@ func (h *Handler) deleteService(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// POST /serving/:name/restart
+// POST /services/:name/restart
 func (h *Handler) restartService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
@@ -145,5 +145,5 @@ func (h *Handler) restartService(c *gin.Context) {
 			return
 		}
 	}
-	c.Status(http.StatusOK)
+	c.Status(http.StatusNoContent)
 }

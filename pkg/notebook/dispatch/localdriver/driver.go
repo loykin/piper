@@ -2,10 +2,9 @@
 // docker and baremetal (process) runtimes — no remote worker/tunnel
 // involved, mirroring fed.md §13.2's Pipeline direct-runtime treatment.
 //
-// K8s is not covered here: pkg/notebook/worker/driver/k8s doesn't implement
-// the shared notebookdriver.Driver interface docker/process share (it
-// registers its own RPC handlers directly), so it needs its own adaptation
-// as a separate follow-up rather than fitting this package's shape.
+// K8s is implemented by the sibling localdriver/k8s package at the higher
+// notebook.Driver boundary because StatefulSet/PVC lifecycle does not fit
+// the docker/process driver's process-like contract.
 package localdriver
 
 import (
@@ -144,15 +143,9 @@ func (d *Driver) volumeDir(volumeID string) string {
 //
 // vol.WorkerID is deliberately left empty rather than set to cfg.WorkerID.
 // pkg/notebook/handler.go's listVolumeFiles and pkg/template/handler.go's
-// snapshot upload both branch on vol.WorkerID != "" to decide whether to
-// RPC a remote worker or walk the local filesystem directly — and
-// NotebookVolume.WorkerID's doc comment already defines empty as "network
-// storage, no specific worker owns it". Direct-runtime volumes live on the
-// same host as Piper itself, so they belong on the local-filesystem path,
-// exactly like that empty-WorkerID case; setting a fixed local WorkerID
-// here would make handler code route through grpcAgentServer.SendRPC to a
-// worker ID with no real connection ever registered for it, which always
-// fails with "agent not connected".
+// Direct-runtime volumes are owned by the Piper installation rather than by
+// a separately addressable worker, so no worker identity is persisted. File
+// access is selected through the configured WorkspaceReader.
 func (d *Driver) ProvisionVolume(_ context.Context, vol *notebook.NotebookVolume, _ notebook.Notebook) error {
 	if vol.ID == "" {
 		return fmt.Errorf("localdriver: volume id is required")
@@ -277,7 +270,7 @@ func (d *Driver) startAsync(spec notebook.Notebook, projectID, name, key string,
 	logRuntimeStart(d.cfg.Infrastructure, rn, workDir, port)
 	var nbSink logsink.LogSink
 	if d.cfg.LogClient != nil {
-		nbSink = logsink.NewRedactingSink(logsink.NewGRPCLogSink(projectID, d.cfg.LogClient), logsink.ValuesFromEnv(extraEnv))
+		nbSink = logsink.NewRedactingSink(logsink.NewBufferedLogSink(projectID, d.cfg.LogClient), logsink.ValuesFromEnv(extraEnv))
 	}
 
 	started, err := d.driver.Start(context.Background(), notebookdriver.StartRequest{

@@ -194,8 +194,8 @@ func TestCreateSweep_Success(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
 	}
 	if gotReq.Experiment != "lr-sweep" {
 		t.Errorf("experiment = %q, want lr-sweep", gotReq.Experiment)
@@ -347,8 +347,8 @@ func TestCreateRunPassesExperiment(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
 	if gotExperiment != "exp-v2" {
 		t.Fatalf("experiment = %q, want exp-v2", gotExperiment)

@@ -189,10 +189,18 @@ func (r *remoteMemberClient) ServeProjectHTTP(ctx context.Context, auth membercl
 
 func (r *remoteMemberClient) deliverHTTP(frame *agentpb.MemberHTTPStreamData) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	ch := r.streams[frame.StreamId]
-	if ch != nil {
-		ch <- frame
+	if ch == nil {
+		r.mu.Unlock()
+		return
+	}
+	select {
+	case ch <- frame:
+		r.mu.Unlock()
+	default:
+		delete(r.streams, frame.StreamId)
+		close(ch)
+		r.mu.Unlock()
 	}
 }
 

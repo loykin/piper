@@ -204,7 +204,7 @@ func (h *Handler) createRun(c *gin.Context) {
 		return
 	}
 	c.Header("Idempotency-Key", idempotencyKey)
-	c.JSON(http.StatusOK, gin.H{"run_id": resp.RunID})
+	c.JSON(http.StatusCreated, gin.H{"run_id": resp.RunID})
 }
 
 // POST /runs/sweep
@@ -239,7 +239,7 @@ func (h *Handler) createSweep(c *gin.Context) {
 		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"experiment": resp.Experiment, "run_ids": resp.RunIDs})
+	c.JSON(http.StatusCreated, gin.H{"experiment": resp.Experiment, "run_ids": resp.RunIDs})
 }
 
 // GET /runs/:id

@@ -98,7 +98,7 @@ func postRun(t *testing.T, serverURL, yaml string) string {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /runs status = %d: %s", resp.StatusCode, body)
 	}
@@ -589,28 +589,28 @@ func newE2EServerWithDirAndStorage(t *testing.T, outputDir, storageURL string) (
 	return p, srv
 }
 
-// postService submits a ModelService YAML to POST /serving.
+// postService submits a ModelService YAML to POST /services.
 func postService(t *testing.T, serverURL, yaml string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"yaml": yaml})
-	resp, err := http.Post(serverURL+e2eBase()+"/serving", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(serverURL+e2eBase()+"/services", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("POST /serving status = %d: %s", resp.StatusCode, b)
+		t.Fatalf("POST /services status = %d: %s", resp.StatusCode, b)
 	}
 }
 
-// waitServiceRunID polls GET /serving/{name} until the returned run_id matches
+// waitServiceRunID polls GET /services/{name} until the returned run_id matches
 // wantRunID or the timeout expires.
 func waitServiceRunID(t *testing.T, serverURL, serviceName, wantRunID string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL + e2eBase() + "/serving/" + serviceName)
+		resp, err := http.Get(serverURL + e2eBase() + "/services/" + serviceName)
 		if err != nil {
 			time.Sleep(200 * time.Millisecond)
 			continue
@@ -679,7 +679,7 @@ spec:
 
 	// Service YAML pointing at an artifact from our pipeline.
 	// The initial deploy uses run: latest; since no run exists yet for this pipeline,
-	// we bootstrap it with from_uri so the first POST /serving succeeds without
+	// we bootstrap it with from_uri so the first POST /services succeeds without
 	// needing a pre-existing run. Subsequent auto-deploys will use from_artifact.
 	serviceYAML := fmt.Sprintf(`
 apiVersion: piper/v1

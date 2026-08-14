@@ -189,7 +189,7 @@ func TestCreateSchedule_Immediate(t *testing.T) {
 		"type": "immediate",
 	})
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
 	var resp map[string]string
@@ -221,7 +221,7 @@ func TestCreateSchedule_PersistsMaxRuns(t *testing.T) {
 		"max_runs": 5,
 	})
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
 	got := repo.schedules["sch-test-id"]
@@ -448,7 +448,7 @@ func TestCreateSchedule_Cron_CallsSchedAdd(t *testing.T) {
 		"cron": "0 0 * * *",
 	})
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
 	if len(sched.added) != 1 {

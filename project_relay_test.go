@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
@@ -19,6 +21,17 @@ type streamProjectStub struct{ called bool }
 
 func (*streamProjectStub) DoProjectRequest(context.Context, memberclient.AuthContext, project.ProjectRef, projectclient.Request) (projectclient.Response, error) {
 	return projectclient.Response{}, nil
+}
+
+type projectRequestStub struct {
+	called bool
+	path   string
+}
+
+func (s *projectRequestStub) DoProjectRequest(_ context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req projectclient.Request) (projectclient.Response, error) {
+	s.called = true
+	s.path = req.Path
+	return projectclient.Response{Status: http.StatusTeapot, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: []byte(`{"remote":true}`)}, nil
 }
 
 func (s *streamProjectStub) ServeProjectHTTP(_ context.Context, auth memberclient.AuthContext, ref project.ProjectRef, w http.ResponseWriter, req *http.Request) error {
@@ -93,6 +106,32 @@ func TestRemoteProjectPipelineAPIWritesOnlyMemberRepository(t *testing.T) {
 	router.ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), "member-owned") {
 		t.Fatalf("GET status=%d body=%s", listRec.Code, listRec.Body.String())
+	}
+}
+
+func TestRemoteMemberRouteGroupFailsClosedForNewPath(t *testing.T) {
+	const projectID = "project-1"
+	home := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}})
+	if err := home.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: "Remote", OwnerMemberID: "member-1"}); err != nil {
+		t.Fatal(err)
+	}
+	stub := &projectRequestStub{}
+	router := gin.New()
+	group := router.Group("/api/projects/:project_id", project.Require(home.repos.Project, nil, security.ProjectRoleViewer))
+	memberRoutes := group.Group("", relayRemoteProject(stub, func(id string) project.ProjectRef {
+		return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
+	}))
+	memberRoutes.GET("/future-domain/resource", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"local": true})
+	})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/future-domain/resource", nil))
+	if !stub.called || stub.path != "/future-domain/resource" {
+		t.Fatalf("remote relay called=%v path=%q", stub.called, stub.path)
+	}
+	if rec.Code != http.StatusTeapot || !strings.Contains(rec.Body.String(), `"remote":true`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

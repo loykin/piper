@@ -51,7 +51,7 @@ type Config struct {
 	LogClient   logsink.PushClient
 }
 
-// Worker manages K8s pipeline workloads dispatched via gRPC.
+// Worker manages K8s pipeline workloads dispatched directly in-process.
 // It uses K8sDriver to satisfy the pdriver.Driver interface, making
 // K8s execution share the same lifecycle contract as baremetal/docker.
 type Worker struct {
@@ -161,7 +161,7 @@ func (a *Worker) dispatchPipeline(ctx context.Context, task *proto.Task) error {
 		StorageURL:   storageURL,
 	}
 	if a.cfg.LogClient != nil {
-		spec.LogSink = logsink.NewRedactingSink(logsink.NewGRPCLogSink(task.ProjectID, a.cfg.LogClient), logsink.ValuesFromEnv(execEnv))
+		spec.LogSink = logsink.NewRedactingSink(logsink.NewBufferedLogSink(task.ProjectID, a.cfg.LogClient), logsink.ValuesFromEnv(execEnv))
 	}
 
 	handle, err := a.driver.Start(ctx, task, spec)

@@ -26,6 +26,11 @@ export interface Step {
   error?: string
 }
 
+export interface RunDetail {
+  run: Run
+  steps: Step[]
+}
+
 export interface LogLine {
   id: number
   run_id: string

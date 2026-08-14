@@ -13,9 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
-	corev1 "k8s.io/api/core/v1"
-
 	iagent "github.com/loykin/piper/internal/agent"
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/internal/event"
@@ -28,19 +25,13 @@ import (
 	"github.com/loykin/piper/internal/srcfetch"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/notebook"
-	"github.com/loykin/piper/pkg/notebook/dispatch/localdriver"
-	notebookk8sdriver "github.com/loykin/piper/pkg/notebook/dispatch/localdriver/k8s"
-	notebookworkerdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
-	notebookdocker "github.com/loykin/piper/pkg/notebook/worker/driver/docker"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 	"github.com/loykin/piper/pkg/serving"
-	servinglocaldriver "github.com/loykin/piper/pkg/serving/dispatch/localdriver"
-	servingk8sdriver "github.com/loykin/piper/pkg/serving/dispatch/localdriver/k8s"
-	servingdocker "github.com/loykin/piper/pkg/serving/worker/driver/docker"
 	"github.com/loykin/piper/pkg/storage"
+	"gopkg.in/yaml.v3"
 
 	storemod "github.com/loykin/piper/internal/store"
 )
@@ -197,130 +188,16 @@ func New(cfg Config) (*Piper, error) {
 		return nil, fmt.Errorf("create model dir: %w", err)
 	}
 
-	// servingMgr is assigned below, after servingDriver is constructed, but
-	// the ReportStatus closure passed into localdriver.New must already
-	// reference it — see the identical nbMgr/nbDriver pattern below for why
-	// this is safe.
-	var servingMgr *serving.Manager
-	var servingDriver serving.Driver
-	// servingK8sDriver is non-nil only in the RuntimeK8s case — WithStorage
-	// below applies there (it fetches stored artifacts remotely via a pod
-	// init container), unlike docker/baremetal direct-runtime, which needs
-	// no storage URL/token handoff since localdriver.Deploy receives an
-	// already-resolved local model path (ArtifactTarget=Local).
-	var servingK8sDriver *servingk8sdriver.Driver
-	// servingK8sObserver's Observe loop is launched as its own background
-	// goroutine below (separate from runtimeObserver, which is
-	// Pipeline-specific) once p.ctx exists.
-	var servingK8sObserver interface{ Observe(context.Context) }
-	switch cfg.Runtime.Type {
-	case RuntimeDocker, RuntimeBaremetal:
-		lsd, err := servinglocaldriver.New(servinglocaldriver.Config{
-			WorkerID:       servingLocalWorkerID,
-			Infrastructure: cfg.Runtime.Type,
-			Docker:         servingdocker.Config{Network: cfg.Runtime.Docker.Network},
-			LogClient:      localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			EnvResolver:    credentialStore.ResolveEnv,
-			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return servingMgr.UpdateStatus(context.Background(), projectID, servingLocalWorkerID, name, status, endpoint)
-			},
-		})
-		if err != nil {
-			_ = repos.Close()
-			return nil, fmt.Errorf("create serving local driver: %w", err)
-		}
-		servingDriver = lsd
-	case RuntimeK8s:
-		ksd, err := servingk8sdriver.New(servingk8sdriver.Config{
-			WorkerID:             servingK8sLocalWorkerID,
-			Namespaces:           cfg.Runtime.K8s.Namespaces,
-			Client:               cfg.Runtime.K8s.Client,
-			ArtifactFetcherImage: cfg.Runtime.K8s.PipelineRunnerImage,
-			ArtifactPullPolicy:   corev1.PullPolicy(cfg.Runtime.K8s.ImagePullPolicy),
-			WorkloadURL:          cfg.Runtime.K8s.WorkloadURL,
-			WorkerToken:          cfg.Server.WorkerToken,
-			LogClient:            localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return servingMgr.UpdateStatus(context.Background(), projectID, servingK8sLocalWorkerID, name, status, endpoint)
-			},
-		})
-		if err != nil {
-			_ = repos.Close()
-			return nil, fmt.Errorf("create serving k8s driver: %w", err)
-		}
-		servingDriver = ksd
-		servingK8sDriver = ksd
-		servingK8sObserver = ksd
-	default:
+	servingRuntime, err := composeServingRuntime(cfg, repos, credentialStore)
+	if err != nil {
 		_ = repos.Close()
-		return nil, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
+		return nil, err
 	}
-	servingMgr = serving.New(repos.Serving, servingDriver)
-
-	// nbMgr is assigned below, after nbDriver is constructed, but the
-	// ReportStatus closure passed into localdriver.New must already
-	// reference it — Go closures capture the variable, not its value at
-	// closure-creation time, so this is safe as long as nbMgr is assigned
-	// before any notebook actually starts (guaranteed: no HTTP handler can
-	// run before New returns).
-	var nbMgr *notebook.Manager
-	var nbDriver notebook.Driver
-	var nbWorkspace notebook.WorkspaceReader
-	// nbK8sObserver is non-nil only in the RuntimeK8s case; its Observe
-	// loop is launched as its own background goroutine below (separate from
-	// runtimeObserver, which is Pipeline-specific) once p.ctx exists.
-	var nbK8sObserver interface{ Observe(context.Context) }
-	switch cfg.Runtime.Type {
-	case RuntimeDocker, RuntimeBaremetal:
-		infra := notebookworkerdriver.ModeDocker
-		if cfg.Runtime.Type == RuntimeBaremetal {
-			infra = notebookworkerdriver.ModeProcess
-		}
-		ld, err := localdriver.New(localdriver.Config{
-			WorkerID:         notebookLocalWorkerID,
-			Infrastructure:   infra,
-			PlacementRuntime: cfg.Runtime.Type,
-			Docker:           notebookdocker.Config{Network: cfg.Runtime.Docker.Network},
-			NotebooksRoot:    cfg.NotebookWorker.NotebooksRoot,
-			PortRange:        cfg.NotebookWorker.PortRange,
-			LogClient:        localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			EnvResolver:      credentialStore.ResolveEnv,
-			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return nbMgr.UpdateStatus(context.Background(), projectID, notebookLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
-			},
-		})
-		if err != nil {
-			_ = repos.Close()
-			return nil, fmt.Errorf("create notebook local driver: %w", err)
-		}
-		nbDriver = ld
-		nbWorkspace = notebook.LocalWorkspaceReader{}
-	case RuntimeK8s:
-		nbWorkspace = &notebookk8sdriver.WorkspaceReader{
-			Client:     cfg.Runtime.K8s.Client,
-			RestConfig: cfg.Runtime.K8s.RestConfig,
-			Namespaces: cfg.Runtime.K8s.Namespaces,
-		}
-		kd, err := notebookk8sdriver.New(notebookk8sdriver.Config{
-			WorkerID:   notebookK8sLocalWorkerID,
-			Namespaces: cfg.Runtime.K8s.Namespaces,
-			Client:     cfg.Runtime.K8s.Client,
-			LogClient:  localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return nbMgr.UpdateStatus(context.Background(), projectID, notebookK8sLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
-			},
-		})
-		if err != nil {
-			_ = repos.Close()
-			return nil, fmt.Errorf("create notebook k8s driver: %w", err)
-		}
-		nbDriver = kd
-		nbK8sObserver = kd
-	default:
+	notebookRuntime, err := composeNotebookRuntime(cfg, repos, credentialStore)
+	if err != nil {
 		_ = repos.Close()
-		return nil, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
+		return nil, err
 	}
-	nbMgr = notebook.New(repos.Notebook, repos.NotebookVolume, nbDriver)
 	bgCtx, stopFn := context.WithCancel(context.Background())
 	q := queue.NewQueue(bgCtx, repos.Run, repos.Step)
 	if cfg.Queue.MaxAttempts > 0 || cfg.Queue.RetryDelay > 0 {
@@ -337,11 +214,11 @@ func New(cfg Config) (*Piper, error) {
 		credentials: credentialStore,
 		queue:       q,
 		serving: servingBundle{
-			manager: servingMgr,
+			manager: servingRuntime.manager,
 			proxy:   serving.NewProxy(repos.Serving),
 		},
-		notebookManager: nbMgr,
-		nbWorkspace:     nbWorkspace,
+		notebookManager: notebookRuntime.manager,
+		nbWorkspace:     notebookRuntime.workspace,
 		stopCtx:         stopFn,
 		events:          event.NewHub(),
 	}
@@ -364,8 +241,8 @@ func New(cfg Config) (*Piper, error) {
 		}
 	}
 	q.SetStorageConfig(p.storageURL, cfg.Storage.Token)
-	if servingK8sDriver != nil {
-		servingK8sDriver.WithStorage(p.storageURL, cfg.Storage.Token)
+	if servingRuntime.k8sDriver != nil {
+		servingRuntime.k8sDriver.WithStorage(p.storageURL, cfg.Storage.Token)
 	}
 	p.resolver = &piperArtifactResolver{
 		runRepo:    repos.Run,
@@ -373,109 +250,37 @@ func New(cfg Config) (*Piper, error) {
 		storageURL: p.storageURL,
 		store:      p.store,
 	}
-	var runtimeObserver interface{ Observe(context.Context) }
-	switch cfg.Runtime.Type {
-	case RuntimeK8s:
-		k8sBackend, err := pipelinedispatch.NewK8sBackend(pipelinedispatch.K8sBackendConfig{
-			Context:             bgCtx,
-			Client:              cfg.Runtime.K8s.Client,
-			Namespaces:          cfg.Runtime.K8s.Namespaces,
-			PipelineRunnerImage: cfg.Runtime.K8s.PipelineRunnerImage,
-			ImagePullPolicy:     cfg.Runtime.K8s.ImagePullPolicy,
-			TTLAfterFinished:    cfg.Runtime.K8s.TTLAfterFinished,
-			MasterURL:           cfg.Runtime.K8s.WorkloadURL,
-			WorkerToken:         cfg.Server.WorkerToken,
-			LogClient:           localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			Complete: func(result proto.TaskResult) error {
-				persistTaskMetrics(context.Background(), repos.Metric, result)
-				return q.Complete(context.Background(), result)
-			},
-			RenewLeases: q.RenewLeases,
-		})
-		if err != nil {
-			stopFn()
-			_ = repos.Close()
-			return nil, fmt.Errorf("create k8s runtime backend: %w", err)
-		}
-		p.SetBackend(k8sBackend)
-		runtimeObserver = k8sBackend
-	case RuntimeDocker:
-		concurrency := cfg.Runtime.Docker.Concurrency
-		if concurrency <= 0 {
-			concurrency = 4
-		}
-		dockerBackend, err := pipelinedispatch.NewDockerBackend(pipelinedispatch.DockerBackendConfig{
-			Network:     cfg.Runtime.Docker.Network,
-			OutputDir:   cfg.OutputDir,
-			Concurrency: concurrency,
-			MasterURL:   cfg.Runtime.Docker.WorkloadURL,
-			WorkerToken: cfg.Server.WorkerToken,
-			LogClient:   localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			Complete: func(result proto.TaskResult) error {
-				persistTaskMetrics(context.Background(), repos.Metric, result)
-				return q.Complete(context.Background(), result)
-			},
-			RenewLeases: q.RenewLeases,
-		})
-		if err != nil {
-			stopFn()
-			_ = repos.Close()
-			return nil, fmt.Errorf("create docker runtime backend: %w", err)
-		}
-		p.SetBackend(dockerBackend)
-		runtimeObserver = dockerBackend
-	case RuntimeBaremetal:
-		concurrency := cfg.Runtime.Baremetal.Concurrency
-		if concurrency <= 0 {
-			concurrency = 4
-		}
-		baremetalBackend, err := pipelinedispatch.NewBaremetalBackend(pipelinedispatch.BaremetalBackendConfig{
-			MetaDir:     cfg.Runtime.Baremetal.MetaDir,
-			OutputDir:   cfg.OutputDir,
-			Concurrency: concurrency,
-			LogClient:   localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			Complete: func(result proto.TaskResult) error {
-				persistTaskMetrics(context.Background(), repos.Metric, result)
-				return q.Complete(context.Background(), result)
-			},
-			RenewLeases: q.RenewLeases,
-		})
-		if err != nil {
-			stopFn()
-			_ = repos.Close()
-			return nil, fmt.Errorf("create baremetal runtime backend: %w", err)
-		}
-		p.SetBackend(baremetalBackend)
-		runtimeObserver = baremetalBackend
-	default:
+	backend, pipelineObserver, err := composePipelineRuntime(cfg, bgCtx, repos, q)
+	if err != nil {
 		stopFn()
 		_ = repos.Close()
-		return nil, fmt.Errorf("runtime.type must be k8s, docker, or baremetal")
+		return nil, fmt.Errorf("create %s pipeline runtime: %w", cfg.Runtime.Type, err)
 	}
+	p.SetBackend(backend)
 	q.OnRunSuccess = p.handleRunSuccess
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)
 	p.notebookManager.SetEventPublisher(p.events)
 	p.recoverInterruptedRuns(context.Background())
-	if runtimeObserver != nil {
+	if pipelineObserver != nil {
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			runtimeObserver.Observe(p.ctx)
+			pipelineObserver.Observe(p.ctx)
 		}()
 	}
-	if nbK8sObserver != nil {
+	if notebookRuntime.observer != nil {
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			nbK8sObserver.Observe(p.ctx)
+			notebookRuntime.observer.Observe(p.ctx)
 		}()
 	}
-	if servingK8sObserver != nil {
+	if servingRuntime.observer != nil {
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
-			servingK8sObserver.Observe(p.ctx)
+			servingRuntime.observer.Observe(p.ctx)
 		}()
 	}
 
@@ -721,7 +526,7 @@ func (c localLogPushClient) SendPush(method string, payload any) error {
 	if method != iagent.MethodLogAppend {
 		return fmt.Errorf("local runtime: unsupported push method %q", method)
 	}
-	batch, ok := payload.(logsink.LogAppendPush)
+	batch, ok := payload.(logsink.LogBatch)
 	if !ok {
 		return fmt.Errorf("local runtime: invalid log payload %T", payload)
 	}

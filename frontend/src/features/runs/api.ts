@@ -1,11 +1,11 @@
 // runs feature API
 export type {
-  Run, Step, LogLine, CreateRunOptions,
+  Run, RunDetail, Step, LogLine, CreateRunOptions,
   ArtifactFile, ArtifactEntry, StepArtifacts, RunFilter,
   SweepRequest, SweepResponse, RunMetrics,
 } from './types'
 
-import type { Run, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, RunMetrics } from './types'
+import type { Run, RunDetail, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, RunMetrics } from './types'
 import { projectApi } from '@/lib/api'
 
 function runListParams(filter?: RunFilter): URLSearchParams {
@@ -49,8 +49,8 @@ export async function createSweep(projectId: string, req: SweepRequest): Promise
 }
 
 export async function getRun(projectId: string, id: string): Promise<Run> {
-  const data = await projectApi(projectId).get<Run | { run: Run }>(`/runs/${id}`)
-  return 'run' in data ? data.run : data
+  const data = await projectApi(projectId).get<RunDetail>(`/runs/${id}`)
+  return data.run
 }
 
 export async function getRunSteps(projectId: string, runID: string): Promise<Step[]> {

@@ -185,7 +185,7 @@ func (h *Handler) createSchedule(c *gin.Context) {
 		_ = err
 	}
 
-	c.JSON(http.StatusOK, gin.H{"schedule_id": sc.ID})
+	c.JSON(http.StatusCreated, gin.H{"schedule_id": sc.ID})
 }
 
 // GET /schedules/:id

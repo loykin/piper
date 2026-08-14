@@ -63,22 +63,22 @@ spec:
       runtime: baremetal
 `
 	body, _ := json.Marshal(map[string]string{"yaml": yaml})
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/serving", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/services", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("deploy service status = %d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("deploy service status = %d, want 201: %s", rec.Code, rec.Body.String())
 	}
 
-	// Poll GET /serving/:name until the async localdriver.Deploy's health
+	// Poll GET /services/:name until the async localdriver.Deploy's health
 	// check reports running via ReportStatus -> servingMgr.UpdateStatus
 	// (never trusting the synchronous deploy response's Status field alone,
 	// matching Manager's own async contract).
 	deadline := time.Now().Add(15 * time.Second)
 	var svc serving.Service
 	for {
-		getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/serving/direct-svc", nil)
+		getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/services/direct-svc", nil)
 		getRec := httptest.NewRecorder()
 		router.ServeHTTP(getRec, getReq)
 		if getRec.Code != http.StatusOK {
@@ -106,14 +106,14 @@ spec:
 		t.Fatalf("Endpoint = %q, want a local endpoint (no tunnel:// scheme in direct mode)", svc.Endpoint)
 	}
 
-	delReq := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/serving/direct-svc", nil)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/services/direct-svc", nil)
 	delRec := httptest.NewRecorder()
 	router.ServeHTTP(delRec, delReq)
 	if delRec.Code != http.StatusNoContent {
 		t.Fatalf("delete service status = %d, want 204: %s", delRec.Code, delRec.Body.String())
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/serving/direct-svc", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/services/direct-svc", nil)
 	getRec := httptest.NewRecorder()
 	router.ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusNotFound {

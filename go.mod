@@ -27,7 +27,6 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	gocloud.dev v0.45.0
-	golang.org/x/sync v0.21.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
@@ -42,6 +41,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.68.1 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
+	golang.org/x/sync v0.21.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	k8s.io/streaming v0.36.1 // indirect
 )
@@ -59,7 +59,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.3
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Azure/go-autorest v14.2.0+incompatible // indirect
 	github.com/Azure/go-autorest/autorest/to v0.4.1 // indirect
@@ -206,7 +206,7 @@ require (
 	golang.org/x/arch v0.27.0 // indirect
 	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/term v0.43.0
 	golang.org/x/text v0.38.0 // indirect

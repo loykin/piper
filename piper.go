@@ -2,6 +2,7 @@ package piper
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -1291,12 +1292,13 @@ func (p *Piper) modelDir(serviceName string) string {
 }
 
 // ResolveStorageURL derives the effective storage URL from the config.
-// Priority: Storage.Disabled -> empty; Storage.URL > S3Config (backward compat) > file://{output_dir}/store.
+// Priority: Storage.Disabled -> empty; Storage.URL > file://{output_dir}/store.
 func (cfg Config) ResolveStorageURL() string { return resolveStorageURL(cfg) }
 
-// injectStorageCredential resolves a system-scoped s3 credential and injects its
-// access key material into an s3:// storage URL's query string. Non-s3 URLs are
-// returned unchanged (credentialRef only applies to s3 backends). Values already
+// injectStorageCredential resolves a system-scoped credential and injects its
+// access key material into a storage URL's query string. The credential kind
+// must match the URL's scheme (s3 credential for s3://, gcs for gs://, azure
+// for azblob://); other schemes are returned unchanged. Values already
 // present in the URL are not overwritten.
 func injectStorageCredential(ctx context.Context, store *credential.Store, storageURL, credentialRef string) (string, error) {
 	if store == nil {
@@ -1306,29 +1308,46 @@ func injectStorageCredential(ctx context.Context, store *credential.Store, stora
 	if err != nil {
 		return "", fmt.Errorf("parse storage url: %w", err)
 	}
-	if u.Scheme != "s3" {
-		slog.Warn("storage.credentialRef ignored: only s3:// URLs use credential injection", "scheme", u.Scheme)
-		return storageURL, nil
-	}
-	val, err := store.ResolveS3(ctx, project.SystemID, credentialRef)
-	if err != nil {
-		return "", err
-	}
+
 	q := u.Query()
 	setIfAbsent := func(key, value string) {
 		if value != "" && q.Get(key) == "" {
 			q.Set(key, value)
 		}
 	}
-	setIfAbsent("accessKey", val.Data["access_key_id"])
-	setIfAbsent("secretKey", val.Data["secret_access_key"])
-	setIfAbsent("sessionToken", val.Data["session_token"])
+
+	switch u.Scheme {
+	case "s3":
+		val, err := store.ResolveS3(ctx, project.SystemID, credentialRef)
+		if err != nil {
+			return "", err
+		}
+		setIfAbsent("accessKey", val.Data["access_key_id"])
+		setIfAbsent("secretKey", val.Data["secret_access_key"])
+		setIfAbsent("sessionToken", val.Data["session_token"])
+	case "gs":
+		val, err := store.ResolveGCS(ctx, project.SystemID, credentialRef)
+		if err != nil {
+			return "", err
+		}
+		setIfAbsent("serviceAccountKey", base64.StdEncoding.EncodeToString([]byte(val.Data["service_account_json"])))
+	case "azblob":
+		val, err := store.ResolveAzure(ctx, project.SystemID, credentialRef)
+		if err != nil {
+			return "", err
+		}
+		setIfAbsent("accountName", val.Data["account_name"])
+		setIfAbsent("accountKey", base64.StdEncoding.EncodeToString([]byte(val.Data["account_key"])))
+	default:
+		slog.Warn("storage.credentialRef ignored: scheme does not support credential injection", "scheme", u.Scheme)
+		return storageURL, nil
+	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
 
-// redactStorageURL masks the S3 credential query params (and any userinfo
-// password) a storage URL may carry, so it's safe to include in log output.
+// redactStorageURL masks credential query params (and any userinfo password)
+// a storage URL may carry, so it's safe to include in log output.
 func redactStorageURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -1340,7 +1359,7 @@ func redactStorageURL(rawURL string) string {
 		}
 	}
 	q := u.Query()
-	for _, key := range []string{"accessKey", "secretKey", "sessionToken"} {
+	for _, key := range []string{"accessKey", "secretKey", "sessionToken", "serviceAccountKey", "accountKey"} {
 		if q.Get(key) != "" {
 			q.Set(key, "***")
 		}
@@ -1350,31 +1369,13 @@ func redactStorageURL(rawURL string) string {
 }
 
 // resolveStorageURL is the internal implementation.
-// Priority: Storage.Disabled -> empty; Storage.URL > S3Config (backward compat) > file://{output_dir}/store (built-in).
+// Priority: Storage.Disabled -> empty; Storage.URL > file://{output_dir}/store (built-in).
 func resolveStorageURL(cfg Config) string {
 	if cfg.Storage.Disabled {
 		return ""
 	}
 	if cfg.Storage.URL != "" {
 		return cfg.Storage.URL
-	}
-	if cfg.S3.Bucket != "" {
-		scheme := "http"
-		if cfg.S3.UseSSL {
-			scheme = "https"
-		}
-		endpoint := cfg.S3.Endpoint
-		q := "s3ForcePathStyle=true"
-		if cfg.S3.AccessKey != "" {
-			q += "&accessKey=" + cfg.S3.AccessKey
-		}
-		if cfg.S3.SecretKey != "" {
-			q += "&secretKey=" + cfg.S3.SecretKey
-		}
-		if endpoint != "" {
-			q += "&endpoint=" + scheme + "://" + endpoint
-		}
-		return "s3://" + cfg.S3.Bucket + "?" + q
 	}
 	// Default: built-in file server under output directory.
 	outputDir := cfg.OutputDir

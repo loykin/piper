@@ -32,6 +32,12 @@ export function useSaveStorageSettings() {
   })
 }
 
+export function useTestStorageSettings() {
+  return useMutation({
+    mutationFn: (config: StorageConfig) => api.testStorageSettings(config),
+  })
+}
+
 export function useDeleteObject() {
   const projectId = useProjectId()
   const qc = useQueryClient()

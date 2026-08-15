@@ -27,6 +27,13 @@ type StorageSettingsView struct {
 	RestartRequired bool                  `json:"restart_required"`
 }
 
+// StorageTestResult reports whether a candidate storage configuration is
+// actually reachable, without persisting it or restarting the server.
+type StorageTestResult struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
 // StorageObjectInfo exposes object store contents to the UI.
 type StorageObjectInfo struct {
 	Key         string `json:"key"`
@@ -104,6 +111,49 @@ func (p *Piper) UpdateStorageSettings(cfg StorageConfig) (StorageSettingsView, e
 		return StorageSettingsView{}, err
 	}
 	return p.StorageSettings()
+}
+
+// TestStorageSettings opens the given candidate configuration (without
+// persisting it or touching the running server's own store) and attempts a
+// bounded-timeout List to confirm the backend is actually reachable — as
+// opposed to just well-formed. A misconfigured but "successfully opened"
+// client (e.g. an S3 client pointed at an unreachable endpoint) only fails
+// on first real use, which is exactly what this forces to happen now,
+// bounded, instead of on some later unbounded request.
+func (p *Piper) TestStorageSettings(ctx context.Context, cfg StorageConfig) StorageTestResult {
+	if cfg.Disabled {
+		return StorageTestResult{OK: false, Message: "storage is disabled"}
+	}
+	rawURL := strings.TrimSpace(cfg.URL)
+	if rawURL == "" {
+		outputDir := p.cfg.OutputDir
+		if outputDir == "" {
+			outputDir = "./piper-outputs"
+		}
+		rawURL = "file://" + filepath.Join(outputDir, "store")
+	}
+	if cfg.CredentialRef != "" {
+		injected, err := injectStorageCredential(ctx, p.credentials, rawURL, cfg.CredentialRef)
+		if err != nil {
+			return StorageTestResult{OK: false, Message: err.Error()}
+		}
+		rawURL = injected
+	}
+
+	testCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	st, err := storage.Open(rawURL, cfg.Token)
+	if err != nil {
+		return StorageTestResult{OK: false, Message: err.Error()}
+	}
+	if closer, ok := st.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
+	}
+	if _, err := st.List(testCtx, ""); err != nil {
+		return StorageTestResult{OK: false, Message: err.Error()}
+	}
+	return StorageTestResult{OK: true, Message: "connected"}
 }
 
 // ListStorageObjects returns a prefix-filtered object listing from the current store.
@@ -230,7 +280,7 @@ func (p *Piper) storageBackendName() string {
 	if p.store == nil {
 		return ""
 	}
-	switch p.store.(type) {
+	switch st := p.store.(type) {
 	case *storage.LocalStore:
 		return "file"
 	case *storage.HTTPStore:
@@ -238,7 +288,7 @@ func (p *Piper) storageBackendName() string {
 	case *storage.S3Store:
 		return "s3"
 	case *storage.CloudStore:
-		return "cloud"
+		return st.Scheme()
 	default:
 		return ""
 	}

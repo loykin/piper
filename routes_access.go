@@ -72,5 +72,13 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 		}
 		c.JSON(http.StatusOK, view)
 	})
+	admin.POST("/storage/settings/test", func(c *gin.Context) {
+		var cfg StorageConfig
+		if err := c.ShouldBindJSON(&cfg); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, p.TestStorageSettings(c.Request.Context(), cfg))
+	})
 	return admin
 }

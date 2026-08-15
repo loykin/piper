@@ -1,8 +1,8 @@
 export type {
-  StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult,
+  StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult, StorageTestResult,
 } from './types'
 
-import type { StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult } from './types'
+import type { StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult, StorageTestResult } from './types'
 import { api, projectApi } from '@/lib/api'
 
 // ── System-scoped (admin) ─────────────────────────────────────────────────────
@@ -13,6 +13,10 @@ export async function getStorageSettings(): Promise<StorageSettingsView> {
 
 export async function saveStorageSettings(config: StorageConfig): Promise<StorageSettingsView> {
   return api.put<StorageSettingsView>('/api/storage/settings', config)
+}
+
+export async function testStorageSettings(config: StorageConfig): Promise<StorageTestResult> {
+  return api.post<StorageTestResult>('/api/storage/settings/test', config)
 }
 
 // ── Project-scoped ────────────────────────────────────────────────────────────

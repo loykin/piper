@@ -26,8 +26,17 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 import { useDeleteProject } from '@/features/projects/hooks'
+import type { Project } from '@/features/projects/types'
 import { useAuth } from '@/features/auth/context'
 import { useProjectContext } from '@/lib/projectContext'
+
+// pkg/project/ref.go: LocalMemberID = "member-local" — every other value is a
+// remote federation Member with its own separate config (including its own
+// storage.url). Settings pages like Storage only ever affect the Piper
+// instance actually serving this UI, so the owning Member matters here.
+function memberLabel(project: Project): string {
+  return project.owner_member_id === 'member-local' ? 'local' : project.owner_member_id
+}
 
 export function ProjectSelector() {
   const { projectId, projects, loading } = useProjectContext()
@@ -80,7 +89,7 @@ export function ProjectSelector() {
                   {currentProject?.name ?? (loading ? 'Loading projects…' : 'No project')}
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
-                  {currentProject?.id ?? 'Select a project'}
+                  {currentProject ? `${currentProject.id} (${memberLabel(currentProject)})` : 'Select a project'}
                 </span>
               </div>
               <ChevronsUpDown className="ml-auto size-4" />
@@ -102,7 +111,10 @@ export function ProjectSelector() {
                     <div className="flex size-6 items-center justify-center rounded-sm border">
                       <FolderKanban className="size-3.5" />
                     </div>
-                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {project.name}
+                      <span className="ml-1.5 text-xs text-muted-foreground">({memberLabel(project)})</span>
+                    </span>
                     {project.id === projectId && <Check className="size-4" />}
                   </DropdownMenuItem>
                 ))}

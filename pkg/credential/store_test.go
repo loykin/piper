@@ -287,6 +287,88 @@ func TestInjectGitCredentialsEncodesUserInfo(t *testing.T) {
 	}
 }
 
+func TestStoreCreateAndResolveGCS(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+
+	saJSON := `{"type":"service_account","project_id":"demo","client_email":"svc@demo.iam.gserviceaccount.com"}`
+	if _, err := store.Create(ctx, testProjectID, CreateRequest{
+		Name: "gcs-cred",
+		Kind: KindGCS,
+		Data: map[string]string{"service_account_json": saJSON},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	value, err := store.ResolveGCS(ctx, testProjectID, "gcs-cred")
+	if err != nil {
+		t.Fatalf("ResolveGCS: %v", err)
+	}
+	if value.Data["service_account_json"] != saJSON {
+		t.Fatalf("service_account_json = %q, want %q", value.Data["service_account_json"], saJSON)
+	}
+
+	// Resolving through the wrong kind check must fail.
+	if _, err := store.ResolveS3(ctx, testProjectID, "gcs-cred"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("ResolveS3 on gcs credential: err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestStoreCreateGCSRejectsMissingOrInvalidJSON(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+
+	cases := map[string]map[string]string{
+		"missing key":  {},
+		"invalid json": {"service_account_json": "not json"},
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.Create(ctx, testProjectID, CreateRequest{Name: "x", Kind: KindGCS, Data: data}); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Create: err = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
+func TestStoreCreateAndResolveAzure(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+
+	if _, err := store.Create(ctx, testProjectID, CreateRequest{
+		Name: "azure-cred",
+		Kind: KindAzure,
+		Data: map[string]string{"account_name": "mystorageacct", "account_key": "base64keymaterial"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	value, err := store.ResolveAzure(ctx, testProjectID, "azure-cred")
+	if err != nil {
+		t.Fatalf("ResolveAzure: %v", err)
+	}
+	if value.Data["account_name"] != "mystorageacct" || value.Data["account_key"] != "base64keymaterial" {
+		t.Fatalf("value = %#v", value.Data)
+	}
+}
+
+func TestStoreCreateAzureRequiresAccountNameAndKey(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+
+	cases := map[string]map[string]string{
+		"missing key":  {"account_name": "acct"},
+		"missing name": {"account_key": "key"},
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.Create(ctx, testProjectID, CreateRequest{Name: "x", Kind: KindAzure, Data: data}); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Create: err = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
 func TestScrubCredentialsMasksRawAndEncodedToken(t *testing.T) {
 	token := "tok@:/% space"
 	msg := "raw tok@:/% space encoded tok%40%3A%2F%25%20space"

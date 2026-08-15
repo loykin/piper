@@ -322,22 +322,6 @@ func TestHandlerExposesArtifactStoreSettings(t *testing.T) {
 	}
 }
 
-func TestConfigValidateAllowsStorageURLWithoutLegacyS3(t *testing.T) {
-	cfg := Config{
-		OutputDir: t.TempDir(),
-		Auth:      AuthConfig{Trusted: true},
-		Storage: StorageConfig{
-			URL: "file:///tmp/piper-store",
-		},
-		S3: S3Config{
-			Bucket: "legacy-bucket",
-		},
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() = %v, want nil", err)
-	}
-}
-
 func TestStorageSettingsRoundTrip(t *testing.T) {
 	outputDir := t.TempDir()
 	p := newTestPiper(t, Config{OutputDir: outputDir})

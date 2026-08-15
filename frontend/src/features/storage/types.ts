@@ -18,6 +18,11 @@ export interface StorageSettingsView {
   restart_required: boolean
 }
 
+export interface StorageTestResult {
+  ok: boolean
+  message: string
+}
+
 export interface StorageObjectInfo {
   key: string
   size: number

@@ -8,6 +8,8 @@ const (
 	KindGeneric Kind = "generic"
 	KindGit     Kind = "git"
 	KindS3      Kind = "s3"
+	KindGCS     Kind = "gcs"
+	KindAzure   Kind = "azure"
 )
 
 type Metadata struct {

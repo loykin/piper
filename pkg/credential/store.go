@@ -163,6 +163,18 @@ func (s *Store) ResolveS3(ctx context.Context, projectID, name string) (Value, e
 	return s.resolve(ctx, projectID, name, string(KindS3), "")
 }
 
+// ResolveGCS returns the decrypted values of a gcs credential
+// (service_account_json).
+func (s *Store) ResolveGCS(ctx context.Context, projectID, name string) (Value, error) {
+	return s.resolve(ctx, projectID, name, string(KindGCS), "")
+}
+
+// ResolveAzure returns the decrypted values of an azure credential
+// (account_name, account_key).
+func (s *Store) ResolveAzure(ctx context.Context, projectID, name string) (Value, error) {
+	return s.resolve(ctx, projectID, name, string(KindAzure), "")
+}
+
 func (s *Store) resolve(ctx context.Context, projectID, name, expectedKind, repoURL string) (Value, error) {
 	meta, err := s.repo.Get(ctx, projectID, name)
 	if err != nil {
@@ -261,8 +273,8 @@ func normalizeCreate(projectID string, req CreateRequest) (*Metadata, Value, err
 	if req.Kind == "" {
 		req.Kind = KindGeneric
 	}
-	if req.Kind != KindGeneric && req.Kind != KindGit && req.Kind != KindS3 {
-		return nil, Value{}, fmt.Errorf("kind must be generic, git, or s3")
+	if req.Kind != KindGeneric && req.Kind != KindGit && req.Kind != KindS3 && req.Kind != KindGCS && req.Kind != KindAzure {
+		return nil, Value{}, fmt.Errorf("kind must be generic, git, s3, gcs, or azure")
 	}
 	if err := validateEndpoint(req.Kind, req.Endpoint); err != nil {
 		return nil, Value{}, err
@@ -295,6 +307,18 @@ func validateData(kind Kind, data map[string]string) error {
 	case KindS3:
 		if data["access_key_id"] == "" || data["secret_access_key"] == "" {
 			return fmt.Errorf("s3 credential requires access_key_id and secret_access_key")
+		}
+	case KindGCS:
+		if data["service_account_json"] == "" {
+			return fmt.Errorf("gcs credential requires service_account_json")
+		}
+		var probe map[string]any
+		if err := json.Unmarshal([]byte(data["service_account_json"]), &probe); err != nil {
+			return fmt.Errorf("gcs credential service_account_json must be valid JSON: %w", err)
+		}
+	case KindAzure:
+		if data["account_name"] == "" || data["account_key"] == "" {
+			return fmt.Errorf("azure credential requires account_name and account_key")
 		}
 	}
 	return nil

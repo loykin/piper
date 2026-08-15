@@ -46,12 +46,8 @@ type Config struct {
 	Git GitConfig `yaml:"git" mapstructure:"git"`
 
 	// Storage selects the artifact store backend.
-	// When empty, falls back to S3 (if S3.Bucket is set) or the built-in file server.
+	// When empty, falls back to the built-in file server.
 	Storage StorageConfig `yaml:"storage" mapstructure:"storage"`
-
-	// S3 keeps compatibility with existing piper.yaml files.
-	// Prefer Storage.URL for new configurations.
-	S3 S3Config `yaml:"s3" mapstructure:"s3"`
 
 	// Server (not required in embedded mode)
 	Server ServerConfig `yaml:"server" mapstructure:"server"`
@@ -130,29 +126,21 @@ type GitConfig struct {
 type StorageConfig struct {
 	// URL selects the storage backend.
 	// Supported schemes: s3://, gs://, azblob://, file://, http://, https://
-	// When empty, falls back to S3Config (backward compat) or the built-in file server.
-	URL string `yaml:"url" mapstructure:"url"`
+	// When empty, falls back to the built-in file server.
+	URL string `yaml:"url" mapstructure:"url" json:"url"`
 
 	// Disabled turns off the artifact store entirely.
 	// When true, Piper runs without blobstore-backed artifact storage.
-	Disabled bool `yaml:"disabled" mapstructure:"disabled"`
+	Disabled bool `yaml:"disabled" mapstructure:"disabled" json:"disabled"`
 
 	// Token is an optional Bearer token for HTTP-based stores.
-	Token string `yaml:"token" mapstructure:"token"`
+	Token string `yaml:"token" mapstructure:"token" json:"token"`
 
 	// CredentialRef names a system-scoped s3 credential that supplies the
 	// access key material for an s3:// URL. The URL itself carries only the
 	// non-secret bucket/endpoint/region; the credential injects
 	// accessKey/secretKey/sessionToken at startup.
-	CredentialRef string `yaml:"credentialRef" mapstructure:"credentialRef"`
-}
-
-type S3Config struct {
-	Endpoint  string `yaml:"endpoint"   mapstructure:"endpoint"`
-	AccessKey string `yaml:"access_key" mapstructure:"access_key"`
-	SecretKey string `yaml:"secret_key" mapstructure:"secret_key"`
-	Bucket    string `yaml:"bucket"     mapstructure:"bucket"`
-	UseSSL    bool   `yaml:"use_ssl"    mapstructure:"use_ssl"`
+	CredentialRef string `yaml:"credentialRef" mapstructure:"credentialRef" json:"credentialRef"`
 }
 
 // LoginRouteProvider registers the login/session endpoints for an auth scheme.
@@ -293,15 +281,6 @@ func (c Config) Validate() error {
 	if c.Server.TLS.Enabled {
 		if c.Server.TLS.CertFile == "" || c.Server.TLS.KeyFile == "" {
 			return fmt.Errorf("server.tls enabled but cert_file or key_file is not set")
-		}
-	}
-
-	if !c.Storage.Disabled && c.Storage.URL == "" && c.S3.Bucket != "" {
-		if c.S3.Endpoint == "" {
-			return fmt.Errorf("source.s3.bucket requires source.s3.endpoint")
-		}
-		if c.S3.AccessKey == "" || c.S3.SecretKey == "" {
-			return fmt.Errorf("source.s3.bucket requires source.s3.access_key and source.s3.secret_key")
 		}
 	}
 

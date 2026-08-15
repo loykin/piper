@@ -31,9 +31,6 @@ func (p *Piper) Settings() SystemSettings {
 	if p.cfg.Storage.Disabled {
 		out.ArtifactStore.Status = "disabled"
 		out.ArtifactStore.Backend = storageScheme(p.cfg.Storage.URL)
-		if out.ArtifactStore.Backend == "" && p.cfg.S3.Bucket != "" {
-			out.ArtifactStore.Backend = "s3"
-		}
 		return out
 	}
 	if p.store != nil {

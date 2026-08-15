@@ -105,8 +105,14 @@ func UploadPath(ctx context.Context, s Store, localPath, prefix string) error {
 // Supported schemes:
 //
 //	s3://bucket?region=…&endpoint=http://…&s3ForcePathStyle=true&accessKey=…&secretKey=…
+//	gs://bucket?serviceAccountKey=<base64 service-account JSON>
+//	azblob://container?accountName=…&accountKey=<base64 shared key>
 //	file:///abs/path  or  file://./rel/path
 //	http://…  or  https://…
+//
+// gs:// and azblob:// fall back to ambient environment credentials
+// (Application Default Credentials / azidentity default chain) when their
+// query parameters are omitted — see openCloud in cloudstore.go.
 func Open(rawURL string, token string) (Store, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

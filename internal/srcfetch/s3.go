@@ -19,7 +19,7 @@ type S3Fetcher struct {
 
 func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string) (string, error) {
 	if f.cfg.StorageURL == "" {
-		return "", fmt.Errorf("s3 source: storage URL not configured (set storage.url or source.s3.*)")
+		return "", fmt.Errorf("s3 source: storage URL not configured (set storage.url)")
 	}
 
 	// When a snapshot prefix is set, download the entire snapshot directory.

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -16,6 +18,20 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 )
+
+// s3HTTPClient bounds only connection setup (dial + TLS handshake), not the
+// overall request duration, so a large Put/Get isn't killed mid-transfer —
+// it just fails fast (instead of hanging indefinitely) when the endpoint
+// itself is unreachable or not listening.
+var s3HTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 10 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+}
 
 // S3Store implements Store for S3-compatible object storage (AWS S3, MinIO, SeaweedFS, R2).
 type S3Store struct {
@@ -44,6 +60,7 @@ func openS3(u *url.URL) (*S3Store, error) {
 
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(region),
+		awsconfig.WithHTTPClient(s3HTTPClient),
 	}
 	if accessKey != "" || secretKey != "" {
 		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(

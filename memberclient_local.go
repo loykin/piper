@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -327,7 +328,12 @@ func (l *localMemberClient) DoProjectRequest(ctx context.Context, auth membercli
 		completeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := l.p.repos.ProjectMutation.Complete(completeCtx, mutation); err != nil {
-			return projectclient.Response{}, err
+			// The mutation itself already succeeded (response was built
+			// above); only its idempotency record failed to persist. Return
+			// the real result instead of hiding it behind this error - the
+			// claim row stays reclaimable (see projectclient.StaleClaimWindow)
+			// so a same-key retry can still complete it later.
+			slog.Warn("project mutation completed but idempotency record failed to persist", "project_id", ref.ProjectID, "key", key, "err", err)
 		}
 	}
 	return response, nil

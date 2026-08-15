@@ -30,6 +30,18 @@ func (r *projectMutationRepo) Claim(ctx context.Context, v *projectclient.Mutati
 			*out = *v
 			return nil
 		}
+		reclaimRes, e := db.ExecContext(ctx, db.Rebind(`UPDATE project_mutations SET request_hash=?,response_status=0,response_headers=NULL,response_body=NULL,completed=FALSE,created_at=? WHERE project_id=? AND idempotency_key=? AND completed=FALSE AND created_at<?`),
+			v.RequestHash, v.CreatedAt, v.ProjectID, v.Key, v.CreatedAt.Add(-projectclient.StaleClaimWindow))
+		if e != nil {
+			return e
+		}
+		if reclaimed, e := reclaimRes.RowsAffected(); e != nil {
+			return e
+		} else if reclaimed == 1 {
+			claimed = true
+			*out = *v
+			return nil
+		}
 		return db.GetContext(ctx, out, db.Rebind(`SELECT project_id,idempotency_key,request_hash,response_status,response_headers,response_body,completed,created_at FROM project_mutations WHERE project_id=? AND idempotency_key=?`), v.ProjectID, v.Key)
 	})
 	return

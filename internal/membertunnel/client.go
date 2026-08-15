@@ -213,21 +213,30 @@ func (c *Client) handleHTTPOpen(ctx context.Context, open *agentpb.MemberHTTPStr
 			c.httpMu.Unlock()
 			_ = inbound.Close()
 		}()
-		for frame := range frames {
-			if frame.Error != "" {
-				_ = inbound.CloseWithError(fmt.Errorf("%s", frame.Error))
+		for {
+			select {
+			case <-ctx.Done():
+				_ = inbound.CloseWithError(ctx.Err())
 				return
-			}
-			if len(frame.Data) > 0 {
-				if _, err := inbound.Write(frame.Data); err != nil {
+			case frame, ok := <-frames:
+				if !ok {
+					_ = inbound.CloseWithError(memberclient.ErrMemberUnavailable)
+					return
+				}
+				if frame.Error != "" {
+					_ = inbound.CloseWithError(fmt.Errorf("%s", frame.Error))
+					return
+				}
+				if len(frame.Data) > 0 {
+					if _, err := inbound.Write(frame.Data); err != nil {
+						return
+					}
+				}
+				if frame.End {
 					return
 				}
 			}
-			if frame.End {
-				return
-			}
 		}
-		_ = inbound.CloseWithError(memberclient.ErrMemberUnavailable)
 	}()
 	go func() {
 		_ = serveOneHTTP(conn, handler)

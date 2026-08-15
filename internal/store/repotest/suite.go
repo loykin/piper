@@ -116,6 +116,27 @@ func ProjectMutationRepoSuite(t *testing.T, repo projectclient.MutationRepositor
 	if err != nil || claimed || !existing.Completed || existing.Status != 201 || string(existing.Body) != "created" {
 		t.Fatalf("completed Claim=%#v %v %v", existing, claimed, err)
 	}
+
+	// A claim that never completed (e.g. the process crashed, or Complete's
+	// persistence write itself failed) must not stay stuck forever - once
+	// it's older than projectclient.StaleClaimWindow, a retry carrying the
+	// same key is allowed to reclaim and re-run it. Time is simulated via
+	// the CreatedAt each attempt supplies (matching how the real caller
+	// stamps CreatedAt with time.Now() on every attempt), not by sleeping.
+	t0 := time.Now().UTC()
+	stuck := &projectclient.Mutation{ProjectID: projectID, Key: "mutation-b", RequestHash: "hash-b", CreatedAt: t0}
+	if _, claimed, err := repo.Claim(ctx, stuck); err != nil || !claimed {
+		t.Fatalf("initial stuck Claim=%v %v", claimed, err)
+	}
+	tooSoon := &projectclient.Mutation{ProjectID: projectID, Key: "mutation-b", RequestHash: "hash-b", CreatedAt: t0.Add(time.Second)}
+	if existing, claimed, err := repo.Claim(ctx, tooSoon); err != nil || claimed || existing.Completed {
+		t.Fatalf("reclaim before stale window elapsed should not happen: claimed=%v existing=%#v err=%v", claimed, existing, err)
+	}
+	reclaim := &projectclient.Mutation{ProjectID: projectID, Key: "mutation-b", RequestHash: "hash-b", CreatedAt: t0.Add(projectclient.StaleClaimWindow + time.Second)}
+	existing, claimed, err = repo.Claim(ctx, reclaim)
+	if err != nil || !claimed || existing.Completed {
+		t.Fatalf("reclaim of stale incomplete claim=%#v %v %v", existing, claimed, err)
+	}
 }
 
 func ProjectRepoSuite(t *testing.T, repo project.Repository) {

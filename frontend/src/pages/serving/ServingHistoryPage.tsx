@@ -14,7 +14,7 @@ export default function ServingHistoryPage() {
       description="Past ModelService deployments."
     >
       <DataBodyTemplate.Body>
-        {historyQuery.isError && historyQuery.data === undefined && (
+        {historyQuery.isError && (
           <QueryErrorNotice
             message="Failed to load serving history"
             error={historyQuery.error}

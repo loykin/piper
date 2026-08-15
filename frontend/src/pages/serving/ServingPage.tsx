@@ -71,7 +71,7 @@ function ServingPageInner() {
       }
     >
       <DataBodyTemplate.Body>
-        {servicesQuery.isError && servicesQuery.data === undefined && (
+        {servicesQuery.isError && (
           <QueryErrorNotice
             message="Failed to load services"
             error={servicesQuery.error}

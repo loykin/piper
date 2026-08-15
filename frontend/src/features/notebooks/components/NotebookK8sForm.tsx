@@ -91,7 +91,7 @@ function K8sFieldsSection({
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Namespace</Label>
-        <p className="text-xs text-muted-foreground">Kubernetes namespace where the notebook and its volume will be created.</p>
+        <p className="text-xs text-muted-foreground">Required. Kubernetes namespace where the notebook and its volume will be created.</p>
         <Input className="h-8 text-sm" value={k8sForm.namespace} onChange={e => setK8sField('namespace', e.target.value)} placeholder="notebooks" />
       </div>
       <div className="space-y-1.5">

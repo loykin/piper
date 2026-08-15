@@ -121,7 +121,7 @@ function HistoryPageInner() {
       description="All pipeline run records. Each square in Steps represents one step's status."
     >
       <DataBodyTemplate.Body>
-        {runsQuery.isError && runsQuery.data === undefined && (
+        {runsQuery.isError && (
           <QueryErrorNotice
             message="Failed to load runs"
             error={runsQuery.error}

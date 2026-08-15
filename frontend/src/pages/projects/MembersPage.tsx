@@ -56,7 +56,7 @@ function MembersPageInner() {
         }
       >
         <DataBodyTemplate.Body>
-          {membersQuery.isError && membersQuery.data === undefined && (
+          {membersQuery.isError && (
             <QueryErrorNotice
               message="Failed to load project members"
               error={membersQuery.error}

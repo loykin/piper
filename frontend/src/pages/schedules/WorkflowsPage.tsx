@@ -103,7 +103,7 @@ function WorkflowsPageInner() {
       }
     >
       <DataBodyTemplate.Body>
-        {schedulesQuery.isError && schedulesQuery.data === undefined && (
+        {schedulesQuery.isError && (
           <QueryErrorNotice
             message="Failed to load schedules"
             error={schedulesQuery.error}

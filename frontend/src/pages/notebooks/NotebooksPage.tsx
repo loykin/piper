@@ -61,7 +61,7 @@ function NotebooksPageInner() {
       }
     >
       <DataBodyTemplate.Body>
-        {notebooksQuery.isError && notebooksQuery.data === undefined && (
+        {notebooksQuery.isError && (
           <QueryErrorNotice
             message="Failed to load notebooks"
             error={notebooksQuery.error}

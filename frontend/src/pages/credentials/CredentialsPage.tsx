@@ -136,7 +136,7 @@ export default function CredentialsPage() {
       }
     >
       <DataBodyTemplate.Body>
-        {credentialsQuery.isError && credentialsQuery.data === undefined && (
+        {credentialsQuery.isError && (
           <QueryErrorNotice
             message="Failed to load credentials"
             error={credentialsQuery.error}

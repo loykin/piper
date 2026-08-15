@@ -54,7 +54,7 @@ function UsersPageInner() {
         }
       >
         <DataBodyTemplate.Body>
-          {usersQuery.isError && usersQuery.data === undefined && (
+          {usersQuery.isError && (
             <QueryErrorNotice
               message="Failed to load users"
               error={usersQuery.error}

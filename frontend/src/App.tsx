@@ -401,8 +401,22 @@ function AppLayout() {
 
 function RootRedirect() {
   const { projectId, loading } = useProjectContext()
+  const { user } = useAuth()
   if (loading) return null
-  return <RedirectTo to={projectId ? `/projects/${projectId}/schedules` : '/users'} />
+  if (projectId) return <RedirectTo to={`/projects/${projectId}/schedules`} />
+  if (user?.system_admin) return <RedirectTo to="/users" />
+  return <NoProjectAccessNotice />
+}
+
+function NoProjectAccessNotice() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <h1 className="text-lg font-semibold">No project access</h1>
+      <p className="max-w-sm text-sm text-muted-foreground">
+        Your account isn't a member of any project yet. Ask a project or system admin to add you.
+      </p>
+    </div>
+  )
 }
 
 function ProjectScopedFallback() {

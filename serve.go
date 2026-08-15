@@ -657,11 +657,11 @@ func (p *Piper) eventsHandler(c *gin.Context) {
 }
 
 func genRunID() string {
-	return fmt.Sprintf("run-%d", time.Now().UnixNano())
+	return uuid.NewString()
 }
 
 func genScheduleID() string {
-	return fmt.Sprintf("sch-%s", genRunID())
+	return uuid.NewString()
 }
 
 // startRunFromAPI handles creating a run from the HTTP API, including

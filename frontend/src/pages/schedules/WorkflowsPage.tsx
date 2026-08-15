@@ -96,36 +96,39 @@ function WorkflowsPageInner() {
     <DataBodyTemplate
       title="Schedules"
       description="Manage cron and one-time pipeline schedules."
-      actions={
-        <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/create`)}>
-          <Plus size={14} className="mr-1.5" /> Create
-        </Button>
-      }
     >
       <DataBodyTemplate.Body>
-        {schedulesQuery.isError && (
-          <QueryErrorNotice
-            message="Failed to load schedules"
-            error={schedulesQuery.error}
-            onRetry={() => void schedulesQuery.refetch()}
-          />
-        )}
-        <DataGrid
-          data={schedules}
-          columns={columns}
-          emptyMessage="No schedules yet. Create one to start."
-          tableWidthMode="fill-last"
-          rowHeight={44}
-          rowCursor
-          onRowClick={(row) => open(<ScheduleDetailPanel id={row.id} />, { size: 560 })}
-          pagination={{ pageSize: 20 }}
-          footer={(table) => (
-            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-              <span>{schedules.length} results</span>
-              <DataGridPaginationCompact table={table} />
-            </div>
+        <DataBodyTemplate.Resource
+          toolbarRight={
+            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/create`)}>
+              <Plus size={14} className="mr-1.5" /> Create
+            </Button>
+          }
+          notice={schedulesQuery.isError && (
+            <QueryErrorNotice
+              message="Failed to load schedules"
+              error={schedulesQuery.error}
+              onRetry={() => void schedulesQuery.refetch()}
+            />
           )}
-        />
+        >
+          <DataGrid
+            data={schedules}
+            columns={columns}
+            emptyMessage="No schedules yet. Create one to start."
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => open(<ScheduleDetailPanel id={row.id} />, { size: 560 })}
+            pagination={{ pageSize: 20 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{schedules.length} results</span>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
+        </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 

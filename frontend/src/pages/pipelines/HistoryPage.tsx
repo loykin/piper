@@ -121,31 +121,34 @@ function HistoryPageInner() {
       description="All pipeline run records. Each square in Steps represents one step's status."
     >
       <DataBodyTemplate.Body>
-        {runsQuery.isError && (
-          <QueryErrorNotice
-            message="Failed to load runs"
-            error={runsQuery.error}
-            onRetry={() => void runsQuery.refetch()}
+        <DataBodyTemplate.Resource
+          notice={runsQuery.isError && (
+            <QueryErrorNotice
+              message="Failed to load runs"
+              error={runsQuery.error}
+              onRetry={() => void runsQuery.refetch()}
+            />
+          )}
+        >
+          <DataGrid
+            data={runs}
+            columns={columns}
+            emptyMessage="No runs yet."
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 480 })}
+            initialSorting={[{ id: 'started_at', desc: true }]}
+            classNames={{ footer: 'pt-3' }}
+            pagination={{
+              pageSize: PAGE_SIZE,
+              pageIndex,
+              pageCount: Math.ceil(total / PAGE_SIZE),
+              onPageChange: setPageIndex,
+            }}
+            footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
           />
-        )}
-        <DataGrid
-          data={runs}
-          columns={columns}
-          emptyMessage="No runs yet."
-          tableWidthMode="fill-last"
-          rowHeight={44}
-          rowCursor
-          onRowClick={(row) => open(<RunDetailPanel id={row.id} />, { size: 480 })}
-          initialSorting={[{ id: 'started_at', desc: true }]}
-          classNames={{ footer: 'pt-3' }}
-          pagination={{
-            pageSize: PAGE_SIZE,
-            pageIndex,
-            pageCount: Math.ceil(total / PAGE_SIZE),
-            onPageChange: setPageIndex,
-          }}
-          footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
-        />
+        </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 

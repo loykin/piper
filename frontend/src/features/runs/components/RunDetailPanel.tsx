@@ -86,24 +86,12 @@ export function RunDetailPanel({ id }: { id: string }) {
       }
     >
       <PanelTemplate.Section title="Details">
-        <dl className="grid grid-cols-2 gap-3">
-          <div>
-            <dt className="text-xs text-muted-foreground">Started</dt>
-            <dd className="mt-0.5 text-xs">{new Date(run.started_at).toLocaleString()}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Ended</dt>
-            <dd className="mt-0.5 text-xs">{run.ended_at ? new Date(run.ended_at).toLocaleString() : '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Steps</dt>
-            <dd className="mt-0.5 text-xs">{completedSteps} / {steps.length} completed</dd>
-          </div>
+        <dl className="space-y-2">
+          <PanelTemplate.Row label="Started">{new Date(run.started_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Ended">{run.ended_at ? new Date(run.ended_at).toLocaleString() : '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Steps">{completedSteps} / {steps.length} completed</PanelTemplate.Row>
           {run.schedule_id && (
-            <div>
-              <dt className="text-xs text-muted-foreground">Schedule</dt>
-              <dd className="mt-0.5 font-mono text-xs">{run.schedule_id.slice(0, 12)}…</dd>
-            </div>
+            <PanelTemplate.Row label="Schedule">{run.schedule_id.slice(0, 12)}…</PanelTemplate.Row>
           )}
         </dl>
       </PanelTemplate.Section>

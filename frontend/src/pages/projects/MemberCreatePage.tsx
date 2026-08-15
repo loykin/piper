@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Button,
   DataBodyTemplate,
-  Label,
+  FormActions,
+  FormField,
   PageTopBar,
   Select,
   SelectContent,
@@ -63,8 +63,12 @@ export default function MemberCreatePage() {
         description="Select an existing account and choose its project-specific role."
       >
         <form className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
-          <div className="space-y-1.5">
-            <Label htmlFor="member-username" className="text-xs">Username</Label>
+          <FormField
+            label="Username"
+            htmlFor="member-username"
+            error={errors.username?.message}
+            helperText={!candidatesLoading && candidates.length === 0 ? 'No accounts are available to add.' : undefined}
+          >
             <Controller
               name="username"
               control={control}
@@ -83,13 +87,12 @@ export default function MemberCreatePage() {
                 </Select>
               )}
             />
-            {errors.username && <p className="text-xs text-destructive">{errors.username.message}</p>}
-            {!candidatesLoading && candidates.length === 0 && (
-              <p className="text-xs text-muted-foreground">No accounts are available to add.</p>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="member-role" className="text-xs">Project role</Label>
+          </FormField>
+          <FormField
+            label="Project role"
+            htmlFor="member-role"
+            helperText="Viewer can inspect resources, Member can operate workloads, and Admin can manage project access."
+          >
             <Controller
               name="role"
               control={control}
@@ -106,30 +109,13 @@ export default function MemberCreatePage() {
                 </Select>
               )}
             />
-            <p className="text-xs text-muted-foreground">
-              Viewer can inspect resources, Member can operate workloads, and Admin can manage project access.
-            </p>
-          </div>
-          {submitError && <p className="text-sm text-destructive" role="alert">{submitError}</p>}
-          <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => void navigate(listPath)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              className="h-8 text-xs"
-              disabled={addMember.isPending || candidates.length === 0}
-            >
-              {addMember.isPending ? 'Adding…' : 'Add Member'}
-            </Button>
-          </div>
+          </FormField>
+          <FormActions
+            status={submitError || undefined}
+            submitLabel={addMember.isPending ? 'Adding…' : 'Add Member'}
+            submitDisabled={addMember.isPending || candidates.length === 0}
+            onCancel={() => void navigate(listPath)}
+          />
         </form>
       </DataBodyTemplate.Group>
     </DataBodyTemplate>

@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { LoginBodyTemplate } from '@loykin/designkit'
+import { FormField, LoginBodyTemplate } from '@loykin/designkit'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useNavigate } from '@/lib/router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { login, bootstrap, bootstrapStatus } from '@/features/auth/api'
 import { useAuth } from '@/features/auth/context'
 
@@ -108,8 +107,7 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit(submit)} className="space-y-4" noValidate>
-          <div className="space-y-1.5">
-            <Label htmlFor="username">Username</Label>
+          <FormField label="Username" htmlFor="username" error={errors.username?.message}>
             <Input
               id="username"
               autoComplete="username"
@@ -117,10 +115,8 @@ export default function LoginPage() {
               aria-invalid={!!errors.username}
               {...register('username')}
             />
-            {errors.username && <p className="text-xs text-destructive">{errors.username.message}</p>}
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="password">Password</Label>
+          </FormField>
+          <FormField label="Password" htmlFor="password" error={errors.password?.message}>
             <Input
               id="password"
               type="password"
@@ -128,8 +124,7 @@ export default function LoginPage() {
               aria-invalid={!!errors.password}
               {...register('password')}
             />
-            {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
-          </div>
+          </FormField>
           {submitError && (
             <p className="text-sm text-destructive" role="alert">{submitError}</p>
           )}

@@ -5,12 +5,11 @@ import {
   Code2, FileCode2, FolderOpen, HardDrive, Plus, BookOpen, Trash2, Upload, X,
 } from 'lucide-react'
 import {
-  DataBodyTemplate, PageTopBar, WorkbenchBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  DataBodyTemplate, FormActions, FormField, PageTopBar, WorkbenchBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { ShellMirror } from '@/components/ui/shell-mirror'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { IconButton } from '@/components/ui/icon-button'
@@ -852,13 +851,17 @@ export default function PipelineEditorPage() {
         description="A pipeline uses exactly one source workspace. Lock it in before you start editing."
       >
         <DataBodyTemplate.Group layout="stacked">
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="pipeline-name" className="text-xs">Pipeline Name</Label>
+          <form
+            className="space-y-3"
+            onSubmit={e => {
+              e.preventDefault()
+              handleStartEditing()
+            }}
+          >
+            <FormField label="Pipeline Name" htmlFor="pipeline-name">
               <Input id="pipeline-name" value={formName} onChange={e => setFormName(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pipeline-source-type" className="text-xs">Source Type</Label>
+            </FormField>
+            <FormField label="Source Type" htmlFor="pipeline-source-type">
               <Select value={formSourceKind} onValueChange={v => setFormSourceKind(v as SourceKind)}>
                 <SelectTrigger id="pipeline-source-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -868,10 +871,9 @@ export default function PipelineEditorPage() {
                   <SelectItem value="object-store">Object Store Prefix</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
+            </FormField>
             {formSourceKind === 'notebook-volume' ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="pipeline-volume" className="text-xs">Notebook Volume</Label>
+              <FormField label="Notebook Volume" htmlFor="pipeline-volume">
                 <Select value={formVolumeId} onValueChange={v => setFormVolumeId(v ?? '')}>
                   <SelectTrigger id="pipeline-volume"><SelectValue placeholder="— select a volume —" /></SelectTrigger>
                   <SelectContent>
@@ -882,14 +884,20 @@ export default function PipelineEditorPage() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FormField>
             ) : formSourceKind === 'git' ? (
               <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="pipeline-git-credential" className="flex items-center gap-1 text-xs">
-                    Git Credential
-                    <span className="font-normal text-muted-foreground/70">(optional)</span>
-                  </Label>
+                <FormField
+                  label={<>Git Credential <span className="font-normal text-muted-foreground/70">(optional)</span></>}
+                  htmlFor="pipeline-git-credential"
+                  helperText={
+                    formCredential
+                      ? 'Using the selected credential.'
+                      : autoMatchedCredential
+                        ? `Auto-matched: ${autoMatchedCredential.name} · ${autoMatchedCredential.endpoint}`
+                        : 'Leave empty to auto-match a registered credential, or clone unauthenticated.'
+                  }
+                >
                   <Select value={formCredential || undefined} onValueChange={v => handleGitCredentialChange(v ?? '')}>
                     <SelectTrigger id="pipeline-git-credential"><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
                     <SelectContent>
@@ -900,43 +908,25 @@ export default function PipelineEditorPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formCredential
-                      ? 'Using the selected credential.'
-                      : autoMatchedCredential
-                        ? `Auto-matched: ${autoMatchedCredential.name} · ${autoMatchedCredential.endpoint}`
-                        : 'Leave empty to auto-match a registered credential, or clone unauthenticated.'}
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="pipeline-git-repo" className="text-xs">Repository URL</Label>
+                </FormField>
+                <FormField label="Repository URL" htmlFor="pipeline-git-repo">
                   <Input id="pipeline-git-repo" value={formRepo} onChange={e => setFormRepo(e.target.value)} placeholder="https://github.com/org/repo.git" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="pipeline-git-branch" className="text-xs">Branch</Label>
+                </FormField>
+                <FormField label="Branch" htmlFor="pipeline-git-branch">
                   <Input id="pipeline-git-branch" value={formBranch} onChange={e => setFormBranch(e.target.value)} placeholder="main" />
-                </div>
+                </FormField>
               </div>
             ) : (
-              <div className="space-y-1.5">
-                <Label htmlFor="pipeline-source-root" className="text-xs">Source Root</Label>
+              <FormField label="Source Root" htmlFor="pipeline-source-root">
                 <Input id="pipeline-source-root" value={formRoot} onChange={e => setFormRoot(e.target.value)} placeholder="/workspaces/project" />
-              </div>
+              </FormField>
             )}
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(`/projects/${projectId}/pipelines`)}
-            >
-              Cancel
-            </Button>
-            <Button size="sm" disabled={!canProceed} onClick={handleStartEditing}>
-              Start Editing
-            </Button>
-          </div>
+            <FormActions
+              submitLabel="Start Editing"
+              submitDisabled={!canProceed}
+              onCancel={() => navigate(`/projects/${projectId}/pipelines`)}
+            />
+          </form>
         </DataBodyTemplate.Group>
       </DataBodyTemplate>
     )

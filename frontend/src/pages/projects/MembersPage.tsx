@@ -48,35 +48,42 @@ function MembersPageInner() {
       <DataBodyTemplate
         title="Project Members"
         description="Project-specific access for Piper user accounts. Click a row to inspect or change its role."
-        actions={
-          <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/members/new`)}>
-            <Plus />
-            New Member
-          </Button>
-        }
       >
         <DataBodyTemplate.Body>
-          {membersQuery.isError && (
-            <QueryErrorNotice
-              message="Failed to load project members"
-              error={membersQuery.error}
-              onRetry={() => void membersQuery.refetch()}
+          <DataBodyTemplate.Resource
+            toolbarRight={
+              <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/members/new`)}>
+                <Plus />
+                New Member
+              </Button>
+            }
+            notice={
+              <>
+                {membersQuery.isError && (
+                  <QueryErrorNotice
+                    message="Failed to load project members"
+                    error={membersQuery.error}
+                    onRetry={() => void membersQuery.refetch()}
+                  />
+                )}
+                {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+              </>
+            }
+          >
+            <DataGrid
+              data={members}
+              columns={memberColumns}
+              isLoading={membersQuery.isLoading}
+              emptyMessage="No project members."
+              tableWidthMode="fill-last"
+              rowHeight={44}
+              rowCursor
+              onRowClick={member => open(
+                <MemberDetailPanel member={member} onRemove={setRemoveTarget} />,
+                { size: 520 },
+              )}
             />
-          )}
-          {actionError && <p className="mb-3 text-sm text-destructive">{actionError}</p>}
-          <DataGrid
-            data={members}
-            columns={memberColumns}
-            isLoading={membersQuery.isLoading}
-            emptyMessage="No project members."
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={member => open(
-              <MemberDetailPanel member={member} onRemove={setRemoveTarget} />,
-              { size: 520 },
-            )}
-          />
+          </DataBodyTemplate.Resource>
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 

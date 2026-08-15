@@ -131,37 +131,42 @@ function PipelinesListPageInner() {
       <DataBodyTemplate
         title="Pipeline Templates"
         description="Each submit creates a new versioned snapshot. Deploy to schedule or run on demand."
-        actions={
-          <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
-            <Plus size={14} className="mr-1.5" /> New Template
-          </Button>
-        }
       >
         <DataBodyTemplate.Body>
-          {initialLoadFailed && (
-            <QueryErrorNotice
-              message="Failed to load pipeline templates"
-              error={loadError}
-              onRetry={() => void refetchTemplates()}
+          <DataBodyTemplate.Resource
+            toolbarRight={
+              <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
+                <Plus size={14} className="mr-1.5" /> New Template
+              </Button>
+            }
+            notice={
+              <>
+                {initialLoadFailed && (
+                  <QueryErrorNotice
+                    message="Failed to load pipeline templates"
+                    error={loadError}
+                    onRetry={() => void refetchTemplates()}
+                  />
+                )}
+                {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+              </>
+            }
+          >
+            <DataGrid
+              data={templates}
+              columns={columns}
+              isLoading={templatesLoading}
+              enableGrouping
+              grouping={['name']}
+              visibilityState={{ name: false }}
+              renderGroupRow={(row) => <GroupHeader row={row} />}
+              emptyMessage="No pipeline templates yet."
+              tableWidthMode="fill-last"
+              rowHeight={44}
+              rowCursor
+              onRowClick={(row) => openDetail(row)}
             />
-          )}
-          {actionError && (
-            <p className="mb-4 text-sm text-destructive">{actionError}</p>
-          )}
-          <DataGrid
-            data={templates}
-            columns={columns}
-            isLoading={templatesLoading}
-            enableGrouping
-            grouping={['name']}
-            visibilityState={{ name: false }}
-            renderGroupRow={(row) => <GroupHeader row={row} />}
-            emptyMessage="No pipeline templates yet."
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={(row) => openDetail(row)}
-          />
+          </DataBodyTemplate.Resource>
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 

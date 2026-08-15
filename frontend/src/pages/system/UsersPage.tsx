@@ -46,35 +46,42 @@ function UsersPageInner() {
       <DataBodyTemplate
         title="Users"
         description="System accounts and administrator access. Click a row to view account details."
-        actions={
-          <Button size="sm" onClick={() => void navigate('/users/new')}>
-            <Plus />
-            New User
-          </Button>
-        }
       >
         <DataBodyTemplate.Body>
-          {usersQuery.isError && (
-            <QueryErrorNotice
-              message="Failed to load users"
-              error={usersQuery.error}
-              onRetry={() => void usersQuery.refetch()}
+          <DataBodyTemplate.Resource
+            toolbarRight={
+              <Button size="sm" onClick={() => void navigate('/users/new')}>
+                <Plus />
+                New User
+              </Button>
+            }
+            notice={
+              <>
+                {usersQuery.isError && (
+                  <QueryErrorNotice
+                    message="Failed to load users"
+                    error={usersQuery.error}
+                    onRetry={() => void usersQuery.refetch()}
+                  />
+                )}
+                {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+              </>
+            }
+          >
+            <DataGrid
+              data={users}
+              columns={userColumns}
+              isLoading={usersQuery.isLoading}
+              emptyMessage="No users found."
+              tableWidthMode="fill-last"
+              rowHeight={44}
+              rowCursor
+              onRowClick={(user) => open(
+                <UserDetailPanel user={user} onDelete={setDeleteTarget} />,
+                { size: 520 },
+              )}
             />
-          )}
-          {actionError && <p className="mb-3 text-sm text-destructive">{actionError}</p>}
-          <DataGrid
-            data={users}
-            columns={userColumns}
-            isLoading={usersQuery.isLoading}
-            emptyMessage="No users found."
-            tableWidthMode="fill-last"
-            rowHeight={44}
-            rowCursor
-            onRowClick={(user) => open(
-              <UserDetailPanel user={user} onDelete={setDeleteTarget} />,
-              { size: 520 },
-            )}
-          />
+          </DataBodyTemplate.Resource>
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 

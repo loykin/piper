@@ -17,7 +17,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
   useSystemCredentials,
@@ -323,9 +322,8 @@ export default function StoragePage() {
               ))}
             </div>
           )}
-          <div className="grid max-w-xl gap-3 pt-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="s3-name">Name</Label>
+          <div className="max-w-xl pt-2">
+            <DataBodyTemplate.Row label="Name">
               <Input
                 id="s3-name"
                 value={s3Form.name}
@@ -333,18 +331,16 @@ export default function StoragePage() {
                 placeholder="minio-artifacts"
                 className="font-mono"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s3-access">access_key_id</Label>
+            </DataBodyTemplate.Row>
+            <DataBodyTemplate.Row label="access_key_id">
               <Input
                 id="s3-access"
                 value={s3Form.accessKeyId}
                 onChange={e => setS3Form(prev => ({ ...prev, accessKeyId: e.target.value }))}
                 className="font-mono text-sm"
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="s3-secret">secret_access_key</Label>
+            </DataBodyTemplate.Row>
+            <DataBodyTemplate.Row label="secret_access_key">
               <Input
                 id="s3-secret"
                 type="password"
@@ -352,9 +348,9 @@ export default function StoragePage() {
                 onChange={e => setS3Form(prev => ({ ...prev, secretAccessKey: e.target.value }))}
                 className="font-mono text-sm"
               />
-            </div>
+            </DataBodyTemplate.Row>
             {s3Error && <p className="text-sm text-destructive">{s3Error}</p>}
-            <div>
+            <div className="pt-2">
               <Button
                 size="sm"
                 onClick={() => void handleCreateS3Credential()}

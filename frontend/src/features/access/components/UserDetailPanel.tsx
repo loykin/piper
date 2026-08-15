@@ -44,15 +44,9 @@ export function UserDetailPanel({ user, onDelete }: Props) {
       }
     >
       <PanelTemplate.Section title="Account">
-        <dl className="grid grid-cols-2 gap-3">
-          <div>
-            <dt className="text-xs text-muted-foreground">Username</dt>
-            <dd className="mt-0.5 text-sm font-medium">{user.username}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Access</dt>
-            <dd className="mt-0.5 text-sm">{user.system_admin ? 'System administrator' : 'Standard user'}</dd>
-          </div>
+        <dl className="space-y-2">
+          <PanelTemplate.Row label="Username">{user.username}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Access">{user.system_admin ? 'System administrator' : 'Standard user'}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
       <PanelTemplate.Section title="Project roles">

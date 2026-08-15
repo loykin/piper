@@ -1,6 +1,7 @@
 // schedules feature — Schedule creation form component
 import { useMemo, useState } from 'react'
 import { CronInput, toCronExpression, validateCronExpression, type CronValue } from '@loykin/cron-input'
+import { FormActions, FormField } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -105,9 +106,14 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
   }
 
   return (
-    <div className="space-y-3">
-      <div className="space-y-1.5">
-        <Label htmlFor="schedule-pipeline-name" className="text-xs">Pipeline Name</Label>
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void handleSubmit()
+      }}
+    >
+      <FormField label="Pipeline Name" htmlFor="schedule-pipeline-name">
         <Input
           id="schedule-pipeline-name"
           className="h-8 text-sm"
@@ -115,7 +121,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
           onChange={(e) => setName(e.target.value)}
           placeholder="my-pipeline"
         />
-      </div>
+      </FormField>
 
       <div className="space-y-1.5">
         <Label className="text-xs">Trigger Type</Label>
@@ -136,8 +142,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
       </div>
 
       {scheduleType === 'once' && (
-        <div className="space-y-1.5">
-          <Label htmlFor="schedule-run-at" className="text-xs">Run At</Label>
+        <FormField label="Run At" htmlFor="schedule-run-at">
           <Input
             id="schedule-run-at"
             type="datetime-local"
@@ -145,19 +150,20 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
             value={runAt}
             onChange={(e) => setRunAt(e.target.value)}
           />
-        </div>
+        </FormField>
       )}
 
       {scheduleType === 'cron' && (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Cron Schedule</Label>
+        <FormField
+          label="Cron Schedule"
+          htmlFor="schedule-cron"
+          error={!cronValid ? 'Cron expression is invalid.' : undefined}
+        >
           <CronInput value={cronValue} onChange={setCronValue} />
-          {!cronValid && <p className="text-xs text-destructive">Cron expression is invalid.</p>}
-        </div>
+        </FormField>
       )}
 
-      <div className="space-y-1.5">
-        <Label htmlFor="schedule-max-runs" className="text-xs">Max Runs</Label>
+      <FormField label="Max Runs" htmlFor="schedule-max-runs" helperText="0 keeps all completed runs.">
         <Input
           id="schedule-max-runs"
           type="number"
@@ -168,35 +174,23 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
           onChange={(e) => setMaxRuns(e.target.value)}
           placeholder="0"
         />
-        <p className="text-xs text-muted-foreground">0 keeps all completed runs.</p>
-      </div>
+      </FormField>
 
-      <div className="space-y-1.5">
-        <Label className="text-xs">Pipeline YAML</Label>
+      <FormField label="Pipeline YAML" htmlFor="schedule-yaml">
         <YamlMirror
           className="bg-background"
           rows={14}
           value={yaml}
           onChange={(e) => setYaml(e.target.value)}
         />
-      </div>
+      </FormField>
 
-      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
-
-      <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
-        {onCancel && (
-          <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={onCancel}>Cancel</Button>
-        )}
-        <Button
-          type="button"
-          size="sm"
-          className="h-8 text-xs"
-          onClick={() => void handleSubmit()}
-          disabled={submitting}
-        >
-          {submitting ? 'Submitting…' : 'Create Schedule'}
-        </Button>
-      </div>
-    </div>
+      <FormActions
+        status={error || undefined}
+        submitLabel={submitting ? 'Submitting…' : 'Create Schedule'}
+        submitDisabled={submitting}
+        onCancel={onCancel}
+      />
+    </form>
   )
 }

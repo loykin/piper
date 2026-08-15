@@ -1,13 +1,11 @@
 // notebooks feature — K8s notebook form component
 import { useEffect, useRef, useState } from 'react'
 import {
-  DataBodyTemplate, PageTopBar,
+  DataBodyTemplate, FormActions, FormField, PageTopBar,
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
   Tabs, TabsList, TabsTrigger,
 } from '@loykin/designkit'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { ShellMirror } from '@/components/ui/shell-mirror'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
@@ -39,11 +37,13 @@ interface VolumeFieldProps {
 function VolumeField({ volumeId, releasedVolumes, onChange }: VolumeFieldProps) {
   const selectedVol = releasedVolumes.find(v => v.id === volumeId)
   return (
-    <div className="space-y-1.5">
-      <Label className="text-xs">Volume</Label>
-      <p className="text-xs text-muted-foreground">Attach to a released volume to recover existing data, or leave blank to provision a new one.</p>
+    <FormField
+      label="Volume"
+      htmlFor="notebook-volume"
+      helperText={selectedVol ? selectedVol.work_dir : 'Attach to a released volume to recover existing data, or leave blank to provision a new one.'}
+    >
       <Select value={volumeId} onValueChange={v => onChange(v ?? '')}>
-        <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue placeholder="— new volume —" /></SelectTrigger>
+        <SelectTrigger id="notebook-volume" size="sm" className="h-8 text-sm"><SelectValue placeholder="— new volume —" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">new volume</SelectItem>
           {releasedVolumes.map(v => (
@@ -54,8 +54,7 @@ function VolumeField({ volumeId, releasedVolumes, onChange }: VolumeFieldProps) 
           ))}
         </SelectContent>
       </Select>
-      {selectedVol && <p className="font-mono text-xs text-muted-foreground">{selectedVol.work_dir}</p>}
-    </div>
+    </FormField>
   )
 }
 
@@ -79,36 +78,27 @@ function K8sFieldsSection({
 }: K8sFieldsSectionProps) {
   return (
     <DataBodyTemplate.Group layout="stacked" title="Server">
-      <div className="space-y-1.5">
-        <Label className="text-xs">Server Name</Label>
-        <Input className="h-8 text-sm" value={k8sForm.name} onChange={e => setK8sField('name', e.target.value)} placeholder="my-notebook" autoFocus />
-      </div>
+      <FormField label="Server Name" htmlFor="k8s-name">
+        <Input id="k8s-name" className="h-8 text-sm" value={k8sForm.name} onChange={e => setK8sField('name', e.target.value)} placeholder="my-notebook" autoFocus />
+      </FormField>
       <VolumeField volumeId={volumeId} releasedVolumes={releasedVolumes} onChange={onVolumeChange} />
-      <div className="space-y-1.5">
-        <Label className="text-xs">Image</Label>
-        <p className="text-xs text-muted-foreground">Required container image for the notebook server.</p>
-        <Input className="h-8 text-sm" value={k8sForm.image} onChange={e => setK8sField('image', e.target.value)} placeholder="jupyter/scipy-notebook:latest" />
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs">Namespace</Label>
-        <p className="text-xs text-muted-foreground">Required. Kubernetes namespace where the notebook and its volume will be created.</p>
-        <Input className="h-8 text-sm" value={k8sForm.namespace} onChange={e => setK8sField('namespace', e.target.value)} placeholder="notebooks" />
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs">Storage Size</Label>
-        <p className="text-xs text-muted-foreground">Required PVC size. Defaults to 10Gi.</p>
-        <Input className="h-8 text-sm" value={k8sForm.storageSize} onChange={e => setK8sField('storageSize', e.target.value)} placeholder="10Gi" />
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs">Prepare Commands</Label>
-        <p className="text-xs text-muted-foreground">One command per line. Runs before notebook start.</p>
+      <FormField label="Image" htmlFor="k8s-image" helperText="Required container image for the notebook server.">
+        <Input id="k8s-image" className="h-8 text-sm" value={k8sForm.image} onChange={e => setK8sField('image', e.target.value)} placeholder="jupyter/scipy-notebook:latest" />
+      </FormField>
+      <FormField label="Namespace" htmlFor="k8s-namespace" helperText="Required. Kubernetes namespace where the notebook and its volume will be created.">
+        <Input id="k8s-namespace" className="h-8 text-sm" value={k8sForm.namespace} onChange={e => setK8sField('namespace', e.target.value)} placeholder="notebooks" />
+      </FormField>
+      <FormField label="Storage Size" htmlFor="k8s-storage-size" helperText="Required PVC size. Defaults to 10Gi.">
+        <Input id="k8s-storage-size" className="h-8 text-sm" value={k8sForm.storageSize} onChange={e => setK8sField('storageSize', e.target.value)} placeholder="10Gi" />
+      </FormField>
+      <FormField label="Prepare Commands" htmlFor="k8s-prepare" helperText="One command per line. Runs before notebook start.">
         <ShellMirror
           value={k8sForm.prepare}
           onChange={e => setK8sField('prepare', e.target.value)}
           minHeight="7rem"
           placeholder={`pip install -r requirements.txt\npython /work/preflight.py`}
         />
-      </div>
+      </FormField>
       <EnvVarEditor items={k8sForm.env} onAdd={onAddEnv} onRemove={onRemoveEnv} onUpdate={onUpdateEnv} />
     </DataBodyTemplate.Group>
   )
@@ -125,18 +115,15 @@ function ResourcesSection({ k8sForm, setK8sField }: ResourcesSectionProps) {
   return (
     <DataBodyTemplate.Group layout="stacked" title="Resources" description="Optional CPU, memory, and GPU requests/limits.">
       <div className="grid grid-cols-3 gap-3">
-        <div className="space-y-1.5">
-          <Label className="text-xs">CPU</Label>
-          <Input className="h-8 text-sm" value={k8sForm.cpu} onChange={e => setK8sField('cpu', e.target.value)} placeholder="2" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Memory</Label>
-          <Input className="h-8 text-sm" value={k8sForm.memory} onChange={e => setK8sField('memory', e.target.value)} placeholder="4Gi" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">GPU</Label>
-          <Input className="h-8 text-sm" value={k8sForm.gpu} onChange={e => setK8sField('gpu', e.target.value)} placeholder="1" />
-        </div>
+        <FormField label="CPU" htmlFor="k8s-cpu">
+          <Input id="k8s-cpu" className="h-8 text-sm" value={k8sForm.cpu} onChange={e => setK8sField('cpu', e.target.value)} placeholder="2" />
+        </FormField>
+        <FormField label="Memory" htmlFor="k8s-memory">
+          <Input id="k8s-memory" className="h-8 text-sm" value={k8sForm.memory} onChange={e => setK8sField('memory', e.target.value)} placeholder="4Gi" />
+        </FormField>
+        <FormField label="GPU" htmlFor="k8s-gpu">
+          <Input id="k8s-gpu" className="h-8 text-sm" value={k8sForm.gpu} onChange={e => setK8sField('gpu', e.target.value)} placeholder="1" />
+        </FormField>
       </div>
     </DataBodyTemplate.Group>
   )
@@ -163,39 +150,34 @@ function WorkerFieldsSection({
 }: WorkerFieldsSectionProps) {
   return (
     <DataBodyTemplate.Group layout="stacked" title="Server">
-      <div className="space-y-1.5">
-        <Label className="text-xs">Server Name</Label>
-        <Input className="h-8 text-sm" value={workerForm.name} onChange={e => setWorkerField('name', e.target.value)} placeholder="my-notebook" autoFocus />
-      </div>
+      <FormField label="Server Name" htmlFor="worker-name">
+        <Input id="worker-name" className="h-8 text-sm" value={workerForm.name} onChange={e => setWorkerField('name', e.target.value)} placeholder="my-notebook" autoFocus />
+      </FormField>
       <VolumeField volumeId={volumeId} releasedVolumes={releasedVolumes} onChange={onVolumeChange} />
       {runtime === 'docker' ? (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Image</Label>
-          <p className="text-xs text-muted-foreground">Container image used to run the notebook server.</p>
-          <Input className="h-8 text-sm" value={workerForm.dockerImage} onChange={e => setWorkerField('dockerImage', e.target.value)} placeholder="jupyter/minimal-notebook:latest" />
-        </div>
+        <FormField label="Image" htmlFor="worker-image" helperText="Container image used to run the notebook server.">
+          <Input id="worker-image" className="h-8 text-sm" value={workerForm.dockerImage} onChange={e => setWorkerField('dockerImage', e.target.value)} placeholder="jupyter/minimal-notebook:latest" />
+        </FormField>
       ) : (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Python Environment</Label>
-          <p className="text-xs text-muted-foreground">venv path (e.g. /project/venv) or conda env (e.g. conda:ml-env). Leave blank to auto-create a .venv.</p>
-          <Input className="h-8 text-sm" value={workerForm.env} onChange={e => setWorkerField('env', e.target.value)} placeholder="/home/user/project/venv" />
-        </div>
+        <FormField
+          label="Python Environment"
+          htmlFor="worker-env"
+          helperText="venv path (e.g. /project/venv) or conda env (e.g. conda:ml-env). Leave blank to auto-create a .venv."
+        >
+          <Input id="worker-env" className="h-8 text-sm" value={workerForm.env} onChange={e => setWorkerField('env', e.target.value)} placeholder="/home/user/project/venv" />
+        </FormField>
       )}
-      <div className="space-y-1.5">
-        <Label className="text-xs">GPUs</Label>
-        <p className="text-xs text-muted-foreground">Device IDs: 0 · 0,1 · all · leave blank for no GPU</p>
-        <Input className="h-8 text-sm" value={workerForm.gpus} onChange={e => setWorkerField('gpus', e.target.value)} placeholder="0" />
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs">Prepare Commands</Label>
-        <p className="text-xs text-muted-foreground">One command per line. Runs before notebook start.</p>
+      <FormField label="GPUs" htmlFor="worker-gpus" helperText="Device IDs: 0 · 0,1 · all · leave blank for no GPU">
+        <Input id="worker-gpus" className="h-8 text-sm" value={workerForm.gpus} onChange={e => setWorkerField('gpus', e.target.value)} placeholder="0" />
+      </FormField>
+      <FormField label="Prepare Commands" htmlFor="worker-prepare" helperText="One command per line. Runs before notebook start.">
         <ShellMirror
           value={workerForm.prepare}
           onChange={e => setWorkerField('prepare', e.target.value)}
           minHeight="7rem"
           placeholder={`uv pip install jupyterlab ipykernel\npython -m ipykernel install --sys-prefix`}
         />
-      </div>
+      </FormField>
       <EnvVarEditor items={workerForm.envVars} onAdd={onAddEnv} onRemove={onRemoveEnv} onUpdate={onUpdateEnv} />
     </DataBodyTemplate.Group>
   )
@@ -321,54 +303,60 @@ export function NotebookK8sForm({
         </TabsList>
       </Tabs>
 
-      {tab === 'form' ? (
-        <>
-          {runtime === 'k8s' ? (
-            <>
-              <K8sFieldsSection
-                k8sForm={k8sForm}
-                setK8sField={setK8sField}
+      <form
+        className="contents"
+        onSubmit={e => {
+          e.preventDefault()
+          handleSubmit()
+        }}
+      >
+        {tab === 'form' ? (
+          <>
+            {runtime === 'k8s' ? (
+              <>
+                <K8sFieldsSection
+                  k8sForm={k8sForm}
+                  setK8sField={setK8sField}
+                  volumeId={volumeId}
+                  releasedVolumes={releasedVolumes}
+                  onVolumeChange={setVolumeId}
+                  onAddEnv={addK8sEnv}
+                  onRemoveEnv={removeK8sEnv}
+                  onUpdateEnv={updateK8sEnv}
+                />
+                <ResourcesSection k8sForm={k8sForm} setK8sField={setK8sField} />
+              </>
+            ) : (
+              <WorkerFieldsSection
+                workerForm={workerForm}
+                runtime={runtime}
+                setWorkerField={setWorkerField}
                 volumeId={volumeId}
                 releasedVolumes={releasedVolumes}
                 onVolumeChange={setVolumeId}
-                onAddEnv={addK8sEnv}
-                onRemoveEnv={removeK8sEnv}
-                onUpdateEnv={updateK8sEnv}
+                onAddEnv={addWorkerEnv}
+                onRemoveEnv={removeWorkerEnv}
+                onUpdateEnv={updateWorkerEnv}
               />
-              <ResourcesSection k8sForm={k8sForm} setK8sField={setK8sField} />
-            </>
-          ) : (
-            <WorkerFieldsSection
-              workerForm={workerForm}
-              runtime={runtime}
-              setWorkerField={setWorkerField}
-              volumeId={volumeId}
-              releasedVolumes={releasedVolumes}
-              onVolumeChange={setVolumeId}
-              onAddEnv={addWorkerEnv}
-              onRemoveEnv={removeWorkerEnv}
-              onUpdateEnv={updateWorkerEnv}
+            )}
+          </>
+        ) : (
+          <DataBodyTemplate.Group layout="stacked" title="YAML">
+            <YamlMirror
+              rows={24}
+              value={runtime === 'k8s' ? k8sYaml : workerYaml}
+              onChange={e => runtime === 'k8s' ? setK8sYaml(e.target.value) : setWorkerYaml(e.target.value)}
             />
-          )}
-        </>
-      ) : (
-        <DataBodyTemplate.Group layout="stacked" title="YAML">
-          <YamlMirror
-            rows={24}
-            value={runtime === 'k8s' ? k8sYaml : workerYaml}
-            onChange={e => runtime === 'k8s' ? setK8sYaml(e.target.value) : setWorkerYaml(e.target.value)}
-          />
-        </DataBodyTemplate.Group>
-      )}
+          </DataBodyTemplate.Group>
+        )}
 
-      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
-
-      <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
-        <Button type="button" variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
-        <Button size="sm" onClick={handleSubmit} disabled={submitDisabled}>
-          {submitting ? 'Launching…' : volumeId ? 'Attach & Launch' : 'Launch'}
-        </Button>
-      </div>
+        <FormActions
+          status={error || undefined}
+          submitLabel={submitting ? 'Launching…' : volumeId ? 'Attach & Launch' : 'Launch'}
+          submitDisabled={submitDisabled}
+          onCancel={onCancel}
+        />
+      </form>
     </DataBodyTemplate>
   )
 }

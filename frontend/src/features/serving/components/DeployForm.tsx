@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   DataBodyTemplate,
+  FormActions, FormField,
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
   Tabs, TabsList, TabsTrigger,
 } from '@loykin/designkit'
@@ -10,7 +11,6 @@ import { useForm, useWatch, type FieldErrors, type UseFormSetValue } from 'react
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
@@ -79,17 +79,16 @@ interface ServiceSectionProps {
 function ServiceSection({ name, error, onChange }: ServiceSectionProps) {
   return (
     <DataBodyTemplate.Group layout="stacked" title="Service">
-      <div className="space-y-1.5">
-        <Label className="text-xs">Service Name</Label>
+      <FormField label="Service Name" htmlFor="deploy-service-name" error={error}>
         <Input
+          id="deploy-service-name"
           className="h-8 text-sm"
           value={name}
           onChange={e => onChange(e.target.value)}
           placeholder="my-model"
           aria-invalid={!!error}
         />
-        {error && <p className="text-xs text-destructive">{error}</p>}
-      </div>
+      </FormField>
     </DataBodyTemplate.Group>
   )
 }
@@ -109,19 +108,17 @@ function ModelSourceSection({ form, pipelines, pipelineRuns, steps, artifactName
   return (
     <DataBodyTemplate.Group layout="stacked" title="Model Source">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Pipeline</Label>
+        <FormField label="Pipeline" htmlFor="deploy-pipeline">
           <Select value={form.pipeline} onValueChange={v => setField('pipeline', v ?? '')}>
-            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue placeholder="— select pipeline —" /></SelectTrigger>
+            <SelectTrigger id="deploy-pipeline" size="sm" className="h-8 text-sm"><SelectValue placeholder="— select pipeline —" /></SelectTrigger>
             <SelectContent>
               {pipelines.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
             </SelectContent>
           </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Run</Label>
+        </FormField>
+        <FormField label="Run" htmlFor="deploy-run">
           <Select value={form.run} onValueChange={v => setField('run', v ?? '')} disabled={!form.pipeline}>
-            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="deploy-run" size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="latest">latest</SelectItem>
               {pipelineRuns.map(r => (
@@ -131,27 +128,25 @@ function ModelSourceSection({ form, pipelines, pipelineRuns, steps, artifactName
               ))}
             </SelectContent>
           </Select>
-        </div>
+        </FormField>
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Step</Label>
+        <FormField label="Step" htmlFor="deploy-step">
           <Select value={form.step} onValueChange={v => setField('step', v ?? '')} disabled={steps.length === 0}>
-            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue placeholder="— select step —" /></SelectTrigger>
+            <SelectTrigger id="deploy-step" size="sm" className="h-8 text-sm"><SelectValue placeholder="— select step —" /></SelectTrigger>
             <SelectContent>
               {steps.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Artifact</Label>
+        </FormField>
+        <FormField label="Artifact" htmlFor="deploy-artifact">
           <Select value={form.artifact} onValueChange={v => setField('artifact', v ?? '')} disabled={artifactNames.length === 0}>
-            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue placeholder="— select artifact —" /></SelectTrigger>
+            <SelectTrigger id="deploy-artifact" size="sm" className="h-8 text-sm"><SelectValue placeholder="— select artifact —" /></SelectTrigger>
             <SelectContent>
               {artifactNames.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
             </SelectContent>
           </Select>
-        </div>
+        </FormField>
       </div>
     </DataBodyTemplate.Group>
   )
@@ -206,66 +201,61 @@ function RuntimeSection({
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Mode</Label>
+        <FormField label="Mode" htmlFor="deploy-mode">
           <Select value={form.runtimeMode} onValueChange={v => setField('runtimeMode', v ?? '')} disabled={modeLocked}>
-            <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectTrigger id="deploy-mode" size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="local">local</SelectItem>
               <SelectItem value="k8s">k8s</SelectItem>
             </SelectContent>
           </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Port</Label>
+        </FormField>
+        <FormField label="Port" htmlFor="deploy-port" error={errors.port?.message}>
           <Input
+            id="deploy-port"
             className="h-8 text-sm"
             value={form.port}
             onChange={e => setField('port', e.target.value)}
             placeholder="8000"
             aria-invalid={!!errors.port}
           />
-          {errors.port && <p className="text-xs text-destructive">{errors.port.message}</p>}
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Health Path</Label>
-          <Input className="h-8 text-sm" value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
-        </div>
+        </FormField>
+        <FormField label="Health Path" htmlFor="deploy-health-path">
+          <Input id="deploy-health-path" className="h-8 text-sm" value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
+        </FormField>
       </div>
 
       {isDockerLocal && (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Container Image</Label>
+        <FormField label="Container Image" htmlFor="deploy-docker-image">
           <Input
+            id="deploy-docker-image"
             className="h-8 text-sm"
             value={form.dockerImage}
             onChange={e => setField('dockerImage', e.target.value)}
             placeholder="registry/image:tag"
           />
-        </div>
+        </FormField>
       )}
 
       {form.runtimeMode === 'k8s' && (
         <>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Container Image</Label>
+          <FormField label="Container Image" htmlFor="deploy-k8s-image" error={errors.k8sImage?.message}>
             <Input
+              id="deploy-k8s-image"
               className="h-8 text-sm"
               value={form.k8sImage}
               onChange={e => setField('k8sImage', e.target.value)}
               placeholder="registry/image:tag"
               aria-invalid={!!errors.k8sImage}
             />
-            {errors.k8sImage && <p className="text-xs text-destructive">{errors.k8sImage.message}</p>}
-          </div>
+          </FormField>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Namespace</Label>
-              <Input className="h-8 text-sm" value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Replicas</Label>
+            <FormField label="Namespace" htmlFor="deploy-k8s-namespace">
+              <Input id="deploy-k8s-namespace" className="h-8 text-sm" value={form.k8sNamespace} onChange={e => setField('k8sNamespace', e.target.value)} placeholder="default" />
+            </FormField>
+            <FormField label="Replicas" htmlFor="deploy-k8s-replicas" error={errors.k8sReplicas?.message}>
               <Input
+                id="deploy-k8s-replicas"
                 className="h-8 text-sm"
                 type="number"
                 min="1"
@@ -273,47 +263,40 @@ function RuntimeSection({
                 onChange={e => setField('k8sReplicas', e.target.value)}
                 aria-invalid={!!errors.k8sReplicas}
               />
-              {errors.k8sReplicas && <p className="text-xs text-destructive">{errors.k8sReplicas.message}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Image Pull Policy</Label>
+            </FormField>
+            <FormField label="Image Pull Policy" htmlFor="deploy-k8s-pull-policy">
               <Select value={form.k8sImagePullPolicy} onValueChange={v => setField('k8sImagePullPolicy', v ?? '')}>
-                <SelectTrigger size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectTrigger id="deploy-k8s-pull-policy" size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Always">Always</SelectItem>
                   <SelectItem value="IfNotPresent">IfNotPresent</SelectItem>
                   <SelectItem value="Never">Never</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
+            </FormField>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">CPU</Label>
-              <Input className="h-8 text-sm" value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Memory</Label>
-              <Input className="h-8 text-sm" value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">GPU</Label>
-              <Input className="h-8 text-sm" value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" />
-            </div>
+            <FormField label="CPU" htmlFor="deploy-k8s-cpu">
+              <Input id="deploy-k8s-cpu" className="h-8 text-sm" value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" />
+            </FormField>
+            <FormField label="Memory" htmlFor="deploy-k8s-memory">
+              <Input id="deploy-k8s-memory" className="h-8 text-sm" value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" />
+            </FormField>
+            <FormField label="GPU" htmlFor="deploy-k8s-gpu">
+              <Input id="deploy-k8s-gpu" className="h-8 text-sm" value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" />
+            </FormField>
           </div>
         </>
       )}
 
-      <div className="space-y-1.5">
-        <Label className="text-xs">Command</Label>
-        <p className="text-xs text-muted-foreground">One argument per line. $PIPER_MODEL_DIR points to the artifact directory.</p>
+      <FormField label="Command" htmlFor="deploy-command" helperText="One argument per line. $PIPER_MODEL_DIR points to the artifact directory.">
         <YamlMirror
           className="bg-background"
           rows={4}
           value={form.command}
           onChange={e => setField('command', e.target.value)}
         />
-      </div>
+      </FormField>
     </DataBodyTemplate.Group>
   )
 }
@@ -514,18 +497,12 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
           </DataBodyTemplate.Group>
         )}
 
-        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
-
-        <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
-          <Button type="button" variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={deploying}
-          >
-            {deploying ? 'Deploying…' : 'Deploy'}
-          </Button>
-        </div>
+        <FormActions
+          status={error || undefined}
+          submitLabel={deploying ? 'Deploying…' : 'Deploy'}
+          submitDisabled={deploying}
+          onCancel={onClose}
+        />
       </form>
     </>
   )

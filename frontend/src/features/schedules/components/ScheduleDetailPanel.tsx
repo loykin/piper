@@ -118,50 +118,26 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
       }
     >
       <PanelTemplate.Section title="Details">
-        <dl className="grid grid-cols-2 gap-3">
+        <dl className="space-y-2">
           {isCron && (
-            <div>
-              <dt className="text-xs text-muted-foreground">Cron Expression</dt>
-              <dd className="mt-0.5 font-mono text-xs">{schedule.cron_expr || '—'}</dd>
-            </div>
+            <PanelTemplate.Row label="Cron Expression">{schedule.cron_expr || '—'}</PanelTemplate.Row>
           )}
           {schedule.schedule_type === 'once' && (
-            <div>
-              <dt className="text-xs text-muted-foreground">Scheduled At</dt>
-              <dd className="mt-0.5 text-xs">{new Date(schedule.next_run_at).toLocaleString()}</dd>
-            </div>
+            <PanelTemplate.Row label="Scheduled At">{new Date(schedule.next_run_at).toLocaleString()}</PanelTemplate.Row>
           )}
-          <div>
-            <dt className="text-xs text-muted-foreground">Status</dt>
-            <dd className="mt-0.5 text-xs">
-              {schedule.enabled ? (isCron ? 'Active' : 'Waiting') : (schedule.schedule_type === 'cron' ? 'Disabled' : 'Done')}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Last Run</dt>
-            <dd className="mt-0.5 text-xs">
-              {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '—'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Retention</dt>
-            <dd className="mt-0.5 text-xs">
-              {schedule.max_runs > 0 ? `Keep ${schedule.max_runs} completed runs` : 'Keep all runs'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Created</dt>
-            <dd className="mt-0.5 text-xs">{new Date(schedule.created_at).toLocaleString()}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Total Runs</dt>
-            <dd className="mt-0.5 text-xs font-semibold">{runs.length}</dd>
-          </div>
+          <PanelTemplate.Row label="Status">
+            {schedule.enabled ? (isCron ? 'Active' : 'Waiting') : (schedule.schedule_type === 'cron' ? 'Disabled' : 'Done')}
+          </PanelTemplate.Row>
+          <PanelTemplate.Row label="Last Run">
+            {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '—'}
+          </PanelTemplate.Row>
+          <PanelTemplate.Row label="Retention">
+            {schedule.max_runs > 0 ? `Keep ${schedule.max_runs} completed runs` : 'Keep all runs'}
+          </PanelTemplate.Row>
+          <PanelTemplate.Row label="Created">{new Date(schedule.created_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Total Runs">{runs.length}</PanelTemplate.Row>
           {templateVersion && (
-            <div>
-              <dt className="text-xs text-muted-foreground">Pipeline Version</dt>
-              <dd className="mt-0.5 text-xs font-semibold">v{templateVersion.version}</dd>
-            </div>
+            <PanelTemplate.Row label="Pipeline Version">v{templateVersion.version}</PanelTemplate.Row>
           )}
         </dl>
       </PanelTemplate.Section>

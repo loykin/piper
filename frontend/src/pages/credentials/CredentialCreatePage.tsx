@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { DataBodyTemplate, PageTopBar, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
+import { DataBodyTemplate, FormActions, FormField, PageTopBar, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -88,9 +88,14 @@ export default function CredentialCreatePage() {
         title="Credential"
         description="Stored values are write-only — the API never returns them again."
       >
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="credential-name" className="text-xs">Name</Label>
+        <form
+          className="space-y-3"
+          onSubmit={e => {
+            e.preventDefault()
+            void submit()
+          }}
+        >
+          <FormField label="Name" htmlFor="credential-name">
             <Input
               id="credential-name"
               value={name}
@@ -98,12 +103,11 @@ export default function CredentialCreatePage() {
               placeholder={kind === 'git' ? 'github-acme' : 'wandb'}
               className="h-8 font-mono text-sm"
             />
-          </div>
+          </FormField>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs">Kind</Label>
+          <FormField label="Kind" htmlFor="credential-kind">
             <Select value={kind} onValueChange={value => handleKindChange((value ?? 'generic') as CredentialKind)}>
-              <SelectTrigger className="h-8 w-44 text-sm">
+              <SelectTrigger id="credential-kind" className="h-8 w-44 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -111,14 +115,13 @@ export default function CredentialCreatePage() {
                 <SelectItem value="git">Git</SelectItem>
               </SelectContent>
             </Select>
-          </div>
+          </FormField>
 
           {kind === 'git' && (
-            <div className="space-y-1.5">
-              <Label htmlFor="credential-endpoint" className="text-xs">
-                Endpoint URL prefix
-                <span className="ml-1 text-xs text-muted-foreground">(optional)</span>
-              </Label>
+            <FormField
+              label={<>Endpoint URL prefix <span className="ml-1 text-xs text-muted-foreground">(optional)</span></>}
+              htmlFor="credential-endpoint"
+            >
               <Input
                 id="credential-endpoint"
                 value={endpoint}
@@ -126,7 +129,7 @@ export default function CredentialCreatePage() {
                 placeholder="https://github.com/myorg/"
                 className="h-8 font-mono text-sm"
               />
-            </div>
+            </FormField>
           )}
 
           <div className="space-y-1.5">
@@ -159,34 +162,19 @@ export default function CredentialCreatePage() {
                 />
               </div>
             ))}
-            <Button variant="ghost" size="sm" onClick={addEntry} className="text-muted-foreground">
+            <Button type="button" variant="ghost" size="sm" onClick={addEntry} className="text-muted-foreground">
               <Plus className="mr-1.5 size-3.5" />
               Add field
             </Button>
           </div>
 
-          {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
-
-          <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => void navigate({ to: `/projects/${projectId}/credentials` })}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => void submit()}
-              disabled={!canSubmit || createCredential.isPending}
-            >
-              {createCredential.isPending ? 'Creating…' : 'Create Credential'}
-            </Button>
-          </div>
-        </div>
+          <FormActions
+            status={error || undefined}
+            submitLabel={createCredential.isPending ? 'Creating…' : 'Create Credential'}
+            submitDisabled={!canSubmit || createCredential.isPending}
+            onCancel={() => void navigate({ to: `/projects/${projectId}/credentials` })}
+          />
+        </form>
       </DataBodyTemplate.Group>
     </DataBodyTemplate>
   )

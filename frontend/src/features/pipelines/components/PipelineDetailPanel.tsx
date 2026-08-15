@@ -43,29 +43,14 @@ export function PipelineDetailPanel({ template: t, onRun, onDeploy, onNewVersion
       }
     >
       <PanelTemplate.Section title="Details">
-        <dl className="grid grid-cols-2 gap-3">
-          <div>
-            <dt className="text-xs text-muted-foreground">Version</dt>
-            <dd className="mt-0.5 text-sm font-medium">v{t.version}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Submitted</dt>
-            <dd className="mt-0.5 text-xs">{new Date(t.created_at).toLocaleString()}</dd>
-          </div>
+        <dl className="space-y-2">
+          <PanelTemplate.Row label="Version">v{t.version}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Submitted">{new Date(t.created_at).toLocaleString()}</PanelTemplate.Row>
           {t.volume_id && (
-            <div className="col-span-2">
-              <dt className="text-xs text-muted-foreground">Volume</dt>
-              <dd className="mt-0.5 font-mono text-xs">{t.volume_id}</dd>
-            </div>
+            <PanelTemplate.Row label="Volume">{t.volume_id}</PanelTemplate.Row>
           )}
-          <div className="col-span-2">
-            <dt className="text-xs text-muted-foreground">Version ID</dt>
-            <dd className="mt-0.5 font-mono text-xs break-all">{t.id}</dd>
-          </div>
-          <div className="col-span-2">
-            <dt className="text-xs text-muted-foreground">Snapshot ID</dt>
-            <dd className="mt-0.5 font-mono text-xs break-all">{t.snapshot_id}</dd>
-          </div>
+          <PanelTemplate.Row label="Version ID">{t.id}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Snapshot ID">{t.snapshot_id}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
 

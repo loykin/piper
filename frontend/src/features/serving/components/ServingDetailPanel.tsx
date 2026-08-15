@@ -90,51 +90,28 @@ export function ServingDetailPanel({ name }: { name: string }) {
       }
     >
       <PanelTemplate.Section title="Details">
-        <dl className="grid grid-cols-2 gap-3">
-          <div>
-            <dt className="text-xs text-muted-foreground">Endpoint</dt>
-            <dd className="mt-0.5">
-              {service.endpoint ? (
-                <a href={service.endpoint} target="_blank" rel="noreferrer"
-                  className="font-mono text-xs text-primary hover:underline">
-                  {service.endpoint}
-                </a>
-              ) : <span className="text-xs text-muted-foreground">—</span>}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Artifact</dt>
-            <dd className="mt-0.5 font-mono text-xs">{service.artifact || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Namespace</dt>
-            <dd className="mt-0.5 text-xs">{service.namespace || 'local'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Source Run</dt>
-            <dd className="mt-0.5 text-xs">
-              {service.run_id ? (
-                <Link to={`/projects/${projectId}/history`}
-                  className="font-mono text-primary hover:underline">
-                  {service.run_id.slice(0, 16)}…
-                </Link>
-              ) : '—'}
-            </dd>
-          </div>
+        <dl className="space-y-2">
+          <PanelTemplate.Row label="Endpoint">
+            {service.endpoint ? (
+              <a href={service.endpoint} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                {service.endpoint}
+              </a>
+            ) : '—'}
+          </PanelTemplate.Row>
+          <PanelTemplate.Row label="Artifact">{service.artifact || '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Namespace">{service.namespace || 'local'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Source Run">
+            {service.run_id ? (
+              <Link to={`/projects/${projectId}/history`} className="text-primary hover:underline">
+                {service.run_id.slice(0, 16)}…
+              </Link>
+            ) : '—'}
+          </PanelTemplate.Row>
           {service.pid > 0 && (
-            <div>
-              <dt className="text-xs text-muted-foreground">PID</dt>
-              <dd className="mt-0.5 font-mono text-xs">{service.pid}</dd>
-            </div>
+            <PanelTemplate.Row label="PID">{service.pid}</PanelTemplate.Row>
           )}
-          <div>
-            <dt className="text-xs text-muted-foreground">Deployed</dt>
-            <dd className="mt-0.5 text-xs">{new Date(service.created_at).toLocaleString()}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Updated</dt>
-            <dd className="mt-0.5 text-xs">{new Date(service.updated_at).toLocaleString()}</dd>
-          </div>
+          <PanelTemplate.Row label="Deployed">{new Date(service.created_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Updated">{new Date(service.updated_at).toLocaleString()}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
 

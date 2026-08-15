@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Button,
   DataBodyTemplate,
+  FormActions,
+  FormField,
   Input,
   Label,
   PageTopBar,
@@ -66,8 +67,7 @@ export default function UserCreatePage() {
           noValidate
           onSubmit={handleSubmit(submit)}
         >
-          <div className="space-y-1.5">
-            <Label htmlFor="create-user-username" className="text-xs">Username</Label>
+          <FormField label="Username" htmlFor="create-user-username" error={errors.username?.message}>
             <Input
               id="create-user-username"
               autoComplete="username"
@@ -76,11 +76,9 @@ export default function UserCreatePage() {
               aria-invalid={!!errors.username}
               {...register('username')}
             />
-            {errors.username && <p className="text-xs text-destructive">{errors.username.message}</p>}
-          </div>
+          </FormField>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="create-user-password" className="text-xs">Temporary password</Label>
+          <FormField label="Temporary password" htmlFor="create-user-password" error={errors.password?.message}>
             <Input
               id="create-user-password"
               type="password"
@@ -89,8 +87,7 @@ export default function UserCreatePage() {
               aria-invalid={!!errors.password}
               {...register('password')}
             />
-            {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
-          </div>
+          </FormField>
 
           <Controller
             name="systemAdmin"
@@ -112,21 +109,12 @@ export default function UserCreatePage() {
             )}
           />
 
-          {submitError && <p className="text-sm text-destructive" role="alert">{submitError}</p>}
-          <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => void navigate('/users')}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" size="sm" className="h-8 text-xs" disabled={createUser.isPending}>
-              {createUser.isPending ? 'Creating…' : 'Create User'}
-            </Button>
-          </div>
+          <FormActions
+            status={submitError || undefined}
+            submitLabel={createUser.isPending ? 'Creating…' : 'Create User'}
+            submitDisabled={createUser.isPending}
+            onCancel={() => void navigate('/users')}
+          />
         </form>
       </DataBodyTemplate.Group>
     </DataBodyTemplate>

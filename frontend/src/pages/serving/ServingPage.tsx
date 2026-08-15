@@ -66,41 +66,44 @@ function ServingPageInner() {
     <DataBodyTemplate
       title="Serving"
       description="Model serving endpoints deployed from pipeline artifacts."
-      actions={
-        <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/serving/new` })}>Deploy</Button>
-      }
     >
       <DataBodyTemplate.Body>
-        {servicesQuery.isError && (
-          <QueryErrorNotice
-            message="Failed to load services"
-            error={servicesQuery.error}
-            onRetry={() => void servicesQuery.refetch()}
-          />
-        )}
-        <DataGrid
-          data={services}
-          columns={columns}
-          emptyContent={
-            <div className="py-12 text-center">
-              <p className="text-sm text-muted-foreground">No services deployed yet.</p>
-              <p className="mt-1 text-xs text-muted-foreground/60">
-                Deploy a ModelService from a pipeline artifact.
-              </p>
-            </div>
+        <DataBodyTemplate.Resource
+          toolbarRight={
+            <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/serving/new` })}>Deploy</Button>
           }
-          tableWidthMode="fill-last"
-          rowHeight={48}
-          rowCursor
-          onRowClick={(row) => open(<ServingDetailPanel name={row.name} />, { size: 520 })}
-          pagination={{ pageSize: 20 }}
-          footer={(table) => (
-            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-              <span>{services.length} services</span>
-              <DataGridPaginationCompact table={table} />
-            </div>
+          notice={servicesQuery.isError && (
+            <QueryErrorNotice
+              message="Failed to load services"
+              error={servicesQuery.error}
+              onRetry={() => void servicesQuery.refetch()}
+            />
           )}
-        />
+        >
+          <DataGrid
+            data={services}
+            columns={columns}
+            emptyContent={
+              <div className="py-12 text-center">
+                <p className="text-sm text-muted-foreground">No services deployed yet.</p>
+                <p className="mt-1 text-xs text-muted-foreground/60">
+                  Deploy a ModelService from a pipeline artifact.
+                </p>
+              </div>
+            }
+            tableWidthMode="fill-last"
+            rowHeight={48}
+            rowCursor
+            onRowClick={(row) => open(<ServingDetailPanel name={row.name} />, { size: 520 })}
+            pagination={{ pageSize: 20 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{services.length} services</span>
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
+        </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 

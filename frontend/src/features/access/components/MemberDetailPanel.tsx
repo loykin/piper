@@ -69,10 +69,7 @@ export function MemberDetailPanel({ member, onRemove }: Props) {
       </PanelTemplate.Section>
       <PanelTemplate.Section title="Identity">
         <dl>
-          <div>
-            <dt className="text-xs text-muted-foreground">Username</dt>
-            <dd className="mt-0.5 text-sm font-medium">{member.username || '—'}</dd>
-          </div>
+          <PanelTemplate.Row label="Username">{member.username || '—'}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
     </PanelTemplate>

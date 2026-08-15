@@ -56,54 +56,57 @@ function NotebooksPageInner() {
     <DataBodyTemplate
       title="Notebooks"
       description="Jupyter notebook servers. Click a row to view details or Open to launch in a new tab."
-      actions={
-        <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
-      }
     >
       <DataBodyTemplate.Body>
-        {notebooksQuery.isError && (
-          <QueryErrorNotice
-            message="Failed to load notebooks"
-            error={notebooksQuery.error}
-            onRetry={() => void notebooksQuery.refetch()}
-          />
-        )}
-        <DataGrid
-          data={notebooks}
-          columns={columns}
-          emptyContent={
-            <div className="py-12 text-center">
-              <p className="text-sm text-muted-foreground">No notebook servers running.</p>
-              {releasedVolumes.length > 0 && (
-                <p className="mt-1 text-xs text-muted-foreground/60">
-                  {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} available — click Launch to attach one.
-                </p>
-              )}
-            </div>
+        <DataBodyTemplate.Resource
+          toolbarRight={
+            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
           }
-          tableWidthMode="fill-last"
-          rowHeight={44}
-          rowCursor
-          onRowClick={(row) => open(<NotebookDetailPanel name={row.name} projectId={projectId} />, { size: 520 })}
-          pagination={{ pageSize: 20 }}
-          footer={(table) => (
-            <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-              <span>{notebooks.length} servers</span>
-              {releasedVolumes.length > 0 && (
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="h-auto p-0 text-xs"
-                  onClick={() => navigate(`/projects/${projectId}/notebooks/create?volume=${releasedVolumes[0].id}`)}
-                >
-                  {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
-                </Button>
-              )}
-              <DataGridPaginationCompact table={table} />
-            </div>
+          notice={notebooksQuery.isError && (
+            <QueryErrorNotice
+              message="Failed to load notebooks"
+              error={notebooksQuery.error}
+              onRetry={() => void notebooksQuery.refetch()}
+            />
           )}
-        />
+        >
+          <DataGrid
+            data={notebooks}
+            columns={columns}
+            emptyContent={
+              <div className="py-12 text-center">
+                <p className="text-sm text-muted-foreground">No notebook servers running.</p>
+                {releasedVolumes.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground/60">
+                    {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} available — click Launch to attach one.
+                  </p>
+                )}
+              </div>
+            }
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => open(<NotebookDetailPanel name={row.name} projectId={projectId} />, { size: 520 })}
+            pagination={{ pageSize: 20 }}
+            footer={(table) => (
+              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
+                <span>{notebooks.length} servers</span>
+                {releasedVolumes.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-xs"
+                    onClick={() => navigate(`/projects/${projectId}/notebooks/create?volume=${releasedVolumes[0].id}`)}
+                  >
+                    {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
+                  </Button>
+                )}
+                <DataGridPaginationCompact table={table} />
+              </div>
+            )}
+          />
+        </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 

@@ -116,40 +116,47 @@ export default function CredentialsPage() {
     <DataBodyTemplate
       title="Credentials"
       description="Project-scoped credentials for workload env and Git source access."
-      actions={
-        <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/credentials/new` })}>
-          <Plus className="mr-2 size-4" />
-          New Credential
-        </Button>
-      }
-      toolbarLeft={
-        <Select value={kindFilter} onValueChange={value => setKindFilter((value ?? 'all') as KindFilter)}>
-          <SelectTrigger size="sm" className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All kinds</SelectItem>
-            <SelectItem value="generic">Generic</SelectItem>
-            <SelectItem value="git">Git</SelectItem>
-          </SelectContent>
-        </Select>
-      }
     >
       <DataBodyTemplate.Body>
-        {credentialsQuery.isError && (
-          <QueryErrorNotice
-            message="Failed to load credentials"
-            error={credentialsQuery.error}
-            onRetry={() => void credentialsQuery.refetch()}
+        <DataBodyTemplate.Resource
+          toolbarLeft={
+            <Select value={kindFilter} onValueChange={value => setKindFilter((value ?? 'all') as KindFilter)}>
+              <SelectTrigger size="sm" className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All kinds</SelectItem>
+                <SelectItem value="generic">Generic</SelectItem>
+                <SelectItem value="git">Git</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+          toolbarRight={
+            <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/credentials/new` })}>
+              <Plus className="mr-2 size-4" />
+              New Credential
+            </Button>
+          }
+          notice={
+            <>
+              {credentialsQuery.isError && (
+                <QueryErrorNotice
+                  message="Failed to load credentials"
+                  error={credentialsQuery.error}
+                  onRetry={() => void credentialsQuery.refetch()}
+                />
+              )}
+              {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+            </>
+          }
+        >
+          <DataGrid
+            data={filtered}
+            columns={columns}
+            isLoading={credentialsQuery.isLoading}
+            emptyMessage="No credentials configured."
           />
-        )}
-        {actionError && <p className="mb-3 text-sm text-destructive">{actionError}</p>}
-        <DataGrid
-          data={filtered}
-          columns={columns}
-          isLoading={credentialsQuery.isLoading}
-          emptyMessage="No credentials configured."
-        />
+        </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
 
       <RotateCredentialDialog

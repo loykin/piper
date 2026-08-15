@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Button,
   DataBodyTemplate,
+  FormActions,
+  FormField,
   Input,
-  Label,
   PageTopBar,
   Select,
   SelectContent,
@@ -80,22 +80,21 @@ export default function ProjectCreatePage() {
         description="The Owner Member stores and executes this project's pipelines, runs, schedules, notebooks, and services."
       >
         <form className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
-          <div className="space-y-1.5">
-            <Label htmlFor="project-id" className="text-xs">Project ID</Label>
+          <FormField label="Project ID" htmlFor="project-id" error={errors.id?.message}>
             <Input id="project-id" placeholder="my-project" className="h-8 text-sm" aria-invalid={!!errors.id} {...register('id')} />
-            {errors.id && <p className="text-xs text-destructive">{errors.id.message}</p>}
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="project-name" className="text-xs">Name</Label>
+          </FormField>
+          <FormField label="Name" htmlFor="project-name" error={errors.name?.message}>
             <Input id="project-name" placeholder="My Project" className="h-8 text-sm" aria-invalid={!!errors.name} {...register('name')} />
-            {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="project-description" className="text-xs">Description</Label>
+          </FormField>
+          <FormField label="Description" htmlFor="project-description">
             <Input id="project-description" className="h-8 text-sm" {...register('description')} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="project-owner-member" className="text-xs">Owner Member</Label>
+          </FormField>
+          <FormField
+            label="Owner Member"
+            htmlFor="project-owner-member"
+            error={errors.ownerMemberID?.message}
+            helperText={membersQuery.isError ? 'Federation directory is unavailable; Local Member will be used.' : undefined}
+          >
             <Controller
               name="ownerMemberID"
               control={control}
@@ -114,18 +113,13 @@ export default function ProjectCreatePage() {
                 </Select>
               )}
             />
-            {errors.ownerMemberID && <p className="text-xs text-destructive">{errors.ownerMemberID.message}</p>}
-            {membersQuery.isError && (
-              <p className="text-xs text-muted-foreground">Federation directory is unavailable; Local Member will be used.</p>
-            )}
-          </div>
-          {submitError && <p className="text-sm text-destructive" role="alert">{submitError}</p>}
-          <div className="flex justify-end gap-2 border-t border-border pt-(--designkit-panel-gap)">
-            <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={() => void navigate(-1)}>Cancel</Button>
-            <Button type="submit" size="sm" className="h-8 text-xs" disabled={createProject.isPending}>
-              {createProject.isPending ? 'Creating…' : 'Create Project'}
-            </Button>
-          </div>
+          </FormField>
+          <FormActions
+            status={submitError || undefined}
+            submitLabel={createProject.isPending ? 'Creating…' : 'Create Project'}
+            submitDisabled={createProject.isPending}
+            onCancel={() => void navigate(-1)}
+          />
         </form>
       </DataBodyTemplate.Group>
     </DataBodyTemplate>

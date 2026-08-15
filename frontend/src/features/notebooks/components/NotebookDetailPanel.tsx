@@ -87,31 +87,13 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
       }
     >
       <PanelTemplate.Section title="Details">
-        <dl className="grid grid-cols-2 gap-3">
-          <div>
-            <dt className="text-xs text-muted-foreground">Environment</dt>
-            <dd className="mt-0.5 break-all font-mono text-xs">{notebook.env || notebook.image || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Work Dir</dt>
-            <dd className="mt-0.5 break-all font-mono text-xs">{notebook.work_dir || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Volume</dt>
-            <dd className="mt-0.5 font-mono text-xs">{notebook.volume_id || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Runtime</dt>
-            <dd className="mt-0.5 text-xs">{notebook.runtime_id || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Endpoint</dt>
-            <dd className="mt-0.5 break-all font-mono text-xs">{notebook.endpoint || '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Created</dt>
-            <dd className="mt-0.5 text-xs">{new Date(notebook.created_at).toLocaleString()}</dd>
-          </div>
+        <dl className="space-y-2">
+          <PanelTemplate.Row label="Environment">{notebook.env || notebook.image || '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Work Dir">{notebook.work_dir || '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Volume">{notebook.volume_id || '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Runtime">{notebook.runtime_id || '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Endpoint">{notebook.endpoint || '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Created">{new Date(notebook.created_at).toLocaleString()}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
 

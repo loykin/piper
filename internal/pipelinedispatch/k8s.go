@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	pipelineworker "github.com/loykin/piper/internal/k8sworker/pipeline"
+	k8spipeline "github.com/loykin/piper/internal/k8sruntime/pipeline"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/proto"
 	"k8s.io/client-go/kubernetes"
 )
 
-const localK8sWorkerID = "piper-k8s-runtime"
+const localK8sRuntimeID = "piper-k8s-runtime"
 
 // K8sBackendConfig configures direct, in-process Kubernetes pipeline
 // execution. The client is expected to target the cluster owned by this Piper
@@ -28,13 +28,13 @@ type K8sBackendConfig struct {
 	WorkloadToken       string
 	LogClient           logsink.PushClient
 	Complete            func(proto.TaskResult) error
-	RenewLeases         func(workerID string, taskIDs []string)
+	RenewLeases         func(runtimeID string, taskIDs []string)
 }
 
 // K8sBackend adapts the existing Kubernetes Start/Wait/Stop/Recover lifecycle
 // to Queue's in-process ExecutionBackend contract.
 type K8sBackend struct {
-	worker *pipelineworker.Worker
+	runtime *k8spipeline.Runtime
 
 	// Serialize dispatch with cancellation so a successful cancellation cannot
 	// be followed by a late Job creation from an already-scheduled goroutine.
@@ -43,14 +43,14 @@ type K8sBackend struct {
 }
 
 func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
-	w := pipelineworker.New(pipelineworker.Config{
-		WorkerID: localK8sWorkerID,
-		Context:  cfg.Context,
-		Store: pipelineworker.StoreConfig{
+	w := k8spipeline.New(k8spipeline.Config{
+		RuntimeID: localK8sRuntimeID,
+		Context:   cfg.Context,
+		Store: k8spipeline.StoreConfig{
 			MasterURL:     cfg.MasterURL,
 			WorkloadToken: cfg.WorkloadToken,
 		},
-		K8s: pipelineworker.K8sConfig{
+		K8s: k8spipeline.K8sConfig{
 			Client:               cfg.Client,
 			Namespaces:           append([]string(nil), cfg.Namespaces...),
 			AgentImage:           cfg.PipelineRunnerImage,
@@ -60,7 +60,7 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		ReportResult: cfg.Complete,
 		RenewLeases: func(taskIDs []string) error {
 			if cfg.RenewLeases != nil {
-				cfg.RenewLeases(localK8sWorkerID, taskIDs)
+				cfg.RenewLeases(localK8sRuntimeID, taskIDs)
 			}
 			return nil
 		},
@@ -69,11 +69,11 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 	if err := w.InitError(); err != nil {
 		return nil, err
 	}
-	return &K8sBackend{worker: w, canceled: make(map[string]*time.Timer)}, nil
+	return &K8sBackend{runtime: w, canceled: make(map[string]*time.Timer)}, nil
 }
 
 func (b *K8sBackend) Dispatch(ctx context.Context, task *proto.Task) error {
-	if b == nil || b.worker == nil {
+	if b == nil || b.runtime == nil {
 		return fmt.Errorf("k8s runtime backend is not configured")
 	}
 	if err := validateDirectK8sTask(task); err != nil {
@@ -85,17 +85,17 @@ func (b *K8sBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 	if _, canceled := b.canceled[task.RunID]; canceled {
 		return fmt.Errorf("k8s runtime dispatch: run %s was canceled before dispatch", task.RunID)
 	}
-	return b.worker.Dispatch(ctx, task)
+	return b.runtime.Dispatch(ctx, task)
 }
 
 func (b *K8sBackend) CancelRun(ctx context.Context, runID string) error {
-	if b == nil || b.worker == nil || runID == "" {
+	if b == nil || b.runtime == nil || runID == "" {
 		return nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.markCanceledLocked(runID)
-	return b.worker.CancelRun(ctx, runID)
+	return b.runtime.CancelRun(ctx, runID)
 }
 
 func (b *K8sBackend) ReleaseRun(runID string) {
@@ -110,8 +110,8 @@ func (b *K8sBackend) ReleaseRun(runID string) {
 // Observe recovers Jobs from a previous Piper process and reconciles terminal
 // state until ctx is canceled.
 func (b *K8sBackend) Observe(ctx context.Context) {
-	if b != nil && b.worker != nil {
-		b.worker.Observe(ctx)
+	if b != nil && b.runtime != nil {
+		b.runtime.Observe(ctx)
 	}
 }
 

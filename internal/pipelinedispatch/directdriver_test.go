@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/loykin/piper/internal/proto"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
 )
 
 // fakeDirectDriver is a minimal pdriver.Driver double shared by

@@ -16,7 +16,7 @@ import (
 	"github.com/loykin/piper/pkg/pipeline/run"
 )
 
-func (q *Queue) takeReadyTask(workerID, label string) *proto.Task {
+func (q *Queue) takeReadyTask(runtimeID, label string) *proto.Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for _, r := range q.runs {
@@ -24,16 +24,16 @@ func (q *Queue) takeReadyTask(workerID, label string) *proto.Task {
 			if entry.status != taskReady {
 				continue
 			}
-			if entry.task.WorkerID != "" && entry.task.WorkerID != workerID {
+			if entry.task.RuntimeID != "" && entry.task.RuntimeID != runtimeID {
 				continue
 			}
 			if entry.task.Label != "" && entry.task.Label != label {
 				continue
 			}
-			entry.assignedWorkerID = workerID
+			entry.assignedRuntimeID = runtimeID
 			q.startTaskLocked(context.Background(), r.runID, entry)
 			task := *entry.task
-			task.WorkerID = workerID
+			task.RuntimeID = runtimeID
 			return &task
 		}
 	}
@@ -236,8 +236,8 @@ func (b *cancelRecordingBackend) canceledRun() string {
 }
 
 type failingOwnedBackend struct {
-	workerID string
-	err      error
+	runtimeID string
+	err       error
 }
 
 func (b *failingOwnedBackend) Dispatch(context.Context, *proto.Task) error {
@@ -245,7 +245,7 @@ func (b *failingOwnedBackend) Dispatch(context.Context, *proto.Task) error {
 }
 
 func (b *failingOwnedBackend) OwnerForTask(string) string {
-	return b.workerID
+	return b.runtimeID
 }
 
 func (b *failingOwnedBackend) ReleaseTask(string) {}
@@ -692,8 +692,8 @@ func TestPermanentDispatchFailureCompletesOwnedTask(t *testing.T) {
 	stepRepo := &memoryStepRepo{}
 	q := NewQueue(context.Background(), runRepo, stepRepo)
 	q.SetBackend(&failingOwnedBackend{
-		workerID: "docker-worker",
-		err:      fmt.Errorf("container create: image not found"),
+		runtimeID: "docker-worker",
+		err:       fmt.Errorf("container create: image not found"),
 	})
 	q.Add(ctx, "project-a", pl, dag, "run-dispatch-failure", ".", t.TempDir(), proto.BuiltinVars{}, nil)
 
@@ -1023,7 +1023,7 @@ func TestCleanupBackstopFailsOrphanedRecoveringStep(t *testing.T) {
 	}
 }
 
-func TestCompleteRejectsDifferentWorker(t *testing.T) {
+func TestCompleteRejectsDifferentRuntime(t *testing.T) {
 	ctx := context.Background()
 	pl := &pipeline.Pipeline{
 		Metadata: manifest.ObjectMeta{Name: "owner"},
@@ -1043,7 +1043,7 @@ func TestCompleteRejectsDifferentWorker(t *testing.T) {
 	}
 	now := time.Now()
 	err = q.Complete(ctx, proto.TaskResult{
-		TaskID: task.ID, WorkerID: "worker-b", Status: proto.TaskStatusDone,
+		TaskID: task.ID, RuntimeID: "worker-b", Status: proto.TaskStatusDone,
 		StartedAt: now, EndedAt: now, Attempt: 1,
 	})
 	if err == nil {
@@ -1387,7 +1387,7 @@ func TestCompleteDuplicateResultIsIgnored(t *testing.T) {
 		t.Fatal("expected task")
 	}
 	now := time.Now()
-	result := proto.TaskResult{TaskID: task.ID, WorkerID: "", Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}
+	result := proto.TaskResult{TaskID: task.ID, RuntimeID: "", Status: proto.TaskStatusDone, StartedAt: now, EndedAt: now, Attempt: 1}
 	if err := q.Complete(ctx, result); err != nil {
 		t.Fatalf("first complete: %v", err)
 	}

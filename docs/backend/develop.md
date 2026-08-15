@@ -26,9 +26,8 @@ which federates *management* across separate Piper installations — see
   pods and Docker containers may need to reach Piper's own file-backed
   artifact store over HTTP (`runtime.workload_url` /
   `runtime.docker.workload_url`), guarded by `ServerConfig.WorkloadToken` and
-  `workerTokenMiddleware` on the `/store` route group — this middleware name
-  is a holdover from the pre-deletion architecture but the mechanism itself
-  is still real and load-bearing; don't remove it while any runtime uses the
+  `workloadTokenMiddleware` on the `/store` route group — the mechanism is
+  still real and load-bearing; don't remove it while any runtime uses the
   built-in file store.
 
 ## Server-Owned Pipeline Runtime (k8s / docker / baremetal)
@@ -39,8 +38,8 @@ which federates *management* across separate Piper installations — see
   not write run/step repositories or finalize runs itself. This applies
   uniformly across `internal/pipelinedispatch`'s `K8sBackend`, `DockerBackend`,
   and `BaremetalBackend` — all three wrap a driver-agnostic
-  `internal/directworker.Worker` (docker/baremetal) or
-  `internal/k8sworker/pipeline.Worker` (k8s) whose `ReportResult`/`Complete`
+  `internal/directruntime.Runtime` (docker/baremetal) or
+  `internal/k8sruntime/pipeline.Runtime` (k8s) whose `ReportResult`/`Complete`
   callback is the only path into the queue.
 - For `k8s`, the configured `runtime.namespaces` list is the complete namespace
   scope for creation, recovery, and cancellation — never silently expand it
@@ -65,10 +64,10 @@ which federates *management* across separate Piper installations — see
   concurrent work on the Piper host (unlike `k8s`, which is bounded by the
   Kubernetes cluster scheduler) — `runtime.docker.concurrency` /
   `runtime.baremetal.concurrency` (default 4) is a required admission gate in
-  `internal/directworker.Worker`, not an optional tuning knob.
+  `internal/directruntime.Runtime`, not an optional tuning knob.
 - Notebook has the same `docker`/`baremetal` direct-runtime treatment as
   pipeline: `pkg/notebook/dispatch/localdriver.Driver` implements
-  `notebook.Driver` directly against `pkg/notebook/worker/driver`'s
+  `notebook.Driver` directly against `pkg/notebook/notebookdriver`'s
   docker/process backends, selected in `piper.go` by the same
   `cfg.Runtime.Type` switch used for pipeline dispatch. `notebook.Manager`
   never trusts `Driver.Start`'s returned status — it only persists status
@@ -78,7 +77,7 @@ which federates *management* across separate Piper installations — see
   from a background goroutine.
 - Serving has the same `docker`/`baremetal` direct-runtime treatment:
   `pkg/serving/dispatch/localdriver.Driver` implements `serving.Driver`
-  directly against `pkg/serving/worker/driver`'s docker/process backends,
+  directly against `pkg/serving/servingdriver`'s docker/process backends,
   selected the same way in `piper.go`. Unlike Notebook, `serving.Manager.Deploy`
   is fully synchronous and *does* trust `Driver.Deploy`'s returned
   `*serving.Service.Status` immediately (it upserts it as-is) — so
@@ -234,7 +233,7 @@ computes the `LocalStore` exclusion dynamically via `filepath.Rel` (it isn't
 always literally named `store`; a custom `storage.url` can point anywhere
 under `OutputDir`), always excludes `artifactCacheDirName` and `.results`
 (the fixed bookkeeping dir the baremetal/docker drivers write task/result
-JSON to — see `pkg/pipeline/worker/driver/{baremetal,docker}.Start`), and
+JSON to — see `pkg/pipeline/pipelinedriver/{baremetal,docker}.Start`), and
 dynamically excludes `runtime.baremetal.meta_dir` when it's nested under
 `OutputDir`.
 

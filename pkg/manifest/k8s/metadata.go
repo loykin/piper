@@ -7,7 +7,7 @@ const (
 	LabelCluster      = "piper.io/cluster"
 	LabelWorkloadKind = "piper.io/workload-kind"
 	LabelWorkloadID   = "piper.io/workload-id"
-	LabelWorkerID     = "piper.io/worker-id"
+	LabelRuntimeID    = "piper.io/runtime-id"
 	LabelRunID        = "piper.io/run-id"
 	LabelStepName     = "piper.io/step-name"
 
@@ -47,8 +47,8 @@ func ManagedSelector() string {
 	return LabelManagedBy + "=" + ManagedByPiper
 }
 
-func WorkerSelector(workerID string) string {
-	return ManagedSelector() + "," + LabelWorkerID + "=" + LabelValue(workerID)
+func RuntimeSelector(runtimeID string) string {
+	return ManagedSelector() + "," + LabelRuntimeID + "=" + LabelValue(runtimeID)
 }
 
 func WorkloadLabels(clusterName, kind, id string) map[string]string {

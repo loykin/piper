@@ -10,14 +10,14 @@ import (
 	"time"
 
 	iagent "github.com/loykin/piper/internal/agent"
-	"github.com/loykin/piper/internal/directworker"
+	"github.com/loykin/piper/internal/directruntime"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/proto"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
-	dockerdriver "github.com/loykin/piper/pkg/pipeline/worker/driver/docker"
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
+	dockerdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver/docker"
 )
 
-const localDockerWorkerID = "piper-docker-runtime"
+const localDockerRuntimeID = "piper-docker-runtime"
 
 // DockerBackendConfig configures direct, in-process Docker pipeline
 // execution. No worker tunnel is involved.
@@ -32,7 +32,7 @@ type DockerBackendConfig struct {
 	WorkloadToken string
 	LogClient     logsink.PushClient
 	Complete      func(proto.TaskResult) error
-	RenewLeases   func(workerID string, taskIDs []string)
+	RenewLeases   func(runtimeID string, taskIDs []string)
 
 	// Driver overrides the constructed dockerdriver.Driver. Test-only; nil
 	// in production builds the real driver via dockerdriver.New.
@@ -42,8 +42,8 @@ type DockerBackendConfig struct {
 // DockerBackend adapts the existing Docker Start/Wait/Stop/Recover lifecycle
 // to Queue's in-process ExecutionBackend contract, mirroring K8sBackend.
 type DockerBackend struct {
-	worker *directworker.Worker
-	driver pdriver.Driver
+	runtime *directruntime.Runtime
+	driver  pdriver.Driver
 
 	// Serialize dispatch with cancellation so a successful cancellation cannot
 	// be followed by a late container creation from an already-scheduled call.
@@ -55,7 +55,7 @@ func NewDockerBackend(cfg DockerBackendConfig) (*DockerBackend, error) {
 	driver := cfg.Driver
 	if driver == nil {
 		d, err := dockerdriver.New(dockerdriver.Config{
-			WorkerID:  localDockerWorkerID,
+			RuntimeID: localDockerRuntimeID,
 			ResultDir: filepath.Join(cfg.OutputDir, ".results"),
 			OutputDir: cfg.OutputDir,
 			Network:   cfg.Network,
@@ -66,8 +66,8 @@ func NewDockerBackend(cfg DockerBackendConfig) (*DockerBackend, error) {
 		driver = d
 	}
 
-	w, err := directworker.New(directworker.Config{
-		WorkerID:    localDockerWorkerID,
+	w, err := directruntime.New(directruntime.Config{
+		RuntimeID:   localDockerRuntimeID,
 		Driver:      driver,
 		Concurrency: cfg.Concurrency,
 		OutputDir:   cfg.OutputDir,
@@ -81,7 +81,7 @@ func NewDockerBackend(cfg DockerBackendConfig) (*DockerBackend, error) {
 		ReportResult: cfg.Complete,
 		RenewLeases: func(taskIDs []string) error {
 			if cfg.RenewLeases != nil {
-				cfg.RenewLeases(localDockerWorkerID, taskIDs)
+				cfg.RenewLeases(localDockerRuntimeID, taskIDs)
 			}
 			return nil
 		},
@@ -92,11 +92,11 @@ func NewDockerBackend(cfg DockerBackendConfig) (*DockerBackend, error) {
 		}
 		return nil, err
 	}
-	return &DockerBackend{worker: w, driver: driver, canceled: make(map[string]*time.Timer)}, nil
+	return &DockerBackend{runtime: w, driver: driver, canceled: make(map[string]*time.Timer)}, nil
 }
 
 func (b *DockerBackend) Dispatch(ctx context.Context, task *proto.Task) error {
-	if b == nil || b.worker == nil {
+	if b == nil || b.runtime == nil {
 		return fmt.Errorf("docker runtime backend is not configured")
 	}
 	if err := validateDirectPlacement(task, "docker runtime", "docker"); err != nil {
@@ -108,7 +108,7 @@ func (b *DockerBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 	if _, canceled := b.canceled[task.RunID]; canceled {
 		return fmt.Errorf("docker runtime dispatch: run %s was canceled before dispatch", task.RunID)
 	}
-	err := b.worker.Dispatch(ctx, task)
+	err := b.runtime.Dispatch(ctx, task)
 	var busy *iagent.BusyError
 	if errors.As(err, &busy) {
 		return &DispatchError{Retryable: true, Err: err}
@@ -117,13 +117,13 @@ func (b *DockerBackend) Dispatch(ctx context.Context, task *proto.Task) error {
 }
 
 func (b *DockerBackend) CancelRun(ctx context.Context, runID string) error {
-	if b == nil || b.worker == nil || runID == "" {
+	if b == nil || b.runtime == nil || runID == "" {
 		return nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.markCanceledLocked(runID)
-	return b.worker.CancelRun(ctx, runID)
+	return b.runtime.CancelRun(ctx, runID)
 }
 
 func (b *DockerBackend) ReleaseRun(runID string) {
@@ -138,8 +138,8 @@ func (b *DockerBackend) ReleaseRun(runID string) {
 // Observe recovers containers from a previous Piper process and renews leases
 // until ctx is canceled.
 func (b *DockerBackend) Observe(ctx context.Context) {
-	if b != nil && b.worker != nil {
-		b.worker.Observe(ctx)
+	if b != nil && b.runtime != nil {
+		b.runtime.Observe(ctx)
 	}
 }
 
@@ -173,9 +173,9 @@ func (b *DockerBackend) markCanceledLocked(runID string) {
 
 // taskStorageForDirectRuntime rewrites file:// artifact storage to an HTTP
 // endpoint reachable from inside a container, mirroring
-// internal/k8sworker/pipeline/worker.go's taskStorageForK8sWorker (k8s Job
+// internal/k8sruntime/pipeline/runtime.go's taskStorageForK8sRuntime (k8s Job
 // pods cannot reach the host's local filesystem directly either).
-func taskStorageForDirectRuntime(task *proto.Task, masterURL, workerToken string) (storageURL, storageToken string) {
+func taskStorageForDirectRuntime(task *proto.Task, masterURL, runtimeToken string) (storageURL, storageToken string) {
 	if task == nil {
 		return "", ""
 	}
@@ -184,7 +184,7 @@ func taskStorageForDirectRuntime(task *proto.Task, masterURL, workerToken string
 	if strings.HasPrefix(storageURL, "file://") {
 		storageURL = strings.TrimRight(strings.TrimSpace(masterURL), "/") + "/store"
 		if storageToken == "" {
-			storageToken = workerToken
+			storageToken = runtimeToken
 		}
 	}
 	return storageURL, storageToken

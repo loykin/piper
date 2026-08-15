@@ -1,5 +1,5 @@
 // Package localdriver implements serving.Driver directly in-process for
-// docker and baremetal (process) runtimes — no remote worker/tunnel
+// docker and baremetal (process) runtimes — no remote runtime/tunnel
 // involved, mirroring fed.md §13.2's Pipeline and the Notebook domain's
 // direct-runtime treatment (pkg/notebook/dispatch/localdriver).
 //
@@ -21,9 +21,9 @@ import (
 	iprocess "github.com/loykin/piper/internal/process"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/serving"
-	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
-	servingdocker "github.com/loykin/piper/pkg/serving/worker/driver/docker"
-	servingprocess "github.com/loykin/piper/pkg/serving/worker/driver/process"
+	servingdriver "github.com/loykin/piper/pkg/serving/servingdriver"
+	servingdocker "github.com/loykin/piper/pkg/serving/servingdriver/docker"
+	servingprocess "github.com/loykin/piper/pkg/serving/servingdriver/process"
 )
 
 // EnvResolver resolves manifest.EnvVar entries (including credentialRef)
@@ -34,12 +34,12 @@ type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvV
 
 // Config configures a direct, in-process serving driver.
 type Config struct {
-	// WorkerID is a fixed low-level identity used to populate Service.RuntimeID.
-	// A real per-worker ID is meaningless once dispatch is in-process (there
+	// RuntimeID is a fixed low-level identity used to populate Service.RuntimeID.
+	// A real per-runtime ID is meaningless once dispatch is in-process (there
 	// is only ever one owner), but the field stays populated so Manager's
 	// existing ownership-check code (UpdateStatus comparing svc.RuntimeID)
 	// keeps working unchanged.
-	WorkerID string
+	RuntimeID string
 	// Infrastructure selects the underlying servingdriver.Driver: "docker" or "baremetal".
 	Infrastructure string
 	Docker         servingdocker.Config
@@ -48,12 +48,11 @@ type Config struct {
 	EnvResolver EnvResolver
 	// HealthCheckTimeout bounds how long Deploy's background goroutine waits
 	// for the service to answer its health path before reporting it failed.
-	// Zero means 30s (matches pkg/serving/worker/worker.go's deploy()).
+	// Zero means 30s.
 	HealthCheckTimeout time.Duration
 	// ReportStatus delivers an async status update once a backgrounded
-	// health check actually completes or fails — mirrors
-	// pkg/serving/worker/worker.go's pushStatus, called in-process instead
-	// of over a tunnel. Required.
+	// health check actually completes or fails, called in-process instead of
+	// over a tunnel. Required.
 	ReportStatus func(projectID, name, status, endpoint string) error
 }
 
@@ -77,8 +76,8 @@ type Driver struct {
 
 // New constructs a Driver. cfg.ReportStatus is required.
 func New(cfg Config) (*Driver, error) {
-	if cfg.WorkerID == "" {
-		return nil, fmt.Errorf("localdriver: WorkerID is required")
+	if cfg.RuntimeID == "" {
+		return nil, fmt.Errorf("localdriver: RuntimeID is required")
 	}
 	if cfg.ReportStatus == nil {
 		return nil, fmt.Errorf("localdriver: ReportStatus is required")
@@ -86,14 +85,14 @@ func New(cfg Config) (*Driver, error) {
 	var drv servingdriver.Driver
 	switch cfg.Infrastructure {
 	case "docker":
-		cfg.Docker.WorkerID = cfg.WorkerID
+		cfg.Docker.RuntimeID = cfg.RuntimeID
 		d, err := servingdocker.New(cfg.Docker)
 		if err != nil {
 			return nil, fmt.Errorf("localdriver: docker driver: %w", err)
 		}
 		drv = d
 	case "baremetal":
-		drv = servingprocess.New(servingprocess.Config{WorkerID: cfg.WorkerID})
+		drv = servingprocess.New(servingprocess.Config{RuntimeID: cfg.RuntimeID})
 	default:
 		return nil, fmt.Errorf("localdriver: unsupported infrastructure %q", cfg.Infrastructure)
 	}
@@ -127,8 +126,7 @@ func (d *Driver) ArtifactTarget() artifact.Target { return artifact.TargetLocal 
 // the returned *serving.Service.Status immediately (unlike Notebook's
 // Manager, which never trusts Driver.Start's return value), so the fast
 // path here must itself return status=starting and only report "running"
-// asynchronously once the health check passes, mirroring
-// pkg/serving/worker/worker.go's deploy() exactly.
+// asynchronously once the health check passes.
 func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
 	projectID := spec.Metadata.ProjectID
 	name := spec.Metadata.Name
@@ -253,7 +251,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 				}
 				// If Stop succeeds, the runtime's own OnExit callback fires
 				// and reports "failed" via the exitAs override set by
-				// failDeploy above, matching worker.go's failService.
+				// failDeploy above.
 			}
 			return
 		}
@@ -268,7 +266,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		Artifact:  artifactLabel(spec),
 		Status:    serving.StatusStarting,
 		Endpoint:  endpoint,
-		RuntimeID: d.cfg.WorkerID,
+		RuntimeID: d.cfg.RuntimeID,
 		YAML:      yamlStr,
 	}, nil
 }
@@ -342,7 +340,7 @@ func (d *Driver) updateEndpoint(key string, gen uint64) bool {
 
 // failDeploy marks the active service's next OnExit report as "failed"
 // (instead of whatever the runtime's natural exit status would be) and
-// confirms gen is still current — mirrors worker.go's failService.
+// confirms gen is still current.
 func (d *Driver) failDeploy(key string, gen uint64) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()

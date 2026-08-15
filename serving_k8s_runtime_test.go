@@ -132,8 +132,8 @@ spec:
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if svc.RuntimeID != servingK8sLocalWorkerID {
-		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", svc.RuntimeID, servingK8sLocalWorkerID)
+	if svc.RuntimeID != servingK8sLocalRuntimeID {
+		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", svc.RuntimeID, servingK8sLocalRuntimeID)
 	}
 	if !strings.HasPrefix(svc.Endpoint, "http://") || !strings.HasSuffix(svc.Endpoint, ".svc.cluster.local:8080") {
 		t.Fatalf("Endpoint = %q, want a plain cluster-DNS endpoint", svc.Endpoint)

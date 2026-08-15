@@ -9,7 +9,7 @@ import (
 
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/notebook"
-	notebookdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
+	notebookdriver "github.com/loykin/piper/pkg/notebook/notebookdriver"
 )
 
 // fakeRuntime is a fake notebookdriver.Driver, mirroring
@@ -70,7 +70,7 @@ func newTestDriver(t *testing.T, rt notebookdriver.Driver) (*Driver, chan status
 	reports := make(chan statusReport, 16)
 	d := &Driver{
 		cfg: Config{
-			WorkerID:         "test-worker",
+			RuntimeID:        "test-worker",
 			NotebooksRoot:    t.TempDir(),
 			PortRange:        "18888-18899",
 			PlacementRuntime: "baremetal",
@@ -113,7 +113,7 @@ func TestProvisionVolumeCreatesWorkDir(t *testing.T) {
 	if _, err := os.Stat(vol.WorkDir); err != nil {
 		t.Fatalf("work dir not created: %v", err)
 	}
-	// WorkerID is deliberately left empty so notebook/template handler code
+	// RuntimeID is deliberately left empty so notebook/template handler code
 	// takes the local-filesystem path instead of RPCing a worker ID with no
 	// real connection registered for it (see ProvisionVolume's doc comment).
 	if vol.RuntimeID != "" {

@@ -8,14 +8,14 @@ import (
 	"time"
 
 	iagent "github.com/loykin/piper/internal/agent"
-	"github.com/loykin/piper/internal/directworker"
+	"github.com/loykin/piper/internal/directruntime"
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/proto"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
-	baremetaldriver "github.com/loykin/piper/pkg/pipeline/worker/driver/baremetal"
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
+	baremetaldriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver/baremetal"
 )
 
-const localBaremetalWorkerID = "piper-baremetal-runtime"
+const localBaremetalRuntimeID = "piper-baremetal-runtime"
 
 // BaremetalBackendConfig configures direct, in-process baremetal (subprocess)
 // pipeline execution. No worker tunnel is involved.
@@ -28,7 +28,7 @@ type BaremetalBackendConfig struct {
 	RemoteStore bool
 	LogClient   logsink.PushClient
 	Complete    func(proto.TaskResult) error
-	RenewLeases func(workerID string, taskIDs []string)
+	RenewLeases func(runtimeID string, taskIDs []string)
 
 	// Driver overrides the constructed baremetaldriver.Driver. Test-only; nil
 	// in production builds the real driver via baremetaldriver.New.
@@ -39,8 +39,8 @@ type BaremetalBackendConfig struct {
 // lifecycle to Queue's in-process ExecutionBackend contract, mirroring
 // K8sBackend/DockerBackend.
 type BaremetalBackend struct {
-	worker *directworker.Worker
-	driver pdriver.Driver
+	runtime *directruntime.Runtime
+	driver  pdriver.Driver
 
 	mu       sync.Mutex
 	canceled map[string]*time.Timer
@@ -50,7 +50,7 @@ func NewBaremetalBackend(cfg BaremetalBackendConfig) (*BaremetalBackend, error) 
 	driver := cfg.Driver
 	if driver == nil {
 		d, err := baremetaldriver.New(baremetaldriver.Config{
-			WorkerID:    localBaremetalWorkerID,
+			RuntimeID:   localBaremetalRuntimeID,
 			MetaDir:     cfg.MetaDir,
 			RemoteStore: cfg.RemoteStore,
 		})
@@ -60,8 +60,8 @@ func NewBaremetalBackend(cfg BaremetalBackendConfig) (*BaremetalBackend, error) 
 		driver = d
 	}
 
-	w, err := directworker.New(directworker.Config{
-		WorkerID:    localBaremetalWorkerID,
+	w, err := directruntime.New(directruntime.Config{
+		RuntimeID:   localBaremetalRuntimeID,
 		Driver:      driver,
 		Concurrency: cfg.Concurrency,
 		OutputDir:   cfg.OutputDir,
@@ -80,7 +80,7 @@ func NewBaremetalBackend(cfg BaremetalBackendConfig) (*BaremetalBackend, error) 
 		ReportResult: cfg.Complete,
 		RenewLeases: func(taskIDs []string) error {
 			if cfg.RenewLeases != nil {
-				cfg.RenewLeases(localBaremetalWorkerID, taskIDs)
+				cfg.RenewLeases(localBaremetalRuntimeID, taskIDs)
 			}
 			return nil
 		},
@@ -88,11 +88,11 @@ func NewBaremetalBackend(cfg BaremetalBackendConfig) (*BaremetalBackend, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &BaremetalBackend{worker: w, driver: driver, canceled: make(map[string]*time.Timer)}, nil
+	return &BaremetalBackend{runtime: w, driver: driver, canceled: make(map[string]*time.Timer)}, nil
 }
 
 func (b *BaremetalBackend) Dispatch(ctx context.Context, task *proto.Task) error {
-	if b == nil || b.worker == nil {
+	if b == nil || b.runtime == nil {
 		return fmt.Errorf("baremetal runtime backend is not configured")
 	}
 	if err := validateDirectPlacement(task, "baremetal runtime", "baremetal"); err != nil {
@@ -104,7 +104,7 @@ func (b *BaremetalBackend) Dispatch(ctx context.Context, task *proto.Task) error
 	if _, canceled := b.canceled[task.RunID]; canceled {
 		return fmt.Errorf("baremetal runtime dispatch: run %s was canceled before dispatch", task.RunID)
 	}
-	err := b.worker.Dispatch(ctx, task)
+	err := b.runtime.Dispatch(ctx, task)
 	var busy *iagent.BusyError
 	if errors.As(err, &busy) {
 		return &DispatchError{Retryable: true, Err: err}
@@ -113,13 +113,13 @@ func (b *BaremetalBackend) Dispatch(ctx context.Context, task *proto.Task) error
 }
 
 func (b *BaremetalBackend) CancelRun(ctx context.Context, runID string) error {
-	if b == nil || b.worker == nil || runID == "" {
+	if b == nil || b.runtime == nil || runID == "" {
 		return nil
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.markCanceledLocked(runID)
-	return b.worker.CancelRun(ctx, runID)
+	return b.runtime.CancelRun(ctx, runID)
 }
 
 func (b *BaremetalBackend) ReleaseRun(runID string) {
@@ -134,8 +134,8 @@ func (b *BaremetalBackend) ReleaseRun(runID string) {
 // Observe recovers processes from a previous Piper process and renews leases
 // until ctx is canceled.
 func (b *BaremetalBackend) Observe(ctx context.Context) {
-	if b != nil && b.worker != nil {
-		b.worker.Observe(ctx)
+	if b != nil && b.runtime != nil {
+		b.runtime.Observe(ctx)
 	}
 }
 

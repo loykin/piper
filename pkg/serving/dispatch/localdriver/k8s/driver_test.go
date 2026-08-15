@@ -23,7 +23,7 @@ func newTestDriver(t *testing.T, client kubernetes.Interface, observeInterval ti
 	t.Helper()
 	reports := make(chan statusReport, 16)
 	d, err := New(Config{
-		WorkerID:             "test-k8s-worker",
+		RuntimeID:            "test-k8s-worker",
 		Namespaces:           []string{"svc-ns"},
 		Client:               client,
 		ArtifactFetcherImage: "piper:test",
@@ -64,7 +64,7 @@ func awaitReport(t *testing.T, reports chan statusReport) statusReport {
 
 func TestNewRejectsMissingConfig(t *testing.T) {
 	base := Config{
-		WorkerID:     "w",
+		RuntimeID:    "w",
 		Namespaces:   []string{"ns"},
 		Client:       fake.NewSimpleClientset(),
 		ReportStatus: func(string, string, string, string) error { return nil },
@@ -73,7 +73,7 @@ func TestNewRejectsMissingConfig(t *testing.T) {
 		name string
 		mut  func(*Config)
 	}{
-		{"worker id", func(c *Config) { c.WorkerID = "" }},
+		{"worker id", func(c *Config) { c.RuntimeID = "" }},
 		{"client", func(c *Config) { c.Client = nil }},
 		{"namespaces", func(c *Config) { c.Namespaces = nil }},
 		{"report status", func(c *Config) { c.ReportStatus = nil }},
@@ -159,7 +159,7 @@ func TestDeployWithStoredArtifactCreatesSecretAndInitContainer(t *testing.T) {
 func TestDeployRequiresArtifactFetcherImageForStoredArtifact(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	d, err := New(Config{
-		WorkerID:     "w",
+		RuntimeID:    "w",
 		Namespaces:   []string{"svc-ns"},
 		Client:       client,
 		ReportStatus: func(string, string, string, string) error { return nil },

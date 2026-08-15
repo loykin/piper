@@ -18,7 +18,7 @@ func NewNotebookRepo(exec *dbstore.Executor, source string) notebook.Repository 
 	return &notebookRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
-const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_by, created_at, updated_at`
+const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, image, yaml, created_by, created_at, updated_at`
 
 func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) error {
 	now := time.Now()
@@ -26,7 +26,7 @@ func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) 
 	nb.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		q := db.Rebind(
-			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, worker_id, volume_id, image, yaml, created_by, created_at, updated_at)
+			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, image, yaml, created_by, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		_, err := db.ExecContext(ctx, q,
 			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML,
@@ -54,7 +54,7 @@ func (r *notebookRepo) Update(ctx context.Context, nb *notebook.NotebookServer) 
 	nb.UpdatedAt = time.Now()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		q := db.Rebind(
-			`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, worker_id=?, volume_id=?, image=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`)
+			`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, runtime_id=?, volume_id=?, image=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`)
 		_, err := db.ExecContext(ctx, q,
 			nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML, nb.UpdatedAt, nb.ProjectID, nb.Name)
 		return err

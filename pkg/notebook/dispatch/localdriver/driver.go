@@ -1,5 +1,5 @@
 // Package localdriver implements notebook.Driver directly in-process for
-// docker and baremetal (process) runtimes — no remote worker/tunnel
+// docker and baremetal (process) runtimes — no remote runtime/tunnel
 // involved, mirroring fed.md §13.2's Pipeline direct-runtime treatment.
 //
 // K8s is implemented by the sibling localdriver/k8s package at the higher
@@ -23,9 +23,9 @@ import (
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/notebook"
-	notebookdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
-	notebookdocker "github.com/loykin/piper/pkg/notebook/worker/driver/docker"
-	notebookprocess "github.com/loykin/piper/pkg/notebook/worker/driver/process"
+	notebookdriver "github.com/loykin/piper/pkg/notebook/notebookdriver"
+	notebookdocker "github.com/loykin/piper/pkg/notebook/notebookdriver/docker"
+	notebookprocess "github.com/loykin/piper/pkg/notebook/notebookdriver/process"
 )
 
 // EnvResolver resolves manifest.EnvVar entries (including credentialRef)
@@ -35,12 +35,12 @@ type EnvResolver func(ctx context.Context, projectID string, env []manifest.EnvV
 
 // Config configures a direct, in-process notebook driver.
 type Config struct {
-	// WorkerID is the low-level driver's historical name for the fixed runtime
-	// identity used to populate NotebookServer.RuntimeID and namespace recovery
-	// metadata. It does not identify a separate process.
-	WorkerID string
+	// RuntimeID is the fixed runtime identity used to populate
+	// NotebookServer.RuntimeID and namespace recovery metadata. It does not
+	// identify a separate process.
+	RuntimeID string
 	// Infrastructure selects the underlying notebookdriver.Driver: must be
-	// notebookworkerdriver.ModeDocker or notebookworkerdriver.ModeProcess
+	// notebookdriver.ModeDocker or notebookdriver.ModeProcess
 	// ("docker"/"process") — not the same string space as PlacementRuntime.
 	Infrastructure string
 	// PlacementRuntime is the runtime.type value this driver instance owns
@@ -56,9 +56,8 @@ type Config struct {
 	// EnvResolver expands credentialRef entries in spec.Options.Env. Optional.
 	EnvResolver EnvResolver
 	// ReportStatus delivers an async status update once a backgrounded
-	// Start actually completes or fails — mirrors
-	// pkg/notebook/worker/worker.go's pushStatus, called in-process instead
-	// of over a tunnel. Required.
+	// Start actually completes or fails, called in-process instead of over a
+	// tunnel. Required.
 	ReportStatus func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error
 }
 
@@ -85,8 +84,8 @@ type Driver struct {
 
 // New constructs a Driver. cfg.ReportStatus is required.
 func New(cfg Config) (*Driver, error) {
-	if cfg.WorkerID == "" {
-		return nil, fmt.Errorf("localdriver: WorkerID is required")
+	if cfg.RuntimeID == "" {
+		return nil, fmt.Errorf("localdriver: RuntimeID is required")
 	}
 	if cfg.ReportStatus == nil {
 		return nil, fmt.Errorf("localdriver: ReportStatus is required")
@@ -94,7 +93,7 @@ func New(cfg Config) (*Driver, error) {
 	var drv notebookdriver.Driver
 	switch cfg.Infrastructure {
 	case notebookdriver.ModeDocker:
-		d, err := notebookdocker.New(cfg.Docker, cfg.WorkerID)
+		d, err := notebookdocker.New(cfg.Docker, cfg.RuntimeID)
 		if err != nil {
 			return nil, fmt.Errorf("localdriver: docker driver: %w", err)
 		}
@@ -138,11 +137,11 @@ func (d *Driver) volumeDir(volumeID string) string {
 
 // ProvisionVolume creates the host work directory backing vol.
 //
-// vol.RuntimeID is deliberately left empty rather than set to cfg.WorkerID.
+// vol.RuntimeID is deliberately left empty rather than set to cfg.RuntimeID.
 // pkg/notebook/handler.go's listVolumeFiles and pkg/template/handler.go's
 // Direct-runtime volumes are owned by the Piper installation rather than by
-// a separately addressable worker, so no worker identity is persisted. File
-// access is selected through the configured WorkspaceReader.
+// a separately addressable runtime, so no runtime identity is persisted.
+// File access is selected through the configured WorkspaceReader.
 func (d *Driver) ProvisionVolume(_ context.Context, vol *notebook.NotebookVolume, _ notebook.Notebook) error {
 	if vol.ID == "" {
 		return fmt.Errorf("localdriver: volume id is required")
@@ -182,10 +181,9 @@ func (d *Driver) DeprovisionVolume(_ context.Context, vol *notebook.NotebookVolu
 // Start reserves a port and registers the notebook as starting, then
 // launches the runtime in the background — Manager already runs Start
 // itself inside a goroutine and only trusts a later status update (not
-// Start's return value) to mark a notebook "running", so this mirrors the
-// exact two-phase shape pkg/notebook/worker/worker.go's startNotebook used
-// over the tunnel: return fast with placeholder info, report the real
-// outcome async via cfg.ReportStatus.
+// Start's return value) to mark a notebook "running", so this returns fast
+// with placeholder info and reports the real outcome async via
+// cfg.ReportStatus.
 func (d *Driver) Start(_ context.Context, spec notebook.Notebook, vol *notebook.NotebookVolume, yamlStr string) (*notebook.NotebookServer, error) {
 	projectID := spec.Metadata.ProjectID
 	name := spec.Metadata.Name
@@ -238,7 +236,7 @@ func (d *Driver) Start(_ context.Context, spec notebook.Notebook, vol *notebook.
 	go d.startAsync(spec, projectID, name, key, gen, workDir, port, token, baseURL, endpoint, yamlStr)
 
 	return &notebook.NotebookServer{
-		RuntimeID: d.cfg.WorkerID,
+		RuntimeID: d.cfg.RuntimeID,
 		Token:     token,
 		WorkDir:   workDir,
 		Endpoint:  endpoint,
@@ -372,7 +370,7 @@ func (d *Driver) Stop(_ context.Context, nb *notebook.NotebookServer) error {
 }
 
 // Recover reattaches to notebooks that survived a process restart. Call
-// once at startup (the remote-worker path never had an in-process
+// once at startup (the remote-runtime path never had an in-process
 // equivalent to wire since it's the same concern as any driver's Recover —
 // see fed.md §13.1's already-frozen Recover contract for pipeline drivers).
 func (d *Driver) Recover(ctx context.Context) error {

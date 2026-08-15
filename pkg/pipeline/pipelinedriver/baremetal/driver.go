@@ -1,0 +1,398 @@
+// Package baremetal implements RuntimeDriver for bare-metal subprocess execution.
+// Each pipeline step runs as an isolated child process via piper agent exec,
+// managed directly through the provisr core.Manager (not JobManager) so that
+// the process name is exactly the runtimeKey and history.Sink events match.
+package baremetaldriver
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/loykin/piper/internal/logsink"
+	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/pkg/pipeline/pipelinedriver"
+	"github.com/loykin/piper/pkg/pipeline/worker/agent"
+	"github.com/loykin/provisr/core"
+	"github.com/loykin/provisr/core/history"
+)
+
+const metadataVersion = 1
+
+// runtimeMetadata is persisted alongside each job so it can be recovered
+// after a process restart.
+type runtimeMetadata struct {
+	Version    int    `json:"version"`
+	RuntimeKey string `json:"runtime_key"`
+	RuntimeID  string `json:"runtime_id"`
+	TaskID     string `json:"task_id"`
+	RunID      string `json:"run_id"`
+	StepName   string `json:"step_name"`
+	Attempt    int    `json:"attempt"`
+	ResultPath string `json:"result_path"`
+	TaskPath   string `json:"task_path"`
+	PIDFile    string `json:"pid_file"`
+}
+
+// activeJob tracks an in-flight subprocess.
+type activeJob struct {
+	handle      pipelinedriver.Handle
+	doneCh      chan pipelinedriver.Exit
+	resultPath  string
+	taskPath    string
+	remoteStore bool
+}
+
+// Driver is the bare-metal RuntimeDriver.
+// It uses core.Manager directly so that the process name equals runtimeKey
+// and history.Sink exit events can be matched without ambiguity.
+type Driver struct {
+	runtimeID   string
+	metaDir     string
+	piperBin    string
+	manager     *core.Manager
+	remoteStore bool
+
+	mu     sync.Mutex
+	active map[string]*activeJob // runtimeKey → activeJob
+}
+
+// Config configures the BaremetalDriver.
+type Config struct {
+	RuntimeID   string
+	MetaDir     string // directory for metadata + PID files; default: $TMPDIR/piper-meta
+	RemoteStore bool   // true when using S3 or other remote artifact store
+	// PiperBin overrides the executable Start execs as piper agent exec.
+	// Test-only; empty (the default) preserves the real os.Executable() behavior.
+	PiperBin string
+}
+
+// New creates a BaremetalDriver.
+func New(cfg Config) (*Driver, error) {
+	piperBin := cfg.PiperBin
+	if piperBin == "" {
+		resolved, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("baremetal driver: resolve executable: %w", err)
+		}
+		piperBin = resolved
+	}
+
+	metaDir := cfg.MetaDir
+	if metaDir == "" {
+		metaDir = filepath.Join(os.TempDir(), "piper-meta")
+	}
+	if err := os.MkdirAll(metaDir, 0755); err != nil {
+		return nil, fmt.Errorf("baremetal driver: create meta dir: %w", err)
+	}
+
+	mgr := core.New()
+
+	d := &Driver{
+		runtimeID:   cfg.RuntimeID,
+		metaDir:     metaDir,
+		piperBin:    piperBin,
+		manager:     mgr,
+		remoteStore: cfg.RemoteStore,
+		active:      make(map[string]*activeJob),
+	}
+
+	// Register a history sink so we hear about process exits.
+	sink := &exitSink{driver: d}
+	mgr.SetHistorySinks(sink)
+
+	return d, nil
+}
+
+// Start launches piper agent exec as a direct child process.
+// The process name in provisr is exactly runtimeKey, so exitSink can match it.
+func (d *Driver) Start(_ context.Context, task *proto.Task, spec pipelinedriver.ExecSpec) (pipelinedriver.Handle, error) {
+	pidFile := d.pidPath(spec.RuntimeKey)
+
+	// Baremetal uses host-side paths directly.
+	resultDir := filepath.Join(spec.OutputDir, ".results")
+	if err := os.MkdirAll(resultDir, 0755); err != nil {
+		return pipelinedriver.Handle{}, fmt.Errorf("create result dir: %w", err)
+	}
+	resultPath := filepath.Join(resultDir, spec.RuntimeKey+".result.json")
+	taskPath := filepath.Join(resultDir, spec.RuntimeKey+".task.json")
+	if err := agent.WriteTaskFile(taskPath, task); err != nil {
+		return pipelinedriver.Handle{}, fmt.Errorf("write task file: %w", err)
+	}
+
+	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
+		StorageToken: spec.StorageToken,
+		StorageURL:   spec.StorageURL,
+		OutputDir:    spec.OutputDir,
+		InputDir:     spec.OutputDir,
+		TaskFile:     taskPath,
+		ResultFile:   resultPath,
+	})
+	if err != nil {
+		_ = os.Remove(taskPath)
+		return pipelinedriver.Handle{}, fmt.Errorf("build agent args: %w", err)
+	}
+
+	args := append([]string{d.piperBin}, agentArgs...)
+
+	handle := pipelinedriver.Handle{
+		RuntimeKey: spec.RuntimeKey,
+		RuntimeID:  d.runtimeID,
+		TaskID:     task.ID,
+		RunID:      task.RunID,
+		StepName:   task.StepName,
+		Attempt:    task.Attempt,
+		ResultPath: resultPath,
+		TaskPath:   taskPath,
+	}
+
+	if werr := d.writeMetadata(spec.RuntimeKey, handle, resultPath, pidFile); werr != nil {
+		_ = os.Remove(taskPath)
+		return pipelinedriver.Handle{}, fmt.Errorf("write metadata: %w", werr)
+	}
+
+	doneCh := make(chan pipelinedriver.Exit, 1)
+	aj := &activeJob{
+		handle:      handle,
+		doneCh:      doneCh,
+		resultPath:  resultPath,
+		taskPath:    taskPath,
+		remoteStore: d.remoteStore,
+	}
+
+	d.mu.Lock()
+	d.active[spec.RuntimeKey] = aj
+	d.mu.Unlock()
+
+	var logConfig core.LogConfig
+	if spec.LogSink != nil {
+		logConfig.File.StdoutWriter = logsink.NewLineWriter(spec.LogSink, task.RunID, task.StepName, "stdout")
+		logConfig.File.StderrWriter = logsink.NewLineWriter(spec.LogSink, task.RunID, task.StepName, "stderr")
+	}
+	if regErr := d.manager.Register(core.Spec{
+		Name:        spec.RuntimeKey, // exact name = runtimeKey, exitSink matches this
+		Args:        args,
+		AutoRestart: false,
+		PIDFile:     pidFile,
+		Log:         logConfig,
+	}); regErr != nil {
+		err = regErr
+	}
+	if err != nil {
+		d.mu.Lock()
+		delete(d.active, spec.RuntimeKey)
+		d.mu.Unlock()
+		_ = d.removeMetadata(spec.RuntimeKey)
+		_ = os.Remove(taskPath)
+		return pipelinedriver.Handle{}, fmt.Errorf("register process: %w", err)
+	}
+
+	return handle, nil
+}
+
+// Wait blocks until the subprocess exits or ctx is cancelled.
+func (d *Driver) Wait(ctx context.Context, handle pipelinedriver.Handle) (pipelinedriver.Exit, error) {
+	d.mu.Lock()
+	aj := d.active[handle.RuntimeKey]
+	d.mu.Unlock()
+
+	if aj == nil {
+		return pipelinedriver.Exit{InfraFailure: fmt.Errorf("job %q not tracked", handle.RuntimeKey)}, nil
+	}
+
+	select {
+	case exit := <-aj.doneCh:
+		return exit, nil
+	case <-ctx.Done():
+		return pipelinedriver.Exit{}, ctx.Err()
+	}
+}
+
+// Stop signals the process to stop.
+func (d *Driver) Stop(_ context.Context, handle pipelinedriver.Handle, grace time.Duration) error {
+	if grace <= 0 {
+		grace = 10 * time.Second
+	}
+	err := d.manager.Stop(handle.RuntimeKey, grace)
+	_ = d.removeMetadata(handle.RuntimeKey)
+	_ = os.Remove(handle.TaskPath)
+	d.mu.Lock()
+	delete(d.active, handle.RuntimeKey)
+	d.mu.Unlock()
+	return err
+}
+
+// Recover re-attaches to processes that survived a process restart
+// by reading metadata sidecars and calling manager.Recover().
+func (d *Driver) Recover(_ context.Context) ([]pipelinedriver.Handle, error) {
+	entries, err := os.ReadDir(d.metaDir)
+	if err != nil {
+		return nil, fmt.Errorf("read meta dir: %w", err)
+	}
+
+	var handles []pipelinedriver.Handle
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".meta.json") {
+			continue
+		}
+		runtimeKey := strings.TrimSuffix(e.Name(), ".meta.json")
+		meta, err := d.readMetadata(runtimeKey)
+		if err != nil {
+			slog.Warn("recover: skip unreadable metadata", "key", runtimeKey, "err", err)
+			continue
+		}
+		if meta.RuntimeID != d.runtimeID {
+			continue
+		}
+
+		// Re-attach to the process via provisr's Recover (PID file based).
+		if err := d.manager.Recover(core.Spec{
+			Name:        runtimeKey,
+			Args:        []string{d.piperBin}, // placeholder; not re-exec'd
+			AutoRestart: false,
+			PIDFile:     meta.PIDFile,
+		}); err != nil {
+			// Process not alive — clean up and skip.
+			_ = d.removeMetadata(runtimeKey)
+			_ = os.Remove(meta.TaskPath)
+			slog.Info("recover: process gone, cleaning up", "key", runtimeKey, "err", err)
+			continue
+		}
+		status, err := d.manager.Status(runtimeKey)
+		if err != nil || !status.Running {
+			_ = d.removeMetadata(runtimeKey)
+			_ = os.Remove(meta.TaskPath)
+			slog.Info("recover: process is not running, cleaning up", "key", runtimeKey)
+			continue
+		}
+
+		handle := pipelinedriver.Handle{
+			RuntimeKey: meta.RuntimeKey,
+			RuntimeID:  meta.RuntimeID,
+			TaskID:     meta.TaskID,
+			RunID:      meta.RunID,
+			StepName:   meta.StepName,
+			Attempt:    meta.Attempt,
+			ResultPath: meta.ResultPath,
+			TaskPath:   meta.TaskPath,
+		}
+
+		doneCh := make(chan pipelinedriver.Exit, 1)
+		d.mu.Lock()
+		d.active[runtimeKey] = &activeJob{
+			handle:      handle,
+			doneCh:      doneCh,
+			resultPath:  meta.ResultPath,
+			taskPath:    meta.TaskPath,
+			remoteStore: d.remoteStore,
+		}
+		d.mu.Unlock()
+		handles = append(handles, handle)
+		slog.Info("recovered baremetal job", "runtime_key", runtimeKey, "task_id", meta.TaskID)
+	}
+	return handles, nil
+}
+
+// onJobExit is called by exitSink when a managed process exits.
+// evt.Record.Name == runtimeKey because we registered with that exact name.
+func (d *Driver) onJobExit(runtimeKey, status string) {
+	d.mu.Lock()
+	aj := d.active[runtimeKey]
+	delete(d.active, runtimeKey)
+	d.mu.Unlock()
+
+	if aj == nil {
+		return
+	}
+
+	_ = d.removeMetadata(runtimeKey)
+	_ = os.Remove(aj.taskPath)
+
+	exit := pipelinedriver.Exit{ResultPath: aj.resultPath}
+
+	if status == "failed" {
+		if _, err := os.Stat(aj.resultPath); os.IsNotExist(err) {
+			exit.InfraFailure = fmt.Errorf("process %q exited without result file", runtimeKey)
+			if d.remoteStore {
+				// Best-effort: clean staging dirs left by crashed agent.
+				slog.Debug("crash residue cleanup", "runtime_key", runtimeKey)
+			}
+		}
+	}
+
+	select {
+	case aj.doneCh <- exit:
+	default:
+	}
+}
+
+// ── metadata helpers ─────────────────────────────────────────────────────────
+
+func (d *Driver) writeMetadata(runtimeKey string, h pipelinedriver.Handle, resultPath, pidFile string) error {
+	meta := runtimeMetadata{
+		Version:    metadataVersion,
+		RuntimeKey: runtimeKey,
+		RuntimeID:  h.RuntimeID,
+		TaskID:     h.TaskID,
+		RunID:      h.RunID,
+		StepName:   h.StepName,
+		Attempt:    h.Attempt,
+		ResultPath: resultPath,
+		TaskPath:   h.TaskPath,
+		PIDFile:    pidFile,
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(d.metaPath(runtimeKey), data, 0644)
+}
+
+func (d *Driver) readMetadata(runtimeKey string) (*runtimeMetadata, error) {
+	data, err := os.ReadFile(d.metaPath(runtimeKey))
+	if err != nil {
+		return nil, err
+	}
+	var meta runtimeMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, err
+	}
+	return &meta, nil
+}
+
+func (d *Driver) removeMetadata(runtimeKey string) error {
+	_ = os.Remove(d.pidPath(runtimeKey))
+	return os.Remove(d.metaPath(runtimeKey))
+}
+
+func (d *Driver) metaPath(runtimeKey string) string {
+	return filepath.Join(d.metaDir, runtimeKey+".meta.json")
+}
+
+func (d *Driver) pidPath(runtimeKey string) string {
+	return filepath.Join(d.metaDir, runtimeKey+".pid")
+}
+
+// ── exitSink ─────────────────────────────────────────────────────────────────
+
+// exitSink receives EventStop from provisr and routes it to the pipelinedriver.
+// Because we registered with Name=runtimeKey, evt.Record.Name == runtimeKey.
+type exitSink struct {
+	driver *Driver
+}
+
+func (s *exitSink) Send(_ context.Context, evt history.Event) error {
+	if evt.Type != history.EventStop {
+		return nil
+	}
+	if s.driver != nil {
+		s.driver.onJobExit(evt.Record.Name, evt.Record.LastStatus)
+	}
+	return nil
+}

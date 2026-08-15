@@ -9,8 +9,8 @@ import (
 
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/pipeline"
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
 	"github.com/loykin/piper/pkg/pipeline/worker/agent"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
 
 func TestAgentExecWritesResultForParentWorker(t *testing.T) {

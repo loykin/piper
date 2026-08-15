@@ -1,11 +1,12 @@
 // Package k8sdriver implements notebook.Driver directly in-process against
-// a Kubernetes cluster — no remote worker/tunnel involved, mirroring
+// a Kubernetes cluster — no remote runtime/tunnel involved, mirroring
 // fed.md §13.2's Pipeline direct-runtime treatment and the docker/baremetal
 // pkg/notebook/dispatch/localdriver package's shape. It is a separate
 // package (not a third case in that package's driver) because the K8s
 // worker never implemented the shared low-level notebookdriver.Driver
 // interface docker/process share — it talks to kubernetes.Interface
-// directly, same split as pkg/notebook/worker/driver/{docker,process,k8s}.
+// directly, same split as pkg/notebook/notebookdriver/{docker,process} vs.
+// this package.
 //
 // Workspace file access (reading a running notebook's files for pipeline
 // template snapshotting) is handled by the separate WorkspaceReader in
@@ -44,15 +45,14 @@ import (
 	"github.com/loykin/piper/pkg/notebook"
 )
 
-// piperDataVolume is the fixed name for the piper-managed PVC volume and
-// mount, matching pkg/notebook/worker/driver/k8s/worker.go.
+// piperDataVolume is the fixed name for the piper-managed PVC volume and mount.
 const piperDataVolume = "piper-data"
 
 // Config configures a direct, in-process K8s notebook driver.
 type Config struct {
-	// WorkerID is a fixed local identity used to populate
+	// RuntimeID is a fixed local identity used to populate
 	// NotebookServer.RuntimeID and as the ReportStatus runtime identity.
-	WorkerID string
+	RuntimeID string
 	// ClusterName is an informational label only (piper.io/cluster) — not
 	// used in any selector, so it's safe to leave empty.
 	ClusterName string
@@ -61,7 +61,7 @@ type Config struct {
 	// LogClient enables pod log streaming for running notebooks. Optional.
 	LogClient logsink.PushClient
 	// ObserveInterval controls how often Observe polls StatefulSet status.
-	// Zero means 2s, matching pkg/notebook/worker/driver/k8s/worker.go's Observe.
+	// Zero means 2s.
 	ObserveInterval time.Duration
 	// ReportStatus mirors pkg/notebook/dispatch/localdriver.Config.ReportStatus's
 	// signature exactly so piper.go can wire the same nbMgr.UpdateStatus
@@ -92,8 +92,8 @@ type Driver struct {
 
 // New constructs a Driver. cfg.Client, cfg.Namespaces, and cfg.ReportStatus are required.
 func New(cfg Config) (*Driver, error) {
-	if cfg.WorkerID == "" {
-		return nil, fmt.Errorf("k8sdriver: WorkerID is required")
+	if cfg.RuntimeID == "" {
+		return nil, fmt.Errorf("k8sdriver: RuntimeID is required")
 	}
 	if cfg.Client == nil {
 		return nil, fmt.Errorf("k8sdriver: Client is required")
@@ -341,7 +341,7 @@ func (d *Driver) Start(ctx context.Context, spec notebook.Notebook, vol *noteboo
 	// have cluster-internal network reachability to ns (see package doc).
 	endpoint := fmt.Sprintf("http://%s.%s.svc.cluster.local:8888", resourceName, ns)
 	return &notebook.NotebookServer{
-		RuntimeID: d.cfg.WorkerID,
+		RuntimeID: d.cfg.RuntimeID,
 		Token:     token,
 		WorkDir:   workDir,
 		Endpoint:  endpoint,

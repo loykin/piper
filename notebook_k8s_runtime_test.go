@@ -126,8 +126,8 @@ spec:
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if nb.RuntimeID != notebookK8sLocalWorkerID {
-		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", nb.RuntimeID, notebookK8sLocalWorkerID)
+	if nb.RuntimeID != notebookK8sLocalRuntimeID {
+		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", nb.RuntimeID, notebookK8sLocalRuntimeID)
 	}
 	if !strings.HasPrefix(nb.Endpoint, "http://") || !strings.HasSuffix(nb.Endpoint, ".svc.cluster.local:8888") {
 		t.Fatalf("Endpoint = %q, want a plain cluster-DNS endpoint (no tunnel:// scheme in direct mode)", nb.Endpoint)

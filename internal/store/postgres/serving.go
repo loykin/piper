@@ -17,14 +17,14 @@ func NewServingRepo(exec *dbstore.Executor, source string) serving.Repository {
 	return &servingRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
-const serviceSelectCols = `project_id, name, run_id, artifact, status, endpoint, namespace, pid, worker_id, yaml, created_by, created_at, updated_at`
+const serviceSelectCols = `project_id, name, run_id, artifact, status, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at`
 
 func (r *servingRepo) Create(ctx context.Context, svc *serving.Service) error {
 	now := time.Now()
 	svc.CreatedAt = now
 	svc.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`INSERT INTO services (project_id, name, run_id, artifact, status, endpoint, namespace, pid, worker_id, yaml, created_by, created_at, updated_at)
+		q := db.Rebind(`INSERT INTO services (project_id, name, run_id, artifact, status, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		_, err := db.ExecContext(ctx, q,
 			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, svc.CreatedAt, svc.UpdatedAt)
@@ -50,7 +50,7 @@ func (r *servingRepo) Get(ctx context.Context, projectID, name string) (*serving
 func (r *servingRepo) Update(ctx context.Context, svc *serving.Service) error {
 	svc.UpdatedAt = time.Now()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`UPDATE services SET run_id=?, artifact=?, status=?, endpoint=?, namespace=?, pid=?, worker_id=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`)
+		q := db.Rebind(`UPDATE services SET run_id=?, artifact=?, status=?, endpoint=?, namespace=?, pid=?, runtime_id=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`)
 		_, err := db.ExecContext(ctx, q,
 			svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.UpdatedAt, svc.ProjectID, svc.Name)
 		return err
@@ -61,11 +61,11 @@ func (r *servingRepo) Upsert(ctx context.Context, svc *serving.Service) error {
 	now := time.Now()
 	svc.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`INSERT INTO services (project_id, name, run_id, artifact, status, endpoint, namespace, pid, worker_id, yaml, created_by, created_at, updated_at)
+		q := db.Rebind(`INSERT INTO services (project_id, name, run_id, artifact, status, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(project_id, name) DO UPDATE SET
 			 	run_id=EXCLUDED.run_id, artifact=EXCLUDED.artifact, status=EXCLUDED.status,
-				endpoint=EXCLUDED.endpoint, namespace=EXCLUDED.namespace, pid=EXCLUDED.pid, worker_id=EXCLUDED.worker_id, yaml=EXCLUDED.yaml,
+				endpoint=EXCLUDED.endpoint, namespace=EXCLUDED.namespace, pid=EXCLUDED.pid, runtime_id=EXCLUDED.runtime_id, yaml=EXCLUDED.yaml,
 				created_by=EXCLUDED.created_by, updated_at=EXCLUDED.updated_at`)
 		_, err := db.ExecContext(ctx, q,
 			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, now, now)

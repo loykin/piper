@@ -58,8 +58,8 @@ type Task struct {
 	WorkDir   string         `json:"work_dir"`
 	OutputDir string         `json:"output_dir"`
 	CreatedAt time.Time      `json:"created_at"`
-	Label     string         `json:"label"` // worker label that should handle this task
-	WorkerID  string         `json:"worker_id,omitempty"`
+	Label     string         `json:"label"` // runtime label that should handle this task
+	RuntimeID string         `json:"runtime_id,omitempty"`
 	Attempt   int            `json:"attempt,omitempty"`
 	Vars      BuiltinVars    `json:"vars,omitempty"`
 	RunParams map[string]any `json:"run_params,omitempty"` // run-level params; override step-level YAML params
@@ -82,7 +82,7 @@ type Task struct {
 type TaskResult struct {
 	ProjectID string             `json:"project_id,omitempty"`
 	TaskID    string             `json:"task_id"`
-	WorkerID  string             `json:"worker_id,omitempty"`
+	RuntimeID string             `json:"runtime_id,omitempty"`
 	Status    string             `json:"status"` // done | failed
 	Error     string             `json:"error,omitempty"`
 	StartedAt time.Time          `json:"started_at"`

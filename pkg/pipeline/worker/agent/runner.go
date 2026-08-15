@@ -369,7 +369,7 @@ func (r *Runner) doneResult(task *proto.Task, startedAt time.Time) proto.TaskRes
 	return proto.TaskResult{
 		ProjectID: task.ProjectID,
 		TaskID:    task.ID,
-		WorkerID:  task.WorkerID,
+		RuntimeID: task.RuntimeID,
 		Status:    proto.TaskStatusDone,
 		StartedAt: startedAt,
 		EndedAt:   time.Now(),
@@ -382,7 +382,7 @@ func (r *Runner) failedResult(task *proto.Task, err error, startedAt time.Time) 
 	return proto.TaskResult{
 		ProjectID: task.ProjectID,
 		TaskID:    task.ID,
-		WorkerID:  task.WorkerID,
+		RuntimeID: task.RuntimeID,
 		Status:    proto.TaskStatusFailed,
 		Error:     err.Error(),
 		StartedAt: startedAt,

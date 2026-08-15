@@ -24,7 +24,7 @@ func newTestDriver(t *testing.T, client kubernetes.Interface, observeInterval ti
 	t.Helper()
 	reports := make(chan statusReport, 16)
 	d, err := New(Config{
-		WorkerID:        "test-k8s-worker",
+		RuntimeID:       "test-k8s-worker",
 		Namespaces:      []string{"nb-ns"},
 		Client:          client,
 		ObserveInterval: observeInterval,
@@ -73,7 +73,7 @@ func expectNoReport(t *testing.T, reports chan statusReport, within time.Duratio
 
 func TestNewRejectsMissingConfig(t *testing.T) {
 	base := Config{
-		WorkerID:     "w",
+		RuntimeID:    "w",
 		Namespaces:   []string{"ns"},
 		Client:       fake.NewSimpleClientset(),
 		ReportStatus: func(string, string, string, string, string, string, int, string) error { return nil },
@@ -82,7 +82,7 @@ func TestNewRejectsMissingConfig(t *testing.T) {
 		name string
 		mut  func(*Config)
 	}{
-		{"worker id", func(c *Config) { c.WorkerID = "" }},
+		{"worker id", func(c *Config) { c.RuntimeID = "" }},
 		{"client", func(c *Config) { c.Client = nil }},
 		{"namespaces", func(c *Config) { c.Namespaces = nil }},
 		{"report status", func(c *Config) { c.ReportStatus = nil }},

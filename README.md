@@ -687,8 +687,8 @@ The Docker notebook E2E requires its configured notebook image locally.
 ```text
 cmd/piper/                 CLI commands and configuration loader
 frontend/                  React web application
-internal/directworker/     Shared docker/baremetal direct-runtime execution
-internal/k8sworker/        Direct in-cluster Kubernetes lifecycle components
+internal/directruntime/    Shared docker/baremetal direct-runtime execution
+internal/k8sruntime/       Direct in-cluster Kubernetes lifecycle components
 internal/membertunnel/     Home/Member federation tunnel (fed.md §13.4)
 internal/pipelinedispatch/ Queue execution backends (k8s, docker, baremetal)
 internal/queue/            Dispatch, retry, lease, and idempotency

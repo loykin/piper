@@ -98,8 +98,8 @@ spec:
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if nb.RuntimeID != notebookLocalWorkerID {
-		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", nb.RuntimeID, notebookLocalWorkerID)
+	if nb.RuntimeID != notebookLocalRuntimeID {
+		t.Fatalf("RuntimeID = %q, want %q (direct-runtime local identity)", nb.RuntimeID, notebookLocalRuntimeID)
 	}
 	if !strings.HasPrefix(nb.Endpoint, "http://127.0.0.1:") {
 		t.Fatalf("Endpoint = %q, want http://127.0.0.1:<port> (no tunnel:// scheme in direct mode)", nb.Endpoint)

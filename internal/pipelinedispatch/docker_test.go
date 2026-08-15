@@ -11,7 +11,7 @@ import (
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
 )
 
 func directRuntimeTask(t *testing.T, runID string, placement manifest.PlacementSpec, driverSpec manifest.DriverSpec) *proto.Task {

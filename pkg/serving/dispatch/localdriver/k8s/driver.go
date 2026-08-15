@@ -1,19 +1,17 @@
 // Package k8sdriver implements serving.Driver directly in-process against
-// a Kubernetes cluster — no remote worker/tunnel involved, mirroring
+// a Kubernetes cluster — no remote runtime/tunnel involved, mirroring
 // fed.md §13.2's Pipeline direct-runtime treatment and the notebook
 // domain's pkg/notebook/dispatch/localdriver/k8s package's shape. Separate
 // package from the docker/process serving localdriver for the same reason
-// notebook's is: the remote K8s worker never implemented the shared
+// notebook's is: the remote K8s runtime never implemented the shared
 // low-level servingdriver.Driver interface docker/process share.
 //
 // Unlike docker/baremetal direct-runtime (ArtifactTarget=TargetLocal, Piper
 // resolves the model to a local path before Deploy runs), a K8s pod cannot
 // reach Piper's local filesystem at all — this driver returns
 // artifact.TargetRemote and, when the model comes from a stored artifact,
-// replicates the remote worker's Secret + init-container
-// ("/piper internal artifact-download") pattern so the pod fetches its own
-// model bytes, exactly like pkg/serving/worker/driver/k8s/worker.go's
-// deployServing already does.
+// replicates the same Secret + init-container ("/piper internal
+// artifact-download") pattern so the pod fetches its own model bytes.
 package k8sdriver
 
 import (
@@ -44,7 +42,7 @@ import (
 
 // Config configures a direct, in-process K8s serving driver.
 type Config struct {
-	WorkerID    string
+	RuntimeID   string
 	ClusterName string
 	Namespaces  []string
 	Client      kubernetes.Interface
@@ -61,11 +59,11 @@ type Config struct {
 	WorkloadURL string
 	// WorkloadToken is used as the storage token fallback when rewriting a
 	// file:// storage URL to WorkloadURL/store and no token was already
-	// set — mirrors internal/k8sworker/pipeline's taskStorageForK8sWorker.
+	// set — mirrors internal/k8sruntime/pipeline's taskStorageForK8sRuntime.
 	WorkloadToken string
 	LogClient     logsink.PushClient
 	// ObserveInterval controls how often Observe polls Deployment status.
-	// Zero means 2s, matching pkg/serving/worker/driver/k8s/worker.go's Observe.
+	// Zero means 2s.
 	ObserveInterval time.Duration
 	// ReportStatus mirrors pkg/serving/dispatch/localdriver.Config.ReportStatus's
 	// signature exactly so piper.go can wire the same servingMgr.UpdateStatus
@@ -78,7 +76,7 @@ type Config struct {
 // detect Deployment readiness transitions and stream pod logs. There is no
 // Recover: Deployments/Services/Secrets are external K8s objects Observe
 // rediscovers on its own on every tick (same reasoning as the notebook K8s
-// driver; the remote K8s worker doesn't implement Recoverable either).
+// driver; the remote K8s runtime doesn't implement Recoverable either).
 type Driver struct {
 	cfg Config
 
@@ -96,8 +94,8 @@ type Driver struct {
 
 // New constructs a Driver. cfg.Client, cfg.Namespaces, and cfg.ReportStatus are required.
 func New(cfg Config) (*Driver, error) {
-	if cfg.WorkerID == "" {
-		return nil, fmt.Errorf("k8sdriver: WorkerID is required")
+	if cfg.RuntimeID == "" {
+		return nil, fmt.Errorf("k8sdriver: RuntimeID is required")
 	}
 	if cfg.Client == nil {
 		return nil, fmt.Errorf("k8sdriver: Client is required")
@@ -314,7 +312,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		Artifact:  artifactLabel(spec),
 		Status:    serving.StatusStarting,
 		Endpoint:  fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", resourceName, ns, rt.Port),
-		RuntimeID: d.cfg.WorkerID,
+		RuntimeID: d.cfg.RuntimeID,
 		YAML:      yamlStr,
 		Namespace: ns,
 	}, nil

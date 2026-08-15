@@ -9,7 +9,7 @@ import (
 
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/manifest"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
 )
 
 func TestBaremetalBackendDispatchesDirectlyAndCancels(t *testing.T) {

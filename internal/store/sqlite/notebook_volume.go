@@ -18,7 +18,7 @@ func NewNotebookVolumeRepo(exec *dbstore.Executor, source string) notebook.Volum
 	return &notebookVolumeRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
 }
 
-const volumeCols = `project_id, id, label, work_dir, status, worker_id, created_at, updated_at`
+const volumeCols = `project_id, id, label, work_dir, status, runtime_id, created_at, updated_at`
 
 func (r *notebookVolumeRepo) Create(ctx context.Context, v *notebook.NotebookVolume) error {
 	now := time.Now()
@@ -26,7 +26,7 @@ func (r *notebookVolumeRepo) Create(ctx context.Context, v *notebook.NotebookVol
 	v.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO notebook_volumes (project_id, id, label, work_dir, status, worker_id, created_at, updated_at)
+			`INSERT INTO notebook_volumes (project_id, id, label, work_dir, status, runtime_id, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			v.ProjectID, v.ID, v.Label, v.WorkDir, v.Status, v.RuntimeID, v.CreatedAt, v.UpdatedAt)
 		return err
@@ -63,7 +63,7 @@ func (r *notebookVolumeRepo) Update(ctx context.Context, v *notebook.NotebookVol
 	v.UpdatedAt = time.Now()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`UPDATE notebook_volumes SET label=?, work_dir=?, status=?, worker_id=?, updated_at=? WHERE id=?`,
+			`UPDATE notebook_volumes SET label=?, work_dir=?, status=?, runtime_id=?, updated_at=? WHERE id=?`,
 			v.Label, v.WorkDir, v.Status, v.RuntimeID, v.UpdatedAt, v.ID)
 		return err
 	})

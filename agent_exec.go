@@ -15,8 +15,8 @@ import (
 	"log/slog"
 	"os"
 
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
 	agentpkg "github.com/loykin/piper/pkg/pipeline/worker/agent"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 )
 
 func init() {

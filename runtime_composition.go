@@ -14,12 +14,12 @@ import (
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/notebook/dispatch/localdriver"
 	notebookk8sdriver "github.com/loykin/piper/pkg/notebook/dispatch/localdriver/k8s"
-	notebookworkerdriver "github.com/loykin/piper/pkg/notebook/worker/driver"
-	notebookdocker "github.com/loykin/piper/pkg/notebook/worker/driver/docker"
+	"github.com/loykin/piper/pkg/notebook/notebookdriver"
+	notebookdocker "github.com/loykin/piper/pkg/notebook/notebookdriver/docker"
 	"github.com/loykin/piper/pkg/serving"
 	servinglocaldriver "github.com/loykin/piper/pkg/serving/dispatch/localdriver"
 	servingk8sdriver "github.com/loykin/piper/pkg/serving/dispatch/localdriver/k8s"
-	servingdocker "github.com/loykin/piper/pkg/serving/worker/driver/docker"
+	servingdocker "github.com/loykin/piper/pkg/serving/servingdriver/docker"
 )
 
 // runtimeObserver is implemented by runtimes that reconcile infrastructure
@@ -43,13 +43,13 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 	switch cfg.Runtime.Type {
 	case RuntimeDocker, RuntimeBaremetal:
 		local, err := servinglocaldriver.New(servinglocaldriver.Config{
-			WorkerID:       servingLocalWorkerID,
+			RuntimeID:      servingLocalRuntimeID,
 			Infrastructure: cfg.Runtime.Type,
 			Docker:         servingdocker.Config{Network: cfg.Runtime.Docker.Network},
 			LogClient:      localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			EnvResolver:    credentials.ResolveEnv,
 			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return statusSink.Update(context.Background(), projectID, servingLocalWorkerID, name, status, endpoint)
+				return statusSink.Update(context.Background(), projectID, servingLocalRuntimeID, name, status, endpoint)
 			},
 		})
 		if err != nil {
@@ -58,7 +58,7 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 		driver = local
 	case RuntimeK8s:
 		k8s, err := servingk8sdriver.New(servingk8sdriver.Config{
-			WorkerID:             servingK8sLocalWorkerID,
+			RuntimeID:            servingK8sLocalRuntimeID,
 			Namespaces:           cfg.Runtime.K8s.Namespaces,
 			Client:               cfg.Runtime.K8s.Client,
 			ArtifactFetcherImage: cfg.Runtime.K8s.PipelineRunnerImage,
@@ -67,7 +67,7 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 			WorkloadToken:        cfg.Server.WorkloadToken,
 			LogClient:            localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return statusSink.Update(context.Background(), projectID, servingK8sLocalWorkerID, name, status, endpoint)
+				return statusSink.Update(context.Background(), projectID, servingK8sLocalRuntimeID, name, status, endpoint)
 			},
 		})
 		if err != nil {
@@ -99,12 +99,12 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 
 	switch cfg.Runtime.Type {
 	case RuntimeDocker, RuntimeBaremetal:
-		infrastructure := notebookworkerdriver.ModeDocker
+		infrastructure := notebookdriver.ModeDocker
 		if cfg.Runtime.Type == RuntimeBaremetal {
-			infrastructure = notebookworkerdriver.ModeProcess
+			infrastructure = notebookdriver.ModeProcess
 		}
 		local, err := localdriver.New(localdriver.Config{
-			WorkerID:         notebookLocalWorkerID,
+			RuntimeID:        notebookLocalRuntimeID,
 			Infrastructure:   infrastructure,
 			PlacementRuntime: cfg.Runtime.Type,
 			Docker:           notebookdocker.Config{Network: cfg.Runtime.Docker.Network},
@@ -113,7 +113,7 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 			LogClient:        localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			EnvResolver:      credentials.ResolveEnv,
 			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return statusSink.Update(context.Background(), projectID, notebookLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
+				return statusSink.Update(context.Background(), projectID, notebookLocalRuntimeID, name, status, endpoint, workDir, token, pid, env)
 			},
 		})
 		if err != nil {
@@ -126,10 +126,10 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 			Client: cfg.Runtime.K8s.Client, RestConfig: cfg.Runtime.K8s.RestConfig, Namespaces: cfg.Runtime.K8s.Namespaces,
 		}
 		k8s, err := notebookk8sdriver.New(notebookk8sdriver.Config{
-			WorkerID: notebookK8sLocalWorkerID, Namespaces: cfg.Runtime.K8s.Namespaces,
+			RuntimeID: notebookK8sLocalRuntimeID, Namespaces: cfg.Runtime.K8s.Namespaces,
 			Client: cfg.Runtime.K8s.Client, LogClient: localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return statusSink.Update(context.Background(), projectID, notebookK8sLocalWorkerID, name, status, endpoint, workDir, token, pid, env)
+				return statusSink.Update(context.Background(), projectID, notebookK8sLocalRuntimeID, name, status, endpoint, workDir, token, pid, env)
 			},
 		})
 		if err != nil {

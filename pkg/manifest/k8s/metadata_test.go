@@ -2,12 +2,12 @@ package k8s
 
 import "testing"
 
-func TestWorkerSelectorUsesSameEncodingAsLabels(t *testing.T) {
-	workerID := " Worker/One. "
-	labels := map[string]string{LabelWorkerID: LabelValue(workerID)}
-	want := ManagedSelector() + "," + LabelWorkerID + "=" + labels[LabelWorkerID]
-	if got := WorkerSelector(workerID); got != want {
-		t.Fatalf("WorkerSelector() = %q, want %q", got, want)
+func TestRuntimeSelectorUsesSameEncodingAsLabels(t *testing.T) {
+	runtimeID := " Runtime/One. "
+	labels := map[string]string{LabelRuntimeID: LabelValue(runtimeID)}
+	want := ManagedSelector() + "," + LabelRuntimeID + "=" + labels[LabelRuntimeID]
+	if got := RuntimeSelector(runtimeID); got != want {
+		t.Fatalf("RuntimeSelector() = %q, want %q", got, want)
 	}
 }
 

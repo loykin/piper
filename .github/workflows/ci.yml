@@ -69,7 +69,7 @@ jobs:
       - name: Run Docker notebook e2e
         run: |
           PIPER_NOTEBOOK_DOCKER_E2E_IMAGE=jupyter/minimal-notebook:latest \
-            go test ./pkg/notebook/worker -run '^TestDockerRuntimeE2E_' -v -count=1 -timeout=6m
+            go test ./pkg/notebook/notebookdriver/docker -run '^TestDockerRuntimeE2E_' -v -count=1 -timeout=6m
 
   process-notebook-e2e:
     name: Process Notebook E2E
@@ -97,7 +97,7 @@ jobs:
         run: |
           PIPER_NOTEBOOK_PROCESS_E2E=1 \
           PIPER_NOTEBOOK_PROCESS_E2E_ENV=/tmp/piper-jupyter-e2e \
-            go test ./pkg/notebook/worker -run '^TestProcessRuntimeE2E_' -v -count=1 -timeout=6m
+            go test ./pkg/notebook/notebookdriver/process -run '^TestProcessRuntimeE2E_' -v -count=1 -timeout=6m
 
   docker-serving-e2e:
     name: Docker Serving E2E
@@ -118,7 +118,7 @@ jobs:
       - name: Run Docker serving e2e
         run: |
           PIPER_SERVING_DOCKER_E2E_IMAGE=python:3.12-slim \
-            go test ./pkg/serving/worker/driver/docker/ \
+            go test ./pkg/serving/servingdriver/docker/ \
               -run '^TestServingDockerE2E_DeployStopCrashRecover$' \
               -v -count=1 -timeout=5m
 
@@ -138,7 +138,7 @@ jobs:
       - name: Run process serving e2e
         run: |
           PIPER_SERVING_PROCESS_E2E=1 \
-            go test ./pkg/serving/worker/driver/process/ \
+            go test ./pkg/serving/servingdriver/process/ \
               -run '^TestServingProcessE2E_DeployStopCrashRecover$' \
               -v -count=1 -timeout=5m
 

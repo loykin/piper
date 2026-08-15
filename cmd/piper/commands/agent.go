@@ -10,8 +10,8 @@ import (
 	"syscall"
 
 	"github.com/loykin/piper/internal/proto"
+	pdriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
 	"github.com/loykin/piper/pkg/pipeline/worker/agent"
-	pdriver "github.com/loykin/piper/pkg/pipeline/worker/driver"
 	"github.com/spf13/cobra"
 )
 

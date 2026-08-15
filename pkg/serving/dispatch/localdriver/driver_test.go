@@ -11,7 +11,7 @@ import (
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/serving"
-	servingdriver "github.com/loykin/piper/pkg/serving/worker/driver"
+	servingdriver "github.com/loykin/piper/pkg/serving/servingdriver"
 )
 
 // fakeRuntime is a fake servingdriver.Driver, mirroring
@@ -72,7 +72,7 @@ func newTestDriver(t *testing.T, rt servingdriver.Driver, healthTimeout time.Dur
 	reports := make(chan statusReport, 16)
 	d := &Driver{
 		cfg: Config{
-			WorkerID:           "test-worker",
+			RuntimeID:          "test-worker",
 			Infrastructure:     "baremetal",
 			HealthCheckTimeout: healthTimeout,
 			ReportStatus: func(projectID, name, status, endpoint string) error {

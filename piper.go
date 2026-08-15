@@ -36,25 +36,25 @@ import (
 	storemod "github.com/loykin/piper/internal/store"
 )
 
-// notebookLocalWorkerID is the fixed identity used by the in-process
+// notebookLocalRuntimeID is the fixed identity used by the in-process
 // notebook direct-runtime driver (docker/baremetal), matching the
-// localDockerWorkerID/localBaremetalWorkerID convention already used by
+// localDockerRuntimeID/localBaremetalRuntimeID convention already used by
 // internal/pipelinedispatch for pipeline direct-runtime.
-const notebookLocalWorkerID = "piper-notebook-runtime"
+const notebookLocalRuntimeID = "piper-notebook-runtime"
 
-// servingLocalWorkerID is the equivalent fixed identity for the in-process
+// servingLocalRuntimeID is the equivalent fixed identity for the in-process
 // serving direct-runtime driver.
-const servingLocalWorkerID = "piper-serving-runtime"
+const servingLocalRuntimeID = "piper-serving-runtime"
 
-// notebookK8sLocalWorkerID is the fixed identity for the in-process K8s
-// notebook direct-runtime driver — distinct from notebookLocalWorkerID
+// notebookK8sLocalRuntimeID is the fixed identity for the in-process K8s
+// notebook direct-runtime driver — distinct from notebookLocalRuntimeID
 // (docker/baremetal) even though only one is ever active per Piper
 // instance, matching internal/pipelinedispatch's per-infra constant convention.
-const notebookK8sLocalWorkerID = "piper-notebook-k8s-runtime"
+const notebookK8sLocalRuntimeID = "piper-notebook-k8s-runtime"
 
-// servingK8sLocalWorkerID is the equivalent fixed identity for the
+// servingK8sLocalRuntimeID is the equivalent fixed identity for the
 // in-process K8s serving direct-runtime driver.
-const servingK8sLocalWorkerID = "piper-serving-k8s-runtime"
+const servingK8sLocalRuntimeID = "piper-serving-k8s-runtime"
 
 // servingBundle groups the serving manager and proxy together.
 type servingBundle struct {

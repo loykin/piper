@@ -43,14 +43,14 @@ const (
 )
 
 type taskEntry struct {
-	task             *proto.Task
-	step             *pipeline.Step
-	status           taskStatus
-	attempts         int
-	maxAttempts      int
-	assignedWorkerID string
-	startedAt        *time.Time
-	leaseAt          *time.Time
+	task              *proto.Task
+	step              *pipeline.Step
+	status            taskStatus
+	attempts          int
+	maxAttempts       int
+	assignedRuntimeID string
+	startedAt         *time.Time
+	leaseAt           *time.Time
 	// deadline is the absolute time by which a running task must complete,
 	// derived from step.options.timeout. Nil means unlimited.
 	deadline *time.Time
@@ -496,20 +496,20 @@ func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (er
 	if !ok {
 		return fmt.Errorf("step %s not found in run %s", stepName, runID), q.takePendingLocked()
 	}
-	ownerID := entry.assignedWorkerID
+	ownerID := entry.assignedRuntimeID
 	if ownerID == "" {
-		ownerID = entry.task.WorkerID
+		ownerID = entry.task.RuntimeID
 	}
 	if ownerID == "" {
 		if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
 			ownerID = owner.OwnerForTask(result.TaskID)
 		}
 	}
-	if ownerID != "" && result.WorkerID == "" {
-		return fmt.Errorf("task %s completion missing worker identity", result.TaskID), q.takePendingLocked()
+	if ownerID != "" && result.RuntimeID == "" {
+		return fmt.Errorf("task %s completion missing runtime identity", result.TaskID), q.takePendingLocked()
 	}
-	if result.WorkerID != "" && ownerID != "" && result.WorkerID != ownerID {
-		return fmt.Errorf("task %s owned by worker %q, result from %q rejected", result.TaskID, ownerID, result.WorkerID), q.takePendingLocked()
+	if result.RuntimeID != "" && ownerID != "" && result.RuntimeID != ownerID {
+		return fmt.Errorf("task %s owned by runtime %q, result from %q rejected", result.TaskID, ownerID, result.RuntimeID), q.takePendingLocked()
 	}
 	resultAttempt := result.Attempt
 	if resultAttempt == 0 {
@@ -588,7 +588,7 @@ func (q *Queue) failOrRetryLocked(ctx context.Context, r *runEntry, entry *taskE
 	if entry.attempts < entry.maxAttempts {
 		q.stopEntryTimerLocked(entry)
 		q.transitionTaskLocked(entry, taskRetrying)
-		entry.assignedWorkerID = ""
+		entry.assignedRuntimeID = ""
 		entry.startedAt = nil
 		entry.leaseAt = nil
 		retryingStep := &run.Step{
@@ -902,10 +902,10 @@ func (q *Queue) recoveryGraceFiredLocked(runID string, entry *taskEntry) pending
 	return q.takePendingLocked()
 }
 
-// RenewLeases records that workerID is still executing the given tasks.
-// Worker liveness and task state remain separate: only explicit task IDs renew leases.
-func (q *Queue) RenewLeases(workerID string, taskIDs []string) {
-	if workerID == "" || len(taskIDs) == 0 {
+// RenewLeases records that runtimeID is still executing the given tasks.
+// Runtime liveness and task state remain separate: only explicit task IDs renew leases.
+func (q *Queue) RenewLeases(runtimeID string, taskIDs []string) {
+	if runtimeID == "" || len(taskIDs) == 0 {
 		return
 	}
 	now := time.Now()
@@ -924,13 +924,13 @@ func (q *Queue) RenewLeases(workerID string, taskIDs []string) {
 		if entry == nil || (entry.status != taskRunning && entry.status != taskRecovering) {
 			continue
 		}
-		if entry.assignedWorkerID == "" {
-			if entry.task.WorkerID != "" && entry.task.WorkerID != workerID {
+		if entry.assignedRuntimeID == "" {
+			if entry.task.RuntimeID != "" && entry.task.RuntimeID != runtimeID {
 				continue
 			}
-			entry.assignedWorkerID = workerID
+			entry.assignedRuntimeID = runtimeID
 		}
-		if entry.assignedWorkerID != workerID {
+		if entry.assignedRuntimeID != runtimeID {
 			continue
 		}
 		if entry.status == taskRecovering {
@@ -997,15 +997,15 @@ func (q *Queue) dispatchIfNeeded(ctx context.Context, entry *taskEntry) {
 			}
 			slog.Error("dispatch failed", "task_id", task.ID, "err", err)
 			now := time.Now()
-			workerID := task.WorkerID
+			runtimeID := task.RuntimeID
 			if owner, ok := b.(pipelinedispatch.TaskOwner); ok {
-				if selectedWorkerID := owner.OwnerForTask(task.ID); selectedWorkerID != "" {
-					workerID = selectedWorkerID
+				if selectedRuntimeID := owner.OwnerForTask(task.ID); selectedRuntimeID != "" {
+					runtimeID = selectedRuntimeID
 				}
 			}
 			if completeErr := q.Complete(dispatchCtx, proto.TaskResult{
 				TaskID:    task.ID,
-				WorkerID:  workerID,
+				RuntimeID: runtimeID,
 				Status:    proto.TaskStatusFailed,
 				Error:     err.Error(),
 				StartedAt: now,
@@ -1037,7 +1037,7 @@ func (q *Queue) requeueBusyLocked(runID, stepName string, reason error) {
 	}
 	entry.task.Attempt = entry.attempts
 	q.transitionTaskLocked(entry, taskReady)
-	entry.assignedWorkerID = ""
+	entry.assignedRuntimeID = ""
 	entry.startedAt = nil
 	entry.leaseAt = nil
 	slog.Info("task requeued after retryable dispatch failure", "task_id", entry.task.ID, "err", reason)

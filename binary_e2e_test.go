@@ -127,6 +127,8 @@ runtime:
 
 	// ── Submit pipeline ───────────────────────────────────────────────────────
 	const pipelineYAML = `
+apiVersion: piper/v1
+kind: Pipeline
 metadata:
   name: binary-e2e
 spec:
@@ -224,7 +226,7 @@ func binaryE2EPostRun(t *testing.T, serverURL, pipelineYAML string) string {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST /runs: status=%d body=%s", resp.StatusCode, b)
 	}

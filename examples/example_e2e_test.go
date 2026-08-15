@@ -566,7 +566,7 @@ func TestExampleNotebookBaremetal(t *testing.T) {
 	const nbName = "e2e-nb-baremetal"
 
 	// Create notebook with baremetal spec.
-	const nbYAML = "metadata:\n  name: " + nbName + "\nspec:\n  process: {}\n"
+	const nbYAML = "apiVersion: piper/v1\nkind: Notebook\nmetadata:\n  name: " + nbName + "\nspec:\n  driver:\n    process: {}\n"
 	nbBody, _ := json.Marshal(map[string]string{"yaml": nbYAML})
 	createResp, err := http.Post(projectAPI+"/notebooks", "application/json", bytes.NewReader(nbBody))
 	if err != nil {

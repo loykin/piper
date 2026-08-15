@@ -179,7 +179,7 @@ func TestStartReturnsFastThenReportsRunningAsync(t *testing.T) {
 
 func TestStartRejectsDuplicateActiveNotebook(t *testing.T) {
 	rt := &fakeRuntime{block: make(chan struct{})}
-	d, _ := newTestDriver(t, rt)
+	d, reports := newTestDriver(t, rt)
 	vol := &notebook.NotebookVolume{ID: "vol-1", WorkDir: t.TempDir()}
 
 	if _, err := d.Start(context.Background(), testSpec("proj", "nb"), vol, ""); err != nil {
@@ -189,6 +189,11 @@ func TestStartRejectsDuplicateActiveNotebook(t *testing.T) {
 		t.Fatal("expected duplicate-start rejection")
 	}
 	close(rt.block)
+	// The first Start's startAsync goroutine is still writing into vol.WorkDir
+	// (t.TempDir()) until it reports running — without waiting for that
+	// report, the goroutine can race t.TempDir()'s cleanup and intermittently
+	// fail with "directory not empty".
+	awaitReport(t, reports)
 }
 
 func TestStartRejectsMismatchedPlacementRuntime(t *testing.T) {

@@ -95,7 +95,7 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
 
   await page.getByRole('row', { name: /frontend-mixed.*1 version/ }).getByRole('button', { name: 'Expand group' }).click()
   await page.getByRole('row', { name: /v1/ }).getByRole('button', { name: 'Run' }).click()
-  await page.waitForURL(new RegExp(`/ui/projects/${projectID}/runs/run-`))
+  await page.waitForURL(new RegExp(`/ui/projects/${projectID}/runs/[^/]+$`))
   const runID = page.url().split('/').pop()!
 
   await expect.poll(async () => {

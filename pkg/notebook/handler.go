@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/internal/tunnelproxy"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
@@ -97,7 +98,15 @@ func (h *Handler) createNotebook(c *gin.Context) {
 		return
 	}
 
-	spec, err := Parse([]byte(req.YAML))
+	var spec *Notebook
+	var err error
+	if req.VolumeID != "" {
+		// Reusing an existing volume — spec.volume.size describes
+		// provisioning a new one and isn't required here.
+		spec, err = ParseForExistingVolume([]byte(req.YAML))
+	} else {
+		spec, err = Parse([]byte(req.YAML))
+	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid YAML: " + err.Error()})
 		return
@@ -200,10 +209,20 @@ func writeLifecycleError(c *gin.Context, err error) {
 
 // GET /notebook-volumes — list all volumes for the current project.
 func (h *Handler) listVolumes(c *gin.Context) {
-	vols, err := h.deps.Volumes.List(c.Request.Context(), currentProjectID(c))
+	limit, offset := httpx.ParseLimitOffset(c)
+	projectID := currentProjectID(c)
+	vols, err := h.deps.Volumes.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.deps.Volumes.Count(c.Request.Context(), projectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	c.JSON(http.StatusOK, vols)
 }

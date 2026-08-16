@@ -138,7 +138,7 @@ func (v *fakeVols) Get(_ context.Context, id string) (*NotebookVolume, error) {
 	return &cp, nil
 }
 
-func (v *fakeVols) List(_ context.Context, _ string) ([]*NotebookVolume, error) {
+func (v *fakeVols) List(_ context.Context, _ string, _, _ int) ([]*NotebookVolume, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	out := make([]*NotebookVolume, 0, len(v.vols))
@@ -147,6 +147,12 @@ func (v *fakeVols) List(_ context.Context, _ string) ([]*NotebookVolume, error) 
 		out = append(out, &cp)
 	}
 	return out, nil
+}
+
+func (v *fakeVols) Count(_ context.Context, _ string) (int, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return len(v.vols), nil
 }
 
 func (v *fakeVols) Update(_ context.Context, vol *NotebookVolume) error {

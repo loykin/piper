@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
-import { DataGrid } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import {
   AlertDialog,
@@ -16,18 +16,22 @@ import {
 import { Button } from '@/components/ui/button'
 import { memberColumns } from '@/features/access/memberColumns'
 import { MemberDetailPanel } from '@/features/access/components/MemberDetailPanel'
-import { useMembers, useRemoveMember } from '@/features/access/hooks'
+import { useMembersPaged, useRemoveMember } from '@/features/access/hooks'
 import type { ProjectMember } from '@/features/access/types'
 import { useProjectId } from '@/lib/projectContext'
 import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
+const PAGE_SIZE = 20
+
 function MembersPageInner() {
   const projectId = useProjectId()
   const navigate = useNavigate()
   const { open } = useSidePanel()
-  const membersQuery = useMembers()
-  const members = membersQuery.data ?? []
+  const [pageIndex, setPageIndex] = useState(0)
+  const membersQuery = useMembersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const members = membersQuery.data?.members ?? []
+  const total = membersQuery.data?.total ?? 0
   const removeMember = useRemoveMember()
   const [removeTarget, setRemoveTarget] = useState<ProjectMember | null>(null)
   const [actionError, setActionError] = useState('')
@@ -82,6 +86,14 @@ function MembersPageInner() {
                 <MemberDetailPanel member={member} onRemove={setRemoveTarget} />,
                 { size: 520 },
               )}
+              classNames={{ footer: 'pt-3' }}
+              pagination={{
+                pageSize: PAGE_SIZE,
+                pageIndex,
+                pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+                onPageChange: setPageIndex,
+              }}
+              footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
             />
           </DataBodyTemplate.Resource>
         </DataBodyTemplate.Body>

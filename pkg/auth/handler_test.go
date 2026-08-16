@@ -16,8 +16,12 @@ func (userDirectoryStub) GetUser(context.Context, string) (*security.User, error
 	return nil, nil
 }
 
-func (userDirectoryStub) ListUsers(context.Context) ([]*security.User, error) {
+func (userDirectoryStub) ListUsers(context.Context, int, int) ([]*security.User, error) {
 	return []*security.User{}, nil
+}
+
+func (userDirectoryStub) CountUsers(context.Context) (int, error) {
+	return 0, nil
 }
 
 func TestUserHandlerReadOnlyDirectoryDoesNotRegisterMutations(t *testing.T) {

@@ -22,7 +22,11 @@ type CreateUserInput struct {
 // UserDirectory provides read-only user discovery.
 type UserDirectory interface {
 	GetUser(ctx context.Context, userID string) (*User, error)
-	ListUsers(ctx context.Context) ([]*User, error)
+	// ListUsers returns accounts ordered by created_at. limit 0 means no
+	// limit (return everything); offset is only meaningful when limit > 0.
+	ListUsers(ctx context.Context, limit, offset int) ([]*User, error)
+	// CountUsers returns the total number of accounts, ignoring limit/offset.
+	CountUsers(ctx context.Context) (int, error)
 }
 
 // UserLookup resolves an exact login username without exposing the full user

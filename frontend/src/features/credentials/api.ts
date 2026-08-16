@@ -23,6 +23,13 @@ export async function listCredentials(projectId: string): Promise<Credential[]> 
   return Array.isArray(data) ? data : []
 }
 
+/** Like `listCredentials`, but for a `limit`-paginated page — see `listServingPaged`. */
+export async function listCredentialsPaged(projectId: string, limit: number, offset: number): Promise<{ credentials: Credential[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  const { data, total } = await projectApi(projectId).getWithTotal<Credential[]>(`/credentials?${params.toString()}`)
+  return { credentials: Array.isArray(data) ? data : [], total: total ?? 0 }
+}
+
 export async function createCredential(projectId: string, req: CreateCredentialRequest): Promise<Credential> {
   return projectApi(projectId).post<Credential>('/credentials', req)
 }

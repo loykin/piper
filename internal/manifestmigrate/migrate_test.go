@@ -69,6 +69,10 @@ func (r *fakeTemplateRepo) List(_ context.Context, projectID string, _ template.
 	return r.byProject[projectID], nil
 }
 
+func (r *fakeTemplateRepo) Count(_ context.Context, projectID string, _ template.Filter) (int, error) {
+	return len(r.byProject[projectID]), nil
+}
+
 func (r *fakeTemplateRepo) Delete(context.Context, string, string) error { return nil }
 
 // ─── fake notebook.Repository ───────────────────────────────────────────────
@@ -151,13 +155,17 @@ func (r *fakeServingRepo) SetStatus(context.Context, string, string, string) err
 func (r *fakeServingRepo) SetStatusEndpoint(context.Context, string, string, string, string) error {
 	return nil
 }
-func (r *fakeServingRepo) List(_ context.Context, projectID string) ([]*serving.Service, error) {
+func (r *fakeServingRepo) List(_ context.Context, projectID string, _, _ int) ([]*serving.Service, error) {
 	return r.byProject[projectID], nil
 }
+func (r *fakeServingRepo) Count(_ context.Context, projectID string) (int, error) {
+	return len(r.byProject[projectID]), nil
+}
 func (r *fakeServingRepo) Delete(context.Context, string, string) error { return nil }
-func (r *fakeServingRepo) ListHistory(context.Context, string) ([]*serving.ServiceHistory, error) {
+func (r *fakeServingRepo) ListHistory(context.Context, string, int, int) ([]*serving.ServiceHistory, error) {
 	return nil, nil
 }
+func (r *fakeServingRepo) CountHistory(context.Context, string) (int, error) { return 0, nil }
 
 // ─── tests ──────────────────────────────────────────────────────────────────
 

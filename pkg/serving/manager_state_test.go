@@ -50,16 +50,23 @@ func (r *stateTestRepo) SetStatusEndpoint(_ context.Context, _, name, status, en
 	}
 	return nil
 }
-func (r *stateTestRepo) List(context.Context, string) ([]*Service, error) {
+func (r *stateTestRepo) List(context.Context, string, int, int) ([]*Service, error) {
 	if r.service == nil {
 		return nil, nil
 	}
 	return []*Service{cloneService(r.service)}, nil
 }
+func (r *stateTestRepo) Count(context.Context, string) (int, error) {
+	if r.service == nil {
+		return 0, nil
+	}
+	return 1, nil
+}
 func (r *stateTestRepo) Delete(context.Context, string, string) error { r.service = nil; return nil }
-func (r *stateTestRepo) ListHistory(context.Context, string) ([]*ServiceHistory, error) {
+func (r *stateTestRepo) ListHistory(context.Context, string, int, int) ([]*ServiceHistory, error) {
 	return nil, nil
 }
+func (r *stateTestRepo) CountHistory(context.Context, string) (int, error) { return 0, nil }
 
 type stateTestDriver struct {
 	stopErr    error

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 )
@@ -32,10 +33,19 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 func (h *Handler) list(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
-	items, err := h.store.List(c.Request.Context(), projectContext.ID)
+	limit, offset := httpx.ParseLimitOffset(c)
+	items, err := h.store.List(c.Request.Context(), projectContext.ID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.store.Count(c.Request.Context(), projectContext.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	c.JSON(http.StatusOK, items)
 }

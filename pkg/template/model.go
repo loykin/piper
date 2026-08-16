@@ -49,8 +49,9 @@ func (t *Template) MarshalTagsJSON() {
 
 // Filter constrains a List query.
 type Filter struct {
-	Name  string // filter by template name (group); empty = all
-	Limit int    // 0 = default (50)
+	Name   string // filter by template name (group); empty = all
+	Limit  int    // 0 = default (50)
+	Offset int    // only meaningful when Limit > 0
 }
 
 // Repository is the persistence interface for Template records.
@@ -63,5 +64,8 @@ type Repository interface {
 	Create(ctx context.Context, t *Template) error
 	Get(ctx context.Context, projectID, id string) (*Template, error)
 	List(ctx context.Context, projectID string, f Filter) ([]*Template, error)
+	// Count returns the number of templates matching f.Name, ignoring
+	// Limit/Offset.
+	Count(ctx context.Context, projectID string, f Filter) (int, error)
 	Delete(ctx context.Context, projectID, id string) error
 }

@@ -28,12 +28,19 @@ func (s *userDirectoryStub) GetUser(_ context.Context, userID string) (*security
 	return nil, nil
 }
 
-func (s *userDirectoryStub) ListUsers(context.Context) ([]*security.User, error) {
+func (s *userDirectoryStub) ListUsers(context.Context, int, int) ([]*security.User, error) {
 	return s.users, nil
 }
 
-func (s *memberManagerStub) ListMembers(context.Context, string) ([]*security.ProjectMember, error) {
+func (s *userDirectoryStub) CountUsers(context.Context) (int, error) {
+	return len(s.users), nil
+}
+
+func (s *memberManagerStub) ListMembers(context.Context, string, int, int) ([]*security.ProjectMember, error) {
 	return s.members, nil
+}
+func (s *memberManagerStub) CountMembers(context.Context, string) (int, error) {
+	return len(s.members), nil
 }
 func (s *memberManagerStub) AddMember(context.Context, *security.ProjectMember) error {
 	return nil

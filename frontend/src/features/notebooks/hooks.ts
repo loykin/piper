@@ -9,6 +9,8 @@ export const notebookKeys = {
   list: (projectId: string) => ['notebooks', projectId, 'list'] as const,
   one: (projectId: string, name: string) => ['notebooks', projectId, name] as const,
   volumes: (projectId: string) => ['notebook-volumes', projectId] as const,
+  volumesPaged: (projectId: string, limit: number, offset: number) =>
+    ['notebook-volumes', projectId, 'paged', limit, offset] as const,
   volumeFiles: (projectId: string, volumeId: string) =>
     ['notebook-volumes', projectId, volumeId, 'files'] as const,
 }
@@ -81,6 +83,18 @@ export function useNotebookVolumes() {
     queryKey: notebookKeys.volumes(projectId),
     queryFn: () => api.listNotebookVolumes(projectId),
     enabled: !!projectId,
+    ...backgroundPolling(5000),
+  })
+}
+
+/** Like `useNotebookVolumes`, but for a `limit`-paginated page — also returns `total`. */
+export function useNotebookVolumesPaged(limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: notebookKeys.volumesPaged(projectId, limit, offset),
+    queryFn: () => api.listNotebookVolumesPaged(projectId, limit, offset),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
     ...backgroundPolling(5000),
   })
 }

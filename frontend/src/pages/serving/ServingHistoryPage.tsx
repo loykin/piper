@@ -1,12 +1,18 @@
-import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
+import { useState } from 'react'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
-import { useServingHistory } from '@/features/serving/hooks'
+import { useServingHistoryPaged } from '@/features/serving/hooks'
 import { serviceHistoryColumns } from '@/features/serving/columns'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
+const PAGE_SIZE = 20
+
 export default function ServingHistoryPage() {
-  const historyQuery = useServingHistory()
-  const history = historyQuery.data ?? []
+  const [pageIndex, setPageIndex] = useState(0)
+  const historyQuery = useServingHistoryPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const { data } = historyQuery
+  const history = data?.history ?? []
+  const total = data?.total ?? 0
 
   return (
     <DataBodyTemplate
@@ -26,17 +32,18 @@ export default function ServingHistoryPage() {
           <DataGrid
             data={history}
             columns={serviceHistoryColumns}
-            isLoading={historyQuery.isLoading}
+            isLoading={historyQuery.isPending && data === undefined}
             emptyMessage="No deployment history yet."
             tableWidthMode="fill-last"
             rowHeight={44}
-            pagination={{ pageSize: 20 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{history.length} records</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
+            classNames={{ footer: 'pt-3' }}
+            pagination={{
+              pageSize: PAGE_SIZE,
+              pageIndex,
+              pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+              onPageChange: setPageIndex,
+            }}
+            footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
           />
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>

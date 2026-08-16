@@ -88,14 +88,14 @@ func (r *pipelineRepo) List(ctx context.Context, projectID string, f template.Fi
 			return db.SelectContext(ctx, &rows,
 				`SELECT `+selectCols+` FROM pipeline_templates
 				  WHERE project_id=? AND name=?
-				  ORDER BY version DESC, created_at DESC LIMIT ?`,
-				projectID, f.Name, limit)
+				  ORDER BY version DESC, created_at DESC LIMIT ? OFFSET ?`,
+				projectID, f.Name, limit, f.Offset)
 		}
 		return db.SelectContext(ctx, &rows,
 			`SELECT `+selectCols+` FROM pipeline_templates
 			  WHERE project_id=?
-			  ORDER BY created_at DESC LIMIT ?`,
-			projectID, limit)
+			  ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+			projectID, limit, f.Offset)
 	})
 	if err != nil {
 		return nil, err
@@ -104,6 +104,19 @@ func (r *pipelineRepo) List(ctx context.Context, projectID string, f template.Fi
 		t.AfterScan()
 	}
 	return rows, nil
+}
+
+func (r *pipelineRepo) Count(ctx context.Context, projectID string, f template.Filter) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		if f.Name != "" {
+			return db.GetContext(ctx, &count,
+				`SELECT COUNT(*) FROM pipeline_templates WHERE project_id=? AND name=?`, projectID, f.Name)
+		}
+		return db.GetContext(ctx, &count,
+			`SELECT COUNT(*) FROM pipeline_templates WHERE project_id=?`, projectID)
+	})
+	return count, err
 }
 
 func (r *pipelineRepo) Delete(ctx context.Context, projectID, id string) error {

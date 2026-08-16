@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
 import type { StorageConfig } from './types'
 import { useProjectId } from '@/lib/projectContext'
+import { ApiError } from '@/lib/api'
 
 export const storageKeys = {
   settings: () => ['storage', 'settings'] as const,
@@ -12,6 +13,10 @@ export function useStorageSettings() {
   return useQuery({
     queryKey: storageKeys.settings(),
     queryFn: api.getStorageSettings,
+    // 403 here means "not a system admin on this instance" — retrying can
+    // never fix that, and unlike a transient 5xx it shouldn't eat a retry
+    // budget or leave the query stuck retrying.
+    retry: (failureCount, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && failureCount < 1,
   })
 }
 

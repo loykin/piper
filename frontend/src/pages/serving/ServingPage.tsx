@@ -14,9 +14,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
-import { useServices, useStopService, useRestartService } from '@/features/serving/hooks'
+import { useServicesPaged, useStopService, useRestartService } from '@/features/serving/hooks'
 import { ServingDetailPanel } from '@/features/serving/components/ServingDetailPanel'
 import { serviceColumns } from '@/features/serving/columns'
 import { RowActions } from '@/shared/components/RowActions'
@@ -24,12 +24,17 @@ import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useProjectId } from '@/lib/projectContext'
 import type { Service } from '@/features/serving/api'
 
+const PAGE_SIZE = 20
+
 function ServingPageInner() {
   const { open } = useSidePanel()
   const projectId = useProjectId()
   const navigate = useNavigate()
-  const servicesQuery = useServices()
-  const services = servicesQuery.data ?? []
+  const [pageIndex, setPageIndex] = useState(0)
+  const servicesQuery = useServicesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const { data } = servicesQuery
+  const services = data?.services ?? []
+  const total = data?.total ?? 0
   const { mutate: stopService, isPending: stopping } = useStopService()
   const { mutate: restartService } = useRestartService()
   const [stopTarget, setStopTarget] = useState<Service | null>(null)
@@ -95,13 +100,14 @@ function ServingPageInner() {
             rowHeight={48}
             rowCursor
             onRowClick={(row) => open(<ServingDetailPanel name={row.name} />, { size: 520 })}
-            pagination={{ pageSize: 20 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{services.length} services</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
+            classNames={{ footer: 'pt-3' }}
+            pagination={{
+              pageSize: PAGE_SIZE,
+              pageIndex,
+              pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+              onPageChange: setPageIndex,
+            }}
+            footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
           />
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>

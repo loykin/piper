@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/internal/redact"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
@@ -72,10 +73,20 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 // GET /schedules
 func (h *Handler) listSchedules(c *gin.Context) {
-	schedules, err := h.deps.Schedules.List(c.Request.Context(), currentProjectID(c))
+	limit, offset := httpx.ParseLimitOffset(c)
+	projectID := currentProjectID(c)
+	schedules, err := h.deps.Schedules.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.deps.Schedules.Count(c.Request.Context(), projectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	out := make([]*Schedule, 0, len(schedules))
 	for _, sc := range schedules {

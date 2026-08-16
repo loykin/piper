@@ -49,16 +49,29 @@ func (r *notebookVolumeRepo) Get(ctx context.Context, id string) (*notebook.Note
 	return &v, nil
 }
 
-func (r *notebookVolumeRepo) List(ctx context.Context, projectID string) ([]*notebook.NotebookVolume, error) {
+func (r *notebookVolumeRepo) List(ctx context.Context, projectID string, limit, offset int) ([]*notebook.NotebookVolume, error) {
+	query := `SELECT ` + pgVolumeCols + ` FROM notebook_volumes WHERE project_id=? ORDER BY created_at DESC`
+	args := []any{projectID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	var out []*notebook.NotebookVolume
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT ` + pgVolumeCols + ` FROM notebook_volumes WHERE project_id=? ORDER BY created_at DESC`)
-		return db.SelectContext(ctx, &out, q, projectID)
+		return db.SelectContext(ctx, &out, db.Rebind(query), args...)
 	})
 	if out == nil {
 		out = []*notebook.NotebookVolume{}
 	}
 	return out, err
+}
+
+func (r *notebookVolumeRepo) Count(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &count, db.Rebind(`SELECT COUNT(*) FROM notebook_volumes WHERE project_id=?`), projectID)
+	})
+	return count, err
 }
 
 func (r *notebookVolumeRepo) Update(ctx context.Context, v *notebook.NotebookVolume) error {

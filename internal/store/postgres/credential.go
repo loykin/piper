@@ -20,10 +20,16 @@ func NewCredentialRepo(exec *dbstore.Executor, source string) credential.Reposit
 
 const pgCredentialCols = `project_id, name, kind, endpoint, keys_json, disabled, last_used_at, last_tested_at, last_test_ok, last_test_message, created_at, updated_at`
 
-func (r *credentialRepo) List(ctx context.Context, projectID string) ([]*credential.Metadata, error) {
+func (r *credentialRepo) List(ctx context.Context, projectID string, limit, offset int) ([]*credential.Metadata, error) {
+	query := `SELECT ` + pgCredentialCols + ` FROM credentials WHERE project_id=? ORDER BY name`
+	args := []any{projectID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	var rows []credential.Record
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		return db.SelectContext(ctx, &rows, db.Rebind(`SELECT `+pgCredentialCols+` FROM credentials WHERE project_id=? ORDER BY name`), projectID)
+		return db.SelectContext(ctx, &rows, db.Rebind(query), args...)
 	})
 	if err != nil {
 		return nil, err
@@ -33,6 +39,14 @@ func (r *credentialRepo) List(ctx context.Context, projectID string) ([]*credent
 		out = append(out, pgCredentialRecordMeta(&rows[i]))
 	}
 	return out, nil
+}
+
+func (r *credentialRepo) Count(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &count, db.Rebind(`SELECT COUNT(*) FROM credentials WHERE project_id=?`), projectID)
+	})
+	return count, err
 }
 
 func (r *credentialRepo) Get(ctx context.Context, projectID, name string) (*credential.Metadata, error) {

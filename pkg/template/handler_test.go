@@ -83,6 +83,8 @@ func (r *stubTemplateRepo) List(context.Context, string, Filter) ([]*Template, e
 	return nil, nil
 }
 
+func (r *stubTemplateRepo) Count(context.Context, string, Filter) (int, error) { return 0, nil }
+
 func (r *stubTemplateRepo) Delete(context.Context, string, string) error { return nil }
 
 type stubScheduleRepo struct {
@@ -99,8 +101,12 @@ func (r *stubScheduleRepo) Get(context.Context, string, string) (*schedule.Sched
 	return nil, nil
 }
 
-func (r *stubScheduleRepo) List(context.Context, string) ([]*schedule.Schedule, error) {
+func (r *stubScheduleRepo) List(context.Context, string, int, int) ([]*schedule.Schedule, error) {
 	return nil, nil
+}
+
+func (r *stubScheduleRepo) Count(context.Context, string) (int, error) {
+	return 0, nil
 }
 
 func (r *stubScheduleRepo) ListWithMaxRuns(context.Context) ([]*schedule.Schedule, error) {

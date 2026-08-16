@@ -20,6 +20,23 @@ export async function listPipelines(
   return Array.isArray(data) ? data : []
 }
 
+/**
+ * Like `listPipelines`, but for a `limit`-paginated page — also returns the
+ * total row count matching `name` (ignoring limit/offset), read from the
+ * `X-Total-Count` response header the server only sets when a limit was sent.
+ */
+export async function listPipelinesPaged(
+  projectId: string,
+  name: string | undefined,
+  limit: number,
+  offset: number,
+): Promise<{ templates: PipelineTemplate[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (name) params.set('name', name)
+  const { data, total } = await projectApi(projectId).getWithTotal<PipelineTemplate[]>(`/pipelines?${params.toString()}`)
+  return { templates: Array.isArray(data) ? data : [], total: total ?? 0 }
+}
+
 export async function createPipeline(
   projectId: string,
   req: CreatePipelineRequest,

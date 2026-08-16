@@ -8,6 +8,7 @@ import { backgroundPolling } from '@/lib/query'
 export const scheduleKeys = {
   all: (projectId: string) => ['schedules', projectId] as const,
   list: (projectId: string) => ['schedules', projectId, 'list'] as const,
+  listPaged: (projectId: string, limit: number, offset: number) => ['schedules', projectId, 'list', limit, offset] as const,
   one: (projectId: string, id: string) => ['schedules', projectId, id] as const,
   runs: (projectId: string, id: string) => ['schedules', projectId, id, 'runs'] as const,
 }
@@ -18,6 +19,18 @@ export function useSchedules() {
     queryKey: scheduleKeys.list(projectId),
     queryFn: () => api.listSchedules(projectId),
     enabled: !!projectId,
+    ...backgroundPolling(5000),
+  })
+}
+
+/** Like `useSchedules`, but for a `limit`-paginated page — also returns `total`. */
+export function useSchedulesPaged(limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: scheduleKeys.listPaged(projectId, limit, offset),
+    queryFn: () => api.listSchedulesPaged(projectId, limit, offset),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
     ...backgroundPolling(5000),
   })
 }

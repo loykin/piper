@@ -73,8 +73,12 @@ func decodeKey(key string) ([]byte, error) {
 	return nil, fmt.Errorf("credential encryption key must be 32 bytes, base64-encoded 32 bytes, or pbkdf2:<passphrase>")
 }
 
-func (s *Store) List(ctx context.Context, projectID string) ([]*Metadata, error) {
-	return s.repo.List(ctx, projectID)
+func (s *Store) List(ctx context.Context, projectID string, limit, offset int) ([]*Metadata, error) {
+	return s.repo.List(ctx, projectID, limit, offset)
+}
+
+func (s *Store) Count(ctx context.Context, projectID string) (int, error) {
+	return s.repo.Count(ctx, projectID)
 }
 
 func (s *Store) Get(ctx context.Context, projectID, name string) (*Metadata, error) {
@@ -246,7 +250,7 @@ func (s *Store) GitEnv(ctx context.Context, projectID, name, repoURL string) ([]
 }
 
 func (s *Store) FindGitByRepo(ctx context.Context, projectID, repoURL string) (*Metadata, error) {
-	all, err := s.repo.List(ctx, projectID)
+	all, err := s.repo.List(ctx, projectID, 0, 0)
 	if err != nil {
 		return nil, err
 	}

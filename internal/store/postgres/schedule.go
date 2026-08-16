@@ -44,11 +44,16 @@ func (r *scheduleRepo) Get(ctx context.Context, projectID, id string) (*schedule
 	return &sc, nil
 }
 
-func (r *scheduleRepo) List(ctx context.Context, projectID string) ([]*schedule.Schedule, error) {
+func (r *scheduleRepo) List(ctx context.Context, projectID string, limit, offset int) ([]*schedule.Schedule, error) {
+	query := `SELECT ` + scheduleSelectCols + ` FROM schedules WHERE project_id=? ORDER BY created_at DESC`
+	args := []any{projectID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	var rows []*schedule.Schedule
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT ` + scheduleSelectCols + ` FROM schedules WHERE project_id=? ORDER BY created_at DESC`)
-		return db.SelectContext(ctx, &rows, q, projectID)
+		return db.SelectContext(ctx, &rows, db.Rebind(query), args...)
 	})
 	if err != nil {
 		return nil, err
@@ -59,6 +64,15 @@ func (r *scheduleRepo) List(ctx context.Context, projectID string) ([]*schedule.
 		}
 	}
 	return rows, nil
+}
+
+func (r *scheduleRepo) Count(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT COUNT(*) FROM schedules WHERE project_id=?`)
+		return db.GetContext(ctx, &count, q, projectID)
+	})
+	return count, err
 }
 
 func (r *scheduleRepo) ListWithMaxRuns(ctx context.Context) ([]*schedule.Schedule, error) {

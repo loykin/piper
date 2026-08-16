@@ -42,12 +42,15 @@ func (r *stubScheduleRepo) Get(_ context.Context, _, id string) (*Schedule, erro
 	}
 	return sc, nil
 }
-func (r *stubScheduleRepo) List(_ context.Context, _ string) ([]*Schedule, error) {
+func (r *stubScheduleRepo) List(_ context.Context, _ string, _, _ int) ([]*Schedule, error) {
 	out := make([]*Schedule, 0, len(r.schedules))
 	for _, sc := range r.schedules {
 		out = append(out, sc)
 	}
 	return out, nil
+}
+func (r *stubScheduleRepo) Count(_ context.Context, _ string) (int, error) {
+	return len(r.schedules), nil
 }
 func (r *stubScheduleRepo) ListWithMaxRuns(_ context.Context) ([]*Schedule, error) {
 	out := make([]*Schedule, 0, len(r.schedules))

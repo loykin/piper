@@ -6,6 +6,17 @@ export async function listUsers(): Promise<User[]> {
   return Array.isArray(data) ? data : []
 }
 
+/**
+ * Like `listUsers`, but for a `limit`-paginated page — also returns the
+ * total row count, read from the `X-Total-Count` response header the server
+ * only sets when a limit was sent.
+ */
+export async function listUsersPaged(limit: number, offset: number): Promise<{ users: User[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  const { data, total } = await api.getWithTotal<User[]>(`/api/users?${params.toString()}`)
+  return { users: Array.isArray(data) ? data : [], total: total ?? 0 }
+}
+
 export function createUser(request: CreateUserRequest): Promise<User> {
   return api.post<User>('/api/users', request)
 }
@@ -22,6 +33,13 @@ export async function listUserMemberships(userId: string): Promise<ProjectMember
 export async function listMembers(projectId: string): Promise<ProjectMember[]> {
   const data = await projectApi(projectId).get<ProjectMember[]>('/members')
   return Array.isArray(data) ? data : []
+}
+
+/** Like `listMembers`, but for a `limit`-paginated page — see `listUsersPaged`. */
+export async function listMembersPaged(projectId: string, limit: number, offset: number): Promise<{ members: ProjectMember[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  const { data, total } = await projectApi(projectId).getWithTotal<ProjectMember[]>(`/members?${params.toString()}`)
+  return { members: Array.isArray(data) ? data : [], total: total ?? 0 }
 }
 
 export async function listMemberCandidates(projectId: string): Promise<MemberCandidate[]> {

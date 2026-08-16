@@ -10,7 +10,17 @@ type Repository interface {
 	Upsert(ctx context.Context, svc *Service) error
 	SetStatus(ctx context.Context, projectID, name, status string) error
 	SetStatusEndpoint(ctx context.Context, projectID, name, status, endpoint string) error
-	List(ctx context.Context, projectID string) ([]*Service, error)
+	// List returns services for projectID, newest first. limit 0 means no
+	// limit (return everything); offset is only meaningful when limit > 0.
+	List(ctx context.Context, projectID string, limit, offset int) ([]*Service, error)
+	// Count returns the total number of services for projectID, ignoring
+	// limit/offset.
+	Count(ctx context.Context, projectID string) (int, error)
 	Delete(ctx context.Context, projectID, name string) error
-	ListHistory(ctx context.Context, projectID string) ([]*ServiceHistory, error)
+	// ListHistory returns service history for projectID, most recently
+	// stopped first. Same limit/offset convention as List.
+	ListHistory(ctx context.Context, projectID string, limit, offset int) ([]*ServiceHistory, error)
+	// CountHistory returns the total number of service history rows for
+	// projectID, ignoring limit/offset.
+	CountHistory(ctx context.Context, projectID string) (int, error)
 }

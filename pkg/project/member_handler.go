@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/pkg/security"
 )
 
@@ -53,12 +54,12 @@ func (h *MemberHandler) candidates(c *gin.Context) {
 		return
 	}
 	projectContext, _ := FromContext(c.Request.Context())
-	users, err := h.users.ListUsers(c.Request.Context())
+	users, err := h.users.ListUsers(c.Request.Context(), 0, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	members, err := h.members.ListMembers(c.Request.Context(), projectContext.ID)
+	members, err := h.members.ListMembers(c.Request.Context(), projectContext.ID, 0, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -83,10 +84,19 @@ func (h *MemberHandler) candidates(c *gin.Context) {
 
 func (h *MemberHandler) list(c *gin.Context) {
 	projectContext, _ := FromContext(c.Request.Context())
-	members, err := h.members.ListMembers(c.Request.Context(), projectContext.ID)
+	limit, offset := httpx.ParseLimitOffset(c)
+	members, err := h.members.ListMembers(c.Request.Context(), projectContext.ID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.members.CountMembers(c.Request.Context(), projectContext.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	out := make([]memberView, len(members))
 	for i, member := range members {

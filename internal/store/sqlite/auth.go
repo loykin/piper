@@ -52,16 +52,29 @@ func (r *userRepo) GetByUsername(ctx context.Context, username string) (*auth.Us
 	return &u, nil
 }
 
-func (r *userRepo) List(ctx context.Context) ([]*auth.User, error) {
+func (r *userRepo) List(ctx context.Context, limit, offset int) ([]*auth.User, error) {
+	query := `SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users ORDER BY created_at DESC`
+	var args []any
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	var out []*auth.User
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		return db.SelectContext(ctx, &out,
-			`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users ORDER BY created_at DESC`)
+		return db.SelectContext(ctx, &out, query, args...)
 	})
 	if out == nil {
 		out = []*auth.User{}
 	}
 	return out, err
+}
+
+func (r *userRepo) Count(ctx context.Context) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &count, `SELECT COUNT(*) FROM users`)
+	})
+	return count, err
 }
 
 func (r *userRepo) Update(ctx context.Context, u *auth.User) error {
@@ -120,13 +133,26 @@ func (r *memberRepo) ListByUser(ctx context.Context, userID string) ([]*security
 	return out, err
 }
 
-func (r *memberRepo) ListByProject(ctx context.Context, projectID string) ([]*security.ProjectMember, error) {
+func (r *memberRepo) ListByProject(ctx context.Context, projectID string, limit, offset int) ([]*security.ProjectMember, error) {
+	query := `SELECT project_id, user_id, role, created_at, updated_at FROM project_members WHERE project_id=? ORDER BY user_id`
+	args := []any{projectID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	var out []*security.ProjectMember
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		return db.SelectContext(ctx, &out,
-			`SELECT project_id, user_id, role, created_at, updated_at FROM project_members WHERE project_id=?`, projectID)
+		return db.SelectContext(ctx, &out, query, args...)
 	})
 	return out, err
+}
+
+func (r *memberRepo) CountByProject(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &count, `SELECT COUNT(*) FROM project_members WHERE project_id=?`, projectID)
+	})
+	return count, err
 }
 
 func (r *memberRepo) Update(ctx context.Context, m *security.ProjectMember) error {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
-import { DataGrid } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import {
   AlertDialog,
@@ -16,16 +16,20 @@ import {
 import { Button } from '@/components/ui/button'
 import { userColumns } from '@/features/access/columns'
 import { UserDetailPanel } from '@/features/access/components/UserDetailPanel'
-import { useDeleteUser, useUsers } from '@/features/access/hooks'
+import { useDeleteUser, useUsersPaged } from '@/features/access/hooks'
 import type { User } from '@/features/access/types'
 import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
+const PAGE_SIZE = 20
+
 function UsersPageInner() {
   const navigate = useNavigate()
   const { open } = useSidePanel()
-  const usersQuery = useUsers()
-  const users = usersQuery.data ?? []
+  const [pageIndex, setPageIndex] = useState(0)
+  const usersQuery = useUsersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const users = usersQuery.data?.users ?? []
+  const total = usersQuery.data?.total ?? 0
   const deleteUser = useDeleteUser()
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
   const [actionError, setActionError] = useState('')
@@ -80,6 +84,14 @@ function UsersPageInner() {
                 <UserDetailPanel user={user} onDelete={setDeleteTarget} />,
                 { size: 520 },
               )}
+              classNames={{ footer: 'pt-3' }}
+              pagination={{
+                pageSize: PAGE_SIZE,
+                pageIndex,
+                pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+                onPageChange: setPageIndex,
+              }}
+              footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
             />
           </DataBodyTemplate.Resource>
         </DataBodyTemplate.Body>

@@ -27,7 +27,12 @@ type NotebookVolume struct {
 type VolumeRepository interface {
 	Create(ctx context.Context, v *NotebookVolume) error
 	Get(ctx context.Context, id string) (*NotebookVolume, error)
-	List(ctx context.Context, projectID string) ([]*NotebookVolume, error)
+	// List returns volumes for projectID, newest first. limit 0 means no
+	// limit (return everything); offset is only meaningful when limit > 0.
+	List(ctx context.Context, projectID string, limit, offset int) ([]*NotebookVolume, error)
+	// Count returns the total number of volumes for projectID, ignoring
+	// limit/offset.
+	Count(ctx context.Context, projectID string) (int, error)
 	Update(ctx context.Context, v *NotebookVolume) error
 	SetStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) error

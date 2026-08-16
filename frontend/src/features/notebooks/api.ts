@@ -48,6 +48,13 @@ export async function listNotebookVolumes(projectId: string): Promise<NotebookVo
   return Array.isArray(data) ? data : []
 }
 
+/** Like `listNotebookVolumes`, but for a `limit`-paginated page — see `listServingPaged`. */
+export async function listNotebookVolumesPaged(projectId: string, limit: number, offset: number): Promise<{ volumes: NotebookVolume[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  const { data, total } = await projectApi(projectId).getWithTotal<NotebookVolume[]>(`/notebook-volumes?${params.toString()}`)
+  return { volumes: Array.isArray(data) ? data : [], total: total ?? 0 }
+}
+
 export type VolumeFilesResult = {
   files: string[]
   truncated: boolean

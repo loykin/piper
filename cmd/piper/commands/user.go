@@ -182,7 +182,7 @@ func newUserListCmd(loader *cliconfig.Loader) *cobra.Command {
 			}
 			defer func() { _ = closeDB() }()
 
-			users, err := provider.ListUsers(context.Background())
+			users, err := provider.ListUsers(context.Background(), 0, 0)
 			if err != nil {
 				return err
 			}

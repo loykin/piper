@@ -5,6 +5,7 @@ import { DataBodyTemplate } from '@loykin/designkit'
 import { useRuns } from '@/features/runs/hooks'
 import { ExperimentDetailPanel } from '@/features/runs/components/ExperimentDetailPanel'
 import type { Run } from '@/features/runs/types'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
 interface ExperimentRow {
   name: string
@@ -17,7 +18,8 @@ interface ExperimentRow {
 
 function ExperimentsPageInner() {
   const { open } = useSidePanel()
-  const { data: runs = [] } = useRuns()
+  const runsQuery = useRuns()
+  const runs = runsQuery.data ?? []
 
   const experiments = useMemo<ExperimentRow[]>(() => {
     const map = new Map<string, Run[]>()
@@ -66,15 +68,26 @@ function ExperimentsPageInner() {
       description="Grouped sweep runs. Click an experiment to compare runs by params and metrics."
     >
       <DataBodyTemplate.Body>
-        <DataGrid
-          data={experiments}
-          columns={columns}
-          emptyMessage="No experiments yet. Submit a sweep via POST /runs/sweep."
-          tableWidthMode="fill-last"
-          rowHeight={44}
-          rowCursor
-          onRowClick={(row) => open(<ExperimentDetailPanel experiment={row.name} />, { size: 800 })}
-        />
+        <DataBodyTemplate.Resource
+          notice={runsQuery.isError && (
+            <QueryErrorNotice
+              message="Failed to load runs"
+              error={runsQuery.error}
+              onRetry={() => void runsQuery.refetch()}
+            />
+          )}
+        >
+          <DataGrid
+            data={experiments}
+            columns={columns}
+            isLoading={runsQuery.isPending}
+            emptyMessage="No experiments yet. Submit a sweep via POST /runs/sweep."
+            tableWidthMode="fill-last"
+            rowHeight={44}
+            rowCursor
+            onRowClick={(row) => open(<ExperimentDetailPanel experiment={row.name} />, { size: 800 })}
+          />
+        </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
   )

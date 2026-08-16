@@ -180,7 +180,7 @@ func scanNotebooks(ctx context.Context, repos *storemod.Repos, apply bool, proje
 }
 
 func scanServices(ctx context.Context, repos *storemod.Repos, apply bool, projectID string) ([]Finding, error) {
-	services, err := repos.Serving.List(ctx, projectID)
+	services, err := repos.Serving.List(ctx, projectID, 0, 0)
 	if err != nil {
 		return nil, err
 	}

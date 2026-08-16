@@ -7,6 +7,8 @@ import { scheduleKeys } from '@/features/schedules/hooks'
 export const pipelineKeys = {
   all: (projectId: string) => ['pipelines', projectId] as const,
   list: (projectId: string, name?: string) => ['pipelines', projectId, 'list', name] as const,
+  listPaged: (projectId: string, name: string | undefined, limit: number, offset: number) =>
+    ['pipelines', projectId, 'list', name, limit, offset] as const,
   one: (projectId: string, id: string) => ['pipelines', projectId, id] as const,
 }
 
@@ -16,6 +18,18 @@ export function usePipelines(name?: string, limit?: number) {
     queryKey: pipelineKeys.list(projectId, name),
     queryFn: () => api.listPipelines(projectId, name, limit),
     enabled: !!projectId,
+    staleTime: 30_000,
+  })
+}
+
+/** Like `usePipelines`, but for a `limit`-paginated page — also returns `total`. */
+export function usePipelinesPaged(name: string | undefined, limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: pipelineKeys.listPaged(projectId, name, limit, offset),
+    queryFn: () => api.listPipelinesPaged(projectId, name, limit, offset),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
     staleTime: 30_000,
   })
 }

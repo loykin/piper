@@ -199,6 +199,8 @@ function HttpFields({
 
 interface ArtifactStoreConfigSectionProps {
   storage: StorageSettingsView | null
+  isLoading: boolean
+  loadError: unknown
   disabled: boolean
   setDisabled: (v: boolean) => void
   token: string
@@ -212,11 +214,32 @@ interface ArtifactStoreConfigSectionProps {
 }
 
 function ArtifactStoreConfigSection({
-  storage, disabled, setDisabled, token, setToken, credentialRef, setCredentialRef,
+  storage, isLoading, loadError, disabled, setDisabled, token, setToken, credentialRef, setCredentialRef,
   backendForm, setBackendForm, activeCredentialKind, backendCredentials,
 }: ArtifactStoreConfigSectionProps) {
   const saveSettings = useSaveStorageSettings()
   const testSettings = useTestStorageSettings()
+
+  if (isLoading) {
+    return (
+      <DataBodyTemplate.Group layout="stacked" title={<>Artifact Store Config<InstanceScopedBadge /></>}>
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </DataBodyTemplate.Group>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <DataBodyTemplate.Group layout="stacked" title={<>Artifact Store Config<InstanceScopedBadge /></>}>
+        <p className="text-sm text-destructive">
+          Couldn&apos;t load storage configuration:{' '}
+          {loadError instanceof Error ? loadError.message : String(loadError)}.
+          {' '}This page only shows config for this Piper instance — a system admin on this
+          instance can check permissions or try again.
+        </p>
+      </DataBodyTemplate.Group>
+    )
+  }
 
   const status = storage?.effective.status ?? 'disabled'
   const backend = storage?.effective.backend || '—'
@@ -561,7 +584,7 @@ function StorageCredentialsSection({
 // ── Upload Object ───────────────────────────────────────────────────────────
 // Owns the save boundary for one ad-hoc upload through this page.
 
-function UploadObjectSection({ enabled }: { enabled: boolean }) {
+function UploadObjectSection() {
   const uploadObject = useUploadObject()
   const [uploadKey, setUploadKey] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
@@ -569,10 +592,15 @@ function UploadObjectSection({ enabled }: { enabled: boolean }) {
 
   async function handleUpload() {
     if (!uploadFile) return
-    await uploadObject.mutateAsync({ file: uploadFile, key: uploadKey.trim() || uploadFile.name })
-    setUploadFile(null)
-    setUploadKey('')
-    if (fileInputRef.current) fileInputRef.current.value = ''
+    try {
+      await uploadObject.mutateAsync({ file: uploadFile, key: uploadKey.trim() || uploadFile.name })
+      setUploadFile(null)
+      setUploadKey('')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    } catch {
+      // surfaced below via uploadObject.error — this project's own storage
+      // access may still work even if the system Storage config above 403s.
+    }
   }
 
   return (
@@ -585,7 +613,6 @@ function UploadObjectSection({ enabled }: { enabled: boolean }) {
           value={uploadKey}
           onChange={e => setUploadKey(e.target.value)}
           placeholder="runs/run-123/model/model.bin"
-          disabled={!enabled}
         />
       </DataBodyTemplate.Row>
 
@@ -595,14 +622,12 @@ function UploadObjectSection({ enabled }: { enabled: boolean }) {
           type="file"
           className="hidden"
           onChange={e => setUploadFile(e.target.files?.[0] ?? null)}
-          disabled={!enabled}
         />
         <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            disabled={!enabled}
             onClick={() => fileInputRef.current?.click()}
           >
             <FolderOpen className="mr-2 size-4" />
@@ -614,11 +639,16 @@ function UploadObjectSection({ enabled }: { enabled: boolean }) {
         </div>
       </DataBodyTemplate.Row>
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        {uploadObject.isError && (
+          <span className="text-xs text-destructive">
+            {uploadObject.error instanceof Error ? uploadObject.error.message : 'Upload failed.'}
+          </span>
+        )}
         <Button
           size="sm"
           onClick={() => void handleUpload()}
-          disabled={!enabled || !uploadFile || uploadObject.isPending}
+          disabled={!uploadFile || uploadObject.isPending}
         >
           <Save className="mr-2 size-4" />
           {uploadObject.isPending ? 'Uploading…' : 'Upload'}
@@ -633,7 +663,7 @@ function UploadObjectSection({ enabled }: { enabled: boolean }) {
 // only mutation — a managed-table-style toolbar (filter + refresh), not a
 // save boundary, so its actions stay in the Group header per that guide.
 
-function UploadedObjectsSection({ projectId, enabled }: { projectId: string; enabled: boolean }) {
+function UploadedObjectsSection({ projectId }: { projectId: string }) {
   const [prefix, setPrefix] = useState('')
   const [appliedPrefix, setAppliedPrefix] = useState('')
   const objectsQuery = useStorageObjects(appliedPrefix)
@@ -723,7 +753,7 @@ function UploadedObjectsSection({ projectId, enabled }: { projectId: string; ena
               variant="outline"
               size="sm"
               onClick={() => (appliedPrefix === prefix ? void objectsQuery.refetch() : setAppliedPrefix(prefix))}
-              disabled={objectsQuery.isFetching || !enabled}
+              disabled={objectsQuery.isFetching}
             >
               <RefreshCw className={objectsQuery.isFetching ? 'size-4 animate-spin' : 'size-4'} />
             </Button>
@@ -734,8 +764,8 @@ function UploadedObjectsSection({ projectId, enabled }: { projectId: string; ena
           data={objects}
           columns={objectColumns}
           emptyMessage={
-            !enabled
-              ? 'Object storage is disabled or unavailable.'
+            objectsQuery.isError
+              ? `Couldn't load objects: ${objectsQuery.error instanceof Error ? objectsQuery.error.message : 'storage is disabled or unavailable.'}`
               : 'No uploaded objects found for this prefix.'
           }
           tableWidthMode="fill-last"
@@ -794,34 +824,27 @@ export default function StoragePage() {
     }
   }, [storage])
 
-  const enabled = storage?.effective.status === 'enabled'
   const status = storage?.effective.status ?? 'disabled'
   const restartRequired = storage?.restart_required ?? false
-
-  if (settingsQuery.isPending) {
-    return (
-      <DataBodyTemplate title="Storage">
-        <DataBodyTemplate.Body>
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        </DataBodyTemplate.Body>
-      </DataBodyTemplate>
-    )
-  }
 
   return (
     <DataBodyTemplate
       title="Storage"
       description="Manage artifact storage configuration and browse stored objects."
       status={
-        <>
-          <Badge variant={statusVariant(status)}>{status}</Badge>
-          {restartRequired && <Badge variant="outline">Restart required</Badge>}
-        </>
+        settingsQuery.isSuccess && (
+          <>
+            <Badge variant={statusVariant(status)}>{status}</Badge>
+            {restartRequired && <Badge variant="outline">Restart required</Badge>}
+          </>
+        )
       }
     >
       <DataBodyTemplate.Body>
         <ArtifactStoreConfigSection
           storage={storage}
+          isLoading={settingsQuery.isPending}
+          loadError={settingsQuery.error}
           disabled={disabled}
           setDisabled={setDisabled}
           token={token}
@@ -844,8 +867,8 @@ export default function StoragePage() {
           />
         )}
 
-        <UploadObjectSection enabled={enabled} />
-        <UploadedObjectsSection projectId={projectId} enabled={enabled} />
+        <UploadObjectSection />
+        <UploadedObjectsSection projectId={projectId} />
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
   )

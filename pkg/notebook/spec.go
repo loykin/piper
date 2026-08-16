@@ -8,7 +8,23 @@ import (
 	"github.com/loykin/piper/pkg/manifest"
 )
 
+// Validate checks a Notebook manifest that will provision its own new
+// volume — spec.volume.size is required for k8s so Manager.Create has what
+// it needs to provision the PVC.
 func (n Notebook) Validate() error {
+	return n.validate(true)
+}
+
+// ValidateForExistingVolume checks a Notebook manifest that will instead be
+// bound to an already-provisioned volume (Manager.CreateWithVolume).
+// spec.volume.size describes provisioning a *new* volume and is never read
+// on this path — the real volume comes from the existing NotebookVolume
+// record — so it isn't required here even though Validate requires it.
+func (n Notebook) ValidateForExistingVolume() error {
+	return n.validate(false)
+}
+
+func (n Notebook) validate(requireVolumeSize bool) error {
 	if err := manifest.ValidateTypeMeta(n.TypeMeta, "Notebook"); err != nil {
 		return err
 	}
@@ -28,7 +44,7 @@ func (n Notebook) Validate() error {
 		if n.Spec.Driver.K8s.Namespace == "" {
 			return fmt.Errorf("driver.k8s.namespace is required")
 		}
-		if n.Spec.Volume == nil || n.Spec.Volume.Size == "" {
+		if requireVolumeSize && (n.Spec.Volume == nil || n.Spec.Volume.Size == "") {
 			return fmt.Errorf("volume.size is required for k8s")
 		}
 	case "":

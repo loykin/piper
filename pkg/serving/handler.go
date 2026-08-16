@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 )
@@ -56,10 +57,20 @@ func (h *Handler) RegisterProxyRoutes(rg *gin.RouterGroup) {
 
 // GET /services
 func (h *Handler) listServices(c *gin.Context) {
-	svcs, err := h.deps.Services.List(c.Request.Context(), currentProjectID(c))
+	limit, offset := httpx.ParseLimitOffset(c)
+	projectID := currentProjectID(c)
+	svcs, err := h.deps.Services.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.deps.Services.Count(c.Request.Context(), projectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	out := make([]*Service, 0, len(svcs))
 	for _, svc := range svcs {
@@ -95,10 +106,20 @@ func (h *Handler) createService(c *gin.Context) {
 
 // GET /services/history
 func (h *Handler) listServiceHistory(c *gin.Context) {
-	history, err := h.deps.Services.ListHistory(c.Request.Context(), currentProjectID(c))
+	limit, offset := httpx.ParseLimitOffset(c)
+	projectID := currentProjectID(c)
+	history, err := h.deps.Services.ListHistory(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.deps.Services.CountHistory(c.Request.Context(), projectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	c.JSON(http.StatusOK, history)
 }

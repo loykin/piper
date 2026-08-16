@@ -260,8 +260,8 @@ func (p *Provider) CreateUser(ctx context.Context, input security.CreateUserInpu
 	return userView(u), nil
 }
 
-func (p *Provider) ListUsers(ctx context.Context) ([]*security.User, error) {
-	users, err := p.users.List(ctx)
+func (p *Provider) ListUsers(ctx context.Context, limit, offset int) ([]*security.User, error) {
+	users, err := p.users.List(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +270,10 @@ func (p *Provider) ListUsers(ctx context.Context) ([]*security.User, error) {
 		out[i] = userView(user)
 	}
 	return out, nil
+}
+
+func (p *Provider) CountUsers(ctx context.Context) (int, error) {
+	return p.users.Count(ctx)
 }
 
 func (p *Provider) DeleteUser(ctx context.Context, id string) error {
@@ -299,8 +303,12 @@ func (p *Provider) FindUser(ctx context.Context, username string) (*security.Use
 	return userView(user), nil
 }
 
-func (p *Provider) ListMembers(ctx context.Context, projectID string) ([]*security.ProjectMember, error) {
-	return p.members.ListByProject(ctx, projectID)
+func (p *Provider) ListMembers(ctx context.Context, projectID string, limit, offset int) ([]*security.ProjectMember, error) {
+	return p.members.ListByProject(ctx, projectID, limit, offset)
+}
+
+func (p *Provider) CountMembers(ctx context.Context, projectID string) (int, error) {
+	return p.members.CountByProject(ctx, projectID)
 }
 
 func (p *Provider) ListUserMemberships(ctx context.Context, userID string) ([]*security.ProjectMember, error) {

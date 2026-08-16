@@ -11,6 +11,7 @@ import type {
 export const credentialKeys = {
   all: (projectId: string) => ['credentials', projectId] as const,
   list: (projectId: string) => ['credentials', projectId, 'list'] as const,
+  listPaged: (projectId: string, limit: number, offset: number) => ['credentials', projectId, 'list', limit, offset] as const,
 }
 
 export function useCredentials() {
@@ -19,6 +20,17 @@ export function useCredentials() {
     queryKey: credentialKeys.list(projectId),
     queryFn: () => api.listCredentials(projectId),
     enabled: !!projectId,
+  })
+}
+
+/** Like `useCredentials`, but for a `limit`-paginated page — also returns `total`. */
+export function useCredentialsPaged(limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: credentialKeys.listPaged(projectId, limit, offset),
+    queryFn: () => api.listCredentialsPaged(projectId, limit, offset),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
   })
 }
 

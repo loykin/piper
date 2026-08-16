@@ -56,8 +56,12 @@ func (testUserDirectory) GetUser(context.Context, string) (*security.User, error
 	return nil, nil
 }
 
-func (testUserDirectory) ListUsers(context.Context) ([]*security.User, error) {
+func (testUserDirectory) ListUsers(context.Context, int, int) ([]*security.User, error) {
 	return []*security.User{}, nil
+}
+
+func (testUserDirectory) CountUsers(context.Context) (int, error) {
+	return 0, nil
 }
 
 func (p *testSecurityProvider) Authenticate(_ context.Context, _ *http.Request) (*security.Identity, error) {

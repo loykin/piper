@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
-import { DataGrid } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import {
   AlertDialog,
@@ -17,12 +17,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { usePipelines, useDeletePipeline, useRunPipeline } from '@/features/pipelines/hooks'
+import { usePipelinesPaged, useDeletePipeline, useRunPipeline } from '@/features/pipelines/hooks'
 import { usePipelineColumns } from '@/features/pipelines/columns'
 import { DeployModal } from '@/features/pipelines/components/DeployModal'
 import { PipelineDetailPanel } from '@/features/pipelines/components/PipelineDetailPanel'
 import type { PipelineTemplate } from '@/features/pipelines/types'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+
+const PAGE_SIZE = 20
 
 function GroupHeader({ row }: { row: Row<PipelineTemplate> }) {
   const first = row.subRows[0]?.original
@@ -44,6 +46,7 @@ function PipelinesListPageInner() {
   const { open } = useSidePanel()
   const [searchParams] = useSearchParams()
   const filterName = searchParams.get('name') ?? ''
+  const [pageIndex, setPageIndex] = useState(0)
 
   const {
     data: templateData,
@@ -51,8 +54,9 @@ function PipelinesListPageInner() {
     isError: loadFailed,
     isLoading: templatesLoading,
     refetch: refetchTemplates,
-  } = usePipelines(filterName || undefined)
-  const templates = templateData ?? []
+  } = usePipelinesPaged(filterName || undefined, PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const templates = templateData?.templates ?? []
+  const total = templateData?.total ?? 0
   const initialLoadFailed = loadFailed && templateData === undefined
   const { mutateAsync: deletePipeline } = useDeletePipeline()
   const { mutateAsync: runPipeline } = useRunPipeline()
@@ -165,6 +169,14 @@ function PipelinesListPageInner() {
               rowHeight={44}
               rowCursor
               onRowClick={(row) => openDetail(row)}
+              classNames={{ footer: 'pt-3' }}
+              pagination={{
+                pageSize: PAGE_SIZE,
+                pageIndex,
+                pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+                onPageChange: setPageIndex,
+              }}
+              footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
             />
           </DataBodyTemplate.Resource>
         </DataBodyTemplate.Body>

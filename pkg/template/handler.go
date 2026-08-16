@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/notebook"
@@ -200,16 +200,20 @@ func (h *Handler) submit(c *gin.Context) {
 // GET /pipelines — list templates
 func (h *Handler) list(c *gin.Context) {
 	f := Filter{Name: c.Query("name")}
-	if lim := c.Query("limit"); lim != "" {
-		if n, err := strconv.Atoi(lim); err == nil && n > 0 {
-			f.Limit = n
-		}
-	}
+	f.Limit, f.Offset = httpx.ParseLimitOffset(c)
 	projectContext, _ := project.FromContext(c.Request.Context())
 	templates, err := h.deps.Templates.List(c.Request.Context(), projectContext.ID, f)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if f.Limit > 0 {
+		total, err := h.deps.Templates.Count(c.Request.Context(), projectContext.ID, f)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, f.Limit, total)
 	}
 	c.JSON(http.StatusOK, templates)
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/pkg/security"
 )
 
@@ -215,12 +216,12 @@ func (h *UserHandler) bootstrapStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"required": false})
 		return
 	}
-	users, err := h.directory.ListUsers(c.Request.Context())
+	total, err := h.directory.CountUsers(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"required": len(users) == 0})
+	c.JSON(http.StatusOK, gin.H{"required": total == 0})
 }
 
 // bootstrap creates the first system-admin account. It only succeeds once —
@@ -230,12 +231,12 @@ func (h *UserHandler) bootstrap(c *gin.Context) {
 	h.bootstrapMu.Lock()
 	defer h.bootstrapMu.Unlock()
 
-	users, err := h.directory.ListUsers(c.Request.Context())
+	total, err := h.directory.CountUsers(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if len(users) > 0 {
+	if total > 0 {
 		c.JSON(http.StatusConflict, gin.H{"error": "setup already completed; sign in or ask an existing admin to create your account"})
 		return
 	}
@@ -260,10 +261,19 @@ func (h *UserHandler) bootstrap(c *gin.Context) {
 }
 
 func (h *UserHandler) listUsers(c *gin.Context) {
-	users, err := h.directory.ListUsers(c.Request.Context())
+	limit, offset := httpx.ParseLimitOffset(c)
+	users, err := h.directory.ListUsers(c.Request.Context(), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.directory.CountUsers(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	out := make([]userViewDTO, len(users))
 	for i, u := range users {

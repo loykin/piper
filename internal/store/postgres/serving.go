@@ -103,16 +103,30 @@ func (r *servingRepo) SetStatusEndpoint(ctx context.Context, projectID, name, st
 	})
 }
 
-func (r *servingRepo) List(ctx context.Context, projectID string) ([]*serving.Service, error) {
+func (r *servingRepo) List(ctx context.Context, projectID string, limit, offset int) ([]*serving.Service, error) {
+	query := `SELECT ` + serviceSelectCols + ` FROM services WHERE project_id=? ORDER BY created_at DESC`
+	args := []any{projectID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	var out []*serving.Service
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT ` + serviceSelectCols + ` FROM services WHERE project_id=? ORDER BY created_at DESC`)
-		return db.SelectContext(ctx, &out, q, projectID)
+		return db.SelectContext(ctx, &out, db.Rebind(query), args...)
 	})
 	if out == nil {
 		out = []*serving.Service{}
 	}
 	return out, err
+}
+
+func (r *servingRepo) Count(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT COUNT(*) FROM services WHERE project_id=?`)
+		return db.GetContext(ctx, &count, q, projectID)
+	})
+	return count, err
 }
 
 func (r *servingRepo) Delete(ctx context.Context, projectID, name string) error {
@@ -136,15 +150,29 @@ func (r *servingRepo) Delete(ctx context.Context, projectID, name string) error 
 	})
 }
 
-func (r *servingRepo) ListHistory(ctx context.Context, projectID string) ([]*serving.ServiceHistory, error) {
+func (r *servingRepo) ListHistory(ctx context.Context, projectID string, limit, offset int) ([]*serving.ServiceHistory, error) {
+	query := `SELECT id, project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at
+		 FROM service_history WHERE project_id=? ORDER BY stopped_at DESC`
+	args := []any{projectID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	var out []*serving.ServiceHistory
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT id, project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at
-			 FROM service_history WHERE project_id=? ORDER BY stopped_at DESC`)
-		return db.SelectContext(ctx, &out, q, projectID)
+		return db.SelectContext(ctx, &out, db.Rebind(query), args...)
 	})
 	if out == nil {
 		out = []*serving.ServiceHistory{}
 	}
 	return out, err
+}
+
+func (r *servingRepo) CountHistory(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`SELECT COUNT(*) FROM service_history WHERE project_id=?`)
+		return db.GetContext(ctx, &count, q, projectID)
+	})
+	return count, err
 }

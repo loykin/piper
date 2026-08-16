@@ -3,7 +3,7 @@ import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { Power, Plus, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import {
   AlertDialog,
@@ -19,19 +19,23 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { scheduleColumns } from '@/features/schedules/columns'
 import { ScheduleDetailPanel } from '@/features/schedules/components/ScheduleDetailPanel'
-import { useSchedules, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
+import { useSchedulesPaged, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
 import { usePipelines } from '@/features/pipelines/hooks'
 import { RowActions } from '@/shared/components/RowActions'
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import type { Schedule } from '@/features/schedules/api'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
+const PAGE_SIZE = 20
+
 function WorkflowsPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
   const { open } = useSidePanel()
-  const schedulesQuery = useSchedules()
-  const schedules = schedulesQuery.data ?? []
+  const [pageIndex, setPageIndex] = useState(0)
+  const schedulesQuery = useSchedulesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const schedules = schedulesQuery.data?.schedules ?? []
+  const total = schedulesQuery.data?.total ?? 0
   const { data: pipelines = [] } = usePipelines()
   const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
@@ -120,13 +124,14 @@ function WorkflowsPageInner() {
             rowHeight={44}
             rowCursor
             onRowClick={(row) => open(<ScheduleDetailPanel id={row.id} />, { size: 560 })}
-            pagination={{ pageSize: 20 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{schedules.length} results</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
+            classNames={{ footer: 'pt-3' }}
+            pagination={{
+              pageSize: PAGE_SIZE,
+              pageIndex,
+              pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+              onPageChange: setPageIndex,
+            }}
+            footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
           />
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>

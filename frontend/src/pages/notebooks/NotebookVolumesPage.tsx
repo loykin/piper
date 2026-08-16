@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
-import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import {
   AlertDialog,
@@ -13,12 +13,18 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { getNotebookVolumeColumns } from '@/features/notebooks/columns'
-import { useNotebookVolumes, usePurgeVolume } from '@/features/notebooks/hooks'
+import { useNotebookVolumesPaged, usePurgeVolume } from '@/features/notebooks/hooks'
 import type { NotebookVolume } from '@/features/notebooks/api'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+
+const PAGE_SIZE = 20
 
 export default function NotebookVolumesPage() {
   const navigate = useNavigate()
-  const { data: volumes = [] } = useNotebookVolumes()
+  const [pageIndex, setPageIndex] = useState(0)
+  const volumesQuery = useNotebookVolumesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const volumes = volumesQuery.data?.volumes ?? []
+  const total = volumesQuery.data?.total ?? 0
   const { mutate: purgeVolume, isPending: purging, variables: purgingId } = usePurgeVolume()
   const [purgeTarget, setPurgeTarget] = useState<NotebookVolume | null>(null)
 
@@ -40,7 +46,15 @@ export default function NotebookVolumesPage() {
       description="Persistent storage for notebook servers. Volumes survive server deletion."
     >
       <DataBodyTemplate.Body>
-        <DataBodyTemplate.Resource>
+        <DataBodyTemplate.Resource
+          notice={volumesQuery.isError && (
+            <QueryErrorNotice
+              message="Failed to load notebook volumes"
+              error={volumesQuery.error}
+              onRetry={() => void volumesQuery.refetch()}
+            />
+          )}
+        >
           <DataGrid
             data={volumes}
             columns={columns}
@@ -54,13 +68,14 @@ export default function NotebookVolumesPage() {
             }
             tableWidthMode="fill-last"
             rowHeight={44}
-            pagination={{ pageSize: 20 }}
-            footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{volumes.length} volumes</span>
-                <DataGridPaginationCompact table={table} />
-              </div>
-            )}
+            classNames={{ footer: 'pt-3' }}
+            pagination={{
+              pageSize: PAGE_SIZE,
+              pageIndex,
+              pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+              onPageChange: setPageIndex,
+            }}
+            footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
           />
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>

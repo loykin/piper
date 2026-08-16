@@ -146,7 +146,7 @@ func (p *Piper) RestartService(ctx context.Context, projectID, name string) erro
 
 func (p *Piper) ListServices(ctx context.Context) ([]*serving.Service, error) {
 	projectContext, _ := project.FromContext(ctx)
-	return p.repos.Serving.List(ctx, projectContext.ID)
+	return p.repos.Serving.List(ctx, projectContext.ID, 0, 0)
 }
 
 func (p *Piper) GetService(ctx context.Context, name string) (*serving.Service, error) {

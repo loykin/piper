@@ -161,6 +161,11 @@ documented domain constraint requires an exception:
    panel.
 8. Use `AlertDialog` only for explicit confirmation of destructive or
    irreversible actions.
+9. Surface a failed list query with `shared/components/QueryErrorNotice.tsx`
+   in `DataBodyTemplate.Resource`'s `notice` prop — `message`, `error`, and
+   `onRetry={() => void query.refetch()}`. Don't hand-roll an error `<p>`;
+   every list page's query can fail and the retry affordance is part of the
+   contract, not an optional extra.
 
 Reference implementations:
 
@@ -202,11 +207,54 @@ Reference implementations:
 ## DataGrid (list pages)
 
 ```ts
-import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 ```
 
 Column definitions live in `features/<domain>/columns.tsx`.
 Columns passed to `<DataGrid>` should be memoized with `useMemo` when they capture callbacks.
+
+### Pagination
+
+Every list page uses **server-side pagination with `DataGridPaginationBar`** —
+this is the DesignKit `managed-table` contract's only sanctioned pagination
+component; `DataGridPaginationCompact` client-side paging is not an
+alternative, even for small collections. `pages/pipelines/HistoryPage.tsx` /
+`features/runs/{api,hooks}.ts` (`useRunsPaged`) is the reference
+implementation — copy its shape for a new list page:
+
+- API layer: a `listXPaged(projectId, limit, offset)` function that calls
+  `projectApi(projectId).getWithTotal<T[]>(...)` (or `api.getWithTotal` for
+  system-scoped lists) and returns `{ items, total }`. `total` comes from the
+  `X-Total-Count` response header, which the server only sets when a `limit`
+  query param was sent — see `internal/httpx.SetTotalCountHeader` on the Go
+  side.
+- Hook layer: a `useXPaged(limit, offset)` query with
+  `placeholderData: (prev) => prev` so the grid doesn't flash empty between
+  pages.
+- Page layer:
+  ```tsx
+  const [pageIndex, setPageIndex] = useState(0)
+  const query = useXPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const total = query.data?.total ?? 0
+
+  <DataGrid
+    classNames={{ footer: 'pt-3' }}
+    pagination={{
+      pageSize: PAGE_SIZE,
+      pageIndex,
+      pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+      onPageChange: setPageIndex,
+    }}
+    footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
+  />
+  ```
+
+Keep the existing unbounded `useX()`/`listX()` hook and API function too when
+other call sites need the full, un-paginated list (e.g. populating a lookup
+map or a picker dropdown) — don't force those callers through the paginated
+variant. Add `Offset`/`Count` to the Go repository interface and both SQLite
+and Postgres implementations (see `pkg/pipeline/run` for the reference
+shape); don't add pagination to only one store backend.
 
 ## Loading State
 

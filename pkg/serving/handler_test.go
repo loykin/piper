@@ -56,19 +56,25 @@ func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, _, name, status, 
 	}
 	return nil
 }
-func (r *stubServingRepo) List(_ context.Context, _ string) ([]*Service, error) {
+func (r *stubServingRepo) List(_ context.Context, _ string, _, _ int) ([]*Service, error) {
 	out := make([]*Service, 0, len(r.services))
 	for _, s := range r.services {
 		out = append(out, s)
 	}
 	return out, nil
 }
+func (r *stubServingRepo) Count(_ context.Context, _ string) (int, error) {
+	return len(r.services), nil
+}
 func (r *stubServingRepo) Delete(_ context.Context, _, name string) error {
 	delete(r.services, name)
 	return nil
 }
-func (r *stubServingRepo) ListHistory(_ context.Context, _ string) ([]*ServiceHistory, error) {
+func (r *stubServingRepo) ListHistory(_ context.Context, _ string, _, _ int) ([]*ServiceHistory, error) {
 	return nil, nil
+}
+func (r *stubServingRepo) CountHistory(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 func injectProjectCtx(id string) gin.HandlerFunc {

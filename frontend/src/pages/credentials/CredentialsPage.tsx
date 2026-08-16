@@ -1,14 +1,14 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
-import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { FlaskConical, Plus, Power, RotateCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { credentialColumns } from '@/features/credentials/columns'
 import {
-  useCredentials,
+  useCredentialsPaged,
   useDeleteCredential,
   usePatchCredential,
   useRotateCredential,
@@ -20,6 +20,8 @@ import RotateCredentialDialog from './RotateCredentialDialog'
 import TestCredentialDialog from './TestCredentialDialog'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 
+const PAGE_SIZE = 20
+
 type KindFilter = 'all' | CredentialKind
 type PendingAction =
   | { type: 'toggle'; credential: Credential }
@@ -28,8 +30,10 @@ type PendingAction =
 export default function CredentialsPage() {
   const projectId = useProjectId()
   const navigate = useNavigate()
-  const credentialsQuery = useCredentials()
-  const data = useMemo(() => credentialsQuery.data ?? [], [credentialsQuery.data])
+  const [pageIndex, setPageIndex] = useState(0)
+  const credentialsQuery = useCredentialsPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const data = useMemo(() => credentialsQuery.data?.credentials ?? [], [credentialsQuery.data])
+  const total = credentialsQuery.data?.total ?? 0
   const patchCredential = usePatchCredential()
   const rotateCredential = useRotateCredential()
   const deleteCredential = useDeleteCredential()
@@ -41,6 +45,9 @@ export default function CredentialsPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionError, setActionError] = useState('')
 
+  // Filters only the current page — the kind filter isn't server-side yet,
+  // so switching kinds can show fewer rows than this page's total until
+  // paging to where matching rows land.
   const filtered = useMemo(
     () => kindFilter === 'all' ? data : data.filter(item => item.kind === kindFilter),
     [data, kindFilter],
@@ -155,6 +162,15 @@ export default function CredentialsPage() {
             columns={columns}
             isLoading={credentialsQuery.isLoading}
             emptyMessage="No credentials configured."
+            tableWidthMode="fill-last"
+            classNames={{ footer: 'pt-3' }}
+            pagination={{
+              pageSize: PAGE_SIZE,
+              pageIndex,
+              pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+              onPageChange: setPageIndex,
+            }}
+            footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
           />
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>

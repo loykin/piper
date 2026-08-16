@@ -174,7 +174,7 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 	if name == "" {
 		return nil, fmt.Errorf("notebook: metadata.name is required")
 	}
-	if err := spec.Validate(); err != nil {
+	if err := spec.ValidateForExistingVolume(); err != nil {
 		return nil, fmt.Errorf("notebook: %w", err)
 	}
 	if err := ValidateDirectPlacement(spec, m.runtime); err != nil {

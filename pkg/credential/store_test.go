@@ -40,7 +40,7 @@ func TestStoreCreateListGetAndRotate(t *testing.T) {
 		t.Fatalf("keys = %#v", meta.Keys)
 	}
 
-	list, err := store.List(ctx, testProjectID)
+	list, err := store.List(ctx, testProjectID, 0, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -401,7 +401,7 @@ type memoryRepo struct {
 	markUsed map[string]int
 }
 
-func (r *memoryRepo) List(_ context.Context, projectID string) ([]*Metadata, error) {
+func (r *memoryRepo) List(_ context.Context, projectID string, limit, offset int) ([]*Metadata, error) {
 	var out []*Metadata
 	for _, meta := range r.meta {
 		if meta.ProjectID == projectID {
@@ -409,7 +409,27 @@ func (r *memoryRepo) List(_ context.Context, projectID string) ([]*Metadata, err
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if limit > 0 {
+		end := offset + limit
+		if offset > len(out) {
+			offset = len(out)
+		}
+		if end > len(out) {
+			end = len(out)
+		}
+		out = out[offset:end]
+	}
 	return out, nil
+}
+
+func (r *memoryRepo) Count(_ context.Context, projectID string) (int, error) {
+	count := 0
+	for _, meta := range r.meta {
+		if meta.ProjectID == projectID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (r *memoryRepo) Get(_ context.Context, projectID, name string) (*Metadata, error) {

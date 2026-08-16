@@ -10,6 +10,13 @@ export async function listSchedules(projectId: string): Promise<Schedule[]> {
   return Array.isArray(data) ? data : []
 }
 
+/** Like `listSchedules`, but for a `limit`-paginated page — see `listServingPaged`. */
+export async function listSchedulesPaged(projectId: string, limit: number, offset: number): Promise<{ schedules: Schedule[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  const { data, total } = await projectApi(projectId).getWithTotal<Schedule[]>(`/schedules?${params.toString()}`)
+  return { schedules: Array.isArray(data) ? data : [], total: total ?? 0 }
+}
+
 export async function getSchedule(projectId: string, id: string): Promise<Schedule> {
   return projectApi(projectId).get<Schedule>(`/schedules/${id}`)
 }

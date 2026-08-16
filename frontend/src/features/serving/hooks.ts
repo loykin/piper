@@ -6,8 +6,10 @@ import { backgroundPolling } from '@/lib/query'
 export const servingKeys = {
   all: (projectId: string) => ['serving', projectId] as const,
   list: (projectId: string) => ['serving', projectId, 'list'] as const,
+  listPaged: (projectId: string, limit: number, offset: number) => ['serving', projectId, 'list', limit, offset] as const,
   one: (projectId: string, name: string) => ['serving', projectId, name] as const,
   history: (projectId: string) => ['serving', projectId, 'history'] as const,
+  historyPaged: (projectId: string, limit: number, offset: number) => ['serving', projectId, 'history', limit, offset] as const,
 }
 
 export function useServices() {
@@ -16,6 +18,18 @@ export function useServices() {
     queryKey: servingKeys.list(projectId),
     queryFn: () => api.listServing(projectId),
     enabled: !!projectId,
+    ...backgroundPolling(5000),
+  })
+}
+
+/** Like `useServices`, but for a `limit`-paginated page — also returns `total`. */
+export function useServicesPaged(limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: servingKeys.listPaged(projectId, limit, offset),
+    queryFn: () => api.listServingPaged(projectId, limit, offset),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
     ...backgroundPolling(5000),
   })
 }
@@ -36,6 +50,17 @@ export function useServingHistory() {
     queryKey: servingKeys.history(projectId),
     queryFn: () => api.listServingHistory(projectId),
     enabled: !!projectId,
+  })
+}
+
+/** Like `useServingHistory`, but for a `limit`-paginated page — also returns `total`. */
+export function useServingHistoryPaged(limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: servingKeys.historyPaged(projectId, limit, offset),
+    queryFn: () => api.listServingHistoryPaged(projectId, limit, offset),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
   })
 }
 

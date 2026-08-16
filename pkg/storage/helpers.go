@@ -33,7 +33,7 @@ func UploadDir(ctx context.Context, s Store, localDir, prefix string) error {
 // prefix/foo/bar.txt → localDir/foo/bar.txt
 // Returns an error if no objects are found under the prefix.
 func DownloadDir(ctx context.Context, s Store, prefix, localDir string) error {
-	objs, err := s.List(ctx, prefix)
+	objs, err := s.List(ctx, prefix, "")
 	if err != nil {
 		return err
 	}

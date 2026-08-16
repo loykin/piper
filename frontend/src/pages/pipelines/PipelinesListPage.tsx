@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Row } from '@tanstack/react-table'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { FilterInput } from '@loykin/filter-input'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import {
@@ -55,9 +56,19 @@ function PipelinesListPageInner() {
     isLoading: templatesLoading,
     refetch: refetchTemplates,
   } = usePipelinesPaged(filterName || undefined, PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const templates = templateData?.templates ?? []
   const total = templateData?.total ?? 0
   const initialLoadFailed = loadFailed && templateData === undefined
+  const [searchFilter, setSearchFilter] = useState('')
+  // Filters only the current page — not server-side yet, same accepted
+  // trade-off as CredentialsPage's kind filter. Separate from `filterName`
+  // (the ?name= URL param), which is an exact-match server-side filter used
+  // by the "jump back to this template after create" flow, not a search box.
+  const filteredTemplates = useMemo(() => {
+    const list = templateData?.templates ?? []
+    if (!searchFilter.trim()) return list
+    const q = searchFilter.trim().toLowerCase()
+    return list.filter(t => t.name.toLowerCase().includes(q))
+  }, [templateData, searchFilter])
   const { mutateAsync: deletePipeline } = useDeletePipeline()
   const { mutateAsync: runPipeline } = useRunPipeline()
 
@@ -138,12 +149,21 @@ function PipelinesListPageInner() {
       >
         <DataBodyTemplate.Body>
           <DataBodyTemplate.Resource
+            toolbarLeft={
+              <div className="w-48">
+                <FilterInput
+                  config={{ key: 'templateSearch', type: 'text', placeholder: 'Search templates…' }}
+                  value={searchFilter}
+                  onChange={v => setSearchFilter(typeof v === 'string' ? v : '')}
+                />
+              </div>
+            }
             toolbarRight={
               <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
                 <Plus size={14} className="mr-1.5" /> New Template
               </Button>
             }
-            notice={
+            notice={(initialLoadFailed || actionError) && (
               <>
                 {initialLoadFailed && (
                   <QueryErrorNotice
@@ -154,10 +174,10 @@ function PipelinesListPageInner() {
                 )}
                 {actionError && <p className="text-sm text-destructive">{actionError}</p>}
               </>
-            }
+            )}
           >
             <DataGrid
-              data={templates}
+              data={filteredTemplates}
               columns={columns}
               isLoading={templatesLoading}
               enableGrouping

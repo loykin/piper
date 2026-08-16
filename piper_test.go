@@ -409,6 +409,9 @@ func TestStorageObjectManagement(t *testing.T) {
 	}
 	router := p.Handler(nil)
 
+	// Listing is one-level (S3 Delimiter="/" semantics — see
+	// storage.Store.List): "runs/run-1" only surfaces its immediate child,
+	// the "train/" folder, not the file nested inside it.
 	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/objects?prefix=runs/run-1", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -416,12 +419,27 @@ func TestStorageObjectManagement(t *testing.T) {
 		t.Fatalf("list status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	var objs []struct {
-		Key string `json:"key"`
+		Key   string `json:"key"`
+		IsDir bool   `json:"is_dir"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&objs); err != nil {
 		t.Fatal(err)
 	}
-	if len(objs) != 1 || objs[0].Key != "runs/run-1/train/model.txt" {
+	if len(objs) != 1 || objs[0].Key != "runs/run-1/train/" || !objs[0].IsDir {
+		t.Fatalf("objects = %#v", objs)
+	}
+
+	// Drilling into that folder surfaces the file itself.
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/objects?prefix=runs/run-1/train/", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&objs); err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 1 || objs[0].Key != "runs/run-1/train/model.txt" || objs[0].IsDir {
 		t.Fatalf("objects = %#v", objs)
 	}
 

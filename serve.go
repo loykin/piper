@@ -477,16 +477,13 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 		if c.Query("list") == "1" {
 			// List keys under prefix query param
 			prefix := c.Query("prefix")
-			objs, err := ls.List(c.Request.Context(), prefix)
+			delimiter := c.Query("delimiter")
+			objs, err := ls.List(c.Request.Context(), prefix, delimiter)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			keys := make([]string, len(objs))
-			for i, o := range objs {
-				keys[i] = o.Key
-			}
-			c.JSON(http.StatusOK, keys)
+			c.JSON(http.StatusOK, objs)
 			return
 		}
 		rc, err := ls.Get(c.Request.Context(), key)

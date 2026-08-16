@@ -102,7 +102,7 @@ func listArtifactsLocal(outputDir, runID string) ([]stepArtifacts, error) {
 // listArtifactsStore lists objects under prefix runID/ from a blobstore.
 func listArtifactsStore(ctx context.Context, st storage.Store, runID string) ([]stepArtifacts, error) {
 	prefix := runID + "/"
-	objs, err := st.List(ctx, prefix)
+	objs, err := st.List(ctx, prefix, "")
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func deleteArtifactsFromStore(ctx context.Context, st storage.Store, runID strin
 	if st == nil {
 		return nil
 	}
-	objs, err := st.List(ctx, runID+"/")
+	objs, err := st.List(ctx, runID+"/", "")
 	if err != nil {
 		return err
 	}

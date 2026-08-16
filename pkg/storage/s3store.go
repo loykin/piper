@@ -134,11 +134,15 @@ func (s *S3Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
-func (s *S3Store) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
-	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+func (s *S3Store) List(ctx context.Context, prefix, delimiter string) ([]ObjectInfo, error) {
+	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(s.bucket),
 		Prefix: aws.String(prefix),
-	})
+	}
+	if delimiter != "" {
+		input.Delimiter = aws.String(delimiter)
+	}
+	paginator := s3.NewListObjectsV2Paginator(s.client, input)
 	var result []ObjectInfo
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
@@ -159,6 +163,9 @@ func (s *S3Store) List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 				Size:       aws.ToInt64(obj.Size),
 				ModifiedAt: modAt,
 			})
+		}
+		for _, cp := range page.CommonPrefixes {
+			result = append(result, ObjectInfo{Key: aws.ToString(cp.Prefix), IsDir: true})
 		}
 	}
 	return result, nil

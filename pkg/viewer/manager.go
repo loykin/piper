@@ -142,7 +142,7 @@ func (m *Manager) materialize(ctx context.Context, v *Viewer) (localPath, tempDi
 	}
 
 	prefix := v.RunID + "/" + v.StepName + "/" + v.Artifact + "/"
-	objs, err := m.store.List(ctx, prefix)
+	objs, err := m.store.List(ctx, prefix, "")
 	if err != nil {
 		return "", "", fmt.Errorf("list objects: %w", err)
 	}

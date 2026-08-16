@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import { FilterInput } from '@loykin/filter-input'
 import { FlaskConical, Plus, Power, RotateCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -19,6 +21,8 @@ import { useProjectId } from '@/lib/projectContext'
 import RotateCredentialDialog from './RotateCredentialDialog'
 import TestCredentialDialog from './TestCredentialDialog'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { RowActions } from '@/shared/components/RowActions'
+import { CredentialDetailPanel } from '@/features/credentials/components/CredentialDetailPanel'
 
 const PAGE_SIZE = 20
 
@@ -27,7 +31,8 @@ type PendingAction =
   | { type: 'toggle'; credential: Credential }
   | { type: 'delete'; credential: Credential }
 
-export default function CredentialsPage() {
+function CredentialsPageInner() {
+  const { open } = useSidePanel()
   const projectId = useProjectId()
   const navigate = useNavigate()
   const [pageIndex, setPageIndex] = useState(0)
@@ -40,18 +45,23 @@ export default function CredentialsPage() {
   const testCredential = useTestCredential()
 
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
+  const [nameFilter, setNameFilter] = useState('')
   const [rotateTarget, setRotateTarget] = useState<Credential | null>(null)
   const [testTarget, setTestTarget] = useState<Credential | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionError, setActionError] = useState('')
 
-  // Filters only the current page — the kind filter isn't server-side yet,
-  // so switching kinds can show fewer rows than this page's total until
-  // paging to where matching rows land.
-  const filtered = useMemo(
-    () => kindFilter === 'all' ? data : data.filter(item => item.kind === kindFilter),
-    [data, kindFilter],
-  )
+  // Filters only the current page — neither the kind nor name filter is
+  // server-side yet, so switching them can show fewer rows than this page's
+  // total until paging to where matching rows land.
+  const filtered = useMemo(() => {
+    let rows = kindFilter === 'all' ? data : data.filter(item => item.kind === kindFilter)
+    if (nameFilter.trim()) {
+      const q = nameFilter.trim().toLowerCase()
+      rows = rows.filter(item => item.name.toLowerCase().includes(q))
+    }
+    return rows
+  }, [data, kindFilter, nameFilter])
 
   const runPendingAction = useCallback(async () => {
     if (!pendingAction) return
@@ -78,7 +88,7 @@ export default function CredentialsPage() {
       header: '',
       meta: { minWidth: 190, align: 'right' },
       cell: ({ row }) => (
-        <div className="flex justify-end gap-1">
+        <RowActions>
           <IconButton
             icon={<FlaskConical />}
             label="Test"
@@ -103,7 +113,7 @@ export default function CredentialsPage() {
             onClick={e => { e.stopPropagation(); setPendingAction({ type: 'delete', credential: row.original }) }}
             className="text-destructive hover:bg-destructive/10"
           />
-        </div>
+        </RowActions>
       ),
     },
   ], [])
@@ -127,16 +137,25 @@ export default function CredentialsPage() {
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
           toolbarLeft={
-            <Select value={kindFilter} onValueChange={value => setKindFilter((value ?? 'all') as KindFilter)}>
-              <SelectTrigger size="sm" className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All kinds</SelectItem>
-                <SelectItem value="generic">Generic</SelectItem>
-                <SelectItem value="git">Git</SelectItem>
-              </SelectContent>
-            </Select>
+            <>
+              <div className="w-48">
+                <FilterInput
+                  config={{ key: 'credentialSearch', type: 'text', placeholder: 'Search credentials…' }}
+                  value={nameFilter}
+                  onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+                />
+              </div>
+              <Select value={kindFilter} onValueChange={value => setKindFilter((value ?? 'all') as KindFilter)}>
+                <SelectTrigger size="sm" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All kinds</SelectItem>
+                  <SelectItem value="generic">Generic</SelectItem>
+                  <SelectItem value="git">Git</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
           }
           toolbarRight={
             <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/credentials/new` })}>
@@ -144,7 +163,7 @@ export default function CredentialsPage() {
               New Credential
             </Button>
           }
-          notice={
+          notice={(credentialsQuery.isError || actionError) && (
             <>
               {credentialsQuery.isError && (
                 <QueryErrorNotice
@@ -155,7 +174,7 @@ export default function CredentialsPage() {
               )}
               {actionError && <p className="text-sm text-destructive">{actionError}</p>}
             </>
-          }
+          )}
         >
           <DataGrid
             data={filtered}
@@ -163,6 +182,17 @@ export default function CredentialsPage() {
             isLoading={credentialsQuery.isLoading}
             emptyMessage="No credentials configured."
             tableWidthMode="fill-last"
+            rowCursor
+            onRowClick={(credential) => open(
+              <CredentialDetailPanel
+                credential={credential}
+                onTest={setTestTarget}
+                onRotate={setRotateTarget}
+                onToggle={c => setPendingAction({ type: 'toggle', credential: c })}
+                onDelete={c => setPendingAction({ type: 'delete', credential: c })}
+              />,
+              { size: 480 },
+            )}
             classNames={{ footer: 'pt-3' }}
             pagination={{
               pageSize: PAGE_SIZE,
@@ -207,5 +237,13 @@ export default function CredentialsPage() {
         </DialogContent>
       </Dialog>
     </DataBodyTemplate>
+  )
+}
+
+export default function CredentialsPage() {
+  return (
+    <SidePanelProvider defaultSize={480} defaultMinSize={380} defaultMaxSize={800}>
+      <CredentialsPageInner />
+    </SidePanelProvider>
   )
 }

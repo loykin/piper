@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import { FilterInput } from '@loykin/filter-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,11 +31,19 @@ function MembersPageInner() {
   const { open } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const membersQuery = useMembersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const members = membersQuery.data?.members ?? []
   const total = membersQuery.data?.total ?? 0
   const removeMember = useRemoveMember()
   const [removeTarget, setRemoveTarget] = useState<ProjectMember | null>(null)
   const [actionError, setActionError] = useState('')
+  const [nameFilter, setNameFilter] = useState('')
+  // Filters only the current page — not server-side yet, same accepted
+  // trade-off as CredentialsPage's kind filter.
+  const filteredMembers = useMemo(() => {
+    const list = membersQuery.data?.members ?? []
+    if (!nameFilter.trim()) return list
+    const q = nameFilter.trim().toLowerCase()
+    return list.filter(m => (m.username ?? '').toLowerCase().includes(q))
+  }, [membersQuery.data, nameFilter])
 
   async function confirmRemove() {
     if (!removeTarget) return
@@ -51,17 +60,26 @@ function MembersPageInner() {
     <>
       <DataBodyTemplate
         title="Project Members"
-        description="Project-specific access for Piper user accounts. Click a row to inspect or change its role."
+        description="Project-specific access for Piper user accounts."
       >
         <DataBodyTemplate.Body>
           <DataBodyTemplate.Resource
+            toolbarLeft={
+              <div className="w-48">
+                <FilterInput
+                  config={{ key: 'memberSearch', type: 'text', placeholder: 'Search members…' }}
+                  value={nameFilter}
+                  onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+                />
+              </div>
+            }
             toolbarRight={
               <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/members/new`)}>
                 <Plus />
                 New Member
               </Button>
             }
-            notice={
+            notice={(membersQuery.isError || actionError) && (
               <>
                 {membersQuery.isError && (
                   <QueryErrorNotice
@@ -72,10 +90,10 @@ function MembersPageInner() {
                 )}
                 {actionError && <p className="text-sm text-destructive">{actionError}</p>}
               </>
-            }
+            )}
           >
             <DataGrid
-              data={members}
+              data={filteredMembers}
               columns={memberColumns}
               isLoading={membersQuery.isLoading}
               emptyMessage="No project members."

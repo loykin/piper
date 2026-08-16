@@ -3,6 +3,7 @@ import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { FilterInput } from '@loykin/filter-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,12 +30,20 @@ function HistoryPageInner() {
   const [pageIndex, setPageIndex] = useState(0)
   const runsQuery = useRunsPaged({ include_steps: true, limit: PAGE_SIZE, offset: pageIndex * PAGE_SIZE })
   const { data } = runsQuery
-  const runs = data?.runs ?? []
   const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
   const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
   const [deleteTarget, setDeleteTarget] = useState<Run | null>(null)
+  const [nameFilter, setNameFilter] = useState('')
+  // Filters only the current page — not server-side yet, same accepted
+  // trade-off as CredentialsPage's kind filter.
+  const filteredRuns = useMemo(() => {
+    const list = data?.runs ?? []
+    if (!nameFilter.trim()) return list
+    const q = nameFilter.trim().toLowerCase()
+    return list.filter(r => r.pipeline_name.toLowerCase().includes(q))
+  }, [data, nameFilter])
 
   // Deleting the last row of the last page shrinks `total` below what
   // pageIndex needs, leaving the grid showing an empty page. This
@@ -122,6 +131,15 @@ function HistoryPageInner() {
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
+          toolbarLeft={
+            <div className="w-48">
+              <FilterInput
+                config={{ key: 'runSearch', type: 'text', placeholder: 'Search by pipeline…' }}
+                value={nameFilter}
+                onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+              />
+            </div>
+          }
           notice={runsQuery.isError && (
             <QueryErrorNotice
               message="Failed to load runs"
@@ -131,7 +149,7 @@ function HistoryPageInner() {
           )}
         >
           <DataGrid
-            data={runs}
+            data={filteredRuns}
             columns={columns}
             emptyMessage="No runs yet."
             tableWidthMode="fill-last"

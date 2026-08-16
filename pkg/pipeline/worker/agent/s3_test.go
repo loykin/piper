@@ -86,7 +86,7 @@ func TestRun_s3_artifact_upload(t *testing.T) {
 
 	// Verify that the file was uploaded to the store
 	prefix := task.RunID + "/upload-step/result/"
-	objs, err := store.List(context.Background(), prefix)
+	objs, err := store.List(context.Background(), prefix, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestRun_s3_artifact_input_output(t *testing.T) {
 
 	// Verify that the output was uploaded to the store
 	outPrefix := runID + "/consume-step/out/"
-	objs, err := store.List(context.Background(), outPrefix)
+	objs, err := store.List(context.Background(), outPrefix, "")
 	if err != nil {
 		t.Fatal(err)
 	}

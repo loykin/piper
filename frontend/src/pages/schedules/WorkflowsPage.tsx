@@ -5,6 +5,7 @@ import { Power, Plus, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { FilterInput } from '@loykin/filter-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,12 +35,20 @@ function WorkflowsPageInner() {
   const { open } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const schedulesQuery = useSchedulesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const schedules = schedulesQuery.data?.schedules ?? []
   const total = schedulesQuery.data?.total ?? 0
   const { data: pipelines = [] } = usePipelines()
   const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
   const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null)
+  const [nameFilter, setNameFilter] = useState('')
+  // Filters only the current page — not server-side yet, same accepted
+  // trade-off as CredentialsPage's kind filter.
+  const filteredSchedules = useMemo(() => {
+    const list = schedulesQuery.data?.schedules ?? []
+    if (!nameFilter.trim()) return list
+    const q = nameFilter.trim().toLowerCase()
+    return list.filter(s => s.name.toLowerCase().includes(q))
+  }, [schedulesQuery.data, nameFilter])
 
   const pipelineByVersionId = useMemo(
     () => new Map(pipelines.map(p => [p.id, p])),
@@ -103,6 +112,15 @@ function WorkflowsPageInner() {
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
+          toolbarLeft={
+            <div className="w-48">
+              <FilterInput
+                config={{ key: 'scheduleSearch', type: 'text', placeholder: 'Search schedules…' }}
+                value={nameFilter}
+                onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+              />
+            </div>
+          }
           toolbarRight={
             <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/create`)}>
               <Plus size={14} className="mr-1.5" /> Create
@@ -117,7 +135,7 @@ function WorkflowsPageInner() {
           )}
         >
           <DataGrid
-            data={schedules}
+            data={filteredSchedules}
             columns={columns}
             emptyMessage="No schedules yet. Create one to start."
             tableWidthMode="fill-last"

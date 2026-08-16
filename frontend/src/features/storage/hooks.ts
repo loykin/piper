@@ -6,7 +6,14 @@ import { ApiError } from '@/lib/api'
 
 export const storageKeys = {
   settings: () => ['storage', 'settings'] as const,
-  objects: (projectId: string, prefix?: string) => ['storage', projectId, 'objects', prefix] as const,
+  // Genuinely shorter than objects() below — used for broad invalidation so
+  // it partial-matches every prefix variant, including the default ''.
+  // objects(projectId) alone would end in `undefined`, which does NOT
+  // partial-match a live query key ending in '' (React Query compares
+  // element-by-element, and undefined !== '').
+  objectsAll: (projectId: string) => ['storage', projectId, 'objects'] as const,
+  objectsPaged: (projectId: string, limit: number, offset: number, prefix: string) =>
+    ['storage', projectId, 'objects', 'paged', limit, offset, prefix] as const,
 }
 
 export function useStorageSettings() {
@@ -20,12 +27,13 @@ export function useStorageSettings() {
   })
 }
 
-export function useStorageObjects(prefix = '') {
+export function useStorageObjectsPaged(limit: number, offset: number, prefix = '') {
   const projectId = useProjectId()
   return useQuery({
-    queryKey: storageKeys.objects(projectId, prefix),
-    queryFn: () => api.listStorageObjects(projectId, prefix),
+    queryKey: storageKeys.objectsPaged(projectId, limit, offset, prefix),
+    queryFn: () => api.listStorageObjectsPaged(projectId, limit, offset, prefix),
     enabled: !!projectId,
+    placeholderData: (prev) => prev,
   })
 }
 
@@ -48,7 +56,7 @@ export function useDeleteObject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (key: string) => api.deleteStorageObject(projectId, key),
-    onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objects(projectId) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objectsAll(projectId) }),
   })
 }
 
@@ -58,6 +66,6 @@ export function useUploadObject() {
   return useMutation({
     mutationFn: ({ file, key }: { file: File; key?: string }) =>
       api.uploadStorageObject(projectId, file, key),
-    onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objects(projectId) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objectsAll(projectId) }),
   })
 }

@@ -21,13 +21,17 @@ export async function testStorageSettings(config: StorageConfig): Promise<Storag
 
 // ── Project-scoped ────────────────────────────────────────────────────────────
 
-export async function listStorageObjects(
+/** Paginated object listing — see `listNotebookVolumesPaged` for the shared shape. */
+export async function listStorageObjectsPaged(
   projectId: string,
+  limit: number,
+  offset: number,
   prefix = '',
-): Promise<StorageObjectInfo[]> {
-  const qs = prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''
-  const data = await projectApi(projectId).get<StorageObjectInfo[]>(`/storage/objects${qs}`)
-  return Array.isArray(data) ? data : []
+): Promise<{ objects: StorageObjectInfo[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (prefix) params.set('prefix', prefix)
+  const { data, total } = await projectApi(projectId).getWithTotal<StorageObjectInfo[]>(`/storage/objects?${params.toString()}`)
+  return { objects: Array.isArray(data) ? data : [], total: total ?? 0 }
 }
 
 export function storageObjectURL(projectId: string, key: string): string {

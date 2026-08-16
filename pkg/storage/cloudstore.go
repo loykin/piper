@@ -146,8 +146,8 @@ func (s *CloudStore) Get(ctx context.Context, key string) (io.ReadCloser, error)
 	return r, nil
 }
 
-func (s *CloudStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
-	iter := s.bucket.List(&blob.ListOptions{Prefix: prefix})
+func (s *CloudStore) List(ctx context.Context, prefix, delimiter string) ([]ObjectInfo, error) {
+	iter := s.bucket.List(&blob.ListOptions{Prefix: prefix, Delimiter: delimiter})
 	var result []ObjectInfo
 	for {
 		obj, err := iter.Next(ctx)
@@ -156,6 +156,10 @@ func (s *CloudStore) List(ctx context.Context, prefix string) ([]ObjectInfo, err
 		}
 		if err != nil {
 			return nil, err
+		}
+		if obj.IsDir {
+			result = append(result, ObjectInfo{Key: obj.Key, IsDir: true})
+			continue
 		}
 		if strings.HasSuffix(obj.Key, "/") {
 			continue

@@ -13,10 +13,10 @@ import (
 // HTTPStore implements Store via HTTP PUT/GET against a remote file server.
 // Compatible with piper's built-in /store/* routes.
 //
-// PUT    {baseURL}/{key}              — upload
-// GET    {baseURL}/{key}              — download
-// DELETE {baseURL}/{key}             — delete
-// GET    {baseURL}/?prefix=&list=1   — list keys (JSON: []string)
+// PUT    {baseURL}/{key}                            — upload
+// GET    {baseURL}/{key}                             — download
+// DELETE {baseURL}/{key}                             — delete
+// GET    {baseURL}/?prefix=&list=1[&delimiter=]      — list (JSON: []ObjectInfo)
 type HTTPStore struct {
 	baseURL string // no trailing slash
 	client  *http.Client
@@ -84,8 +84,11 @@ func (s *HTTPStore) Get(ctx context.Context, key string) (io.ReadCloser, error) 
 	return resp.Body, nil
 }
 
-func (s *HTTPStore) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
+func (s *HTTPStore) List(ctx context.Context, prefix, delimiter string) ([]ObjectInfo, error) {
 	listURL := s.baseURL + "/?prefix=" + url.QueryEscape(prefix) + "&list=1"
+	if delimiter != "" {
+		listURL += "&delimiter=" + url.QueryEscape(delimiter)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
 	if err != nil {
 		return nil, err
@@ -99,13 +102,9 @@ func (s *HTTPStore) List(ctx context.Context, prefix string) ([]ObjectInfo, erro
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("httpstore list: status %d", resp.StatusCode)
 	}
-	var keys []string
-	if err := json.NewDecoder(resp.Body).Decode(&keys); err != nil {
+	var result []ObjectInfo
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
-	}
-	result := make([]ObjectInfo, len(keys))
-	for i, k := range keys {
-		result[i] = ObjectInfo{Key: k}
 	}
 	return result, nil
 }

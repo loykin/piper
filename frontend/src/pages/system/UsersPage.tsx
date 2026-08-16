@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import { FilterInput } from '@loykin/filter-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,11 +29,19 @@ function UsersPageInner() {
   const { open } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const usersQuery = useUsersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const users = usersQuery.data?.users ?? []
   const total = usersQuery.data?.total ?? 0
   const deleteUser = useDeleteUser()
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
   const [actionError, setActionError] = useState('')
+  const [nameFilter, setNameFilter] = useState('')
+  // Filters only the current page — not server-side yet, same accepted
+  // trade-off as CredentialsPage's kind filter.
+  const filteredUsers = useMemo(() => {
+    const list = usersQuery.data?.users ?? []
+    if (!nameFilter.trim()) return list
+    const q = nameFilter.trim().toLowerCase()
+    return list.filter(u => u.username.toLowerCase().includes(q))
+  }, [usersQuery.data, nameFilter])
 
   async function confirmDelete() {
     if (!deleteTarget) return
@@ -49,17 +58,26 @@ function UsersPageInner() {
     <>
       <DataBodyTemplate
         title="Users"
-        description="System accounts and administrator access. Click a row to view account details."
+        description="System accounts and administrator access."
       >
         <DataBodyTemplate.Body>
           <DataBodyTemplate.Resource
+            toolbarLeft={
+              <div className="w-48">
+                <FilterInput
+                  config={{ key: 'userSearch', type: 'text', placeholder: 'Search users…' }}
+                  value={nameFilter}
+                  onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+                />
+              </div>
+            }
             toolbarRight={
               <Button size="sm" onClick={() => void navigate('/users/new')}>
                 <Plus />
                 New User
               </Button>
             }
-            notice={
+            notice={(usersQuery.isError || actionError) && (
               <>
                 {usersQuery.isError && (
                   <QueryErrorNotice
@@ -70,10 +88,10 @@ function UsersPageInner() {
                 )}
                 {actionError && <p className="text-sm text-destructive">{actionError}</p>}
               </>
-            }
+            )}
           >
             <DataGrid
-              data={users}
+              data={filteredUsers}
               columns={userColumns}
               isLoading={usersQuery.isLoading}
               emptyMessage="No users found."

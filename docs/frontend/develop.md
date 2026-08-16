@@ -88,6 +88,28 @@ export function useRuns(filter?: Filter) {
 
 System-scoped hooks (system settings, users) use `api` directly and do not include `projectId` in the query key.
 
+### Invalidating on Mutation Success
+
+Always invalidate through a dedicated, genuinely-shorter key (`keys.all(pid)`
+above), never by calling the specific-query key builder with a missing
+optional argument:
+
+```ts
+// ✗ wrong — objects(pid) with no prefix arg produces ['storage', pid, 'objects', undefined].
+// React Query's invalidateQueries does prefix matching element-by-element, and
+// undefined !== '' — so this silently fails to match the live query key
+// ['storage', pid, 'objects', ''] used by useStorageObjectsPaged(..., '').
+onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objects(projectId) })
+
+// ✓ correct — a key with no trailing optional param is a true prefix of every variant
+onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.objectsAll(projectId) })
+```
+
+If a mutation's `onSuccess` invalidates a list query that takes an optional
+filter/prefix/cursor argument, the key builder it invalidates through must not
+take that argument at all — add a separate `xAll(pid)` builder rather than
+calling `x(pid)` and relying on the trailing `undefined` to partial-match.
+
 ## Routing
 
 ```
@@ -166,15 +188,138 @@ documented domain constraint requires an exception:
    `onRetry={() => void query.refetch()}`. Don't hand-roll an error `<p>`;
    every list page's query can fail and the retry affordance is part of the
    contract, not an optional extra.
+   **The `notice` prop itself must evaluate to a falsy value (not an empty
+   `<>...</>` Fragment) when there is nothing to show.** `Resource` renders a
+   spacer container whenever `notice` is truthy, even if that Fragment's own
+   children are all `false` — an empty Fragment is still a truthy React
+   element. Passing `notice={cond && <X/>}` for a single condition is safe;
+   for two conditions, gate the whole Fragment on their combined truthiness
+   instead of just wrapping both in a bare Fragment:
+   ```tsx
+   // ✗ wrong — <>...</> is truthy even when both children render false,
+   // so Resource reserves ~12px of empty space below the toolbar on every
+   // page load, not just when there's actually a notice to show
+   notice={
+     <>
+       {query.isError && <QueryErrorNotice ... />}
+       {actionError && <p>{actionError}</p>}
+     </>
+   }
+
+   // ✓ correct — notice is false outright when neither condition applies
+   notice={(query.isError || actionError) && (
+     <>
+       {query.isError && <QueryErrorNotice ... />}
+       {actionError && <p>{actionError}</p>}
+     </>
+   )}
+   ```
+10. Row action columns render icon-only controls — `RowActions` wrapping
+    `IconButton`s (the `label` prop supplies a11y text and a tooltip, never
+    visible text). Never render an action as a `Button`/anchor with both an
+    icon and visible text sitting next to icon-only siblings — pick one style
+    for the whole row and it's icon-only. This also applies to a link-style
+    action (e.g. an external "Open" link): style it as an icon-only anchor at
+    the same `size-7`/`icon-sm` dimensions, not a full labeled button.
+
+11. Every list page's `toolbarLeft` opens with a text search box built from
+    `@loykin/filter-input`'s `FilterInput` (`type: 'text'`), not a raw
+    `<Input>` — the raw `<Input>` search box that predates this rule had no
+    real precedent anywhere else in the app; `FilterInput` is the sanctioned
+    component now. Wrap it in a fixed-width `<div>` (`w-48`/`w-52`) since it
+    fills its container:
+    ```tsx
+    const [nameFilter, setNameFilter] = useState('')
+    const filtered = useMemo(() => {
+      const list = query.data?.items ?? []
+      if (!nameFilter.trim()) return list
+      const q = nameFilter.trim().toLowerCase()
+      return list.filter(item => item.name.toLowerCase().includes(q))
+    }, [query.data, nameFilter])
+
+    <DataBodyTemplate.Resource
+      toolbarLeft={
+        <div className="w-48">
+          <FilterInput
+            config={{ key: 'itemSearch', type: 'text', placeholder: 'Search items…' }}
+            value={nameFilter}
+            onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+          />
+        </div>
+      }
+    >
+    ```
+    On a paginated list, this only filters the current page — the same
+    accepted trade-off as `CredentialsPage`'s `kind` filter (documented
+    inline there) — since these endpoints don't support server-side
+    substring search yet. Derive the filtered list's `useMemo` dependency
+    from the query's `.data` object, not from a `?? []`-derived local
+    variable — the latter is a fresh array every render and defeats memoization
+    (flagged by `react-hooks/exhaustive-deps`).
+    `FilterInput`'s own `inputClassName`/`classNames.control` cannot reliably
+    override the package's base `.fi-control` styles (padding, height, etc.)
+    due to CSS import-order — see
+    `/Users/loykin/Project/basekit/packages/filter-input/ISSUES.md` for the
+    full writeup. Don't fight this with utility class overrides.
+
+Rule 5 has no standing exception for "the row only has a few columns" or
+"there's nothing more to show than the grid already displays" — a column
+that's truncated or `flex: 1`-squeezed off-screen (an object key, a long ID)
+is exactly the case a detail panel exists to fix, and even a read-only
+resource (no create/edit form) still benefits from one for that reason. Before
+skipping rule 5, check whether the omission is because there's truly nothing
+to show, or because the page just didn't get a panel built yet.
 
 Reference implementations:
 
 - List + SidePanel: `pages/pipelines/PipelinesListPage.tsx`,
-  `pages/notebooks/NotebooksPage.tsx`, `pages/system/UsersPage.tsx`
+  `pages/notebooks/NotebooksPage.tsx`, `pages/system/UsersPage.tsx`,
+  `pages/credentials/CredentialsPage.tsx`, `pages/notebooks/NotebookVolumesPage.tsx`,
+  `pages/serving/ServingHistoryPage.tsx`, `pages/system/StoragePage.tsx`
+  (Uploaded Objects)
 - Dedicated create page: `pages/credentials/CredentialCreatePage.tsx`,
   `pages/system/UserCreatePage.tsx`
 - Detail panel: `features/pipelines/components/PipelineDetailPanel.tsx`,
-  `features/access/components/UserDetailPanel.tsx`
+  `features/access/components/UserDetailPanel.tsx`,
+  `features/credentials/components/CredentialDetailPanel.tsx`,
+  `features/storage/components/ObjectDetailPanel.tsx` (copy-to-clipboard for
+  a long technical value)
+
+### Tabs (`DataBodyTemplate.Tab`)
+
+A page with multiple independent resource areas uses `DataBodyTemplate.Tab`,
+one per area, as direct children of the `DataBodyTemplate` root — never
+nested inside `Body`, `Group`, or another layout mode. Reference:
+`pages/system/StoragePage.tsx` (Configuration / Objects tabs).
+
+- **Bind the active tab to a URL search param**, not bare `useState`. Left
+  uncontrolled, `DataBodyTemplate` defaults to internal state that resets to
+  the first tab on every reload — a real regression a user will hit by
+  refreshing the page.
+  ```tsx
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = searchParams.get('tab') ?? DEFAULT_TAB
+
+  function handleTabChange(next: string) {
+    setSearchParams({ ...Object.fromEntries(searchParams), tab: next }, { replace: true })
+  }
+
+  <DataBodyTemplate activeTab={activeTab} onTabChange={handleTabChange} ...>
+    <DataBodyTemplate.Tab id="config" label="Configuration">...</DataBodyTemplate.Tab>
+    <DataBodyTemplate.Tab id="objects" label="Objects">...</DataBodyTemplate.Tab>
+  </DataBodyTemplate>
+  ```
+- **A tab whose content is a list/grid still follows the Resource List
+  Interaction Pattern above** — render `DataBodyTemplate.Resource` (toolbar,
+  `notice`, pagination footer) as that tab's direct child, exactly as it would
+  appear under `Body` on a non-tabbed list page. Do not substitute
+  `DataBodyTemplate.Group` for a tab's list content — `Group` is for
+  form-workflow save boundaries (Form Convention below), and using it for a
+  list silently drops the managed-table toolbar/notice/pagination contract
+  the other list pages follow, producing a table with a different structure
+  than every other list in the app.
+- A tab whose content is a settings form still follows the Form Convention
+  below (`DataBodyTemplate.Group layout="stacked"`).
 
 ### Form Convention
 

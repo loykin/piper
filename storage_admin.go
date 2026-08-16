@@ -40,6 +40,11 @@ type StorageObjectInfo struct {
 	Size        int64  `json:"size"`
 	ModifiedAt  string `json:"modified_at"`
 	DownloadURL string `json:"download_url"`
+	// IsDir marks a pseudo-directory entry (a common prefix one level below
+	// the queried prefix) rather than an actual uploaded object — see
+	// storage.Store.List's delimiter semantics. Zero-valued fields other than
+	// Key are meaningless for a directory entry.
+	IsDir bool `json:"is_dir"`
 }
 
 type storageSettingsFile struct {
@@ -150,41 +155,78 @@ func (p *Piper) TestStorageSettings(ctx context.Context, cfg StorageConfig) Stor
 	if closer, ok := st.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
 	}
-	if _, err := st.List(testCtx, ""); err != nil {
+	if _, err := st.List(testCtx, "", ""); err != nil {
 		return StorageTestResult{OK: false, Message: err.Error()}
 	}
 	return StorageTestResult{OK: true, Message: "connected"}
 }
 
-// ListStorageObjects returns a prefix-filtered object listing from the current store.
-func (p *Piper) ListStorageObjects(ctx context.Context, prefix string) ([]StorageObjectInfo, error) {
+// ListStorageObjects returns a one-level, optionally limit/offset-paged
+// listing of prefix's immediate children — files as regular entries and
+// subfolders aggregated into a single IsDir entry each — along with the
+// total match count. This follows S3 ListObjectsV2's Delimiter="/" console
+// convention: browsing deeper means calling this again with a subfolder's
+// own Key as the new prefix, not fetching everything recursively up front.
+//
+// pkg/storage.Store.List has no native cursor/limit support (S3-style
+// backends would need continuation tokens for that) — it always returns
+// every matching entry at this level, so limit/offset are applied here in
+// memory against the already-sorted slice. A limit of 0 returns every entry
+// (offset ignored), matching the other paginated list endpoints' convention.
+func (p *Piper) ListStorageObjects(ctx context.Context, prefix string, limit, offset int) ([]StorageObjectInfo, int, error) {
 	if p.store == nil {
-		return nil, fmt.Errorf("artifact store is unavailable")
+		return nil, 0, fmt.Errorf("artifact store is unavailable")
 	}
 	projectPrefix, err := projectStoragePrefix(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	relativePrefix, err := cleanProjectStorageKey(prefix, true)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	objs, err := p.store.List(ctx, projectPrefix+relativePrefix)
+	// cleanProjectStorageKey path.Cleans away trailing slashes, but a
+	// folder-level query needs one preserved so delimiter listing matches
+	// only that folder's own children — not every key that merely starts
+	// with its name (e.g. "uploads" would otherwise also match a sibling
+	// key like "uploads-old/…").
+	if relativePrefix != "" && strings.HasSuffix(prefix, "/") {
+		relativePrefix += "/"
+	}
+	objs, err := p.store.List(ctx, projectPrefix+relativePrefix, "/")
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	sort.Slice(objs, func(i, j int) bool { return objs[i].Key < objs[j].Key })
+	// Folders first, like most file browsers; each group sorted by key.
+	sort.Slice(objs, func(i, j int) bool {
+		if objs[i].IsDir != objs[j].IsDir {
+			return objs[i].IsDir
+		}
+		return objs[i].Key < objs[j].Key
+	})
+	total := len(objs)
+	if limit > 0 {
+		if offset > total {
+			offset = total
+		}
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		objs = objs[offset:end]
+	}
 	out := make([]StorageObjectInfo, 0, len(objs))
 	for _, obj := range objs {
 		key := strings.TrimPrefix(obj.Key, projectPrefix)
-		out = append(out, StorageObjectInfo{
-			Key:         key,
-			Size:        obj.Size,
-			ModifiedAt:  obj.ModifiedAt.UTC().Format(time.RFC3339),
-			DownloadURL: "/api/projects/" + projectID(ctx) + "/storage/object?key=" + url.QueryEscape(key),
-		})
+		info := StorageObjectInfo{Key: key, IsDir: obj.IsDir}
+		if !obj.IsDir {
+			info.Size = obj.Size
+			info.ModifiedAt = obj.ModifiedAt.UTC().Format(time.RFC3339)
+			info.DownloadURL = "/api/projects/" + projectID(ctx) + "/storage/object?key=" + url.QueryEscape(key)
+		}
+		out = append(out, info)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // OpenStorageObject opens an object for download.

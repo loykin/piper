@@ -68,13 +68,20 @@ func (s *LocalStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	return f, err
 }
 
-func (s *LocalStore) List(_ context.Context, prefix string) ([]ObjectInfo, error) {
+func (s *LocalStore) List(_ context.Context, prefix, delimiter string) ([]ObjectInfo, error) {
 	searchRoot, err := s.fullPath(prefix)
 	if err != nil {
 		return nil, err
 	}
+	if delimiter == "" {
+		return s.listRecursive(searchRoot)
+	}
+	return s.listOneLevel(searchRoot, prefix, delimiter)
+}
+
+func (s *LocalStore) listRecursive(searchRoot string) ([]ObjectInfo, error) {
 	var result []ObjectInfo
-	err = filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -93,6 +100,42 @@ func (s *LocalStore) List(_ context.Context, prefix string) ([]ObjectInfo, error
 		return nil
 	})
 	return result, err
+}
+
+// listOneLevel lists only the immediate children of searchRoot — the
+// filesystem already IS a real tree here, so a delimiter-scoped listing is
+// just os.ReadDir instead of a recursive Walk. Subdirectories become IsDir
+// entries named prefix+name+delimiter, matching S3 Delimiter semantics so
+// callers can treat every backend identically.
+func (s *LocalStore) listOneLevel(searchRoot, prefix, delimiter string) ([]ObjectInfo, error) {
+	entries, err := os.ReadDir(searchRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	keyPrefix := prefix
+	if keyPrefix != "" && !strings.HasSuffix(keyPrefix, delimiter) {
+		keyPrefix += delimiter
+	}
+	var result []ObjectInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			result = append(result, ObjectInfo{Key: keyPrefix + entry.Name() + delimiter, IsDir: true})
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		result = append(result, ObjectInfo{
+			Key:        keyPrefix + entry.Name(),
+			Size:       info.Size(),
+			ModifiedAt: info.ModTime().UTC(),
+		})
+	}
+	return result, nil
 }
 
 func (s *LocalStore) Delete(_ context.Context, keys ...string) error {

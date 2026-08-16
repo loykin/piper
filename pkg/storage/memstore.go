@@ -46,18 +46,31 @@ func (s *MemStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(obj.data)), nil
 }
 
-func (s *MemStore) List(_ context.Context, prefix string) ([]ObjectInfo, error) {
+func (s *MemStore) List(_ context.Context, prefix, delimiter string) ([]ObjectInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var result []ObjectInfo
+	seenDirs := map[string]bool{}
 	for k, obj := range s.data {
-		if strings.HasPrefix(k, prefix) {
-			result = append(result, ObjectInfo{
-				Key:        k,
-				Size:       int64(len(obj.data)),
-				ModifiedAt: obj.modifiedAt,
-			})
+		if !strings.HasPrefix(k, prefix) {
+			continue
 		}
+		if delimiter != "" {
+			rest := k[len(prefix):]
+			if idx := strings.Index(rest, delimiter); idx >= 0 {
+				dirKey := prefix + rest[:idx+len(delimiter)]
+				if !seenDirs[dirKey] {
+					seenDirs[dirKey] = true
+					result = append(result, ObjectInfo{Key: dirKey, IsDir: true})
+				}
+				continue
+			}
+		}
+		result = append(result, ObjectInfo{
+			Key:        k,
+			Size:       int64(len(obj.data)),
+			ModifiedAt: obj.modifiedAt,
+		})
 	}
 	return result, nil
 }

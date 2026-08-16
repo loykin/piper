@@ -133,7 +133,7 @@ func (h *Handler) submit(c *gin.Context) {
 		// Upload local files to object storage
 		if uploadErr != nil {
 			// Rollback: delete snapshot prefix
-			if objs, _ := h.deps.Store.List(c.Request.Context(), "snapshots/"+snapshotID+"/"); len(objs) > 0 {
+			if objs, _ := h.deps.Store.List(c.Request.Context(), "snapshots/"+snapshotID+"/", ""); len(objs) > 0 {
 				keys := make([]string, len(objs))
 				for i, o := range objs {
 					keys[i] = o.Key
@@ -178,7 +178,7 @@ func (h *Handler) submit(c *gin.Context) {
 	}
 	if err := h.deps.Templates.Create(c.Request.Context(), t); err != nil {
 		if len(localPaths) > 0 && h.deps.Store != nil {
-			if objs, _ := h.deps.Store.List(c.Request.Context(), "snapshots/"+snapshotID+"/"); len(objs) > 0 {
+			if objs, _ := h.deps.Store.List(c.Request.Context(), "snapshots/"+snapshotID+"/", ""); len(objs) > 0 {
 				keys := make([]string, len(objs))
 				for i, o := range objs {
 					keys[i] = o.Key
@@ -232,7 +232,7 @@ func (h *Handler) delete(c *gin.Context) {
 	// Delete S3 snapshot prefix (best-effort list then delete)
 	if h.deps.Store != nil && t.SnapshotID != "" {
 		prefix := "snapshots/" + t.SnapshotID + "/"
-		objs, _ := h.deps.Store.List(c.Request.Context(), prefix)
+		objs, _ := h.deps.Store.List(c.Request.Context(), prefix, "")
 		if len(objs) > 0 {
 			keys := make([]string, len(objs))
 			for i, o := range objs {

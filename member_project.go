@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -158,7 +159,8 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 		c.JSON(http.StatusOK, gin.H{"key": key})
 	})
 	projectStorage.GET("/objects", func(c *gin.Context) {
-		objects, err := p.ListStorageObjects(c.Request.Context(), c.Query("prefix"))
+		limit, offset := httpx.ParseLimitOffset(c)
+		objects, total, err := p.ListStorageObjects(c.Request.Context(), c.Query("prefix"), limit, offset)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if p.store == nil {
@@ -167,6 +169,7 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
+		httpx.SetTotalCountHeader(c, limit, total)
 		c.JSON(http.StatusOK, objects)
 	})
 	projectStorage.GET("/object", func(c *gin.Context) {

@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { FilterInput } from '@loykin/filter-input'
 import { useRuns } from '@/features/runs/hooks'
 import { ExperimentDetailPanel } from '@/features/runs/components/ExperimentDetailPanel'
 import type { Run } from '@/features/runs/types'
@@ -41,6 +42,13 @@ function ExperimentsPageInner() {
       .sort((a, b) => b.latest.localeCompare(a.latest))
   }, [runs])
 
+  const [nameFilter, setNameFilter] = useState('')
+  const filteredExperiments = useMemo(() => {
+    if (!nameFilter.trim()) return experiments
+    const q = nameFilter.trim().toLowerCase()
+    return experiments.filter(e => e.name.toLowerCase().includes(q))
+  }, [experiments, nameFilter])
+
   const columns = useMemo<DataGridColumnDef<ExperimentRow>[]>(() => [
     { id: 'name',    header: 'Experiment',  accessorKey: 'name',    meta: { minWidth: 220 } },
     { id: 'runs',    header: 'Runs',        accessorKey: 'runs',    meta: { minWidth: 80 } },
@@ -69,6 +77,15 @@ function ExperimentsPageInner() {
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
+          toolbarLeft={
+            <div className="w-48">
+              <FilterInput
+                config={{ key: 'experimentSearch', type: 'text', placeholder: 'Search experiments…' }}
+                value={nameFilter}
+                onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+              />
+            </div>
+          }
           notice={runsQuery.isError && (
             <QueryErrorNotice
               message="Failed to load runs"
@@ -78,7 +95,7 @@ function ExperimentsPageInner() {
           )}
         >
           <DataGrid
-            data={experiments}
+            data={filteredExperiments}
             columns={columns}
             isLoading={runsQuery.isPending}
             emptyMessage="No experiments yet. Submit a sweep via POST /runs/sweep."

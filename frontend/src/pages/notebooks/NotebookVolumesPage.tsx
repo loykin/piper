@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import { FilterInput } from '@loykin/filter-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,17 +18,27 @@ import { getNotebookVolumeColumns } from '@/features/notebooks/columns'
 import { useNotebookVolumesPaged, usePurgeVolume } from '@/features/notebooks/hooks'
 import type { NotebookVolume } from '@/features/notebooks/api'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { NotebookVolumeDetailPanel } from '@/features/notebooks/components/NotebookVolumeDetailPanel'
 
 const PAGE_SIZE = 20
 
-export default function NotebookVolumesPage() {
+function NotebookVolumesPageInner() {
+  const { open } = useSidePanel()
   const navigate = useNavigate()
   const [pageIndex, setPageIndex] = useState(0)
   const volumesQuery = useNotebookVolumesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const volumes = volumesQuery.data?.volumes ?? []
   const total = volumesQuery.data?.total ?? 0
   const { mutate: purgeVolume, isPending: purging, variables: purgingId } = usePurgeVolume()
   const [purgeTarget, setPurgeTarget] = useState<NotebookVolume | null>(null)
+  const [labelFilter, setLabelFilter] = useState('')
+  // Filters only the current page — not server-side yet, same accepted
+  // trade-off as CredentialsPage's kind filter.
+  const filteredVolumes = useMemo(() => {
+    const list = volumesQuery.data?.volumes ?? []
+    if (!labelFilter.trim()) return list
+    const q = labelFilter.trim().toLowerCase()
+    return list.filter(v => v.label.toLowerCase().includes(q))
+  }, [volumesQuery.data, labelFilter])
 
   const busy = purging ? (purgingId ?? null) : null
 
@@ -47,6 +59,15 @@ export default function NotebookVolumesPage() {
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
+          toolbarLeft={
+            <div className="w-48">
+              <FilterInput
+                config={{ key: 'volumeSearch', type: 'text', placeholder: 'Search volumes…' }}
+                value={labelFilter}
+                onChange={v => setLabelFilter(typeof v === 'string' ? v : '')}
+              />
+            </div>
+          }
           notice={volumesQuery.isError && (
             <QueryErrorNotice
               message="Failed to load notebook volumes"
@@ -56,8 +77,18 @@ export default function NotebookVolumesPage() {
           )}
         >
           <DataGrid
-            data={volumes}
+            data={filteredVolumes}
             columns={columns}
+            rowCursor
+            onRowClick={(volume) => open(
+              <NotebookVolumeDetailPanel
+                volume={volume}
+                busy={busy === volume.id}
+                onAttach={handleAttach}
+                onPurge={handlePurge}
+              />,
+              { size: 480 },
+            )}
             emptyContent={
               <div className="py-12 text-center">
                 <p className="text-sm text-muted-foreground">No volumes yet.</p>
@@ -106,5 +137,13 @@ export default function NotebookVolumesPage() {
       </AlertDialogContent>
     </AlertDialog>
     </>
+  )
+}
+
+export default function NotebookVolumesPage() {
+  return (
+    <SidePanelProvider defaultSize={480} defaultMinSize={380} defaultMaxSize={800}>
+      <NotebookVolumesPageInner />
+    </SidePanelProvider>
   )
 }

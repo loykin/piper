@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { RefreshCw, Square } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { FilterInput } from '@loykin/filter-input'
 import { useServicesPaged, useStopService, useRestartService } from '@/features/serving/hooks'
 import { ServingDetailPanel } from '@/features/serving/components/ServingDetailPanel'
 import { serviceColumns } from '@/features/serving/columns'
@@ -33,11 +34,19 @@ function ServingPageInner() {
   const [pageIndex, setPageIndex] = useState(0)
   const servicesQuery = useServicesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const { data } = servicesQuery
-  const services = data?.services ?? []
   const total = data?.total ?? 0
   const { mutate: stopService, isPending: stopping } = useStopService()
   const { mutate: restartService } = useRestartService()
   const [stopTarget, setStopTarget] = useState<Service | null>(null)
+  const [nameFilter, setNameFilter] = useState('')
+  // Filters only the current page — not server-side yet, same accepted
+  // trade-off as CredentialsPage's kind filter.
+  const filteredServices = useMemo(() => {
+    const list = data?.services ?? []
+    if (!nameFilter.trim()) return list
+    const q = nameFilter.trim().toLowerCase()
+    return list.filter(s => s.name.toLowerCase().includes(q))
+  }, [data, nameFilter])
 
   const actionColumn: DataGridColumnDef<Service> = {
     id: 'actions',
@@ -74,6 +83,15 @@ function ServingPageInner() {
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
+          toolbarLeft={
+            <div className="w-48">
+              <FilterInput
+                config={{ key: 'serviceSearch', type: 'text', placeholder: 'Search services…' }}
+                value={nameFilter}
+                onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+              />
+            </div>
+          }
           toolbarRight={
             <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/serving/new` })}>Deploy</Button>
           }
@@ -86,7 +104,7 @@ function ServingPageInner() {
           )}
         >
           <DataGrid
-            data={services}
+            data={filteredServices}
             columns={columns}
             emptyContent={
               <div className="py-12 text-center">

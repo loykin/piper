@@ -4,6 +4,7 @@ import { useProjectId } from '@/lib/projectContext'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
+import { FilterInput } from '@loykin/filter-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +29,13 @@ function NotebooksPageInner() {
   const projectId = useProjectId()
   const { open } = useSidePanel()
   const notebooksQuery = useNotebooks()
-  const notebooks = notebooksQuery.data ?? []
+  const [nameFilter, setNameFilter] = useState('')
+  const filteredNotebooks = useMemo(() => {
+    const list = notebooksQuery.data ?? []
+    if (!nameFilter.trim()) return list
+    const q = nameFilter.trim().toLowerCase()
+    return list.filter(n => n.name.toLowerCase().includes(q))
+  }, [notebooksQuery.data, nameFilter])
   const { data: allVolumes = [] } = useNotebookVolumes()
   const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
 
@@ -55,10 +62,19 @@ function NotebooksPageInner() {
     <>
     <DataBodyTemplate
       title="Notebooks"
-      description="Jupyter notebook servers. Click a row to view details or Open to launch in a new tab."
+      description="Jupyter notebook servers. Open launches a server in a new tab."
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
+          toolbarLeft={
+            <div className="w-48">
+              <FilterInput
+                config={{ key: 'notebookSearch', type: 'text', placeholder: 'Search notebooks…' }}
+                value={nameFilter}
+                onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+              />
+            </div>
+          }
           toolbarRight={
             <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
           }
@@ -71,7 +87,7 @@ function NotebooksPageInner() {
           )}
         >
           <DataGrid
-            data={notebooks}
+            data={filteredNotebooks}
             columns={columns}
             emptyContent={
               <div className="py-12 text-center">
@@ -90,7 +106,7 @@ function NotebooksPageInner() {
             pagination={{ pageSize: 20 }}
             footer={(table) => (
               <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{notebooks.length} servers</span>
+                <span>{filteredNotebooks.length} servers</span>
                 {releasedVolumes.length > 0 && (
                   <Button
                     type="button"

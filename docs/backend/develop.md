@@ -248,6 +248,37 @@ itself; and Docker's bind-mount source must be absolute outright, so
 relative-`OutputDir` code path anywhere downstream — rely on the
 already-absolute `cfg.OutputDir` instead of re-deriving or re-validating it.
 
+## `storage.Store.List` — Delimiter-Scoped Listing
+
+`List(ctx, prefix, delimiter string) ([]ObjectInfo, error)` supports two
+distinct modes, and callers must pick the right one deliberately:
+
+- **`delimiter == ""`** — fully recursive, exactly the old pre-delimiter
+  behavior. Use this for anything that needs every key under a prefix in one
+  call: artifact download/cleanup (`artifacts.go`), viewer file resolution
+  (`pkg/viewer/manager.go`), template snapshot rollback
+  (`pkg/template/handler.go`).
+- **`delimiter != ""`** (in practice always `"/"`) — one level only, S3
+  `ListObjectsV2` `Delimiter` semantics (the same convention the AWS/MinIO/
+  GCS/Azure consoles use to render a folder tree from a flat key namespace).
+  Keys deeper than one segment past `prefix` collapse into a single
+  `ObjectInfo{IsDir: true}` per immediate subfolder; drill in by calling
+  `List` again with that entry's `Key` as the new `prefix`. Reference: `
+  storage_admin.go`'s `ListStorageObjects` (folder browsing for Uploaded
+  Objects) and `frontend/src/pages/system/StoragePage.tsx` for the UI side.
+
+All 5 backends (`S3Store`, `CloudStore` for GCS/Azure, `LocalStore`,
+`HTTPStore`, `MemStore`) implement both modes natively — S3 and
+`gocloud.dev/blob` (GCS/Azure) already had first-class delimiter primitives
+sitting unused before this; `LocalStore` swaps a recursive `filepath.Walk`
+for a one-level `os.ReadDir` when a delimiter is set, since the filesystem
+already is a real tree. `HTTPStore`'s wire protocol (`GET {baseURL}/?prefix=
+&list=1&delimiter=`) carries the full `[]ObjectInfo` (including `IsDir`) as
+JSON now, not the old bare `[]string`.
+
+Adding a new `Store` implementation must implement both modes — don't ship
+one that only does recursive listing and silently ignores `delimiter`.
+
 ## Manifest Rules
 
 "Manifest" refers to the shared YAML kind envelope that `Pipeline`,

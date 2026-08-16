@@ -49,7 +49,7 @@ func runStoreTests(t *testing.T, st storage.Store) {
 		_ = st.Put(ctx, "prefix/y.txt", strings.NewReader("y"), 1)
 		_ = st.Put(ctx, "other/z.txt", strings.NewReader("z"), 1)
 
-		objs, err := st.List(ctx, "prefix/")
+		objs, err := st.List(ctx, "prefix/", "")
 		if err != nil {
 			t.Fatal(err)
 		}

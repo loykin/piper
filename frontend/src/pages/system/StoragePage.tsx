@@ -1,8 +1,25 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useProjectId } from '@/lib/projectContext'
-import { CheckCircle2, Download, FolderOpen, RefreshCw, Save, Trash2, XCircle } from 'lucide-react'
-import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
-import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
+import { useSearchParams } from '@/lib/router'
+import { CheckCircle2, Download, Folder, FolderOpen, Plus, RefreshCw, Save, Trash2, XCircle } from 'lucide-react'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+  DataBodyTemplate,
+  FormField,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@loykin/designkit'
+import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
+import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
+import { FilterInput } from '@loykin/filter-input'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,8 +30,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -26,13 +44,17 @@ import {
 import type { Credential, CredentialKind } from '@/features/credentials/types'
 import {
   useStorageSettings,
-  useStorageObjects,
+  useStorageObjectsPaged,
   useSaveStorageSettings,
   useTestStorageSettings,
   useDeleteObject,
   useUploadObject,
 } from '@/features/storage/hooks'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { RowActions } from '@/shared/components/RowActions'
 import { storageObjectURL, type StorageObjectInfo, type StorageSettingsView } from '@/features/storage/api'
+import { fmtBytes, fmtDate } from '@/features/storage/format'
+import { ObjectDetailPanel } from '@/features/storage/components/ObjectDetailPanel'
 import {
   BACKEND_CREDENTIAL_KIND,
   BACKEND_LABELS,
@@ -68,27 +90,6 @@ function statusVariant(status: StorageSettingsView['effective']['status']): 'def
     case 'unavailable': return 'destructive'
     default:            return 'secondary'
   }
-}
-
-function fmtBytes(size: number): string {
-  if (!Number.isFinite(size) || size < 0) return '—'
-  if (size < 1024) return `${size} B`
-  const units = ['KiB', 'MiB', 'GiB', 'TiB']
-  let value = size / 1024
-  let unit = units[0]
-  for (let i = 0; i < units.length; i += 1) {
-    unit = units[i]
-    if (value < 1024 || i === units.length - 1) break
-    value /= 1024
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`
-}
-
-function fmtDate(value: string): string {
-  if (!value || value.startsWith('0001-01-01')) return '—'
-  const ts = new Date(value)
-  if (Number.isNaN(ts.getTime())) return '—'
-  return ts.toLocaleString()
 }
 
 type FormUpdater = (updater: (prev: BackendForm) => BackendForm) => void
@@ -582,94 +583,142 @@ function StorageCredentialsSection({
 }
 
 // ── Upload Object ───────────────────────────────────────────────────────────
-// Owns the save boundary for one ad-hoc upload through this page.
+// A narrowly-scoped value-collection action (file + optional key), not an
+// entity worth its own page — matches the Modal destination in the
+// form-workflow contract, and mirrors credentials' TestCredentialDialog/
+// RotateCredentialDialog. Triggered from Uploaded Objects' own toolbar since
+// it's that list's create action, not a permanent fixture above the list.
 
-function UploadObjectSection() {
+function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const uploadObject = useUploadObject()
   const [uploadKey, setUploadKey] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  function handleOpenChange(next: boolean) {
+    if (!next) {
+      setUploadKey('')
+      setUploadFile(null)
+      uploadObject.reset()
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+    onOpenChange(next)
+  }
+
   async function handleUpload() {
     if (!uploadFile) return
     try {
       await uploadObject.mutateAsync({ file: uploadFile, key: uploadKey.trim() || uploadFile.name })
-      setUploadFile(null)
-      setUploadKey('')
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      handleOpenChange(false)
     } catch {
-      // surfaced below via uploadObject.error — this project's own storage
-      // access may still work even if the system Storage config above 403s.
+      // surfaced below via uploadObject.error
     }
   }
 
   return (
-    <DataBodyTemplate.Group layout="stacked" title="Upload Object">
-      <DataBodyTemplate.Row
-        label="Object key"
-        description="Leave empty to use the selected file name."
-      >
-        <Input
-          value={uploadKey}
-          onChange={e => setUploadKey(e.target.value)}
-          placeholder="runs/run-123/model/model.bin"
-        />
-      </DataBodyTemplate.Row>
-
-      <DataBodyTemplate.Row label="File">
-        <Input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={e => setUploadFile(e.target.files?.[0] ?? null)}
-        />
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => fileInputRef.current?.click()}
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Upload Object</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <FormField
+            label="Object key"
+            htmlFor="upload-object-key"
+            helperText="Leave empty to use the selected file name."
           >
-            <FolderOpen className="mr-2 size-4" />
-            Choose file
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            {uploadFile ? uploadFile.name : 'No file chosen'}
-          </span>
-        </div>
-      </DataBodyTemplate.Row>
+            <Input
+              id="upload-object-key"
+              value={uploadKey}
+              onChange={e => setUploadKey(e.target.value)}
+              placeholder="runs/run-123/model/model.bin"
+            />
+          </FormField>
 
-      <div className="flex items-center justify-end gap-2">
-        {uploadObject.isError && (
-          <span className="text-xs text-destructive">
-            {uploadObject.error instanceof Error ? uploadObject.error.message : 'Upload failed.'}
-          </span>
-        )}
-        <Button
-          size="sm"
-          onClick={() => void handleUpload()}
-          disabled={!uploadFile || uploadObject.isPending}
-        >
-          <Save className="mr-2 size-4" />
-          {uploadObject.isPending ? 'Uploading…' : 'Upload'}
-        </Button>
-      </div>
-    </DataBodyTemplate.Group>
+          <FormField label="File" htmlFor="upload-object-file">
+            <Input
+              ref={fileInputRef}
+              id="upload-object-file"
+              type="file"
+              className="hidden"
+              onChange={e => setUploadFile(e.target.files?.[0] ?? null)}
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <FolderOpen className="mr-2 size-4" />
+                Choose file
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                {uploadFile ? uploadFile.name : 'No file chosen'}
+              </span>
+            </div>
+          </FormField>
+
+          {uploadObject.isError && (
+            <p className="text-sm text-destructive">
+              {uploadObject.error instanceof Error ? uploadObject.error.message : 'Upload failed.'}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
+          <Button onClick={() => void handleUpload()} disabled={!uploadFile || uploadObject.isPending}>
+            <Save className="mr-2 size-4" />
+            {uploadObject.isPending ? 'Uploading…' : 'Upload'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 // ── Uploaded Objects ────────────────────────────────────────────────────────
-// Read-only browser over this project's uploads/ prefix, with delete as its
-// only mutation — a managed-table-style toolbar (filter + refresh), not a
-// save boundary, so its actions stay in the Group header per that guide.
+// Folder-tree browser over this project's uploads/ prefix, with delete as its
+// only mutation. Per managed-table.md, list content lives in
+// DataBodyTemplate.Resource (toolbar/notice/pagination), not Group — Group is
+// reserved for the form-workflow save boundaries above (Config, Credentials).
+//
+// Listing is one level at a time (S3 ListObjectsV2 Delimiter="/" semantics —
+// see storage.Store.List on the Go side), the same convention the AWS/MinIO
+// consoles use: a folder row is a pseudo-directory aggregated server-side,
+// not a real DataGrid nesting, and drilling in means re-querying with that
+// folder's own key as the new prefix. Root Label is what breadcrumb segment
+// 0 always reads.
+
+const OBJECTS_PAGE_SIZE = 20
+const ROOT_LABEL = 'uploads'
+
+function breadcrumbSegments(prefix: string): string[] {
+  return prefix.split('/').filter(Boolean)
+}
 
 function UploadedObjectsSection({ projectId }: { projectId: string }) {
-  const [prefix, setPrefix] = useState('')
+  const { open } = useSidePanel()
   const [appliedPrefix, setAppliedPrefix] = useState('')
-  const objectsQuery = useStorageObjects(appliedPrefix)
-  const objects = objectsQuery.data ?? []
+  const [pageIndex, setPageIndex] = useState(0)
+  const [nameFilter, setNameFilter] = useState('')
+  const objectsQuery = useStorageObjectsPaged(OBJECTS_PAGE_SIZE, pageIndex * OBJECTS_PAGE_SIZE, appliedPrefix)
+  const objects = objectsQuery.data?.objects ?? []
+  const total = objectsQuery.data?.total ?? 0
+  // Filters only the current page/folder level — matches the accepted
+  // trade-off in CredentialsPage's kind filter. A true cross-page name
+  // search would need server-side support object storage doesn't offer.
+  const filteredObjects = nameFilter.trim()
+    ? objects.filter(o => o.key.slice(appliedPrefix.length).toLowerCase().includes(nameFilter.trim().toLowerCase()))
+    : objects
   const deleteObject = useDeleteObject()
   const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+
+  function navigateTo(nextPrefix: string) {
+    setAppliedPrefix(nextPrefix)
+    setPageIndex(0)
+  }
 
   function confirmDeleteObject() {
     if (!deleteObjectTarget) return
@@ -677,23 +726,35 @@ function UploadedObjectsSection({ projectId }: { projectId: string }) {
     setDeleteObjectTarget(null)
   }
 
+  const segments = breadcrumbSegments(appliedPrefix)
+
   const objectColumns: DataGridColumnDef<StorageObjectInfo>[] = [
     {
       accessorKey: 'key',
-      header: 'Key',
+      header: 'Name',
       meta: { minWidth: 240, flex: 1 },
-      cell: ({ row }) => (
-        <span className="block truncate font-mono text-xs" title={row.original.key}>
-          {row.original.key}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const leaf = row.original.key.slice(appliedPrefix.length).replace(/\/$/, '')
+        return row.original.is_dir ? (
+          <span className="flex items-center gap-2 font-medium">
+            <Folder className="size-4 shrink-0 text-muted-foreground" />
+            {leaf}
+          </span>
+        ) : (
+          <span className="block truncate font-mono text-xs" title={row.original.key}>
+            {leaf}
+          </span>
+        )
+      },
     },
     {
       accessorKey: 'size',
       header: 'Size',
       meta: { minWidth: 90 },
       cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">{fmtBytes(row.original.size)}</span>
+        <span className="text-xs text-muted-foreground">
+          {row.original.is_dir ? '—' : fmtBytes(row.original.size)}
+        </span>
       ),
     },
     {
@@ -701,25 +762,25 @@ function UploadedObjectsSection({ projectId }: { projectId: string }) {
       header: 'Modified',
       meta: { minWidth: 160 },
       cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">{fmtDate(row.original.modified_at)}</span>
+        <span className="text-xs text-muted-foreground">
+          {row.original.is_dir ? '—' : fmtDate(row.original.modified_at)}
+        </span>
       ),
     },
     {
       id: 'actions',
       header: '',
-      meta: { minWidth: 160, align: 'right' },
-      cell: ({ row }) => (
-        <div className="flex justify-end gap-2">
-          <a
-            href={storageObjectURL(projectId, row.original.key)}
-            target="_blank"
-            rel="noreferrer"
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
-            onClick={e => e.stopPropagation()}
-          >
-            <Download className="mr-2 size-4" />
-            Download
-          </a>
+      meta: { minWidth: 80, align: 'right' },
+      cell: ({ row }) => row.original.is_dir ? null : (
+        <RowActions>
+          <IconButton
+            icon={<Download />}
+            label="Download"
+            onClick={e => {
+              e.stopPropagation()
+              window.open(storageObjectURL(projectId, row.original.key), '_blank', 'noopener,noreferrer')
+            }}
+          />
           <IconButton
             icon={<Trash2 />}
             label="Delete"
@@ -727,51 +788,113 @@ function UploadedObjectsSection({ projectId }: { projectId: string }) {
             onClick={e => { e.stopPropagation(); setDeleteObjectTarget(row.original.key) }}
             className="text-destructive hover:bg-destructive/10"
           />
-        </div>
+        </RowActions>
       ),
     },
   ]
 
   return (
     <>
-      <DataBodyTemplate.Group
-        layout="stacked"
-        title="Uploaded Objects"
-        description="Files uploaded directly through this page, under this project's uploads/ prefix. Pipeline run artifacts are stored separately — browse and download them from that run's detail page."
-        actions={
-          <div className="flex items-center gap-2">
-            <Input
-              value={prefix}
-              onChange={e => setPrefix(e.target.value)}
-              placeholder="prefix filter"
-              className="w-52"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); setAppliedPrefix(prefix) }
-              }}
+      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+        <Folder className="size-4 shrink-0 text-muted-foreground" />
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              {segments.length === 0 ? (
+                <BreadcrumbPage>{ROOT_LABEL}</BreadcrumbPage>
+              ) : (
+                <BreadcrumbLink href="#" onClick={e => { e.preventDefault(); navigateTo('') }}>
+                  {ROOT_LABEL}
+                </BreadcrumbLink>
+              )}
+            </BreadcrumbItem>
+            {segments.map((segment, i) => {
+              const segmentPrefix = segments.slice(0, i + 1).join('/') + '/'
+              const isLast = i === segments.length - 1
+              return (
+                <Fragment key={segmentPrefix}>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    {isLast ? (
+                      <BreadcrumbPage>{segment}</BreadcrumbPage>
+                    ) : (
+                      <BreadcrumbLink href="#" onClick={e => { e.preventDefault(); navigateTo(segmentPrefix) }}>
+                        {segment}
+                      </BreadcrumbLink>
+                    )}
+                  </BreadcrumbItem>
+                </Fragment>
+              )
+            })}
+          </BreadcrumbList>
+        </Breadcrumb>
+      </div>
+
+      <DataBodyTemplate.Resource
+        toolbarLeft={
+          <div className="w-52">
+            <FilterInput
+              config={{ key: 'objectSearch', type: 'text', placeholder: 'Search objects…' }}
+              value={nameFilter}
+              onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
             />
+          </div>
+        }
+        toolbarRight={
+          <>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => (appliedPrefix === prefix ? void objectsQuery.refetch() : setAppliedPrefix(prefix))}
+              onClick={() => void objectsQuery.refetch()}
               disabled={objectsQuery.isFetching}
             >
               <RefreshCw className={objectsQuery.isFetching ? 'size-4 animate-spin' : 'size-4'} />
             </Button>
-          </div>
+            <Button size="sm" onClick={() => setUploadOpen(true)}>
+              <Plus className="mr-1.5 size-3.5" />
+              Upload
+            </Button>
+          </>
         }
+        notice={objectsQuery.isError && (
+          <QueryErrorNotice
+            message="Failed to load uploaded objects"
+            error={objectsQuery.error}
+            onRetry={() => void objectsQuery.refetch()}
+          />
+        )}
       >
         <DataGrid
-          data={objects}
+          data={filteredObjects}
           columns={objectColumns}
-          emptyMessage={
-            objectsQuery.isError
-              ? `Couldn't load objects: ${objectsQuery.error instanceof Error ? objectsQuery.error.message : 'storage is disabled or unavailable.'}`
-              : 'No uploaded objects found for this prefix.'
-          }
+          isLoading={objectsQuery.isPending}
+          emptyMessage={segments.length > 0 ? 'This folder is empty.' : 'No uploaded objects yet.'}
           tableWidthMode="fill-last"
           rowHeight={44}
+          rowCursor
+          onRowClick={(object) => {
+            if (object.is_dir) { navigateTo(object.key); return }
+            open(
+              <ObjectDetailPanel
+                projectId={projectId}
+                object={object}
+                onDelete={o => setDeleteObjectTarget(o.key)}
+              />,
+              { size: 480 },
+            )
+          }}
+          classNames={{ footer: 'pt-3' }}
+          pagination={{
+            pageSize: OBJECTS_PAGE_SIZE,
+            pageIndex,
+            pageCount: Math.max(1, Math.ceil(total / OBJECTS_PAGE_SIZE)),
+            onPageChange: setPageIndex,
+          }}
+          footer={(table) => <DataGridPaginationBar table={table} totalCount={total} />}
         />
-      </DataBodyTemplate.Group>
+      </DataBodyTemplate.Resource>
+
+      <UploadObjectDialog open={uploadOpen} onOpenChange={setUploadOpen} />
 
       <AlertDialog open={deleteObjectTarget != null} onOpenChange={open => { if (!open) setDeleteObjectTarget(null) }}>
         <AlertDialogContent>
@@ -799,10 +922,19 @@ function UploadedObjectsSection({ projectId }: { projectId: string }) {
 // credential it points at (Artifact Store Config reads and writes both;
 // System Credentials reads both to filter its list and clear a deleted ref).
 
-export default function StoragePage() {
+const DEFAULT_TAB = 'objects'
+
+function StoragePageInner() {
   const projectId = useProjectId()
   const settingsQuery = useStorageSettings()
   const storage = settingsQuery.data ?? null
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = searchParams.get('tab') ?? DEFAULT_TAB
+
+  function handleTabChange(next: string) {
+    setSearchParams({ ...Object.fromEntries(searchParams), tab: next }, { replace: true })
+  }
 
   const [disabled, setDisabled] = useState(false)
   const [token, setToken] = useState('')
@@ -830,7 +962,8 @@ export default function StoragePage() {
   return (
     <DataBodyTemplate
       title="Storage"
-      description="Manage artifact storage configuration and browse stored objects."
+      activeTab={activeTab}
+      onTabChange={handleTabChange}
       status={
         settingsQuery.isSuccess && (
           <>
@@ -840,7 +973,11 @@ export default function StoragePage() {
         )
       }
     >
-      <DataBodyTemplate.Body>
+      <DataBodyTemplate.Tab id="objects" label="Objects">
+        <UploadedObjectsSection projectId={projectId} />
+      </DataBodyTemplate.Tab>
+
+      <DataBodyTemplate.Tab id="config" label="Configuration">
         <ArtifactStoreConfigSection
           storage={storage}
           isLoading={settingsQuery.isPending}
@@ -866,10 +1003,15 @@ export default function StoragePage() {
             setCredentialRef={setCredentialRef}
           />
         )}
-
-        <UploadObjectSection />
-        <UploadedObjectsSection projectId={projectId} />
-      </DataBodyTemplate.Body>
+      </DataBodyTemplate.Tab>
     </DataBodyTemplate>
+  )
+}
+
+export default function StoragePage() {
+  return (
+    <SidePanelProvider defaultSize={480} defaultMinSize={380} defaultMaxSize={800}>
+      <StoragePageInner />
+    </SidePanelProvider>
   )
 }

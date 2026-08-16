@@ -259,7 +259,7 @@ func (s *stubStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
-func (s *stubStore) List(_ context.Context, prefix string) ([]storage.ObjectInfo, error) {
+func (s *stubStore) List(_ context.Context, prefix, _ string) ([]storage.ObjectInfo, error) {
 	var out []storage.ObjectInfo
 	for _, k := range s.keys {
 		if strings.HasPrefix(k, prefix) {

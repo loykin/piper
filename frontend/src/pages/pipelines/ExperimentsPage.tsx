@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
@@ -80,7 +81,12 @@ function ExperimentsPageInner() {
           toolbarLeft={
             <div className="w-48">
               <FilterInput
-                config={{ key: 'experimentSearch', type: 'text', placeholder: 'Search experiments…' }}
+                config={{
+                  key: 'experimentSearch',
+                  type: 'text',
+                  placeholder: 'Search experiments…',
+                  display: { size: 'sm', leadingIcon: <Search /> },
+                }}
                 value={nameFilter}
                 onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
               />

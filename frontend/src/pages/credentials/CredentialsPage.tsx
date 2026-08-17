@@ -4,7 +4,7 @@ import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, Sel
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
-import { FlaskConical, Plus, Power, RotateCw, Trash2 } from 'lucide-react'
+import { FlaskConical, Plus, Power, RotateCw, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
@@ -140,7 +140,12 @@ function CredentialsPageInner() {
             <>
               <div className="w-48">
                 <FilterInput
-                  config={{ key: 'credentialSearch', type: 'text', placeholder: 'Search credentials…' }}
+                  config={{
+                    key: 'credentialSearch',
+                    type: 'text',
+                    placeholder: 'Search credentials…',
+                    display: { size: 'sm', leadingIcon: <Search /> },
+                  }}
                   value={nameFilter}
                   onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
                 />

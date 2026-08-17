@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { RefreshCw, Square } from 'lucide-react'
+import { RefreshCw, Search, Square } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import {
   AlertDialog,
@@ -86,7 +86,12 @@ function ServingPageInner() {
           toolbarLeft={
             <div className="w-48">
               <FilterInput
-                config={{ key: 'serviceSearch', type: 'text', placeholder: 'Search services…' }}
+                config={{
+                  key: 'serviceSearch',
+                  type: 'text',
+                  placeholder: 'Search services…',
+                  display: { size: 'sm', leadingIcon: <Search /> },
+                }}
                 value={nameFilter}
                 onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
               />

@@ -1,13 +1,23 @@
 // schedules feature — Schedule creation form component
 import { useMemo, useState } from 'react'
 import { CronInput, toCronExpression, validateCronExpression, type CronValue } from '@loykin/cron-input'
+import { createShadcnAdapter } from '@loykin/cron-input/adapters/shadcn'
 import { FormActions, FormField } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useCreateSchedule } from '../hooks'
 import { parseMaxRuns } from '../maxRuns'
+
+// Built once at module scope — uiAdapter must be referentially stable, or the
+// adapted subtree remounts on every render (see @loykin/cron-input README).
+const cronInputShadcnAdapter = createShadcnAdapter({
+  Button, Popover, PopoverTrigger, PopoverContent,
+  Tabs, TabsList, TabsTrigger, TabsContent,
+})
 
 const DEFAULT_CRON_VALUE: CronValue = { type: 'interval', every: 1, unit: 'hour' }
 
@@ -159,7 +169,11 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
           htmlFor="schedule-cron"
           error={!cronValid ? 'Cron expression is invalid.' : undefined}
         >
-          <CronInput value={cronValue} onChange={setCronValue} />
+          <CronInput
+            value={cronValue}
+            onChange={setCronValue}
+            uiAdapter={cronInputShadcnAdapter}
+          />
         </FormField>
       )}
 

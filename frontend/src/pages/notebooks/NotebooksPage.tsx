@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
@@ -69,7 +70,12 @@ function NotebooksPageInner() {
           toolbarLeft={
             <div className="w-48">
               <FilterInput
-                config={{ key: 'notebookSearch', type: 'text', placeholder: 'Search notebooks…' }}
+                config={{
+                  key: 'notebookSearch',
+                  type: 'text',
+                  placeholder: 'Search notebooks…',
+                  display: { size: 'sm', leadingIcon: <Search /> },
+                }}
                 value={nameFilter}
                 onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
               />

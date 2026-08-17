@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Row } from '@tanstack/react-table'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
-import { Plus } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
@@ -152,7 +152,12 @@ function PipelinesListPageInner() {
             toolbarLeft={
               <div className="w-48">
                 <FilterInput
-                  config={{ key: 'templateSearch', type: 'text', placeholder: 'Search templates…' }}
+                  config={{
+                    key: 'templateSearch',
+                    type: 'text',
+                    placeholder: 'Search templates…',
+                    display: { size: 'sm', leadingIcon: <Search /> },
+                  }}
                   value={searchFilter}
                   onChange={v => setSearchFilter(typeof v === 'string' ? v : '')}
                 />

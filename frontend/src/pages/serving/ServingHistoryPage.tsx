@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
@@ -36,7 +37,12 @@ function ServingHistoryPageInner() {
           toolbarLeft={
             <div className="w-48">
               <FilterInput
-                config={{ key: 'historySearch', type: 'text', placeholder: 'Search history…' }}
+                config={{
+                  key: 'historySearch',
+                  type: 'text',
+                  placeholder: 'Search history…',
+                  display: { size: 'sm', leadingIcon: <Search /> },
+                }}
                 value={nameFilter}
                 onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
               />

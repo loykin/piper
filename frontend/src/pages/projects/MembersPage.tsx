@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
@@ -67,7 +67,12 @@ function MembersPageInner() {
             toolbarLeft={
               <div className="w-48">
                 <FilterInput
-                  config={{ key: 'memberSearch', type: 'text', placeholder: 'Search members…' }}
+                  config={{
+                    key: 'memberSearch',
+                    type: 'text',
+                    placeholder: 'Search members…',
+                    display: { size: 'sm', leadingIcon: <Search /> },
+                  }}
                   value={nameFilter}
                   onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
                 />

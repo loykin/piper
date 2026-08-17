@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
-import { Power, Plus, Trash2 } from 'lucide-react'
+import { Power, Plus, Search, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
@@ -115,7 +115,12 @@ function WorkflowsPageInner() {
           toolbarLeft={
             <div className="w-48">
               <FilterInput
-                config={{ key: 'scheduleSearch', type: 'text', placeholder: 'Search schedules…' }}
+                config={{
+                  key: 'scheduleSearch',
+                  type: 'text',
+                  placeholder: 'Search schedules…',
+                  display: { size: 'sm', leadingIcon: <Search /> },
+                }}
                 value={nameFilter}
                 onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
               />

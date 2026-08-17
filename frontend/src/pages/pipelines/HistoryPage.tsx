@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RotateCcw, RefreshCw, Trash2 } from 'lucide-react'
+import { RotateCcw, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
@@ -134,7 +134,12 @@ function HistoryPageInner() {
           toolbarLeft={
             <div className="w-48">
               <FilterInput
-                config={{ key: 'runSearch', type: 'text', placeholder: 'Search by pipeline…' }}
+                config={{
+                  key: 'runSearch',
+                  type: 'text',
+                  placeholder: 'Search by pipeline…',
+                  display: { size: 'sm', leadingIcon: <Search /> },
+                }}
                 value={nameFilter}
                 onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
               />

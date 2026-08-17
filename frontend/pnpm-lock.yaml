@@ -39,20 +39,20 @@ importers:
         specifier: ^5.7.1
         version: 5.7.1(ajv-formats@2.1.1(ajv@8.20.0))(ajv@8.20.0)(react-hook-form@7.84.0(react@19.2.8))(zod@4.4.3)
       '@loykin/cron-input':
-        specifier: 0.0.1-dev.3
-        version: 0.0.1-dev.3(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: 0.0.2
+        version: 0.0.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@loykin/designkit':
         specifier: 0.0.5
         version: 0.0.5(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)(use-sync-external-store@1.6.0(react@19.2.8))
       '@loykin/filter-input':
-        specifier: 0.0.1-dev.4
-        version: 0.0.1-dev.4(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        specifier: 0.0.2
+        version: 0.0.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@loykin/gridkit':
         specifier: ^0.2.2
         version: 0.2.2(@tanstack/react-table@8.21.3(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@tanstack/react-virtual@3.14.9(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
       '@loykin/side-panel':
-        specifier: 0.0.1-dev.2
-        version: 0.0.1-dev.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
+        specifier: 0.0.2
+        version: 0.0.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
       '@tanstack/react-query':
         specifier: ^5.101.4
         version: 5.101.4(react@19.2.8)
@@ -570,8 +570,8 @@ packages:
   '@lezer/yaml@1.0.4':
     resolution: {integrity: sha512-2lrrHqxalACEbxIbsjhqGpSW8kWpUKuY6RHgnSAFZa6qK62wvnPxA8hGOwOoDbwHcOFs5M4o27mjGu+P7TvBmw==}
 
-  '@loykin/cron-input@0.0.1-dev.3':
-    resolution: {integrity: sha512-55o2wx9+Wumfz4cEM3YqRGxP3dC31aHXhZoXblWxEWS1vqnMpe2pHpDyRHSD4G8pcjFAKmlprVZzedqGcdyp/Q==}
+  '@loykin/cron-input@0.0.2':
+    resolution: {integrity: sha512-PSc27OZAH4xb1N/urHTnPaT0PNHyhrXhaiEqOFGmdSNr0/1QtTqBVAqn5gyJDGrXHj97PjkHZg7nAoOX1xaV3Q==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -584,8 +584,8 @@ packages:
       react-dom: ^19.0.0
       tailwindcss: ^4.0.0
 
-  '@loykin/filter-input@0.0.1-dev.4':
-    resolution: {integrity: sha512-rBIL0TkDbO2JxmQKA41uJ8skiGSqPGaiRNARvnTucEv3AYriCwLtZU95EjAS5kh7AjDzvvnBwCLjiORjQjQ+/g==}
+  '@loykin/filter-input@0.0.2':
+    resolution: {integrity: sha512-l0vDQqBgvP7Ql6tcaBuj+PJgEV49qwwCiwma/iMRtWl8pmdA4pvgqB+isbF9jyVWYwMB9sZnbFx5SQXobz3bKA==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -598,8 +598,8 @@ packages:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@loykin/side-panel@0.0.1-dev.2':
-    resolution: {integrity: sha512-YxB1nIzWaTwYaNrLf1z3wd9p76cw4BfJitI2O1PHMEJaAAi9YYUK1F2OwvIIBY3CgxouyO45BDl3UXGZaFS/Uw==}
+  '@loykin/side-panel@0.0.2':
+    resolution: {integrity: sha512-5P9n0TsGkpunxuHsxbVKPMc/K+OWxx9QI0JqMf5bJAEhfWFyehOBL7AnVvVCoO7HBcRqAcCfiNDa+5T91tki0w==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -3176,7 +3176,7 @@ snapshots:
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
 
-  '@loykin/cron-input@0.0.1-dev.3(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@loykin/cron-input@0.0.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@base-ui/react': 1.6.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       clsx: 2.1.1
@@ -3206,7 +3206,7 @@ snapshots:
       - immer
       - use-sync-external-store
 
-  '@loykin/filter-input@0.0.1-dev.4(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+  '@loykin/filter-input@0.0.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
       '@base-ui/react': 1.6.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       clsx: 2.1.1
@@ -3234,7 +3234,7 @@ snapshots:
       - immer
       - use-sync-external-store
 
-  '@loykin/side-panel@0.0.1-dev.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))':
+  '@loykin/side-panel@0.0.2(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))':
     dependencies:
       clsx: 2.1.1
       re-resizable: 6.11.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)

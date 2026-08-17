@@ -1,1 +1,0 @@
-import"./rolldown-runtime-CbXtAM7H.js";import{o as e,s as t}from"./vendor-codemirror-ABbF79D8.js";import{D as n}from"./index-BjjcmGIQ.js";t();var r=e();function i({className:e,...t}){return(0,r.jsx)(`label`,{className:n(`text-sm font-medium leading-none`,e),...t})}export{i as t};

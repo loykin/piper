@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useProjectId } from '@/lib/projectContext'
 import { useSearchParams } from '@/lib/router'
-import { CheckCircle2, Download, Folder, FolderOpen, Plus, RefreshCw, Save, Trash2, XCircle } from 'lucide-react'
+import { CheckCircle2, Download, Folder, FolderOpen, Plus, RefreshCw, Save, Search, Trash2, XCircle } from 'lucide-react'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -834,7 +834,12 @@ function UploadedObjectsSection({ projectId }: { projectId: string }) {
         toolbarLeft={
           <div className="w-52">
             <FilterInput
-              config={{ key: 'objectSearch', type: 'text', placeholder: 'Search objects…' }}
+              config={{
+                key: 'objectSearch',
+                type: 'text',
+                placeholder: 'Search objects…',
+                display: { size: 'sm', leadingIcon: <Search /> },
+              }}
               value={nameFilter}
               onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
             />

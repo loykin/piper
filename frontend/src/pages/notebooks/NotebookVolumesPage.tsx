@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
@@ -62,7 +63,12 @@ function NotebookVolumesPageInner() {
           toolbarLeft={
             <div className="w-48">
               <FilterInput
-                config={{ key: 'volumeSearch', type: 'text', placeholder: 'Search volumes…' }}
+                config={{
+                  key: 'volumeSearch',
+                  type: 'text',
+                  placeholder: 'Search volumes…',
+                  display: { size: 'sm', leadingIcon: <Search /> },
+                }}
                 value={labelFilter}
                 onChange={v => setLabelFilter(typeof v === 'string' ? v : '')}
               />

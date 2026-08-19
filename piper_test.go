@@ -21,6 +21,7 @@ import (
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/internal/runlifecycle"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
@@ -191,14 +192,6 @@ func TestNew_ResolvesRelativeOutputDirToAbsolute(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: "./relative-output"})
 	if !filepath.IsAbs(p.cfg.OutputDir) {
 		t.Fatalf("OutputDir = %q, want an absolute path", p.cfg.OutputDir)
-	}
-}
-
-func TestRunWorkspaceDir(t *testing.T) {
-	got := runWorkspaceDir("/data/piper-outputs", "run-123")
-	want := filepath.Join("/data/piper-outputs", "run-123")
-	if got != want {
-		t.Fatalf("runWorkspaceDir() = %q, want %q", got, want)
 	}
 }
 
@@ -581,7 +574,7 @@ func TestStartRunPersistsExperiment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID, err := p.startRun(context.Background(), pl, dag, StartRunOptions{
+	runID, err := p.runs.StartRun(context.Background(), pl, dag, runlifecycle.StartRunOptions{
 		ProjectID:  projectID,
 		Experiment: "exp-v2",
 		YAML:       "metadata:\n  name: train\n",
@@ -689,7 +682,7 @@ func TestScheduleFiredCronClaimsAndCreatesRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p.scheduleFired(ctx, projectID, sc.ID)
+	p.runs.ScheduleFired(ctx, projectID, sc.ID)
 
 	runs, err := p.repos.Run.List(ctx, projectID, run.RunFilter{ScheduleID: sc.ID})
 	if err != nil {
@@ -741,7 +734,7 @@ func TestScheduleFiredIgnoresFutureCronTick(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p.scheduleFired(ctx, projectID, sc.ID)
+	p.runs.ScheduleFired(ctx, projectID, sc.ID)
 
 	runs, err := p.repos.Run.List(ctx, projectID, run.RunFilter{ScheduleID: sc.ID})
 	if err != nil {
@@ -791,7 +784,7 @@ func TestScheduleFiredMisfireSkipAdvancesWithoutRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p.scheduleFired(ctx, projectID, sc.ID)
+	p.runs.ScheduleFired(ctx, projectID, sc.ID)
 
 	runs, err := p.repos.Run.List(ctx, projectID, run.RunFilter{ScheduleID: sc.ID})
 	if err != nil {
@@ -972,7 +965,7 @@ func TestCleanupScheduleRetentionKeepsNewestTerminalRuns(t *testing.T) {
 	createRun("run-new", run.StatusSuccess, newEnd, &newEnd)
 	createRun("run-running", run.StatusRunning, now.Add(-4*time.Hour), nil)
 
-	p.cleanupScheduleRetention(ctx)
+	p.runs.CleanupScheduleRetention(ctx)
 
 	if got, err := p.repos.Run.Get(ctx, projectID, "run-old"); err != nil {
 		t.Fatalf("get old run: %v", err)
@@ -1052,7 +1045,7 @@ func TestCleanupScheduleRetentionNonTerminalNewestDoesNotConsumeQuota(t *testing
 	createRun("run-mid", run.StatusSuccess, midEnd, &midEnd)
 	createRun("run-old", run.StatusSuccess, oldEnd, &oldEnd)
 
-	p.cleanupScheduleRetention(ctx)
+	p.runs.CleanupScheduleRetention(ctx)
 
 	if got, err := p.repos.Run.Get(ctx, projectID, "run-old"); err != nil {
 		t.Fatalf("get old run: %v", err)
@@ -1109,7 +1102,7 @@ func TestCleanupRetentionDeletesExpiredRunsByTTL(t *testing.T) {
 	createRun("run-fresh", run.StatusSuccess, freshEnd, &freshEnd)
 	createRun("run-still-running", run.StatusRunning, now.Add(-3*time.Hour), nil)
 
-	p.cleanupRetention(ctx)
+	p.runs.CleanupRetention(ctx)
 
 	if got, err := p.repos.Run.Get(ctx, projectID, "run-expired"); err != nil {
 		t.Fatalf("get run-expired: %v", err)
@@ -1169,7 +1162,7 @@ func TestRecoverInterruptedRunsFixesOrphanedFinalizeWrite(t *testing.T) {
 		t.Fatal("precondition failed: run should not be tracked in memory")
 	}
 
-	p.recoverInterruptedRuns(ctx)
+	p.runs.RecoverInterruptedRuns(ctx)
 
 	got, err := p.repos.Run.Get(ctx, projectID, runID)
 	if err != nil {
@@ -1223,7 +1216,7 @@ func TestRecoverInterruptedRunsSkipsTrackedRun(t *testing.T) {
 		t.Fatal("precondition failed: run should be tracked in memory after Add")
 	}
 
-	p.recoverInterruptedRuns(ctx)
+	p.runs.RecoverInterruptedRuns(ctx)
 
 	// Still tracked and still running — recoverInterruptedRuns must not have
 	// touched its DB row (a real bug here would show up as the row jumping

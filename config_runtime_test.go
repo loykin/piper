@@ -76,7 +76,7 @@ spec:
         command: [sh, -c, echo ok]
 `
 	ctx := project.WithContext(context.Background(), project.Context{ID: project.DefaultID})
-	runID, err := p.startRunFromAPI(ctx, yaml, nil, BuiltinVars{}, "")
+	runID, err := p.runs.StartRunFromAPI(ctx, yaml, nil, BuiltinVars{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

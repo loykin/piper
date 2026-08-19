@@ -3,7 +3,6 @@ package piper
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -22,17 +21,16 @@ import (
 	"github.com/loykin/piper/internal/pipelinedispatch"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/internal/queue"
+	"github.com/loykin/piper/internal/runlifecycle"
 	ischeduler "github.com/loykin/piper/internal/scheduler"
 	"github.com/loykin/piper/internal/srcfetch"
 	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
-	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
-	"github.com/loykin/piper/pkg/security"
 	"github.com/loykin/piper/pkg/serving"
 	"github.com/loykin/piper/pkg/storage"
-	"gopkg.in/yaml.v3"
 
 	storemod "github.com/loykin/piper/internal/store"
 )
@@ -82,6 +80,7 @@ type Piper struct {
 	nbWorkspace     notebook.WorkspaceReader // reads a notebook volume's live workspace files, for pipeline template snapshotting
 	store           storage.Store            // nil when no artifact store configured
 	credentials     *credential.Store
+	federationSvc   *federation.Service
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
 	resolver        artifact.Resolver // central artifact resolver
@@ -89,7 +88,7 @@ type Piper struct {
 	events          *event.Hub
 	scheduler       *ischeduler.Scheduler
 	startedAt       time.Time // wall-clock when New() ran; used for misfire detection
-	submissionMu    sync.Mutex
+	runs            *runlifecycle.Manager
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 	wg      sync.WaitGroup
@@ -207,13 +206,14 @@ func New(cfg Config) (*Piper, error) {
 	q.SetRecoveryGracePeriod(cfg.Queue.RecoveryGrace)
 
 	p := &Piper{
-		cfg:         cfg,
-		ctx:         bgCtx,
-		repos:       repos,
-		logs:        repos.Log,
-		metrics:     repos.Metric,
-		credentials: credentialStore,
-		queue:       q,
+		cfg:           cfg,
+		ctx:           bgCtx,
+		repos:         repos,
+		logs:          repos.Log,
+		metrics:       repos.Metric,
+		credentials:   credentialStore,
+		federationSvc: federation.NewService(repos.Project, repos.Federation),
+		queue:         q,
 		serving: servingBundle{
 			manager: servingRuntime.manager,
 			proxy:   serving.NewProxy(repos.Serving),
@@ -245,12 +245,33 @@ func New(cfg Config) (*Piper, error) {
 	if servingRuntime.k8sDriver != nil {
 		servingRuntime.k8sDriver.WithStorage(p.storageURL, cfg.Storage.Token)
 	}
-	p.resolver = &piperArtifactResolver{
-		runRepo:    repos.Run,
-		outputDir:  cfg.OutputDir,
-		storageURL: p.storageURL,
-		store:      p.store,
-	}
+	p.resolver = artifact.NewResolver(repos.Run, cfg.OutputDir, p.storageURL, p.store)
+	// startedAt is set before the scheduler exists so misfire detection works
+	// on its first Add (see the scheduler wiring below).
+	p.startedAt = time.Now().UTC()
+	p.runs = runlifecycle.New(runlifecycle.Deps{
+		RunRepo:            repos.Run,
+		StepRepo:           repos.Step,
+		ScheduleRepo:       repos.Schedule,
+		SubmissionRepo:     repos.Submission,
+		ProjectRepo:        repos.Project,
+		ServingRepo:        repos.Serving,
+		RunDeleter:         repos,
+		Queue:              q,
+		Credentials:        credentialStore,
+		Store:              p.store,
+		OutputDir:          cfg.OutputDir,
+		RuntimeType:        cfg.Runtime.Type,
+		RunTTL:             cfg.Retention.RunTTL,
+		ArtifactTTL:        cfg.Retention.ArtifactTTL,
+		MisfirePolicy:      cfg.Schedule.MisfirePolicy,
+		MisfireGracePeriod: cfg.Schedule.MisfireGracePeriod,
+		StartedAt:          p.startedAt,
+		OnRunStart:         cfg.Hooks.OnRunStart,
+		DeployService:      p.DeployService,
+		DeleteArtifacts:    deleteArtifactsFromStore,
+		DeleteWorkspace:    deleteRunWorkspace,
+	})
 	backend, pipelineObserver, err := composePipelineRuntime(cfg, bgCtx, repos, q)
 	if err != nil {
 		stopFn()
@@ -258,11 +279,11 @@ func New(cfg Config) (*Piper, error) {
 		return nil, fmt.Errorf("create %s pipeline runtime: %w", cfg.Runtime.Type, err)
 	}
 	p.SetBackend(backend)
-	q.OnRunSuccess = p.handleRunSuccess
+	q.OnRunSuccess = p.runs.HandleRunSuccess
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)
 	p.notebookManager.SetEventPublisher(p.events)
-	p.recoverInterruptedRuns(context.Background())
+	p.runs.RecoverInterruptedRuns(context.Background())
 	if pipelineObserver != nil {
 		p.wg.Add(1)
 		go func() {
@@ -286,9 +307,8 @@ func New(cfg Config) (*Piper, error) {
 	}
 
 	// Start the in-memory scheduler and seed it from the DB.
-	// startedAt is set before LoadFromRepo so misfire detection works on first Add.
-	p.startedAt = time.Now().UTC()
-	p.scheduler = ischeduler.New(p.scheduleFired)
+	p.scheduler = ischeduler.New(p.runs.ScheduleFired)
+	p.runs.SetScheduler(p.scheduler)
 	p.scheduler.Start()
 	if err := ischeduler.LoadFromRepo(context.Background(), p.repos.Schedule, p.scheduler); err != nil {
 		slog.Warn("load schedules from repo failed", "err", err)
@@ -338,78 +358,20 @@ func ensureSystemProject(ctx context.Context, repo project.Repository) error {
 // trail atomically. It returns false when the Project does not exist yet;
 // creation can subsequently apply the same owner through project.OwnerResolver.
 func (p *Piper) SetProjectOwner(ctx context.Context, homeID, projectID, memberID, actorID string) (bool, error) {
-	projectRecord, err := p.repos.Project.Get(ctx, projectID)
-	if err != nil {
-		return false, err
-	}
-	if projectRecord == nil {
-		return false, nil
-	}
-	if memberID == "" {
-		memberID = project.LocalMemberID
-	}
-	if projectRecord.OwnerMemberID == memberID {
-		return true, nil
-	}
-	if p.repos.Federation == nil {
-		return true, fmt.Errorf("federation repository is unavailable")
-	}
-	return true, p.repos.Federation.SetProjectOwner(ctx, homeID, projectID, memberID, actorID, time.Now().UTC())
-}
-
-func (p *Piper) createFederatedProject(ctx context.Context, homeID string, value *project.Project, actorID string) error {
-	if p.repos.Federation == nil {
-		return fmt.Errorf("federation repository is unavailable")
-	}
-	return p.repos.Federation.CreateProject(ctx, homeID, value, actorID)
+	return p.federationSvc.SetProjectOwner(ctx, homeID, projectID, memberID, actorID)
 }
 
 // SyncFederationMembers reconciles Home's non-secret Member directory with
 // the configured enrollment identities. Previously configured Members remain
 // as disabled history records; all connections start offline after restart.
 func (p *Piper) SyncFederationMembers(ctx context.Context, homeID string, memberIDs []string) error {
-	if p.repos.Federation == nil {
-		return fmt.Errorf("federation repository is unavailable")
-	}
-	return p.repos.Federation.SyncConfiguredMembers(ctx, homeID, memberIDs, time.Now().UTC())
+	return p.federationSvc.SyncMembers(ctx, homeID, memberIDs)
 }
 
 // SetFederationMemberConnected atomically updates the Member directory and
 // appends its connection audit event.
 func (p *Piper) SetFederationMemberConnected(ctx context.Context, homeID, memberID string, connected bool) error {
-	if p.repos.Federation == nil {
-		return fmt.Errorf("federation repository is unavailable")
-	}
-	return p.repos.Federation.SetMemberConnected(ctx, homeID, memberID, connected, time.Now().UTC())
-}
-
-// handleRunSuccess is called (in a goroutine) when a queued run completes successfully.
-// It triggers on_success.deploy if configured in the pipeline spec.
-func (p *Piper) handleRunSuccess(ctx context.Context, runID string, pl *pipeline.Pipeline) {
-	if pl.Spec.OnSuccess == nil || pl.Spec.OnSuccess.Deploy == nil {
-		return
-	}
-	trigger := pl.Spec.OnSuccess.Deploy
-	projectContext, _ := project.FromContext(ctx)
-	svc, err := p.repos.Serving.Get(ctx, projectContext.ID, trigger.Service)
-	if err != nil || svc == nil {
-		return
-	}
-	if svc.YAML == "" {
-		return
-	}
-	// Re-deploy with the new run's artifact
-	ms, err := serving.Parse([]byte(svc.YAML))
-	if err != nil {
-		return
-	}
-	if ms.Spec.Model.FromArtifact != nil {
-		ms.Spec.Model.FromArtifact.Run = runID
-	}
-	updatedYAML, _ := yaml.Marshal(ms)
-	if _, err := p.DeployService(ctx, projectContext.ID, updatedYAML); err != nil {
-		slog.Warn("auto-deploy on run success failed", "run_id", runID, "service", trigger.Service, "err", err)
-	}
+	return p.federationSvc.SetMemberConnected(ctx, homeID, memberID, connected)
 }
 
 // recoveryReconcileEvery bounds how often runCleanup's periodic pass re-runs
@@ -438,27 +400,21 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			tick++
 			p.reconcileBackend(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
-			p.cleanupRetention(ctx)
+			p.runs.CleanupRetention(ctx)
 			p.cleanupOrphanArtifacts(ctx)
 			if tick%recoveryReconcileEvery == 0 {
-				p.recoverInterruptedRuns(ctx)
+				p.runs.RecoverInterruptedRuns(ctx)
 			}
 		}
 	}
 }
 
-// artifactCacheDirName is where piperArtifactResolver stages a local copy of
-// an artifact when the configured Store is remote (S3/HTTP/cloud) — a
-// subdirectory of OutputDir, distinct from both the per-run workspace and
-// the Store itself, so it needs its own exclusion from the orphan sweep
-// (see Piper.cleanupOrphanArtifacts).
-const artifactCacheDirName = "artifact-cache"
-
 // cleanupOrphanArtifacts sweeps outputDir for run directories with no
 // matching DB row, excluding:
 //   - the default serving model dir (outputDir/models) when Serving.ModelDir
 //     wasn't overridden to point elsewhere — see modelDir().
-//   - artifactCacheDirName, the local staging cache for remote-store reads.
+//   - artifact.CacheDirName, the local staging cache the artifact resolver
+//     uses for remote-store reads.
 //   - ".results", the fixed bookkeeping directory the baremetal and docker
 //     direct-runtime drivers create directly under OutputDir to hold each
 //     task's result/task JSON — not a run's workspace, and not swept even
@@ -480,7 +436,7 @@ const artifactCacheDirName = "artifact-cache"
 // outputDir against an absolute root made filepath.Rel fail and silently
 // skip the exclusion, which is what let the sweep delete the store itself.
 func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
-	exclude := []string{artifactCacheDirName, ".results"}
+	exclude := []string{artifact.CacheDirName, ".results"}
 	if p.cfg.Serving.ModelDir == "" {
 		exclude = append(exclude, "models")
 	}
@@ -605,181 +561,6 @@ func (p *Piper) reconcileBackend(ctx context.Context) {
 	})
 }
 
-func (p *Piper) listRunsAcrossProjects(ctx context.Context, filter run.RunFilter) ([]*run.Run, error) {
-	projects, err := p.repos.Project.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var runs []*run.Run
-	for _, projectRecord := range projects {
-		projectRuns, err := p.repos.Run.List(ctx, projectRecord.ID, filter)
-		if err != nil {
-			return nil, err
-		}
-		runs = append(runs, projectRuns...)
-	}
-	return runs, nil
-}
-
-func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
-	runs, err := p.listRunsAcrossProjects(ctx, run.RunFilter{Status: run.StatusRunning})
-	if err != nil {
-		slog.Warn("recover running runs failed", "err", err)
-		return
-	}
-	now := time.Now().UTC()
-	for _, r := range runs {
-		if p.queue.IsTracking(r.ID) {
-			// Still actively being processed by this queue instance — leave
-			// it alone. Without this guard, calling this function again
-			// after startup (see runCleanup's periodic reconciler pass)
-			// would re-add a live run and corrupt its in-memory state.
-			continue
-		}
-		if r.PipelineYAML == "" {
-			// No YAML — can't reconstruct DAG, mark failed.
-			if err := p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now); err != nil {
-				slog.Warn("recover run failed", "run_id", r.ID, "err", err)
-			}
-			continue
-		}
-		pl, err := p.Parse([]byte(r.PipelineYAML))
-		if err != nil {
-			slog.Warn("recover: parse pipeline failed", "run_id", r.ID, "err", err)
-			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
-			continue
-		}
-		dag, err := pipeline.BuildDAG(pl)
-		if err != nil {
-			slog.Warn("recover: build dag failed", "run_id", r.ID, "err", err)
-			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
-			continue
-		}
-		steps, _ := p.repos.Step.List(ctx, r.ProjectID, r.ID)
-		var recovered []queue.RecoveredStep
-		for _, s := range steps {
-			switch s.Status {
-			case "done", "skipped":
-				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, Done: true})
-			case "running":
-				startedAt := now
-				if s.StartedAt != nil {
-					startedAt = *s.StartedAt
-				}
-				recovered = append(recovered, queue.RecoveredStep{Name: s.StepName, StartedAt: startedAt, Attempts: s.Attempts})
-			}
-		}
-		var params map[string]any
-		if r.ParamsJSON != "" {
-			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
-		}
-		outputDir := runWorkspaceDir(p.cfg.OutputDir, r.ID)
-		envByStep, err := p.resolvePipelineCredentialEnv(ctx, r.ProjectID, r.ID, pl)
-		if err != nil {
-			slog.Warn("recover: resolve credential env failed", "run_id", r.ID, "err", err)
-			_ = p.repos.Run.UpdateStatus(ctx, r.ProjectID, r.ID, run.StatusFailed, &now)
-			continue
-		}
-		p.queue.RecoverWithEnv(ctx, r.ProjectID, pl, dag, r.ID, ".", outputDir, proto.BuiltinVars{ScheduledAt: r.ScheduledAt}, params, recovered, envByStep)
-	}
-}
-
-// retentionScheduleBatch bounds how many overflow runs cleanupScheduleRetention
-// deletes per schedule per cycle, so a schedule with a very long backlog (e.g.
-// max_runs just lowered on a schedule with years of history) drains over
-// several 15s cycles instead of loading its entire run history in one pass.
-const retentionScheduleBatch = 200
-
-func (p *Piper) cleanupRetention(ctx context.Context) {
-	runTTL := p.cfg.Retention.RunTTL
-	artifactTTL := p.cfg.Retention.ArtifactTTL
-	if runTTL > 0 || artifactTTL > 0 {
-		// Only pull runs old enough to possibly match *either* TTL — the
-		// smaller of the two positive values is the earliest cutoff either
-		// branch below could act on. ListTerminalBefore does this filtering
-		// in SQL (indexed on (project_id, ended_at)) instead of loading every
-		// run a project has ever had, terminal or not, expired or not.
-		cutoffTTL := runTTL
-		if artifactTTL > 0 && (cutoffTTL <= 0 || artifactTTL < cutoffTTL) {
-			cutoffTTL = artifactTTL
-		}
-		now := time.Now().UTC()
-		cutoff := now.Add(-cutoffTTL)
-		projects, err := p.repos.Project.List(ctx)
-		if err != nil {
-			slog.Warn("retention list projects failed", "err", err)
-		}
-		for _, projectRecord := range projects {
-			runs, err := p.repos.Run.ListTerminalBefore(ctx, projectRecord.ID, cutoff)
-			if err != nil {
-				slog.Warn("retention list terminal runs failed", "project_id", projectRecord.ID, "err", err)
-				continue
-			}
-			for _, r := range runs {
-				if runTTL > 0 && r.EndedAt.Before(now.Add(-runTTL)) {
-					if err := p.deleteRunWithArtifacts(project.WithContext(ctx, project.Context{ID: r.ProjectID}), r.ID); err != nil {
-						slog.Warn("retention delete run failed", "run_id", r.ID, "err", err)
-					}
-					continue
-				}
-				if artifactTTL > 0 && r.EndedAt.Before(now.Add(-artifactTTL)) {
-					// Store only: artifactTTL retires the artifact repository
-					// copy, not the run's own workspace/record — that's
-					// runTTL's job, above (fed.md §13.6).
-					if err := deleteArtifactsFromStore(ctx, p.store, r.ID); err != nil {
-						slog.Warn("retention delete artifacts failed", "run_id", r.ID, "err", err)
-					}
-				}
-			}
-		}
-	}
-	p.cleanupScheduleRetention(ctx)
-}
-
-func (p *Piper) cleanupScheduleRetention(ctx context.Context) {
-	schedules, err := p.repos.Schedule.ListWithMaxRuns(ctx)
-	if err != nil {
-		slog.Warn("retention list schedules with max_runs failed", "err", err)
-		return
-	}
-	for _, sc := range schedules {
-		// List returns runs newest-first (started_at DESC); we keep the first
-		// max_runs terminal runs and delete the remainder — a non-terminal run
-		// doesn't consume a "kept" slot, exactly as before. The fetch is now
-		// bounded to max_runs+retentionScheduleBatch instead of the schedule's
-		// entire run history: if the kept quota isn't reached within that
-		// window (only possible with an implausible number of non-terminal
-		// runs interspersed among the newest rows), this cycle simply deletes
-		// nothing for this schedule rather than risk treating an uncounted
-		// run as overflow — safe to pick up next cycle.
-		runs, err := p.repos.Run.List(ctx, sc.ProjectID, run.RunFilter{
-			ScheduleID: sc.ID,
-			Limit:      sc.MaxRuns + retentionScheduleBatch,
-		})
-		if err != nil {
-			slog.Warn("retention list schedule runs failed", "project_id", sc.ProjectID, "schedule_id", sc.ID, "err", err)
-			continue
-		}
-		kept := 0
-		deleteIDs := make([]string, 0)
-		for _, r := range runs {
-			if r.EndedAt == nil || r.Status == run.StatusRunning || r.Status == run.StatusScheduled {
-				continue
-			}
-			if kept < sc.MaxRuns {
-				kept++
-				continue
-			}
-			deleteIDs = append(deleteIDs, r.ID)
-		}
-		if len(deleteIDs) > 0 {
-			if err := p.deleteRunsWithArtifacts(project.WithContext(ctx, project.Context{ID: sc.ProjectID}), deleteIDs); err != nil {
-				slog.Warn("retention delete schedule runs failed", "project_id", sc.ProjectID, "schedule_id", sc.ID, "count", len(deleteIDs), "err", err)
-			}
-		}
-	}
-}
-
 // queueDrainGrace bounds how long Close waits for the queue's own in-flight
 // goroutines (dispatch calls, fired timeout/retry/recovery-grace timers) to
 // finish flushing before giving up and tearing down the DB out from under
@@ -888,7 +669,7 @@ func (p *Piper) runWithConfiguredBackend(ctx context.Context, yamlBytes []byte, 
 		}
 	}
 	projectCtx := project.WithContext(ctx, project.Context{ID: projectID})
-	runID, err := p.startRunFromAPI(projectCtx, string(yamlBytes), opts.Params, opts.Vars, "")
+	runID, err := p.runs.StartRunFromAPI(projectCtx, string(yamlBytes), opts.Params, opts.Vars, "")
 	if err != nil {
 		return nil, err
 	}
@@ -957,122 +738,6 @@ func (p *Piper) buildRunResult(ctx context.Context, projectID, runID string) (*p
 	return result, nil
 }
 
-// StartRunOptions holds parameters for enqueuing a new distributed run.
-type StartRunOptions struct {
-	RunID      string
-	ProjectID  string
-	ScheduleID string
-	Experiment string
-	Params     map[string]any
-	Vars       BuiltinVars
-	YAML       string // raw YAML, persisted to DB
-}
-
-// runWorkspaceDir returns the Workspace root for a run (docs/backend/develop.md
-// "Workspace vs. Artifact Repository"): OutputDir/<runID>. Per-step execution
-// and logs live under <step> subdirectories of this path — see runner.go's
-// stepOutputDir, the directory a Command step actually executes in and the
-// one uploadOutputs later reads "outputs:" files from.
-func runWorkspaceDir(outputDirBase, runID string) string {
-	return filepath.Join(outputDirBase, runID)
-}
-
-// startRun is the single entry point for enqueuing a pipeline run.
-// Both the HTTP API and the scheduler go through here.
-// It creates the DB record, initialises step rows, enqueues the DAG, and fires OnRunStart.
-func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeline.DAG, opts StartRunOptions) (string, error) {
-	if err := pipeline.ValidateRuntime(pl, p.cfg.Runtime.Type); err != nil {
-		return "", err
-	}
-	runID := opts.RunID
-	if runID == "" {
-		runID = genRunID()
-	}
-	outputDir := runWorkspaceDir(p.cfg.OutputDir, runID)
-	now := time.Now().UTC()
-	if opts.Vars.RunStartedAt == nil {
-		opts.Vars.RunStartedAt = &now
-	}
-
-	r := &run.Run{
-		ID:           runID,
-		ProjectID:    opts.ProjectID,
-		ScheduleID:   opts.ScheduleID,
-		Experiment:   opts.Experiment,
-		PipelineName: pl.Metadata.Name,
-		Status:       run.StatusRunning,
-		StartedAt:    now,
-		ScheduledAt:  opts.Vars.ScheduledAt,
-		PipelineYAML: opts.YAML,
-		ParamsJSON:   encodeParams(opts.Params),
-	}
-	if identity, ok := security.IdentityFromContext(ctx); ok {
-		r.CreatedBy = identity.ID
-	}
-	if err := p.repos.Run.Create(ctx, r); err != nil {
-		return "", fmt.Errorf("create run: %w", err)
-	}
-
-	for _, s := range pl.Spec.Steps {
-		if err := p.repos.Step.Upsert(ctx, &run.Step{
-			ProjectID: opts.ProjectID,
-			RunID:     runID,
-			StepName:  s.Name,
-			Status:    "pending",
-		}); err != nil {
-			slog.Warn("init step failed", "run_id", runID, "step", s.Name, "err", err)
-		}
-	}
-
-	envByStep, err := p.resolvePipelineCredentialEnv(ctx, opts.ProjectID, runID, pl)
-	if err != nil {
-		now := time.Now().UTC()
-		_ = p.repos.Run.UpdateStatus(ctx, opts.ProjectID, runID, run.StatusFailed, &now)
-		return "", err
-	}
-
-	p.queue.AddWithEnv(ctx, opts.ProjectID, pl, dag, runID, ".", outputDir, opts.Vars, opts.Params, envByStep)
-	slog.Info("event", "type", "run.started", "run_id", runID, "pipeline", pl.Metadata.Name)
-
-	if p.cfg.Hooks.OnRunStart != nil {
-		go p.cfg.Hooks.OnRunStart(ctx, runID, pl)
-	}
-
-	return runID, nil
-}
-
-// startSweep submits multiple runs from one YAML with different params.
-// On partial failure it cancels already-submitted runs (best-effort).
-func (p *Piper) startSweep(ctx context.Context, projectID string, req run.SweepRequest) (run.SweepResponse, error) {
-	pl, err := pipeline.Parse([]byte(req.YAML))
-	if err != nil {
-		return run.SweepResponse{}, fmt.Errorf("parse pipeline: %w", err)
-	}
-	dag, err := pipeline.BuildDAG(pl)
-	if err != nil {
-		return run.SweepResponse{}, fmt.Errorf("build dag: %w", err)
-	}
-
-	runIDs := make([]string, 0, len(req.Runs))
-	for i, trial := range req.Runs {
-		runID, err := p.startRun(ctx, pl, dag, StartRunOptions{
-			ProjectID:  projectID,
-			Experiment: req.Experiment,
-			Params:     trial.Params,
-			YAML:       req.YAML,
-		})
-		if err != nil {
-			now := time.Now().UTC()
-			for _, id := range runIDs {
-				_ = p.repos.Run.UpdateStatus(ctx, projectID, id, run.StatusCanceled, &now)
-			}
-			return run.SweepResponse{}, fmt.Errorf("trial %d: %w", i, err)
-		}
-		runIDs = append(runIDs, runID)
-	}
-	return run.SweepResponse{Experiment: req.Experiment, RunIDs: runIDs}, nil
-}
-
 // Parse parses YAML only (for validation without execution)
 func (p *Piper) Parse(yamlBytes []byte) (*pipeline.Pipeline, error) {
 	return pipeline.Parse(yamlBytes)
@@ -1091,78 +756,6 @@ func (p *Piper) sourceConfig() srcfetch.Config {
 	}
 }
 
-// resolveGitEnv resolves git credentials for a step using priority:
-// credentialRef (explicit) > endpoint auto-match (lowest).
-// Returns nil env (no error) when no credential is configured.
-func (p *Piper) resolveGitEnv(ctx context.Context, projectID, runID, stepName, credentialRef, repoURL string) ([]string, error) {
-	if p.credentials != nil && strings.TrimSpace(credentialRef) != "" {
-		env, err := p.credentials.GitEnv(ctx, projectID, credentialRef, repoURL)
-		if err == nil {
-			slog.Info("git credential resolved",
-				"project_id", projectID,
-				"run_id", runID,
-				"step", stepName,
-				"repo", repoURL,
-				"credential", credentialRef,
-				"source", "explicit",
-			)
-		}
-		return env, err
-	}
-	// Auto-match: find credential whose endpoint covers repoURL.
-	if p.credentials != nil {
-		best, err := p.credentials.FindGitByRepo(ctx, projectID, repoURL)
-		if err != nil {
-			return nil, err
-		}
-		if best != nil {
-			env, envErr := p.credentials.GitEnv(ctx, projectID, best.Name, repoURL)
-			if envErr == nil {
-				slog.Info("git credential resolved",
-					"project_id", projectID,
-					"run_id", runID,
-					"step", stepName,
-					"repo", repoURL,
-					"credential", best.Name,
-					"source", "endpoint-auto-match",
-				)
-			}
-			return env, envErr
-		}
-	}
-	return nil, nil
-}
-
-func (p *Piper) resolvePipelineCredentialEnv(ctx context.Context, projectID, runID string, pl *pipeline.Pipeline) (map[string][]string, error) {
-	envByStep := map[string][]string{}
-	for _, step := range pl.Spec.Steps {
-		var env []string
-
-		// Git credential resolution: credentialRef > auto-match by endpoint.
-		if strings.TrimSpace(step.Run.Source) == "git" && strings.TrimSpace(step.Run.Repo) != "" {
-			gitEnv, err := p.resolveGitEnv(ctx, projectID, runID, step.Name, step.Run.CredentialRef, step.Run.Repo)
-			if err != nil {
-				return nil, fmt.Errorf("step %q git credential: %w", step.Name, err)
-			}
-			env = append(env, gitEnv...)
-		}
-
-		// options.env: plain values + credentialRef resolution.
-		if len(step.Options.Env) > 0 {
-			optEnv, err := p.credentials.ResolveEnv(ctx, projectID, step.Options.Env)
-			if err != nil {
-				return nil, fmt.Errorf("step %q env: %w", step.Name, err)
-			}
-			env = append(env, optEnv...)
-		}
-
-		if len(env) > 0 {
-			envByStep[step.Name] = env
-		}
-	}
-	return envByStep, nil
-}
-
 // SetBackend registers an external execution environment such as a K8s Job launcher.
 // When set, Dispatch is called immediately whenever a task becomes ready.
 // Setting nil disables task dispatch until another backend is configured.
@@ -1178,118 +771,8 @@ func (p *Piper) Config() Config {
 // Repos returns the underlying store.Repos, useful for admin CLI commands.
 func (p *Piper) Repos() *storemod.Repos { return p.repos }
 
-// piperArtifactResolver implements artifact.Resolver for the Piper instance.
-type piperArtifactResolver struct {
-	runRepo    run.Repository
-	outputDir  string
-	storageURL string        // resolved storage URL; empty means local-only
-	store      storage.Store // nil when storage is disabled
-}
-
-func (r *piperArtifactResolver) Resolve(ctx context.Context, pipeline, step, artName, runRef string, target artifact.Target) (artifact.Resolved, error) {
-	runID := runRef
-	if runID == "latest" || runID == "" {
-		projectContext, _ := project.FromContext(ctx)
-		latest, err := r.runRepo.GetLatestSuccessful(ctx, projectContext.ID, pipeline)
-		if err != nil {
-			return artifact.Resolved{}, fmt.Errorf("lookup latest run for pipeline %q: %w", pipeline, err)
-		}
-		if latest == nil {
-			return artifact.Resolved{}, fmt.Errorf("no successful run found for pipeline %q", pipeline)
-		}
-		runID = latest.ID
-	}
-
-	artKey := fmt.Sprintf("%s/%s/%s", runID, step, artName)
-
-	switch target {
-	case artifact.TargetS3:
-		uri, err := r.artifactURI(artKey)
-		if err != nil {
-			return artifact.Resolved{}, err
-		}
-		return artifact.Resolved{RunID: runID, S3URI: uri}, nil
-	case artifact.TargetRemote:
-		resolved := artifact.Resolved{RunID: runID, ArtifactKey: artKey}
-		if strings.HasPrefix(r.storageURL, "s3://") {
-			uri, err := r.artifactURI(artKey)
-			if err != nil {
-				return artifact.Resolved{}, err
-			}
-			resolved.S3URI = uri
-			resolved.RemoteURI = uri
-		}
-		if r.storageURL == "" {
-			return artifact.Resolved{}, fmt.Errorf("remote artifact delivery requires storage")
-		}
-		return resolved, nil
-	default:
-		return r.resolveLocal(ctx, runID, step, artKey)
-	}
-}
-
-// resolveLocal produces a local filesystem directory for artKey, preferring
-// the artifact repository (Store) over the ephemeral per-run workspace
-// (r.outputDir/runID/step) — the workspace is not guaranteed to survive
-// artifactTTL cleanup, and with a non-local store the runner already deletes
-// it right after upload (see pkg/pipeline/worker/agent's cleanWorkdir), so
-// it cannot be treated as a durable copy (fed.md §13.6).
-func (r *piperArtifactResolver) resolveLocal(ctx context.Context, runID, step, artKey string) (artifact.Resolved, error) {
-	if ls, ok := r.store.(*storage.LocalStore); ok {
-		// Same host, same disk: the store already holds a durable copy under
-		// this exact key — use it directly, no copy needed.
-		return artifact.Resolved{RunID: runID, LocalPath: filepath.Join(ls.Root(), artKey)}, nil
-	}
-	if r.store != nil {
-		// Remote store (S3/HTTP/cloud): stage a local copy once, under a
-		// cache directory distinct from both the workspace and the store,
-		// and reuse it on subsequent resolutions of the same artifact
-		// instead of re-downloading every time.
-		dest := filepath.Join(r.outputDir, artifactCacheDirName, filepath.FromSlash(artKey))
-		if _, err := os.Stat(dest); err == nil {
-			return artifact.Resolved{RunID: runID, LocalPath: dest}, nil
-		}
-		if err := storage.DownloadDir(ctx, r.store, artKey+"/", dest); err != nil {
-			return artifact.Resolved{}, fmt.Errorf("stage local copy of %s: %w", artKey, err)
-		}
-		return artifact.Resolved{RunID: runID, LocalPath: dest}, nil
-	}
-	// No store configured at all: only the raw workspace copy exists.
-	return artifact.Resolved{RunID: runID, LocalPath: filepath.Join(r.outputDir, runID, step)}, nil
-}
-
-// artifactURI constructs a URI for the artifact key based on the configured storage.
-func (r *piperArtifactResolver) artifactURI(artKey string) (string, error) {
-	if r.storageURL == "" {
-		return "", fmt.Errorf("artifact URI requires a storage backend (configure storage.url or s3)")
-	}
-	u, err := url.Parse(r.storageURL)
-	if err != nil {
-		return "", err
-	}
-	switch u.Scheme {
-	case "s3":
-		return "s3://" + u.Host + "/" + artKey, nil
-	case "http", "https":
-		return "", fmt.Errorf("remote serving requires s3 storage; HTTP artifact storage is not supported")
-	default:
-		return "", fmt.Errorf("storage backend %q cannot provide artifact URIs for remote serving", u.Scheme)
-	}
-}
-
 func (p *Piper) SourceConfig() srcfetch.Config {
 	return p.sourceConfig()
-}
-
-func encodeParams(params map[string]any) string {
-	if params == nil {
-		return "{}"
-	}
-	b, err := json.Marshal(params)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
 }
 
 // modelDir returns the local directory for a serving model.

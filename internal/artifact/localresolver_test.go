@@ -1,4 +1,4 @@
-package piper
+package artifact
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/pkg/storage"
 )
 
@@ -24,7 +23,7 @@ func TestArtifactURIForRemoteServing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := (&piperArtifactResolver{storageURL: tt.storageURL}).artifactURI("run-1/train/model")
+			got, err := (&localResolver{storageURL: tt.storageURL}).artifactURI("run-1/train/model")
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("artifactURI() error = %v, want %q", err, tt.wantErr)
@@ -63,8 +62,8 @@ func TestResolveLocal_LocalStorePrefersRepositoryOverWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := &piperArtifactResolver{outputDir: outputDir, store: ls}
-	resolved, err := r.Resolve(ctx, "pl", "train", "model", "run-1", artifact.TargetLocal)
+	r := &localResolver{outputDir: outputDir, store: ls}
+	resolved, err := r.Resolve(ctx, "pl", "train", "model", "run-1", TargetLocal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +84,12 @@ func TestResolveLocal_RemoteStoreStagesLocalCacheAndReusesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := &piperArtifactResolver{outputDir: outputDir, store: ms}
-	resolved, err := r.Resolve(ctx, "pl", "train", "model", "run-1", artifact.TargetLocal)
+	r := &localResolver{outputDir: outputDir, store: ms}
+	resolved, err := r.Resolve(ctx, "pl", "train", "model", "run-1", TargetLocal)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDir := filepath.Join(outputDir, artifactCacheDirName, "run-1", "train", "model")
+	wantDir := filepath.Join(outputDir, CacheDirName, "run-1", "train", "model")
 	if resolved.LocalPath != wantDir {
 		t.Fatalf("LocalPath = %q, want %q", resolved.LocalPath, wantDir)
 	}
@@ -109,7 +108,7 @@ func TestResolveLocal_RemoteStoreStagesLocalCacheAndReusesIt(t *testing.T) {
 	if err := ms.Delete(ctx, "run-1/train/model/weights.bin"); err != nil {
 		t.Fatal(err)
 	}
-	resolved2, err := r.Resolve(ctx, "pl", "train", "model", "run-1", artifact.TargetLocal)
+	resolved2, err := r.Resolve(ctx, "pl", "train", "model", "run-1", TargetLocal)
 	if err != nil {
 		t.Fatalf("second resolve should reuse the cache, got error: %v", err)
 	}
@@ -132,8 +131,8 @@ func TestResolveLocal_NoStoreFallsBackToWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := &piperArtifactResolver{outputDir: outputDir, store: nil}
-	resolved, err := r.Resolve(context.Background(), "pl", "train", "model", "run-1", artifact.TargetLocal)
+	r := &localResolver{outputDir: outputDir, store: nil}
+	resolved, err := r.Resolve(context.Background(), "pl", "train", "model", "run-1", TargetLocal)
 	if err != nil {
 		t.Fatal(err)
 	}

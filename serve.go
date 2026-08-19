@@ -3,7 +3,6 @@ package piper
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,7 +21,6 @@ import (
 	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
-	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
@@ -209,7 +207,7 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	var projectCreator project.Creator
 	if homeID != "" && p.repos.Federation != nil {
 		projectCreator = func(ctx context.Context, value *project.Project, actorID string) error {
-			return p.createFederatedProject(ctx, homeID, value, actorID)
+			return p.federationSvc.CreateProject(ctx, homeID, value, actorID)
 		}
 	}
 	project.NewHandlerWithDirectory(p.repos.Project, p.cfg.Auth.Authorizer, projectOwner, projectCreator).RegisterRoutes(userAPI)
@@ -656,98 +654,35 @@ func (p *Piper) eventsHandler(c *gin.Context) {
 	})
 }
 
-func genRunID() string {
-	return uuid.NewString()
-}
-
-func genScheduleID() string {
-	return uuid.NewString()
-}
-
-// startRunFromAPI handles creating a run from the HTTP API, including
-// future-scheduled runs and immediate dispatch.
-func (p *Piper) startRunFromAPI(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-	return p.startRunFromAPIWithID(ctx, "", yaml, params, vars, experiment)
-}
-
-func (p *Piper) startRunFromAPIWithID(ctx context.Context, runID, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-	projectContext, _ := project.FromContext(ctx)
-
-	pl, err := p.Parse([]byte(yaml))
-	if err != nil {
-		return "", fmt.Errorf("parse: %w", err)
-	}
-
-	dag, err := pipeline.BuildDAG(pl)
-	if err != nil {
-		return "", fmt.Errorf("build dag: %w", err)
-	}
-
-	// Future-scheduled runs are stored but not enqueued yet.
-	now := time.Now().UTC()
-	if vars.ScheduledAt != nil && vars.ScheduledAt.After(now) {
-		if runID == "" {
-			runID = genRunID()
-		}
-		newRun := &run.Run{
-			ID:           runID,
-			ProjectID:    projectContext.ID,
-			Experiment:   experiment,
-			PipelineName: pl.Metadata.Name,
-			Status:       run.StatusScheduled,
-			StartedAt:    now,
-			ScheduledAt:  vars.ScheduledAt,
-			PipelineYAML: yaml,
-			ParamsJSON:   encodeParams(params),
-		}
-		if identity, ok := security.IdentityFromContext(ctx); ok {
-			newRun.CreatedBy = identity.ID
-		}
-		if err := p.repos.Run.Create(ctx, newRun); err != nil {
-			return "", err
-		}
-		return runID, nil
-	}
-
-	return p.startRun(ctx, pl, dag, StartRunOptions{
-		RunID:      runID,
-		ProjectID:  projectContext.ID,
-		Experiment: experiment,
-		Params:     params,
-		Vars:       vars,
-		YAML:       yaml,
-	})
-}
-
 // StartRun is the exported entry point for creating a run from the HTTP API.
 func (p *Piper) StartRun(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars) (string, error) {
-	return p.startRunFromAPI(ctx, yaml, params, vars, "")
+	return p.runs.StartRunFromAPI(ctx, yaml, params, vars, "")
 }
 
 // CancelRun cancels a queued or running run.
 func (p *Piper) CancelRun(ctx context.Context, runID string) error {
-	projectContext, _ := project.FromContext(ctx)
-	return p.queue.Cancel(ctx, projectContext.ID, runID)
+	return p.runs.CancelRun(ctx, runID)
 }
 
 // RerunRun re-executes a run, optionally limiting to failed steps only.
 func (p *Piper) RerunRun(ctx context.Context, runID string, failedOnly bool) (string, error) {
-	return p.rerunRun(ctx, runID, failedOnly)
+	return p.runs.RerunRun(ctx, runID, failedOnly)
 }
 
 // RetryStep retries a single failed step within a run.
 func (p *Piper) RetryStep(ctx context.Context, runID, stepName string) (string, error) {
-	return p.retryStep(ctx, runID, stepName)
+	return p.runs.RetryStep(ctx, runID, stepName)
 }
 
 // DeleteRun deletes a run and its artifacts.
 func (p *Piper) DeleteRun(ctx context.Context, runID string) error {
-	return p.deleteRunWithArtifacts(ctx, runID)
+	return p.runs.DeleteRunWithArtifacts(ctx, runID)
 }
 
-func (p *Piper) cancelRun(ctx context.Context, runID string) error {
-	projectContext, _ := project.FromContext(ctx)
-	return p.queue.Cancel(ctx, projectContext.ID, runID)
+// BackfillSchedule creates runs for every cron tick a schedule would have
+// fired in [from, to).
+func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.Time) ([]string, error) {
+	return p.runs.BackfillSchedule(ctx, id, from, to)
 }
 
 type piperCollector struct {
@@ -759,7 +694,7 @@ func (c *piperCollector) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (c *piperCollector) Collect(ch chan<- prometheus.Metric) {
-	runs, err := c.p.listRunsAcrossProjects(context.Background(), run.RunFilter{})
+	runs, err := c.p.runs.ListRunsAcrossProjects(context.Background(), run.RunFilter{})
 	if err != nil {
 		slog.Error("collect piper metrics", "err", err)
 		return
@@ -801,140 +736,6 @@ func (p *Piper) metricsHandler(c *gin.Context) {
 	}
 	gatherers := prometheus.Gatherers{prometheus.DefaultGatherer, registry}
 	promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}).ServeHTTP(c.Writer, c.Request)
-}
-
-func (p *Piper) rerunRun(ctx context.Context, runID string, failedOnly bool) (string, error) {
-	projectContext, _ := project.FromContext(ctx)
-	prev, err := p.repos.Run.Get(ctx, projectContext.ID, runID)
-	if err != nil || prev == nil {
-		return "", fmt.Errorf("run %q not found", runID)
-	}
-	if prev.PipelineYAML == "" {
-		return "", fmt.Errorf("run %q has no stored pipeline yaml", runID)
-	}
-	var params map[string]any
-	if prev.ParamsJSON != "" {
-		_ = json.Unmarshal([]byte(prev.ParamsJSON), &params)
-	}
-	pl, err := p.Parse([]byte(prev.PipelineYAML))
-	if err != nil {
-		return "", fmt.Errorf("parse previous run yaml: %w", err)
-	}
-	if failedOnly {
-		steps, err := p.repos.Step.List(ctx, projectContext.ID, runID)
-		if err != nil {
-			return "", err
-		}
-		failed := map[string]bool{}
-		for _, s := range steps {
-			if s.Status == "failed" {
-				failed[s.StepName] = true
-			}
-		}
-		if len(failed) == 0 {
-			return "", fmt.Errorf("run %q has no failed steps", runID)
-		}
-		var filtered []pipeline.Step
-		for _, s := range pl.Spec.Steps {
-			if failed[s.Name] {
-				s.DependsOn = nil
-				filtered = append(filtered, s)
-			}
-		}
-		pl.Spec.Steps = filtered
-	}
-	dag, err := pipeline.BuildDAG(pl)
-	if err != nil {
-		return "", fmt.Errorf("build dag: %w", err)
-	}
-	return p.startRun(ctx, pl, dag, StartRunOptions{
-		ProjectID: prev.ProjectID,
-		Params:    params,
-		YAML:      prev.PipelineYAML,
-	})
-}
-
-func (p *Piper) retryStep(ctx context.Context, runID, stepName string) (string, error) {
-	projectContext, _ := project.FromContext(ctx)
-	prev, err := p.repos.Run.Get(ctx, projectContext.ID, runID)
-	if err != nil || prev == nil {
-		return "", fmt.Errorf("run %q not found", runID)
-	}
-	steps, err := p.repos.Step.List(ctx, projectContext.ID, runID)
-	if err != nil {
-		return "", err
-	}
-	foundFailed := false
-	for _, s := range steps {
-		if s.StepName == stepName && s.Status == "failed" {
-			foundFailed = true
-			break
-		}
-	}
-	if !foundFailed {
-		return "", fmt.Errorf("step %q is not failed in run %q", stepName, runID)
-	}
-	if prev.PipelineYAML == "" {
-		return "", fmt.Errorf("run %q has no stored pipeline yaml", runID)
-	}
-	var params map[string]any
-	if prev.ParamsJSON != "" {
-		_ = json.Unmarshal([]byte(prev.ParamsJSON), &params)
-	}
-	pl, err := p.Parse([]byte(prev.PipelineYAML))
-	if err != nil {
-		return "", fmt.Errorf("parse previous run yaml: %w", err)
-	}
-	for _, s := range pl.Spec.Steps {
-		if s.Name == stepName {
-			s.DependsOn = nil
-			pl.Spec.Steps = []pipeline.Step{s}
-			dag, err := pipeline.BuildDAG(pl)
-			if err != nil {
-				return "", fmt.Errorf("build dag: %w", err)
-			}
-			return p.startRun(ctx, pl, dag, StartRunOptions{ProjectID: prev.ProjectID, Params: params, YAML: prev.PipelineYAML})
-		}
-	}
-	return "", fmt.Errorf("step %q not found in pipeline yaml", stepName)
-}
-
-// deleteRunWithArtifacts deletes the run record and then its artifacts.
-// The DB row goes first: it's the authoritative reference, and losing it
-// after a successful artifact delete would just mean a 404 on a run that's
-// genuinely gone. Doing it the other way — as this used to — risked the
-// opposite: an artifact-delete failure left the DB row erased anyway, so the
-// artifacts became permanently unreachable orphans (nothing left pointing at
-// them). cleanupOrphanArtifacts sweeps up whatever this order still misses
-// (e.g. a crash between the two steps).
-func (p *Piper) deleteRunWithArtifacts(ctx context.Context, runID string) error {
-	projectContext, _ := project.FromContext(ctx)
-	if err := p.repos.DeleteRun(ctx, projectContext.ID, runID); err != nil {
-		return err
-	}
-	if err := deleteArtifactsFromStore(ctx, p.store, runID); err != nil {
-		slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
-	}
-	if err := deleteRunWorkspace(p.cfg.OutputDir, runID); err != nil {
-		slog.Warn("delete run workspace failed", "run_id", runID, "err", err)
-	}
-	return nil
-}
-
-func (p *Piper) deleteRunsWithArtifacts(ctx context.Context, runIDs []string) error {
-	projectContext, _ := project.FromContext(ctx)
-	if err := p.repos.DeleteRuns(ctx, projectContext.ID, runIDs); err != nil {
-		return err
-	}
-	for _, runID := range runIDs {
-		if err := deleteArtifactsFromStore(ctx, p.store, runID); err != nil {
-			slog.Warn("delete artifacts failed", "run_id", runID, "err", err)
-		}
-		if err := deleteRunWorkspace(p.cfg.OutputDir, runID); err != nil {
-			slog.Warn("delete run workspace failed", "run_id", runID, "err", err)
-		}
-	}
-	return nil
 }
 
 // ── piperRunHooks — bridges Hooks into run.RunHooks ──────────────────────────

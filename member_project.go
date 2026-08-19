@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/loykin/piper/internal/httpx"
+	"github.com/loykin/piper/internal/runlifecycle"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -46,7 +47,7 @@ func (p *Piper) newMemberProjectRouter() http.Handler {
 	viewerMgr.RegisterDriver(viewertb.New())
 	viewerMgr.RegisterDriver(viewerhtml.New())
 	handlers := p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
-		return p.startRunFromAPI(ctx, yaml, params, vars, experiment)
+		return p.runs.StartRunFromAPI(ctx, yaml, params, vars, experiment)
 	})
 	handlers.serving.RegisterProxyRoutes(projectAPI)
 	handlers.notebook.RegisterProxyRoutes(projectAPI)
@@ -75,9 +76,9 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 			return p.Parse(yaml)
 		},
 		Sched:    p.scheduler,
-		NextTime: nextScheduleTime,
+		NextTime: runlifecycle.NextScheduleTime,
 		Backfill: p.BackfillSchedule,
-		GenID:    genScheduleID,
+		GenID:    runlifecycle.GenScheduleID,
 	}).RegisterRoutes(projectAPI)
 
 	servingHandler := serving.NewHandler(serving.HandlerDeps{
@@ -119,8 +120,8 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 			return p.Parse(yaml)
 		},
 		StartRun: startRun,
-		NextTime: nextScheduleTime,
-		GenID:    genScheduleID,
+		NextTime: runlifecycle.NextScheduleTime,
+		GenID:    runlifecycle.GenScheduleID,
 	}).RegisterRoutes(projectAPI)
 
 	return memberProjectHandlers{serving: servingHandler, notebook: notebookHandler, viewer: viewerHandler}

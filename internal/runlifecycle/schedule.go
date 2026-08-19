@@ -1,4 +1,4 @@
-package piper
+package runlifecycle
 
 import (
 	"context"
@@ -7,16 +7,20 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/schedule"
-	"github.com/robfig/cron/v3"
 )
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-func nextScheduleTime(expr string, from time.Time) (time.Time, error) {
+// NextScheduleTime computes the next fire time for a cron expression after
+// from. Exported for member_project.go's schedule.HandlerDeps/
+// template.HandlerDeps wiring (NextTime).
+func NextScheduleTime(expr string, from time.Time) (time.Time, error) {
 	s, err := cronParser.Parse(expr)
 	if err != nil {
 		return time.Time{}, err
@@ -24,9 +28,12 @@ func nextScheduleTime(expr string, from time.Time) (time.Time, error) {
 	return s.Next(from.UTC()), nil
 }
 
-func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.Time) ([]string, error) {
+// BackfillSchedule creates runs for every cron tick a schedule would have
+// fired in [from, to), capped at 1000 runs. HTTP-triggered (schedule.Handler's
+// backfill route), not cron-triggered.
+func (m *Manager) BackfillSchedule(ctx context.Context, id string, from, to time.Time) ([]string, error) {
 	projectContext, _ := project.FromContext(ctx)
-	sc, err := p.repos.Schedule.Get(ctx, projectContext.ID, id)
+	sc, err := m.deps.ScheduleRepo.Get(ctx, projectContext.ID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +65,7 @@ func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.T
 			return nil, fmt.Errorf("backfill range creates more than 1000 runs")
 		}
 		intervalEnd := cronSchedule.Next(scheduledAt)
-		runID, err := p.startRun(ctx, pl, dag, StartRunOptions{
+		runID, err := m.StartRun(ctx, pl, dag, StartRunOptions{
 			ProjectID:  sc.ProjectID,
 			ScheduleID: sc.ID,
 			Params:     params,
@@ -76,10 +83,10 @@ func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.T
 	return runIDs, nil
 }
 
-// scheduleFired is the FireFunc passed to the in-memory Scheduler.
+// ScheduleFired is the FireFunc passed to the in-memory Scheduler.
 // Reads fresh state from DB on every call so the Scheduler holds no sc copies.
-func (p *Piper) scheduleFired(ctx context.Context, projectID, scheduleID string) {
-	sc, err := p.repos.Schedule.Get(ctx, projectID, scheduleID)
+func (m *Manager) ScheduleFired(ctx context.Context, projectID, scheduleID string) {
+	sc, err := m.deps.ScheduleRepo.Get(ctx, projectID, scheduleID)
 	if err != nil || sc == nil {
 		slog.Warn("scheduler: schedule not found", "id", scheduleID, "err", err)
 		return
@@ -95,28 +102,28 @@ func (p *Piper) scheduleFired(ctx context.Context, projectID, scheduleID string)
 	switch sc.ScheduleType {
 	case "cron":
 		plannedAt := sc.NextRunAt
-		next, err := nextScheduleTime(sc.CronExpr, now)
+		next, err := NextScheduleTime(sc.CronExpr, now)
 		if err != nil {
 			slog.Warn("scheduler: invalid cron expression, disabling", "id", scheduleID, "err", err)
-			_ = p.repos.Schedule.SetEnabled(ctx, projectID, scheduleID, false)
-			p.scheduler.Remove(scheduleID)
+			_ = m.deps.ScheduleRepo.SetEnabled(ctx, projectID, scheduleID, false)
+			m.deps.Scheduler.Remove(scheduleID)
 			return
 		}
 
 		// Misfire: planned tick predates this process start — decide fire or skip.
-		if plannedAt.Before(p.startedAt) {
-			switch p.cfg.Schedule.MisfirePolicy {
+		if plannedAt.Before(m.deps.StartedAt) {
+			switch m.deps.MisfirePolicy {
 			case "skip":
 				slog.Info("scheduler: misfire skipped (policy=skip)", "id", scheduleID, "planned_at", plannedAt)
-				if ok, err := p.repos.Schedule.AdvanceNextRun(ctx, projectID, scheduleID, plannedAt, next); !ok || err != nil {
+				if ok, err := m.deps.ScheduleRepo.AdvanceNextRun(ctx, projectID, scheduleID, plannedAt, next); !ok || err != nil {
 					slog.Warn("scheduler: AdvanceNextRun failed or lost race", "id", scheduleID, "err", err)
 				}
 				return
 			default: // run_once
-				grace := p.cfg.Schedule.MisfireGracePeriod
+				grace := m.deps.MisfireGracePeriod
 				if grace > 0 && now.Sub(plannedAt) > grace {
 					slog.Info("scheduler: misfire outside grace period, skipping", "id", scheduleID, "planned_at", plannedAt, "grace", grace)
-					if ok, err := p.repos.Schedule.AdvanceNextRun(ctx, projectID, scheduleID, plannedAt, next); !ok || err != nil {
+					if ok, err := m.deps.ScheduleRepo.AdvanceNextRun(ctx, projectID, scheduleID, plannedAt, next); !ok || err != nil {
 						slog.Warn("scheduler: AdvanceNextRun failed or lost race", "id", scheduleID, "err", err)
 					}
 					return
@@ -129,7 +136,7 @@ func (p *Piper) scheduleFired(ctx context.Context, projectID, scheduleID string)
 		}
 
 		// Atomic claim: disabled/deleted/modified/already-claimed → false
-		claimed, err := p.repos.Schedule.ClaimRun(ctx, projectID, scheduleID, plannedAt, now, next)
+		claimed, err := m.deps.ScheduleRepo.ClaimRun(ctx, projectID, scheduleID, plannedAt, now, next)
 		if err != nil {
 			slog.Warn("scheduler: ClaimRun error", "id", scheduleID, "err", err)
 			return
@@ -139,14 +146,14 @@ func (p *Piper) scheduleFired(ctx context.Context, projectID, scheduleID string)
 			return
 		}
 
-		p.fireSchedule(ctx, sc, proto.BuiltinVars{
+		m.fireSchedule(ctx, sc, proto.BuiltinVars{
 			ScheduledAt:     &plannedAt,
 			DataIntervalEnd: &next,
 		})
 
 	case "once", "immediate":
 		scheduledAt := sc.NextRunAt
-		claimed, err := p.repos.Schedule.ClaimOneShotRun(ctx, projectID, scheduleID, scheduledAt, now)
+		claimed, err := m.deps.ScheduleRepo.ClaimOneShotRun(ctx, projectID, scheduleID, scheduledAt, now)
 		if err != nil {
 			slog.Warn("scheduler: ClaimOneShotRun error", "id", scheduleID, "err", err)
 			return
@@ -155,13 +162,13 @@ func (p *Piper) scheduleFired(ctx context.Context, projectID, scheduleID string)
 			slog.Info("scheduler: one-shot already claimed or disabled, skipping", "id", scheduleID)
 			return
 		}
-		p.fireSchedule(ctx, sc, proto.BuiltinVars{ScheduledAt: &scheduledAt})
+		m.fireSchedule(ctx, sc, proto.BuiltinVars{ScheduledAt: &scheduledAt})
 	}
 }
 
 // fireSchedule parses the pipeline and starts the run. Called from a goroutine.
-func (p *Piper) fireSchedule(ctx context.Context, sc *schedule.Schedule, vars proto.BuiltinVars) {
-	pl, err := p.Parse([]byte(sc.PipelineYAML))
+func (m *Manager) fireSchedule(ctx context.Context, sc *schedule.Schedule, vars proto.BuiltinVars) {
+	pl, err := pipeline.Parse([]byte(sc.PipelineYAML))
 	if err != nil {
 		slog.Warn("parse schedule pipeline failed", "schedule_id", sc.ID, "err", err)
 		return
@@ -193,7 +200,7 @@ func (p *Piper) fireSchedule(ctx context.Context, sc *schedule.Schedule, vars pr
 			time.Sleep(delays[attempt-1])
 			slog.Info("scheduler: retrying run creation", "schedule_id", sc.ID, "attempt", attempt+1)
 		}
-		if _, err := p.startRun(ctx, pl, dag, opts); err != nil {
+		if _, err := m.StartRun(ctx, pl, dag, opts); err != nil {
 			lastErr = err
 			continue
 		}

@@ -514,11 +514,17 @@ export default function PipelineEditorPage() {
   }, [editorSourceKind, editorVolumeId, projectId])
 
   useEffect(() => {
-    setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults }))
+    // Only the Design tab drives yamlText. While the YAML tab is active, its
+    // textarea is the user's working draft — regenerating from Design state
+    // here (e.g. because the runtime-autofill effect above just nudged
+    // `defaults`) would silently clobber whatever they're mid-typing.
+    if (activeTab !== 'yaml') {
+      setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults }))
+    }
     setValidation(validatePipelineDraft({ name: pipelineName, steps: tasks, defaults }))
     if (!tasks.some(t => t.id === selectedId)) setSelectedId(tasks[0]?.id ?? '')
     if (editingId && !tasks.some(t => t.id === editingId)) setEditingId(null)
-  }, [pipelineName, tasks, pipelineSource, defaults, selectedId, editingId])
+  }, [pipelineName, tasks, pipelineSource, defaults, selectedId, editingId, activeTab])
 
   useEffect(() => {
     setPositions(prev => {

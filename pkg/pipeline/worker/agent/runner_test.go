@@ -150,6 +150,42 @@ func TestRun_failedStepOmitsFinalMetrics(t *testing.T) {
 	}
 }
 
+// TestRun_commandCwdMatchesWorkspaceOutputDir guards against regressing to a
+// bug where a Command step without an explicit source (task.WorkDir) ran with
+// cwd "." — the agent process's own launch directory — instead of its
+// isolated per-run/per-step workspace. A relative "outputs:" path is only
+// found by uploadOutputs when the step's command actually wrote it into that
+// same workspace directory.
+func TestRun_commandCwdMatchesWorkspaceOutputDir(t *testing.T) {
+	out := t.TempDir()
+	store := t.TempDir()
+	r, err := agent.New(agent.Config{OutputDir: out, StorageURL: "file://" + store})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	step := pipeline.Step{
+		Name: "task-1",
+		Run:  pipeline.Run{Command: []string{"sh", "-c", "echo model-marker > model.txt"}},
+		Outputs: []pipeline.Artifact{
+			{Name: "model", Path: "model.txt"},
+		},
+	}
+	task := makeTaskWithRunID(t, step, "run-workdir")
+	task.WorkDir = "." // what piper.go still sends; must not be trusted as-is
+
+	result := r.Run(context.Background(), task)
+	if result.Status != proto.TaskStatusDone {
+		t.Fatalf("run failed: %+v", result)
+	}
+
+	uploaded := filepath.Join(store, "run-workdir", "task-1", "model", "model.txt")
+	got := readFile(t, uploaded)
+	if got != "model-marker\n" {
+		t.Fatalf("artifact content = %q", got)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

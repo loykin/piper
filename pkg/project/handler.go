@@ -70,9 +70,12 @@ func (h *Handler) requireSystemAdmin() gin.HandlerFunc {
 			return
 		}
 		identity, _ := security.IdentityFromContext(c.Request.Context())
+		if identity == nil {
+			security.RespondUnauthorized(c, "")
+			return
+		}
 		if err := h.authorizer.AuthorizeSystem(c.Request.Context(), identity); err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": "system admin required"})
-			c.Abort()
+			security.RespondForbidden(c, "system admin required")
 			return
 		}
 		c.Next()
@@ -86,7 +89,7 @@ func (h *Handler) list(c *gin.Context) {
 	if h.authorizer != nil {
 		identity, ok := security.IdentityFromContext(ctx)
 		if !ok || identity == nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			security.RespondUnauthorized(c, "")
 			return
 		}
 		// The Authorizer owns system-admin policy; do not infer it from identity fields.
@@ -189,9 +192,13 @@ func (h *Handler) get(c *gin.Context) {
 	// In auth mode, verify the caller has access to this project.
 	if h.authorizer != nil {
 		identity, _ := security.IdentityFromContext(c.Request.Context())
+		if identity == nil {
+			security.RespondUnauthorized(c, "")
+			return
+		}
 		role, err := h.authorizer.ProjectRole(c.Request.Context(), identity, projectID)
 		if err != nil || role < security.ProjectRoleViewer {
-			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			security.RespondForbidden(c, "forbidden")
 			return
 		}
 	}

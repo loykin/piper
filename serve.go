@@ -520,8 +520,7 @@ func (p *Piper) authenticateUser() gin.HandlerFunc {
 		}
 		identity, err := authenticator.Authenticate(c.Request.Context(), c.Request)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-			c.Abort()
+			security.RespondUnauthorized(c, err.Error())
 			return
 		}
 		if identity != nil {
@@ -543,9 +542,12 @@ func (p *Piper) requireSystemAdmin() gin.HandlerFunc {
 			return
 		}
 		identity, _ := security.IdentityFromContext(c.Request.Context())
+		if identity == nil {
+			security.RespondUnauthorized(c, "")
+			return
+		}
 		if err := authorizer.AuthorizeSystem(c.Request.Context(), identity); err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": "system admin required"})
-			c.Abort()
+			security.RespondForbidden(c, "system admin required")
 			return
 		}
 		c.Next()
@@ -564,8 +566,7 @@ func (p *Piper) workloadTokenMiddleware() gin.HandlerFunc {
 		}
 		auth := c.Request.Header.Get("Authorization")
 		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid workload token"})
-			c.Abort()
+			security.RespondUnauthorized(c, "invalid workload token")
 			return
 		}
 		c.Next()
@@ -589,13 +590,11 @@ func (p *Piper) metricsAuth() gin.HandlerFunc {
 		}
 		identity, err := p.cfg.Auth.Authenticator.Authenticate(c.Request.Context(), c.Request)
 		if err != nil || identity == nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "metrics authentication required"})
-			c.Abort()
+			security.RespondUnauthorized(c, "metrics authentication required")
 			return
 		}
 		if err := p.cfg.Auth.Authorizer.AuthorizeSystem(c.Request.Context(), identity); err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": "system admin required"})
-			c.Abort()
+			security.RespondForbidden(c, "system admin required")
 			return
 		}
 		c.Request = c.Request.WithContext(security.WithIdentity(c.Request.Context(), identity))
@@ -610,17 +609,21 @@ func (p *Piper) eventsHandler(c *gin.Context) {
 
 	if p.cfg.Auth.Authorizer != nil {
 		identity, _ := security.IdentityFromContext(c.Request.Context())
+		if identity == nil {
+			security.RespondUnauthorized(c, "")
+			return
+		}
 		if filterProject != "" {
 			// Verify caller can access the requested project.
 			role, err := p.cfg.Auth.Authorizer.ProjectRole(c.Request.Context(), identity, filterProject)
 			if err != nil || role < security.ProjectRoleViewer {
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+				security.RespondForbidden(c, "forbidden")
 				return
 			}
 		} else {
 			// No project filter → require system admin to avoid info leak.
 			if err := p.cfg.Auth.Authorizer.AuthorizeSystem(c.Request.Context(), identity); err != nil {
-				c.JSON(http.StatusForbidden, gin.H{"error": "system admin required for global event stream"})
+				security.RespondForbidden(c, "system admin required for global event stream")
 				return
 			}
 		}

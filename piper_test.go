@@ -194,6 +194,14 @@ func TestNew_ResolvesRelativeOutputDirToAbsolute(t *testing.T) {
 	}
 }
 
+func TestRunWorkspaceDir(t *testing.T) {
+	got := runWorkspaceDir("/data/piper-outputs", "run-123")
+	want := filepath.Join("/data/piper-outputs", "run-123")
+	if got != want {
+		t.Fatalf("runWorkspaceDir() = %q, want %q", got, want)
+	}
+}
+
 func TestRunPipeline_localArtifactPathIncludesRunID(t *testing.T) {
 	outputDir := t.TempDir()
 	p := newTestPiper(t, Config{OutputDir: outputDir})

@@ -38,8 +38,7 @@ func RequireRole(minRole security.ProjectRole) gin.HandlerFunc {
 			return
 		}
 		if projectContext.Role < minRole {
-			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient project role"})
-			c.Abort()
+			security.RespondForbidden(c, "insufficient project role")
 			return
 		}
 		c.Next()
@@ -73,10 +72,13 @@ func Require(repo Repository, authorizer security.Authorizer, minRole security.P
 			role = security.ProjectRoleAdmin // trusted mode: full access
 		} else {
 			identity, _ := security.IdentityFromContext(c.Request.Context())
+			if identity == nil {
+				security.RespondUnauthorized(c, "")
+				return
+			}
 			resolvedRole, err := authorizer.ProjectRole(c.Request.Context(), identity, projectID)
 			if err != nil || resolvedRole < minRole {
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-				c.Abort()
+				security.RespondForbidden(c, "forbidden")
 				return
 			}
 			role = resolvedRole

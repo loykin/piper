@@ -673,7 +673,7 @@ func (p *Piper) recoverInterruptedRuns(ctx context.Context) {
 		if r.ParamsJSON != "" {
 			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
 		}
-		outputDir := filepath.Join(p.cfg.OutputDir, r.ID)
+		outputDir := runWorkspaceDir(p.cfg.OutputDir, r.ID)
 		envByStep, err := p.resolvePipelineCredentialEnv(ctx, r.ProjectID, r.ID, pl)
 		if err != nil {
 			slog.Warn("recover: resolve credential env failed", "run_id", r.ID, "err", err)
@@ -968,6 +968,15 @@ type StartRunOptions struct {
 	YAML       string // raw YAML, persisted to DB
 }
 
+// runWorkspaceDir returns the Workspace root for a run (docs/backend/develop.md
+// "Workspace vs. Artifact Repository"): OutputDir/<runID>. Per-step execution
+// and logs live under <step> subdirectories of this path — see runner.go's
+// stepOutputDir, the directory a Command step actually executes in and the
+// one uploadOutputs later reads "outputs:" files from.
+func runWorkspaceDir(outputDirBase, runID string) string {
+	return filepath.Join(outputDirBase, runID)
+}
+
 // startRun is the single entry point for enqueuing a pipeline run.
 // Both the HTTP API and the scheduler go through here.
 // It creates the DB record, initialises step rows, enqueues the DAG, and fires OnRunStart.
@@ -979,7 +988,7 @@ func (p *Piper) startRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipeli
 	if runID == "" {
 		runID = genRunID()
 	}
-	outputDir := filepath.Join(p.cfg.OutputDir, runID)
+	outputDir := runWorkspaceDir(p.cfg.OutputDir, runID)
 	now := time.Now().UTC()
 	if opts.Vars.RunStartedAt == nil {
 		opts.Vars.RunStartedAt = &now

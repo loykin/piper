@@ -162,7 +162,11 @@ func (r *Runner) execute(
 	stderrW := &lineWriter{stream: "stderr", logger: logger, tee: os.Stderr}
 
 	cfg := executor.ExecConfig{
-		WorkDir:     task.WorkDir,
+		// Steps without an explicit source (task.WorkDir is otherwise unset)
+		// must run inside their own isolated per-run/per-step workspace, the
+		// same directory uploadOutputs later reads "outputs:" files from —
+		// not whatever directory the agent process happened to be launched in.
+		WorkDir:     outputDir,
 		SourceDir:   filepath.Join(outputDir, "_source"),
 		InputDir:    filepath.Join(r.cfg.InputDir, task.RunID, step.Name),
 		OutputDir:   outputDir,

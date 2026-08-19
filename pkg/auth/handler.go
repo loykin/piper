@@ -58,7 +58,7 @@ func (h *Handler) login(c *gin.Context) {
 	}
 	result, err := h.sessions.Login(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		security.RespondUnauthorized(c, err.Error())
 		return
 	}
 	h.setTokenCookies(c, result)
@@ -70,13 +70,13 @@ func (h *Handler) login(c *gin.Context) {
 func (h *Handler) refresh(c *gin.Context) {
 	refreshToken := refreshTokenFromRequest(c)
 	if refreshToken == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing refresh token"})
+		security.RespondUnauthorized(c, "missing refresh token")
 		return
 	}
 	result, err := h.sessions.Refresh(c.Request.Context(), refreshToken)
 	if err != nil {
 		h.clearTokenCookies(c)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		security.RespondUnauthorized(c, err.Error())
 		return
 	}
 	h.setTokenCookies(c, result)
@@ -104,12 +104,12 @@ func (h *Handler) logout(c *gin.Context) {
 func (h *Handler) me(c *gin.Context) {
 	identity, ok := security.IdentityFromContext(c.Request.Context())
 	if !ok || identity == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
+		security.RespondUnauthorized(c, "not authenticated")
 		return
 	}
 	u, err := h.users.GetUser(c.Request.Context(), identity.ID)
 	if err != nil || u == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
+		security.RespondUnauthorized(c, "user not found")
 		return
 	}
 	c.JSON(http.StatusOK, securityUserView(u))

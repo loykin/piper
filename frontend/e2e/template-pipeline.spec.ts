@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const backend = 'http://127.0.0.1:18080'
 const projectID = 'e2e'
@@ -53,16 +53,20 @@ spec:
           path: summary.json
 `
 
+async function replaceYaml(page: Page, yaml: string) {
+  const editor = page.locator('.cm-content')
+  await editor.click()
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.insertText(yaml)
+}
+
 test('submits and runs a mixed template with dependency files in S3', async ({ page }) => {
   await page.goto(`${uiBase}/pipelines/editor?source=notebook-volume&volume=frontend-e2e-volume&name=frontend-mixed`)
   await expect(page.getByRole('heading', { name: 'Pipeline Editor' })).toBeVisible()
   await expect(page.getByText('Frontend E2E Workspace')).toBeVisible()
 
   await page.getByRole('tab', { name: 'YAML' }).click()
-  const editor = page.locator('.cm-content')
-  await editor.click()
-  await page.keyboard.press('ControlOrMeta+A')
-  await page.keyboard.insertText(pipelineYAML)
+  await replaceYaml(page, pipelineYAML)
   await page.getByRole('button', { name: 'Apply YAML to Graph' }).click()
 
   await page.getByRole('tab', { name: 'YAML' }).click()
@@ -113,4 +117,93 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
     sum: 30,
     source: 'frontend-template',
   })
+})
+
+test('never discards YAML-only fields during tab changes or submit', async ({ page }) => {
+  await page.goto(`${uiBase}/pipelines/editor?source=local&root=/tmp&name=yaml-lossless`)
+  await expect(page.getByRole('heading', { name: 'Pipeline Editor' })).toBeVisible()
+  await page.getByRole('tab', { name: 'YAML' }).click()
+
+  const supportedYAML = `apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: yaml-tab-roundtrip
+spec:
+  steps:
+    - name: task-1
+      run:
+        type: command
+        command: [echo, roundtrip]
+`
+  await replaceYaml(page, supportedYAML)
+  await page.getByRole('tab', { name: 'Design' }).click()
+  await expect(page.getByRole('tab', { name: 'Design' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('tab', { name: 'YAML' }).click()
+  await expect(page.locator('.cm-content')).toContainText('yaml-tab-roundtrip')
+  await expect(page.locator('.cm-content')).toContainText('roundtrip')
+
+  const workerYAML = `apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: yaml-worker-rejected
+spec:
+  defaults:
+    driver:
+      placement:
+        runtime: baremetal
+        worker: legacy-worker
+  steps:
+    - name: task-1
+      run:
+        type: command
+        command: [echo, ok]
+`
+  await replaceYaml(page, workerYAML)
+  await expect(page.getByText(/Design cannot preserve/).first()).toBeVisible()
+  await page.getByRole('tab', { name: 'Design' }).click()
+  await expect(page.getByRole('tab', { name: 'YAML' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.cm-content')).toContainText('worker: legacy-worker')
+  await page.getByRole('button', { name: 'Submit' }).click()
+  await page.getByRole('button', { name: 'Confirm Submit' }).click()
+  await expect(page.getByText(/field worker not found/).last()).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await replaceYaml(page, 'apiVersion: piper/v1\nkind: Pipeline\nspec: [')
+  await page.getByRole('tab', { name: 'Design' }).click()
+  await expect(page.getByRole('tab', { name: 'YAML' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.cm-content')).toContainText('spec: [')
+
+  const timeoutYAML = `apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: yaml-lossless
+spec:
+  steps:
+    - name: task-1
+      options:
+        timeout: 15
+      run:
+        type: command
+        command: [echo, ok]
+`
+  await replaceYaml(page, timeoutYAML)
+  await expect(page.getByText(/Design cannot preserve/).first()).toBeVisible()
+  await page.getByRole('button', { name: 'Submit' }).click()
+  await expect(page.getByRole('heading', { name: 'Submit Pipeline Template' })).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm Submit' }).click()
+  await page.waitForURL(new RegExp(`/ui/projects/${projectID}/pipelines\\?name=yaml-lossless`))
+
+  const templatesResponse = await page.request.get(
+    `${backend}${projectBase}/pipelines?name=yaml-lossless`,
+  )
+  expect(templatesResponse.ok()).toBeTruthy()
+  const templates = await templatesResponse.json() as Array<{ id: string; yaml: string }>
+  expect(templates).toHaveLength(1)
+  expect(templates[0].yaml).toContain('timeout: 15')
+
+  await page.goto(
+    `${uiBase}/pipelines/editor?source=local&root=/tmp&name=yaml-lossless&from_version=${templates[0].id}`,
+  )
+  await expect(page.getByRole('tab', { name: 'YAML' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.cm-content')).toContainText('timeout: 15')
 })

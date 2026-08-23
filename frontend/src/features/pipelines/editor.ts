@@ -245,6 +245,56 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
   }
 }
 
+function firstYamlDifference(source: unknown, generated: unknown, path = '$'): string | null {
+  if (Object.is(source, generated)) return null
+
+  if (Array.isArray(source) || Array.isArray(generated)) {
+    if (!Array.isArray(source) || !Array.isArray(generated)) return path
+    if (source.length !== generated.length) return path
+    for (let index = 0; index < source.length; index += 1) {
+      const difference = firstYamlDifference(source[index], generated[index], `${path}[${index}]`)
+      if (difference) return difference
+    }
+    return null
+  }
+
+  if (
+    source !== null && generated !== null
+    && typeof source === 'object' && typeof generated === 'object'
+  ) {
+    const sourceObject = source as Record<string, unknown>
+    const generatedObject = generated as Record<string, unknown>
+    const keys = Array.from(new Set([
+      ...Object.keys(sourceObject),
+      ...Object.keys(generatedObject),
+    ])).sort()
+    for (const key of keys) {
+      if (!(key in sourceObject) || !(key in generatedObject)) {
+        return path === '$' ? key : `${path}.${key}`
+      }
+      const childPath = path === '$' ? key : `${path}.${key}`
+      const difference = firstYamlDifference(sourceObject[key], generatedObject[key], childPath)
+      if (difference) return difference
+    }
+    return null
+  }
+
+  // Any scalar change is lossy. Return only the path so credential-backed
+  // environment values never leak into an error message.
+  return path
+}
+
+/**
+ * Returns the first semantic value that the Design editor would change or
+ * discard when it regenerates YAML. Formatting, comments, quoting, and map
+ * key order are intentionally ignored by comparing parsed YAML values.
+ */
+export function findPipelineDraftYamlDifference(yaml: string, draft: PipelineDraft): string | null {
+  const source = parseYAML(yaml || '') as unknown
+  const generated = parseYAML(buildPipelineDraftYaml(draft)) as unknown
+  return firstYamlDifference(source, generated)
+}
+
 function formatArtifactBlock(key: 'inputs' | 'outputs', items: PipelineArtifactDraft[]): string[] {
   if (items.length === 0) return []
   const lines = [`      ${key}:`]

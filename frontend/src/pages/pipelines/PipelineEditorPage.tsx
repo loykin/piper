@@ -25,7 +25,7 @@ import { useSystemSettings } from '@/features/system/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
-  parsePipelineDraftYaml, validatePipelineDraft,
+  findPipelineDraftYamlDifference, parsePipelineDraftYaml, validatePipelineDraft,
   type PipelineSourceDraft,
   type PipelineArtifactDraft, type PipelineKeyValueDraft,
   type PipelineDefaultsDraft, type PipelineStepDraft, type PipelineTaskType,
@@ -33,6 +33,10 @@ import {
 
 type SourceKind = 'notebook-volume' | 'git' | 'local' | 'object-store'
 type ActiveTab = 'design' | 'yaml'
+
+function designLossMessage(path: string): string {
+  return `Design view cannot preserve "${path}". Keep editing or submit from the YAML tab.`
+}
 
 const TASK_LABELS: Record<PipelineTaskType, string> = {
   notebook: 'Notebook Task',
@@ -420,15 +424,13 @@ export default function PipelineEditorPage() {
   const artifactBrowseRef = useRef<HTMLDivElement>(null)
   const [browseQuery, setBrowseQuery] = useState('')
   const [yamlText, setYamlText] = useState(() => buildPipelineDraftYaml(initialDraft))
-  const [validation, setValidation] = useState<string[]>([])
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitModalOpen, setSubmitModalOpen] = useState(false)
-  // Draft resolved at Submit time — see resolveSubmitDraft(). Keeping it in a
-  // ref (rather than re-reading `tasks`/`defaults` state) guarantees
-  // confirmSubmit() sends exactly what was validated, even though the YAML
-  // tab's content only lands in state asynchronously.
-  const pendingSubmitDraftRef = useRef<{ name: string; steps: PipelineStepDraft[]; defaults: PipelineDefaultsDraft } | null>(null)
+  // Resolve the exact YAML at Submit time. Keeping it in a ref guarantees the
+  // confirmation action sends the same lossless document the user reviewed,
+  // even if other editor state changes while the modal is open.
+  const pendingSubmitRef = useRef<{ name: string; yaml: string } | null>(null)
   const [submitVolumeId, setSubmitVolumeId] = useState('')
   const [resetKey, setResetKey] = useState(0)
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
@@ -461,21 +463,36 @@ export default function PipelineEditorPage() {
     let cancelled = false
     getPipeline(projectId, editorFromVersion).then(template => {
       if (cancelled) return
-      const parsed = parsePipelineDraftYaml(template.yaml)
+      // Preserve the fetched document before parsing. Even if the Design
+      // parser cannot understand a valid server-side feature, the user can
+      // still inspect, edit, and resubmit the exact stored YAML.
       setPipelineName(template.name)
       setFormName(template.name)
+      setYamlText(template.yaml)
+      setActiveTab('yaml')
+      const parsed = parsePipelineDraftYaml(template.yaml)
+      const designDraft = { ...parsed, source: pipelineSource }
+      const difference = findPipelineDraftYamlDifference(template.yaml, designDraft)
       setTasks(parsed.steps)
       setDefaults(parsed.defaults)
       setPositions(buildPositions(parsed.steps))
       setSelectedId(parsed.steps[0]?.id ?? '')
       setEditingId(null)
-      setYamlText(buildPipelineDraftYaml({ name: template.name, steps: parsed.steps, source: parsed.source, defaults: parsed.defaults }))
-      setError('')
+      if (difference) {
+        // A previous version may contain valid manifest fields that the visual
+        // editor does not model. Open the lossless view and retain the exact
+        // stored YAML instead of silently generating a reduced document.
+        setError(designLossMessage(difference))
+      } else {
+        setYamlText(buildPipelineDraftYaml(designDraft))
+        setActiveTab('design')
+        setError('')
+      }
     }).catch(err => {
       if (!cancelled) setError(err instanceof Error ? err.message : String(err))
     })
     return () => { cancelled = true }
-  }, [projectId, editorFromVersion])
+  }, [projectId, editorFromVersion, pipelineSource])
 
   useEffect(() => {
     if (!fileBrowserOpen && !artifactBrowseKey) return
@@ -521,7 +538,6 @@ export default function PipelineEditorPage() {
     if (activeTab !== 'yaml') {
       setYamlText(buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults }))
     }
-    setValidation(validatePipelineDraft({ name: pipelineName, steps: tasks, defaults }))
     if (!tasks.some(t => t.id === selectedId)) setSelectedId(tasks[0]?.id ?? '')
     if (editingId && !tasks.some(t => t.id === editingId)) setEditingId(null)
   }, [pipelineName, tasks, pipelineSource, defaults, selectedId, editingId, activeTab])
@@ -544,6 +560,15 @@ export default function PipelineEditorPage() {
   const editingTask = editingIndex >= 0 ? tasks[editingIndex] : null
   const selectedVolume = useMemo(() => volumes.find(v => v.id === editorVolumeId) ?? null, [editorVolumeId, volumes])
   const canBrowse = editorSourceKind === 'notebook-volume'
+  const yamlStatus = useMemo(() => {
+    try {
+      const parsed = parsePipelineDraftYaml(yamlText)
+      const difference = findPipelineDraftYamlDifference(yamlText, { ...parsed, source: pipelineSource })
+      return { parseError: '', difference }
+    } catch (err) {
+      return { parseError: err instanceof Error ? err.message : String(err), difference: null }
+    }
+  }, [pipelineSource, yamlText])
 
   function updateTask(index: number, patch: Partial<PipelineStepDraft>) {
     setTasks(current => {
@@ -652,42 +677,70 @@ export default function PipelineEditorPage() {
   function resetLayout() { setPositions(buildPositions(tasks)); setResetKey(k => k + 1) }
   function openTaskEditor(id: string) { setSelectedId(id); setEditingId(id) }
 
-  function applyYaml() {
+  function applyYamlToDesign(): boolean {
     try {
       const parsed = parsePipelineDraftYaml(yamlText)
-      setPipelineName(parsed.name)
-      setTasks(parsed.steps)
-      setDefaults(parsed.defaults)
-      setPositions(buildPositions(parsed.steps))
-      setSelectedId(parsed.steps[0]?.id ?? '')
+      const designDraft = { ...parsed, source: pipelineSource }
+      const difference = findPipelineDraftYamlDifference(yamlText, designDraft)
+      if (difference) {
+        setError(designLossMessage(difference))
+        return false
+      }
+      const messages = validatePipelineDraft(designDraft)
+      const runtimeMessage = validateRuntimePlacement(designDraft.defaults)
+      if (runtimeMessage) messages.unshift(runtimeMessage)
+      if (messages.length > 0) {
+        setError(messages[0])
+        return false
+      }
+      setPipelineName(designDraft.name)
+      setTasks(designDraft.steps)
+      setDefaults(designDraft.defaults)
+      setPositions(buildPositions(designDraft.steps))
+      setSelectedId(designDraft.steps[0]?.id ?? '')
       setEditingId(null)
+      setYamlText(buildPipelineDraftYaml(designDraft))
       setError('')
       setActiveTab('design')
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      return false
     }
   }
 
-  // Resolves the draft that Submit should act on. When the YAML tab is
-  // active, yamlText is authoritative — even if "Apply YAML to Graph" was
-  // never clicked — because the editor already told the user "Draft looks
-  // valid" for that exact text. Falls back to the Design canvas state
-  // otherwise. Also syncs canvas state from a successful YAML parse so the
-  // two views don't drift once Submit has run.
-  function resolveSubmitDraft(): { name: string; steps: PipelineStepDraft[]; defaults: PipelineDefaultsDraft } | null {
-    if (activeTab !== 'yaml') {
-      return { name: pipelineName, steps: tasks, defaults }
+  function handleTabChange(nextTab: ActiveTab) {
+    if (nextTab === activeTab) return
+    if (activeTab === 'yaml' && nextTab === 'design') {
+      applyYamlToDesign()
+      return
     }
+    setError('')
+    setActiveTab(nextTab)
+  }
+
+  function resolveSubmitPayload(): { name: string; yaml: string } | null {
+    if (activeTab !== 'yaml') {
+      const draft = { name: pipelineName, steps: tasks, source: pipelineSource, defaults }
+      const runtimeMessage = validateRuntimePlacement(defaults)
+      if (runtimeMessage) {
+        setError(runtimeMessage)
+        return null
+      }
+      const messages = validatePipelineDraft(draft)
+      if (messages.length > 0) {
+        setError(messages[0])
+        return null
+      }
+      return { name: pipelineName, yaml: buildPipelineDraftYaml(draft) }
+    }
+
     try {
       const parsed = parsePipelineDraftYaml(yamlText)
-      setPipelineName(parsed.name)
-      setTasks(parsed.steps)
-      setDefaults(parsed.defaults)
-      setPositions(buildPositions(parsed.steps))
-      setSelectedId(parsed.steps[0]?.id ?? '')
-      setEditingId(null)
-      setActiveTab('design')
-      return { name: parsed.name, steps: parsed.steps, defaults: parsed.defaults }
+      // YAML is the authoritative document in this tab. Do not round-trip it
+      // through the intentionally smaller Design model: the server's strict
+      // manifest decoder must see the exact fields the user entered.
+      return { name: parsed.name, yaml: yamlText }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       return null
@@ -695,33 +748,28 @@ export default function PipelineEditorPage() {
   }
 
   async function handleSubmit() {
-    const draft = resolveSubmitDraft()
-    if (!draft) return
-    const runtimeMessage = validateRuntimePlacement(draft.defaults)
-    if (runtimeMessage) {
-      setError(runtimeMessage)
-      return
-    }
-    const messages = validatePipelineDraft({ name: draft.name, steps: draft.steps, defaults: draft.defaults })
-    if (messages.length > 0) { setError(messages[0]); return }
+    const payload = resolveSubmitPayload()
+    if (!payload) return
     setError('')
-    pendingSubmitDraftRef.current = draft
+    pendingSubmitRef.current = payload
     setSubmitModalOpen(true)
     setSubmitVolumeId(editorSourceKind === 'notebook-volume' ? editorVolumeId : '')
   }
 
   async function confirmSubmit() {
-    const draft = pendingSubmitDraftRef.current ?? { name: pipelineName, steps: tasks, defaults }
+    const pending = pendingSubmitRef.current ?? {
+      name: pipelineName,
+      yaml: buildPipelineDraftYaml({ name: pipelineName, steps: tasks, source: pipelineSource, defaults }),
+    }
     setSubmitting(true)
     setError('')
     try {
-      const yaml = buildPipelineDraftYaml({ name: draft.name, steps: draft.steps, source: pipelineSource, defaults: draft.defaults })
       await createPipeline({
-        yaml,
+        yaml: pending.yaml,
         volume_id: submitVolumeId || undefined,
       })
       setSubmitModalOpen(false)
-      navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(draft.name)}`)
+      navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(pending.name)}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -730,10 +778,19 @@ export default function PipelineEditorPage() {
   }
 
   function validateNow() {
-    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks, defaults })
+    if (activeTab === 'yaml') {
+      if (yamlStatus.parseError) {
+        setError(yamlStatus.parseError)
+      } else if (yamlStatus.difference) {
+        setError(designLossMessage(yamlStatus.difference))
+      } else {
+        setError('')
+      }
+      return
+    }
+    const messages = validatePipelineDraft({ name: pipelineName, steps: tasks, source: pipelineSource, defaults })
     const runtimeMessage = validateRuntimePlacement(defaults)
     if (runtimeMessage) messages.unshift(runtimeMessage)
-    setValidation(messages)
     setError(messages[0] || '')
   }
 
@@ -1057,7 +1114,7 @@ export default function PipelineEditorPage() {
               )}
             </div>
 
-            <Tabs value={activeTab} onValueChange={value => setActiveTab(value as ActiveTab)} className="flex min-h-0 flex-1 flex-col">
+            <Tabs value={activeTab} onValueChange={value => handleTabChange(value as ActiveTab)} className="flex min-h-0 flex-1 flex-col">
               <TabsList variant="line" className="shrink-0 border-b border-border px-4">
                 <TabsTrigger value="design">Design</TabsTrigger>
                 <TabsTrigger value="yaml">YAML</TabsTrigger>
@@ -1088,18 +1145,27 @@ export default function PipelineEditorPage() {
                       <h2 className="text-sm font-semibold">Pipeline YAML</h2>
                       <p className="text-xs text-muted-foreground">The YAML stays canonical. Apply it to rehydrate the task graph.</p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={applyYaml}>Apply YAML to Graph</Button>
+                    <Button variant="outline" size="sm" onClick={applyYamlToDesign}>Apply YAML to Graph</Button>
                   </div>
                   <div className="space-y-3">
-                    {validation.length === 0 ? (
-                      <p className="text-xs text-green-500">Draft looks valid.</p>
+                    {yamlStatus.parseError ? (
+                      <p className="text-sm text-destructive">{yamlStatus.parseError}</p>
+                    ) : yamlStatus.difference ? (
+                      <p className="text-xs text-amber-500">
+                        YAML syntax is valid, but Design cannot preserve “{yamlStatus.difference}”. You can submit the original YAML from this tab.
+                      </p>
                     ) : (
-                      <ul className="space-y-1 text-sm text-destructive">
-                        {validation.map(msg => <li key={msg}>• {msg}</li>)}
-                      </ul>
+                      <p className="text-xs text-green-500">YAML is ready for Design. Server validation runs on submit.</p>
                     )}
                     {error && <p className="text-sm text-destructive">{error}</p>}
-                    <YamlMirror value={yamlText} onChange={e => setYamlText(e.target.value)} className="min-h-136" />
+                    <YamlMirror
+                      value={yamlText}
+                      onChange={e => {
+                        setYamlText(e.target.value)
+                        setError('')
+                      }}
+                      className="min-h-136"
+                    />
                   </div>
                 </div>
               </TabsContent>

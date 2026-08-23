@@ -77,7 +77,7 @@ export function DeployModal({
           <label htmlFor="deploy-enabled" className="text-xs">Enable immediately</label>
         </div>
         <div className="mb-4">
-          <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Max Runs</label>
+          <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Retention</label>
           <Input
             type="number"
             min={0}
@@ -86,7 +86,7 @@ export function DeployModal({
             onChange={e => setMaxRuns(e.target.value)}
             placeholder="0"
           />
-          <p className="mt-1 text-xs text-muted-foreground">0 keeps all completed runs.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Completed run records to keep, not a limit on how many times this schedule fires. 0 keeps all of them.</p>
         </div>
         {(localError || error) && <p className="mb-3 text-xs text-destructive">{localError || error}</p>}
         <div className="flex justify-end gap-2">

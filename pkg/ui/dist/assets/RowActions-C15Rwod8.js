@@ -1,1 +1,0 @@
-import{o as e}from"./vendor-codemirror-ABbF79D8.js";import{D as t}from"./index-BP99ykds.js";var n=e();function r({children:e,className:r}){return(0,n.jsx)(`div`,{className:t(`flex items-center justify-end gap-0.5`,r),onPointerDown:e=>e.stopPropagation(),onMouseDown:e=>e.stopPropagation(),onClick:e=>e.stopPropagation(),children:e})}export{r as t};

@@ -147,7 +147,23 @@ func (r *Driver) Start(_ context.Context, req notebookdriver.StartRequest) (*not
 		r.mu.Unlock()
 	}
 
-	extraEnvMap := make(map[string]string, len(req.ExtraEnv))
+	extraEnvMap := make(map[string]string, len(req.ExtraEnv)+3)
+	if !strings.HasPrefix(envPath, "conda:") {
+		// Isolate Jupyter's kernelspec search to this notebook's own venv.
+		// Without this, jupyter-lab (launched via a login shell below, so
+		// $HOME resolves to the real OS user's home) also searches the host
+		// user's global kernel directory (e.g. ~/Library/Jupyter/kernels on
+		// macOS) and any kernel found there — including ones belonging to
+		// entirely unrelated projects on the same host — can shadow the
+		// venv-local "python3" kernel ensureVenv just installed, since
+		// Jupyter's search order gives the user directory priority over
+		// sys.prefix. Mirrors pkg/pipeline/executor.ExecConfig.Env's
+		// JUPYTER_DATA_DIR isolation for the batch/papermill path.
+		jupyterDataDir := filepath.Join(envPath, "share", "jupyter")
+		extraEnvMap["JUPYTER_DATA_DIR"] = jupyterDataDir
+		extraEnvMap["JUPYTER_CONFIG_DIR"] = filepath.Join(envPath, "jupyter-config")
+		extraEnvMap["JUPYTER_RUNTIME_DIR"] = filepath.Join(envPath, "jupyter-runtime")
+	}
 	for _, kv := range req.ExtraEnv {
 		if idx := strings.IndexByte(kv, '='); idx > 0 {
 			extraEnvMap[kv[:idx]] = kv[idx+1:]

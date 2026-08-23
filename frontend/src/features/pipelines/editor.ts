@@ -245,6 +245,40 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
   }
 }
 
+/**
+ * Removes a top-level `metadata.version` scalar line from stored template
+ * YAML, without touching any other formatting/comments. The server stamps
+ * this field into every stored template's YAML so the record is
+ * self-contained (see pkg/template/handler.go); reusing that same text as
+ * the starting point for a *new* submission would carry the old version
+ * number along and collide with the version that already exists server-side
+ * (ErrVersionExists → a "New Version" submit can never succeed). Stripping
+ * it here restores the same auto-assign-next-version behavior "New
+ * Template" already has.
+ */
+export function stripMetadataVersion(yaml: string): string {
+  const lines = yaml.split('\n')
+  let inMetadata = false
+  let metadataIndent = -1
+  const result: string[] = []
+  for (const line of lines) {
+    const indent = line.length - line.trimStart().length
+    if (!inMetadata && /^metadata:\s*$/.test(line.trim()) && /^\S/.test(line)) {
+      inMetadata = true
+      result.push(line)
+      continue
+    }
+    if (inMetadata) {
+      if (metadataIndent < 0 && line.trim() !== '') metadataIndent = indent
+      const stillInMetadata = line.trim() === '' || indent > 0
+      if (!stillInMetadata) inMetadata = false
+      else if (/^version:\s*\d+\s*$/.test(line.trim())) continue
+    }
+    result.push(line)
+  }
+  return result.join('\n')
+}
+
 function firstYamlDifference(source: unknown, generated: unknown, path = '$'): string | null {
   if (Object.is(source, generated)) return null
 

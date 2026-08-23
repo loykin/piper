@@ -177,7 +177,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
         </FormField>
       )}
 
-      <FormField label="Max Runs" htmlFor="schedule-max-runs" helperText="0 keeps all completed runs.">
+      <FormField label="Retention" htmlFor="schedule-max-runs" helperText="Completed run records to keep, not a limit on how many times this schedule fires. 0 keeps all of them.">
         <Input
           id="schedule-max-runs"
           type="number"

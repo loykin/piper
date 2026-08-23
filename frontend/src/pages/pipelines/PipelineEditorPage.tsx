@@ -25,7 +25,7 @@ import { useSystemSettings } from '@/features/system/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import {
   buildPipelineDraftYaml, defaultPipelineDraft, defaultPipelineStep,
-  findPipelineDraftYamlDifference, parsePipelineDraftYaml, validatePipelineDraft,
+  findPipelineDraftYamlDifference, parsePipelineDraftYaml, stripMetadataVersion, validatePipelineDraft,
   type PipelineSourceDraft,
   type PipelineArtifactDraft, type PipelineKeyValueDraft,
   type PipelineDefaultsDraft, type PipelineStepDraft, type PipelineTaskType,
@@ -466,13 +466,18 @@ export default function PipelineEditorPage() {
       // Preserve the fetched document before parsing. Even if the Design
       // parser cannot understand a valid server-side feature, the user can
       // still inspect, edit, and resubmit the exact stored YAML.
+      // Strip the server-stamped metadata.version: submitting it unchanged
+      // would collide with the version that already exists (ErrVersionExists)
+      // instead of letting the server auto-assign the next one, the same way
+      // a brand-new template submission does.
+      const yaml = stripMetadataVersion(template.yaml)
       setPipelineName(template.name)
       setFormName(template.name)
-      setYamlText(template.yaml)
+      setYamlText(yaml)
       setActiveTab('yaml')
-      const parsed = parsePipelineDraftYaml(template.yaml)
+      const parsed = parsePipelineDraftYaml(yaml)
       const designDraft = { ...parsed, source: pipelineSource }
-      const difference = findPipelineDraftYamlDifference(template.yaml, designDraft)
+      const difference = findPipelineDraftYamlDifference(yaml, designDraft)
       setTasks(parsed.steps)
       setDefaults(parsed.defaults)
       setPositions(buildPositions(parsed.steps))
@@ -1249,7 +1254,7 @@ export default function PipelineEditorPage() {
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Command</label>
                   <ShellMirror
                     value={editingTask.command.join('\n')}
-                    onChange={e => updateTask(editingIndex, { command: e.target.value.split(/\n+/).map(s => s.trim()).filter(Boolean) })}
+                    onChange={e => updateTask(editingIndex, { command: e.target.value.split('\n') })}
                     minHeight="6rem"
                     placeholder={editingTask.type === 'python' ? 'python\nscript.py' : 'echo\nhello'}
                   />

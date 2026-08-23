@@ -1,5 +1,5 @@
 // serving feature — Deploy form component
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DataBodyTemplate,
   FormActions, FormField,
@@ -379,8 +379,18 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
     return () => { canceled = true }
   }, [projectId, selectedRunID])
 
-  const steps = artifacts.map(sa => sa.step)
-  const artifactNames = artifacts.find(sa => sa.step === form.step)?.artifacts.map(a => a.name) ?? []
+  // Stable array identities: Select's item collection is sensitive to option
+  // list identity, and DeployForm re-renders on every keystroke/dropdown
+  // interaction (react-hook-form's useWatch snapshot changes each time) —
+  // without this, `steps`/`artifactNames` were a fresh array every render,
+  // which could momentarily leave the Step Select's displayed value out of
+  // sync with its (visually identical but reference-different) option list
+  // the instant a sibling field like Artifact was touched.
+  const steps = useMemo(() => artifacts.map(sa => sa.step), [artifacts])
+  const artifactNames = useMemo(
+    () => artifacts.find(sa => sa.step === form.step)?.artifacts.map(a => a.name) ?? [],
+    [artifacts, form.step],
+  )
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     const next = { ...form, [key]: value }

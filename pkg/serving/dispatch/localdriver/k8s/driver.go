@@ -393,6 +393,9 @@ func (d *Driver) observeOnce(ctx context.Context) {
 			name := deployment.Annotations[k8smanifest.AnnotationWorkloadID]
 			projectID := deployment.Annotations[k8smanifest.AnnotationProjectID]
 			status := observedDeploymentStatus(deployment)
+			if status == serving.StatusStarting && d.podsCrashLooping(ctx, deployment) {
+				status = serving.StatusFailed
+			}
 			if projectID == "" || name == "" || status == "" || !d.statusChanged(servingKey(projectID, name), status) {
 				continue
 			}
@@ -441,6 +444,31 @@ func observedDeploymentStatus(deployment *appsv1.Deployment) string {
 		return serving.StatusRunning
 	}
 	return serving.StatusStarting
+}
+
+// podsCrashLooping reports whether any pod backing deployment is stuck
+// restart-looping (CrashLoopBackOff) or failing to pull its image
+// (ImagePullBackOff/ErrImagePull) — signals ReadyReplicas/Conditions never
+// surface, since ReadyReplicas simply stays below desired indefinitely in
+// both cases and observedDeploymentStatus falls back to StatusStarting.
+func (d *Driver) podsCrashLooping(ctx context.Context, deployment *appsv1.Deployment) bool {
+	selector := metav1.FormatLabelSelector(deployment.Spec.Selector)
+	pods, err := d.cfg.Client.CoreV1().Pods(deployment.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return false
+	}
+	for _, pod := range pods.Items {
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Waiting == nil {
+				continue
+			}
+			switch cs.State.Waiting.Reason {
+			case "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ensureServingLogStream starts a PodLogs stream for the first running pod

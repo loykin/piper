@@ -142,7 +142,7 @@ function WorkflowsPageInner() {
           <DataGrid
             data={filteredSchedules}
             columns={columns}
-            emptyMessage="No schedules yet. Create one to start."
+            emptyMessage={schedulesQuery.isError ? undefined : 'No schedules yet. Create one to start.'}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor

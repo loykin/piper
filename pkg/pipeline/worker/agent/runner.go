@@ -440,6 +440,9 @@ func (r *Runner) uploadOutputs(ctx context.Context, runID, stepName, outputDir s
 		prefix := fmt.Sprintf("%s/%s/%s", runID, stepName, art.Name)
 
 		if err := storage.UploadPath(ctx, r.store, localPath, prefix); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("upload %q: step did not produce %s in its output directory — outputs[].path is relative to the step's own output dir, and `run.command` execs directly (no shell): redirection/pipes/&& are only interpreted if you wrap them as [\"sh\", \"-c\", \"...\"]: %w", art.Name, art.Path, err)
+			}
 			return fmt.Errorf("upload %q: %w", art.Name, err)
 		}
 		slog.Info("artifact uploaded", "name", art.Name, "prefix", prefix)

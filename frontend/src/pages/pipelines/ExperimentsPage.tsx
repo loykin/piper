@@ -104,7 +104,7 @@ function ExperimentsPageInner() {
             data={filteredExperiments}
             columns={columns}
             isLoading={runsQuery.isPending}
-            emptyMessage="No experiments yet. Submit a sweep via POST /runs/sweep."
+            emptyMessage={runsQuery.isError ? undefined : 'No experiments yet. Submit a sweep via POST /runs/sweep.'}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor

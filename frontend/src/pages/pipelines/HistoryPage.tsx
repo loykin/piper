@@ -156,7 +156,7 @@ function HistoryPageInner() {
           <DataGrid
             data={filteredRuns}
             columns={columns}
-            emptyMessage="No runs yet."
+            emptyMessage={runsQuery.isError ? undefined : 'No runs yet.'}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor

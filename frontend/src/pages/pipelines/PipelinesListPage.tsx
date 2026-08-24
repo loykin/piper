@@ -189,7 +189,7 @@ function PipelinesListPageInner() {
               grouping={['name']}
               visibilityState={{ name: false }}
               renderGroupRow={(row) => <GroupHeader row={row} />}
-              emptyMessage="No pipeline templates yet."
+              emptyMessage={loadFailed ? undefined : 'No pipeline templates yet.'}
               tableWidthMode="fill-last"
               rowHeight={44}
               rowCursor

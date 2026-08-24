@@ -95,7 +95,7 @@ function NotebooksPageInner() {
           <DataGrid
             data={filteredNotebooks}
             columns={columns}
-            emptyContent={
+            emptyContent={!notebooksQuery.isError && (
               <div className="py-12 text-center">
                 <p className="text-sm text-muted-foreground">No notebook servers running.</p>
                 {releasedVolumes.length > 0 && (
@@ -104,7 +104,7 @@ function NotebooksPageInner() {
                   </p>
                 )}
               </div>
-            }
+            )}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor

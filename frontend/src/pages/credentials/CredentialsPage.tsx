@@ -185,7 +185,7 @@ function CredentialsPageInner() {
             data={filtered}
             columns={columns}
             isLoading={credentialsQuery.isLoading}
-            emptyMessage="No credentials configured."
+            emptyMessage={credentialsQuery.isError ? undefined : 'No credentials configured.'}
             tableWidthMode="fill-last"
             rowCursor
             onRowClick={(credential) => open(

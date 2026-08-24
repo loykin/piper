@@ -99,7 +99,7 @@ function UsersPageInner() {
               data={filteredUsers}
               columns={userColumns}
               isLoading={usersQuery.isLoading}
-              emptyMessage="No users found."
+              emptyMessage={usersQuery.isError ? undefined : 'No users found.'}
               tableWidthMode="fill-last"
               rowHeight={44}
               rowCursor

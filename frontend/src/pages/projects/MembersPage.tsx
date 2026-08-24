@@ -101,7 +101,7 @@ function MembersPageInner() {
               data={filteredMembers}
               columns={memberColumns}
               isLoading={membersQuery.isLoading}
-              emptyMessage="No project members."
+              emptyMessage={membersQuery.isError ? undefined : 'No project members.'}
               tableWidthMode="fill-last"
               rowHeight={44}
               rowCursor

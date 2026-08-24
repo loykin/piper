@@ -60,7 +60,7 @@ function ServingHistoryPageInner() {
             data={filteredHistory}
             columns={serviceHistoryColumns}
             isLoading={historyQuery.isPending && data === undefined}
-            emptyMessage="No deployment history yet."
+            emptyMessage={historyQuery.isError ? undefined : 'No deployment history yet.'}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor

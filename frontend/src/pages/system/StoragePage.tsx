@@ -873,7 +873,7 @@ function UploadedObjectsSection({ projectId }: { projectId: string }) {
           data={filteredObjects}
           columns={objectColumns}
           isLoading={objectsQuery.isPending}
-          emptyMessage={segments.length > 0 ? 'This folder is empty.' : 'No uploaded objects yet.'}
+          emptyMessage={objectsQuery.isError ? undefined : (segments.length > 0 ? 'This folder is empty.' : 'No uploaded objects yet.')}
           tableWidthMode="fill-last"
           rowHeight={44}
           rowCursor

@@ -184,6 +184,23 @@ which federates *management* across separate Piper installations — see
   that doesn't come from the runtime the master actually assigned the task
   to, and ignores duplicate/stale/future-attempt reports.
 
+## `run.command` Execution — No Shell
+
+`pkg/pipeline/executor/command.go`'s `CommandExecutor` runs `step.run.command`
+via `exec.Command(step.Run.Command[0], step.Run.Command[1:]...)` directly —
+there is no shell in between. Redirection (`>`, `>>`), pipes (`|`), and
+control operators (`&&`, `;`) are only interpreted if the step's own command
+list *is* a shell invocation: `command: ["sh", "-c", "echo hi > out.txt"]`,
+not `command: ["echo", "hi", ">", "out.txt"]` (the latter passes `>` and
+`out.txt` to `echo` as literal arguments — every `outputs:`-writing example
+under `examples/` wraps its command in `sh -c` for exactly this reason).
+This silently "succeeds" (exit 0, nothing written) rather than erroring, so
+it only surfaces later as a missing-file `uploadOutputs` failure — see the
+hint text `pkg/pipeline/worker/agent/runner.go`'s `uploadOutputs` adds to
+that error. `outputs[].path` itself is always relative to the step's own
+output directory (`stepOutputDir`, distinct per step), not the pipeline's
+`OutputDir` root or the previous step's directory.
+
 ## Workspace vs. Artifact Repository (fed.md §13.6)
 
 Two distinct, independently-lifecycled things live under `OutputDir`, and

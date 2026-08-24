@@ -95,14 +95,14 @@ function NotebookVolumesPageInner() {
               />,
               { size: 480 },
             )}
-            emptyContent={
+            emptyContent={!volumesQuery.isError && (
               <div className="py-12 text-center">
                 <p className="text-sm text-muted-foreground">No volumes yet.</p>
                 <p className="mt-1 text-xs text-muted-foreground/60">
                   Volumes are created automatically when you launch a notebook server.
                 </p>
               </div>
-            }
+            )}
             tableWidthMode="fill-last"
             rowHeight={44}
             classNames={{ footer: 'pt-3' }}

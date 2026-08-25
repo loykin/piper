@@ -5,13 +5,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/pipeline/run"
 )
 
-type stepRepo struct{ dbstore.BaseRepo }
+type stepRepo struct{ sqlxadapter.Source }
 
-func NewStepRepo(exec *dbstore.Executor, source string) run.StepRepository {
-	return &stepRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewStepRepo(exec *dbstore.Executor[*sqlx.DB], source string) run.StepRepository {
+	return &stepRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *stepRepo) Upsert(ctx context.Context, s *run.Step) error {

@@ -6,13 +6,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/internal/projectclient"
 )
 
-type projectMutationRepo struct{ dbstore.BaseRepo }
+type projectMutationRepo struct{ sqlxadapter.Source }
 
-func NewProjectMutationRepo(exec *dbstore.Executor, source string) projectclient.MutationRepository {
-	return &projectMutationRepo{dbstore.NewBaseRepo(source, exec)}
+func NewProjectMutationRepo(exec *dbstore.Executor[*sqlx.DB], source string) projectclient.MutationRepository {
+	return &projectMutationRepo{sqlxadapter.NewSource(source, exec)}
 }
 func (r *projectMutationRepo) Claim(ctx context.Context, v *projectclient.Mutation) (out *projectclient.Mutation, claimed bool, err error) {
 	out = &projectclient.Mutation{}

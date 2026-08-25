@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
 	storemod "github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/security"
@@ -173,7 +174,7 @@ type AuthDependencies struct {
 	DB            *sql.DB
 	Driver        string
 	SecureCookies bool
-	Executor      *dbstore.Executor
+	Executor      *dbstore.Executor[*sqlx.DB]
 }
 
 type AuthFactory func(AuthDependencies) (AuthConfig, error)

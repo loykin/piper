@@ -8,14 +8,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/project"
 )
 
-type federationRepo struct{ dbstore.BaseRepo }
+type federationRepo struct{ sqlxadapter.Source }
 
-func NewFederationRepo(exec *dbstore.Executor, source string) federation.Repository {
-	return &federationRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewFederationRepo(exec *dbstore.Executor[*sqlx.DB], source string) federation.Repository {
+	return &federationRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *federationRepo) SyncConfiguredMembers(ctx context.Context, homeID string, memberIDs []string, at time.Time) error {

@@ -6,16 +6,17 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/auth"
 	"github.com/loykin/piper/pkg/security"
 )
 
 // ── UserRepository ───────────────────────────────────────────────────────────
 
-type userRepo struct{ dbstore.BaseRepo }
+type userRepo struct{ sqlxadapter.Source }
 
-func NewUserRepo(exec *dbstore.Executor, source string) auth.UserRepository {
-	return &userRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewUserRepo(exec *dbstore.Executor[*sqlx.DB], source string) auth.UserRepository {
+	return &userRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *userRepo) Create(ctx context.Context, u *auth.User) error {
@@ -94,10 +95,10 @@ func (r *userRepo) Delete(ctx context.Context, id string) error {
 
 // ── MemberRepository ─────────────────────────────────────────────────────────
 
-type memberRepo struct{ dbstore.BaseRepo }
+type memberRepo struct{ sqlxadapter.Source }
 
-func NewMemberRepo(exec *dbstore.Executor, source string) security.ProjectMemberRepository {
-	return &memberRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewMemberRepo(exec *dbstore.Executor[*sqlx.DB], source string) security.ProjectMemberRepository {
+	return &memberRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *memberRepo) Add(ctx context.Context, m *security.ProjectMember) error {
@@ -171,10 +172,10 @@ func (r *memberRepo) Remove(ctx context.Context, projectID, userID string) error
 
 // ── SessionRepository ────────────────────────────────────────────────────────
 
-type sessionRepo struct{ dbstore.BaseRepo }
+type sessionRepo struct{ sqlxadapter.Source }
 
-func NewSessionRepo(exec *dbstore.Executor, source string) auth.SessionRepository {
-	return &sessionRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewSessionRepo(exec *dbstore.Executor[*sqlx.DB], source string) auth.SessionRepository {
+	return &sessionRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *sessionRepo) Create(ctx context.Context, s *auth.Session) error {

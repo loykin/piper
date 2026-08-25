@@ -9,13 +9,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/credential"
 )
 
-type credentialRepo struct{ dbstore.BaseRepo }
+type credentialRepo struct{ sqlxadapter.Source }
 
-func NewCredentialRepo(exec *dbstore.Executor, source string) credential.Repository {
-	return &credentialRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewCredentialRepo(exec *dbstore.Executor[*sqlx.DB], source string) credential.Repository {
+	return &credentialRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 const pgCredentialCols = `project_id, name, kind, endpoint, keys_json, disabled, last_used_at, last_tested_at, last_test_ok, last_test_message, created_at, updated_at`

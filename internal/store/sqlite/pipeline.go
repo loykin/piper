@@ -8,13 +8,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/template"
 )
 
-type pipelineRepo struct{ dbstore.BaseRepo }
+type pipelineRepo struct{ sqlxadapter.Source }
 
-func NewPipelineRepo(exec *dbstore.Executor, source string) template.Repository {
-	return &pipelineRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewPipelineRepo(exec *dbstore.Executor[*sqlx.DB], source string) template.Repository {
+	return &pipelineRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 const selectCols = `project_id, id, name, version, description, tags, yaml, snapshot_id, volume_id, created_at, updated_at`

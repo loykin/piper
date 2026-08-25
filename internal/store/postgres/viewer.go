@@ -8,13 +8,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/viewer"
 )
 
-type viewerRepo struct{ dbstore.BaseRepo }
+type viewerRepo struct{ sqlxadapter.Source }
 
-func NewViewerRepo(exec *dbstore.Executor, source string) viewer.Repository {
-	return &viewerRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewViewerRepo(exec *dbstore.Executor[*sqlx.DB], source string) viewer.Repository {
+	return &viewerRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *viewerRepo) Create(ctx context.Context, v *viewer.Viewer) error {

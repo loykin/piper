@@ -5,13 +5,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/pipeline/run"
 )
 
-type submissionRepo struct{ dbstore.BaseRepo }
+type submissionRepo struct{ sqlxadapter.Source }
 
-func NewSubmissionRepo(exec *dbstore.Executor, source string) run.SubmissionRepository {
-	return &submissionRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewSubmissionRepo(exec *dbstore.Executor[*sqlx.DB], source string) run.SubmissionRepository {
+	return &submissionRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *submissionRepo) Claim(ctx context.Context, value *run.Submission) (*run.Submission, bool, error) {

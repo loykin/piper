@@ -6,13 +6,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/schedule"
 )
 
-type scheduleRepo struct{ dbstore.BaseRepo }
+type scheduleRepo struct{ sqlxadapter.Source }
 
-func NewScheduleRepo(exec *dbstore.Executor, source string) schedule.Repository {
-	return &scheduleRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewScheduleRepo(exec *dbstore.Executor[*sqlx.DB], source string) schedule.Repository {
+	return &scheduleRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 // scheduleRow is the DB scan target; maps int-stored enabled to bool.

@@ -8,14 +8,15 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 
 	"github.com/loykin/piper/pkg/notebook"
 )
 
-type notebookRepo struct{ dbstore.BaseRepo }
+type notebookRepo struct{ sqlxadapter.Source }
 
-func NewNotebookRepo(exec *dbstore.Executor, source string) notebook.Repository {
-	return &notebookRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewNotebookRepo(exec *dbstore.Executor[*sqlx.DB], source string) notebook.Repository {
+	return &notebookRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, image, yaml, created_by, created_at, updated_at`

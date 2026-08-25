@@ -5,18 +5,19 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/internal/redact"
 )
 
 // SQLiteLogStore implements LogStore and MetricStore using SQLite via dbstore.Executor.
 type SQLiteLogStore struct {
-	exec   *dbstore.Executor
+	exec   *dbstore.Executor[*sqlx.DB]
 	source string
 }
 
 // NewSQLite creates a SQLiteLogStore that routes all DB access through the executor,
 // ensuring log writes participate in the same MaxConcurrency: 1 throttle as other repos.
-func NewSQLite(exec *dbstore.Executor, source string) *SQLiteLogStore {
+func NewSQLite(exec *dbstore.Executor[*sqlx.DB], source string) *SQLiteLogStore {
 	return &SQLiteLogStore{exec: exec, source: source}
 }
 
@@ -24,7 +25,7 @@ func (s *SQLiteLogStore) Append(ctx context.Context, lines []*Line) error {
 	if len(lines) == 0 {
 		return nil
 	}
-	return s.exec.RunTx(ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
+	return sqlxadapter.RunTx(s.exec, ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
 		stmt, err := tx.PrepareContext(ctx,
 			`INSERT INTO logs (project_id, run_id, step_name, ts, stream, line) VALUES (?, ?, ?, ?, ?, ?)`)
 		if err != nil {
@@ -69,7 +70,7 @@ func (s *SQLiteLogStore) AppendMetrics(ctx context.Context, metrics []*Metric) e
 	if len(metrics) == 0 {
 		return nil
 	}
-	return s.exec.RunTx(ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
+	return sqlxadapter.RunTx(s.exec, ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
 		stmt, err := tx.PrepareContext(ctx,
 			`INSERT INTO run_metrics (project_id, run_id, step_name, key, value, recorded_at) VALUES (?, ?, ?, ?, ?, ?)`)
 		if err != nil {

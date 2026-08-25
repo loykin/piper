@@ -8,13 +8,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/pipeline/run"
 )
 
-type runRepo struct{ dbstore.BaseRepo }
+type runRepo struct{ sqlxadapter.Source }
 
-func NewRunRepo(exec *dbstore.Executor, source string) run.Repository {
-	return &runRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewRunRepo(exec *dbstore.Executor[*sqlx.DB], source string) run.Repository {
+	return &runRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 const runSelectCols = `project_id, id, schedule_id, experiment, pipeline_name, status, started_at, ended_at, scheduled_at, pipeline_yaml, params_json, created_by`

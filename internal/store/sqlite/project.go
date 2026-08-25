@@ -7,13 +7,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/project"
 )
 
-type projectRepo struct{ dbstore.BaseRepo }
+type projectRepo struct{ sqlxadapter.Source }
 
-func NewProjectRepo(exec *dbstore.Executor, source string) project.Repository {
-	return &projectRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewProjectRepo(exec *dbstore.Executor[*sqlx.DB], source string) project.Repository {
+	return &projectRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 func (r *projectRepo) Create(ctx context.Context, p *project.Project) error {

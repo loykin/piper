@@ -6,13 +6,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/schedule"
 )
 
-type scheduleRepo struct{ dbstore.BaseRepo }
+type scheduleRepo struct{ sqlxadapter.Source }
 
-func NewScheduleRepo(exec *dbstore.Executor, source string) schedule.Repository {
-	return &scheduleRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewScheduleRepo(exec *dbstore.Executor[*sqlx.DB], source string) schedule.Repository {
+	return &scheduleRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 const scheduleSelectCols = `project_id, id, name, pipeline_yaml, template_version_id, cron_expr, params_json, enabled, max_runs, last_run_at, next_run_at, created_at, updated_at, schedule_type`

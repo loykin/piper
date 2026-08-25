@@ -5,17 +5,18 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/internal/redact"
 )
 
 // PgStore implements LogStore and MetricStore using PostgreSQL via dbstore.Executor.
 type PgStore struct {
-	exec   *dbstore.Executor
+	exec   *dbstore.Executor[*sqlx.DB]
 	source string
 }
 
 // NewPostgres creates a PgStore that routes all DB access through the executor.
-func NewPostgres(exec *dbstore.Executor, source string) *PgStore {
+func NewPostgres(exec *dbstore.Executor[*sqlx.DB], source string) *PgStore {
 	return &PgStore{exec: exec, source: source}
 }
 
@@ -23,7 +24,7 @@ func (s *PgStore) Append(ctx context.Context, lines []*Line) error {
 	if len(lines) == 0 {
 		return nil
 	}
-	return s.exec.RunTx(ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
+	return sqlxadapter.RunTx(s.exec, ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
 		stmt, err := tx.PrepareContext(ctx,
 			`INSERT INTO logs (project_id, run_id, step_name, ts, stream, line) VALUES ($1, $2, $3, $4, $5, $6)`)
 		if err != nil {
@@ -68,7 +69,7 @@ func (s *PgStore) AppendMetrics(ctx context.Context, metrics []*Metric) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	return s.exec.RunTx(ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
+	return sqlxadapter.RunTx(s.exec, ctx, s.source, func(ctx context.Context, tx *sqlx.Tx) error {
 		stmt, err := tx.PrepareContext(ctx,
 			`INSERT INTO run_metrics (project_id, run_id, step_name, key, value, recorded_at) VALUES ($1, $2, $3, $4, $5, $6)`)
 		if err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	_ "modernc.org/sqlite"
 
 	"github.com/loykin/piper/internal/logstore"
@@ -48,8 +49,8 @@ type Repos struct {
 	// db is owned by pool; retained here for DB() and deleteRunQueries rebind.
 	// Callers must not use DB() after Close.
 	db        *sqlx.DB
-	pool      *dbstore.Pool
-	executor  *dbstore.Executor
+	adapter   *sqlxadapter.Adapter
+	executor  *dbstore.Executor[*sqlx.DB]
 	driver    string
 	closeFunc func() error
 	deleteRun func(ctx context.Context, projectID, id string) error
@@ -106,7 +107,7 @@ type driverAdapter struct {
 	apply  func(*sqlx.DB, dbstore.PoolConfig)
 }
 
-func (d *driverAdapter) Open(cfg dbstore.DriverConfig) (*sqlx.DB, error) {
+func (d *driverAdapter) Open(cfg dbstore.SourceConfig) (*sqlx.DB, error) {
 	db, err := sqlx.Connect(d.driver, cfg.DSN)
 	if err != nil {
 		return nil, err
@@ -119,23 +120,22 @@ func (d *driverAdapter) ApplyPoolConfig(db *sqlx.DB, cfg dbstore.PoolConfig) {
 	d.apply(db, cfg)
 }
 
-func openDBStore(driver, dsn string, cfg dbstore.PoolConfig) (*sqlx.DB, *dbstore.Pool, *dbstore.Executor, error) {
-	adapter := &driverAdapter{driver: driver, apply: dbstore.DefaultApplyPoolConfig}
+func openDBStore(driver, dsn string, cfg dbstore.PoolConfig) (*sqlx.DB, *sqlxadapter.Adapter, *dbstore.Executor[*sqlx.DB], error) {
+	adapter := &driverAdapter{driver: driver, apply: sqlxadapter.ApplyPoolConfig}
 	if driver == "sqlite" {
 		adapter.apply = applySQLitePoolConfig
 	}
 
-	registry := dbstore.NewDriverRegistry()
-	registry.Register(driver, adapter)
-	pool := dbstore.NewPool(registry)
-	if err := pool.Register(PrimarySource, dbstore.DriverConfig{
+	sa := sqlxadapter.New()
+	sa.RegisterDriver(driver, adapter)
+	if err := sa.Open(PrimarySource, dbstore.SourceConfig{
 		Driver:     driver,
 		DSN:        dsn,
 		PoolConfig: cfg,
 	}); err != nil {
 		return nil, nil, nil, err
 	}
-	return adapter.db, pool, dbstore.NewExecutor(pool), nil
+	return adapter.db, sa, sa.Executor(), nil
 }
 
 func sqlitePoolConfig() dbstore.PoolConfig {
@@ -165,16 +165,16 @@ func applySQLitePoolConfig(db *sqlx.DB, cfg dbstore.PoolConfig) {
 	db.SetConnMaxLifetime(cfg.MaxLifetime)
 }
 
-func newReposFromDBStore(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstore.Executor) (*Repos, error) {
+func newReposFromDBStore(db *sqlx.DB, driver string, adapter *sqlxadapter.Adapter, executor *dbstore.Executor[*sqlx.DB]) (*Repos, error) {
 	if !supportedDriver(driver) {
-		pool.RemoveAll()
+		adapter.Close()
 		return nil, fmt.Errorf("unsupported db driver: %s", driver)
 	}
 	if err := migrate(context.Background(), db, driver); err != nil {
-		pool.RemoveAll()
+		adapter.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	return buildRepos(db, driver, pool, executor), nil
+	return buildRepos(db, driver, adapter, executor), nil
 }
 
 func supportedDriver(driver string) bool {
@@ -186,7 +186,7 @@ func supportedDriver(driver string) bool {
 	}
 }
 
-func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstore.Executor) *Repos {
+func buildRepos(db *sqlx.DB, driver string, adapter *sqlxadapter.Adapter, executor *dbstore.Executor[*sqlx.DB]) *Repos {
 	switch driver {
 	case "sqlite", "sqlite3", "":
 		return &Repos{
@@ -206,7 +206,7 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Log:              logstore.NewSQLite(executor, PrimarySource),
 			Metric:           logstore.NewSQLite(executor, PrimarySource),
 			db:               db,
-			pool:             pool,
+			adapter:          adapter,
 			executor:         executor,
 			driver:           driver,
 		}
@@ -228,12 +228,12 @@ func buildRepos(db *sqlx.DB, driver string, pool *dbstore.Pool, executor *dbstor
 			Log:              logstore.NewPostgres(executor, PrimarySource),
 			Metric:           logstore.NewPostgres(executor, PrimarySource),
 			db:               db,
-			pool:             pool,
+			adapter:          adapter,
 			executor:         executor,
 			driver:           driver,
 		}
 	}
-	return &Repos{db: db, pool: pool, executor: executor, driver: driver}
+	return &Repos{db: db, adapter: adapter, executor: executor, driver: driver}
 }
 
 // Close closes the underlying pool, or calls the custom closer if set.
@@ -241,8 +241,8 @@ func (r *Repos) Close() error {
 	if r.closeFunc != nil {
 		return r.closeFunc()
 	}
-	if r.pool != nil {
-		r.pool.RemoveAll()
+	if r.adapter != nil {
+		r.adapter.Close()
 		return nil
 	}
 	return nil
@@ -259,7 +259,7 @@ func (r *Repos) DB() *sql.DB {
 
 // Executor returns the dbstore Executor for constructing additional repositories
 // (e.g. auth repos) that share the same pool and throttle policy.
-func (r *Repos) Executor() *dbstore.Executor {
+func (r *Repos) Executor() *dbstore.Executor[*sqlx.DB] {
 	return r.executor
 }
 
@@ -283,7 +283,7 @@ func (r *Repos) DeleteRun(ctx context.Context, projectID, id string) error {
 	if r.executor == nil {
 		return fmt.Errorf("DeleteRun: no executor configured — set ExternalReposConfig.DeleteRun")
 	}
-	return r.executor.RunTx(ctx, PrimarySource, func(ctx context.Context, tx *sqlx.Tx) error {
+	return sqlxadapter.RunTx(r.executor, ctx, PrimarySource, func(ctx context.Context, tx *sqlx.Tx) error {
 		for _, q := range deleteRunQueries(r.db) {
 			if _, err := tx.ExecContext(ctx, q, projectID, id); err != nil {
 				return err
@@ -309,7 +309,7 @@ func (r *Repos) DeleteRuns(ctx context.Context, projectID string, ids []string) 
 	if r.executor == nil {
 		return fmt.Errorf("DeleteRuns: no executor configured — set ExternalReposConfig.DeleteRun")
 	}
-	return r.executor.RunTx(ctx, PrimarySource, func(ctx context.Context, tx *sqlx.Tx) error {
+	return sqlxadapter.RunTx(r.executor, ctx, PrimarySource, func(ctx context.Context, tx *sqlx.Tx) error {
 		for _, spec := range deleteRunsQueries() {
 			query, args, err := sqlx.In(spec.query, projectID, ids)
 			if err != nil {

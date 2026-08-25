@@ -8,13 +8,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
+	sqlxadapter "github.com/loykin/dbstore/adapters/sqlx"
 	"github.com/loykin/piper/pkg/serving"
 )
 
-type servingRepo struct{ dbstore.BaseRepo }
+type servingRepo struct{ sqlxadapter.Source }
 
-func NewServingRepo(exec *dbstore.Executor, source string) serving.Repository {
-	return &servingRepo{BaseRepo: dbstore.NewBaseRepo(source, exec)}
+func NewServingRepo(exec *dbstore.Executor[*sqlx.DB], source string) serving.Repository {
+	return &servingRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
 const serviceSelectCols = `project_id, name, run_id, artifact, status, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at`

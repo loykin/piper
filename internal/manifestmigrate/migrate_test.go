@@ -116,6 +116,13 @@ func (r *fakeNotebookRepo) List(_ context.Context, projectID string) ([]*noteboo
 	return r.byProject[projectID], nil
 }
 func (r *fakeNotebookRepo) Delete(context.Context, string, string) error { return nil }
+func (r *fakeNotebookRepo) AppendHistory(context.Context, *notebook.NotebookServer) error {
+	return nil
+}
+func (r *fakeNotebookRepo) ListHistory(context.Context, string, int, int) ([]*notebook.NotebookHistory, error) {
+	return nil, nil
+}
+func (r *fakeNotebookRepo) CountHistory(context.Context, string) (int, error) { return 0, nil }
 
 // ─── fake serving.Repository ────────────────────────────────────────────────
 
@@ -161,7 +168,8 @@ func (r *fakeServingRepo) List(_ context.Context, projectID string, _, _ int) ([
 func (r *fakeServingRepo) Count(_ context.Context, projectID string) (int, error) {
 	return len(r.byProject[projectID]), nil
 }
-func (r *fakeServingRepo) Delete(context.Context, string, string) error { return nil }
+func (r *fakeServingRepo) Delete(context.Context, string, string) error          { return nil }
+func (r *fakeServingRepo) AppendHistory(context.Context, *serving.Service) error { return nil }
 func (r *fakeServingRepo) ListHistory(context.Context, string, int, int) ([]*serving.ServiceHistory, error) {
 	return nil, nil
 }

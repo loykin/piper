@@ -339,6 +339,13 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 	}
 	spec.Metadata.ProjectID = projectID
 
+	// Archive the pre-restart state before this restart cycle overwrites it —
+	// otherwise "start -> restart -> restart" leaves no trace that the
+	// earlier runs ever happened, only the eventual delete does.
+	if err := m.repo.AppendHistory(ctx, nb); err != nil {
+		return fmt.Errorf("notebook: archive previous state: %w", err)
+	}
+
 	if err := m.repo.SetStatus(ctx, projectID, name, StatusStarting); err != nil {
 		return fmt.Errorf("notebook: set status starting: %w", err)
 	}

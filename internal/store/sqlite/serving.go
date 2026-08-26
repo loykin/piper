@@ -135,16 +135,20 @@ func (r *servingRepo) Delete(ctx context.Context, projectID, name string) error 
 		return db.GetContext(ctx, &svc,
 			`SELECT `+serviceSelectCols+` FROM services WHERE project_id=? AND name=?`, projectID, name)
 	}); err == nil {
-		_ = r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-			_, err := db.ExecContext(ctx,
-				`INSERT INTO service_history (project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.CreatedBy, svc.CreatedAt, time.Now())
-			return err
-		})
+		_ = r.AppendHistory(ctx, &svc)
 	}
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx, `DELETE FROM services WHERE project_id=? AND name=?`, projectID, name)
+		return err
+	})
+}
+
+func (r *servingRepo) AppendHistory(ctx context.Context, svc *serving.Service) error {
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO service_history (project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.CreatedBy, svc.CreatedAt, time.Now())
 		return err
 	})
 }

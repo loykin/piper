@@ -17,6 +17,12 @@ type Repository interface {
 	// limit/offset.
 	Count(ctx context.Context, projectID string) (int, error)
 	Delete(ctx context.Context, projectID, name string) error
+	// AppendHistory records svc as a past deployment in service_history,
+	// stamped with the current time as its stopped_at/replaced-at moment.
+	// Called both when a service is deleted and, before Deploy overwrites the
+	// current row, whenever a redeploy replaces an already-running version —
+	// so no version a service ever ran is silently lost on the next deploy.
+	AppendHistory(ctx context.Context, svc *Service) error
 	// ListHistory returns service history for projectID, most recently
 	// stopped first. Same limit/offset convention as List.
 	ListHistory(ctx context.Context, projectID string, limit, offset int) ([]*ServiceHistory, error)

@@ -427,6 +427,9 @@ func (d *Driver) observeNamespace(ctx context.Context, ns string) {
 			continue
 		}
 		status := observedStatefulSetStatus(sts)
+		if status == notebook.StatusStarting && d.podsCrashLooping(ctx, sts) {
+			status = notebook.StatusFailed
+		}
 		if status == "" || !d.statusChanged(notebookStatusKey(projectID, name), status) {
 			continue
 		}
@@ -500,6 +503,31 @@ func (d *Driver) ensureNotebookLogStream(ctx context.Context, projectID, name st
 			sink.Append(runID, "runtime", "combined", sc.Text(), time.Now())
 		}
 	}()
+}
+
+// podsCrashLooping reports whether any pod backing sts is stuck
+// restart-looping (CrashLoopBackOff) or failing to pull its image
+// (ImagePullBackOff/ErrImagePull) — signals ReadyReplicas/Conditions never
+// surface, since ReadyReplicas simply stays below desired indefinitely in
+// both cases and observedStatefulSetStatus falls back to StatusStarting.
+func (d *Driver) podsCrashLooping(ctx context.Context, sts *appsv1.StatefulSet) bool {
+	selector := metav1.FormatLabelSelector(sts.Spec.Selector)
+	pods, err := d.cfg.Client.CoreV1().Pods(sts.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return false
+	}
+	for _, pod := range pods.Items {
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.State.Waiting == nil {
+				continue
+			}
+			switch cs.State.Waiting.Reason {
+			case "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func observedStatefulSetStatus(sts *appsv1.StatefulSet) string {

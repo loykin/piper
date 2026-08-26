@@ -43,6 +43,7 @@ const LoginPage              = lazyRouteComponent(() => import('@/pages/LoginPag
 const NotebooksPage          = lazyRouteComponent(() => import('@/pages/notebooks/NotebooksPage'))
 const NotebookCreatePage     = lazyRouteComponent(() => import('@/pages/notebooks/NotebookCreatePage'))
 const NotebookVolumesPage    = lazyRouteComponent(() => import('@/pages/notebooks/NotebookVolumesPage'))
+const NotebookHistoryPage    = lazyRouteComponent(() => import('@/pages/notebooks/NotebookHistoryPage'))
 const PipelinesListPage      = lazyRouteComponent(() => import('@/pages/pipelines/PipelinesListPage'))
 const PipelineEditorPage     = lazyRouteComponent(() => import('@/pages/pipelines/PipelineEditorPage'))
 const HistoryPage            = lazyRouteComponent(() => import('@/pages/pipelines/HistoryPage'))
@@ -91,6 +92,7 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
       items: [
         { id: 'notebooks',        label: 'Notebooks', icon: BookOpen,  to: `${base}/notebooks` },
         { id: 'notebook-volumes', label: 'Volumes',   icon: HardDrive, to: `${base}/notebook-volumes` },
+        { id: 'notebook-history', label: 'History',   icon: History,   to: `${base}/notebooks/history`, exact: true },
       ],
     },
     {
@@ -492,6 +494,7 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'serving/history', component: ServingHistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks', component: NotebooksPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/create', component: NotebookCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/history', component: NotebookHistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-volumes', component: NotebookVolumesPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'storage', component: StoragePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'members', component: MembersPage }),

@@ -19,6 +19,7 @@ var errDriverUnavailable = errors.New("notebook: driver unavailable")
 type fakeRepo struct {
 	mu      sync.Mutex
 	servers map[string]*NotebookServer
+	history []*NotebookServer
 }
 
 func newFakeRepo() *fakeRepo {
@@ -94,6 +95,31 @@ func (r *fakeRepo) Delete(_ context.Context, _, name string) error {
 	defer r.mu.Unlock()
 	delete(r.servers, name)
 	return nil
+}
+
+func (r *fakeRepo) AppendHistory(_ context.Context, nb *NotebookServer) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := *nb
+	r.history = append(r.history, &cp)
+	return nil
+}
+
+func (r *fakeRepo) ListHistory(_ context.Context, _ string, _, _ int) ([]*NotebookHistory, error) {
+	return nil, nil
+}
+
+func (r *fakeRepo) CountHistory(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
+// helper: read history without lock (call only from same test goroutine after sync point)
+func (r *fakeRepo) historySnapshot() []*NotebookServer {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*NotebookServer, len(r.history))
+	copy(out, r.history)
+	return out
 }
 
 // helper: read without lock (call only from same test goroutine after sync point)
@@ -675,6 +701,32 @@ func TestManager_Restart_StoppedServer(t *testing.T) {
 	nb = requireNotebook(t, repo, "nb-rst")
 	if nb.RuntimeID != "w-rst" {
 		t.Errorf("RuntimeID = %q, want %q", nb.RuntimeID, "w-rst")
+	}
+}
+
+func TestManager_Restart_ArchivesPreviousStateToHistory(t *testing.T) {
+	repo := newFakeRepo()
+	vols := newFakeVols()
+	drv := newFakeDriver()
+	drv.startResult = &NotebookServer{RuntimeID: "w-rst"}
+
+	m := New(repo, vols, drv)
+	ctx := context.Background()
+
+	vol := &NotebookVolume{ID: "vol-rst", Label: "nb-rst", WorkDir: "/data/rst", Status: VolumeStatusBound}
+	_ = vols.Create(ctx, vol)
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-rst", Status: StatusFailed, VolumeID: "vol-rst", WorkDir: "/data/rst", RuntimeID: "w-old"})
+
+	if err := m.Restart(ctx, "project-a", "nb-rst"); err != nil {
+		t.Fatalf("Restart() error: %v", err)
+	}
+
+	history := repo.historySnapshot()
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(history))
+	}
+	if history[0].Status != StatusFailed || history[0].RuntimeID != "w-old" {
+		t.Fatalf("archived history = %+v, want the pre-restart failed/w-old record", history[0])
 	}
 }
 

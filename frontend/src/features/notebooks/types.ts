@@ -16,6 +16,22 @@ export interface NotebookServer {
   updated_at: string
 }
 
+export interface NotebookHistory {
+  id: number
+  name: string
+  status: string
+  env: string
+  endpoint: string
+  pid: number
+  work_dir: string
+  runtime_id?: string
+  volume_id: string
+  image: string
+  yaml: string
+  deployed_at: string
+  stopped_at: string
+}
+
 export interface NotebookVolume {
   id: string
   label: string

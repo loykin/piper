@@ -33,6 +33,23 @@ import (
 
 const maxRequestBodyBytes int64 = 1 << 20
 
+// maxBlobRequestBodyBytes bounds the built-in file store's PUT and the
+// project storage object upload — both carry real artifacts (model
+// checkpoints, log bundles) that routinely exceed maxRequestBodyBytes, which
+// exists to bound JSON API payload abuse, not blob transfer.
+const maxBlobRequestBodyBytes int64 = 4 << 30 // 4 GiB
+
+// isBlobRoute reports whether fullPath is one of the artifact-transfer routes
+// that must use maxBlobRequestBodyBytes instead of the JSON-API default.
+// Matched by suffix because the same handlers are mounted under different
+// prefixes: "/store/*key" on the main engine, and ".../storage/object" both
+// on the main engine (behind /api/projects/:project_id) and on the Member
+// tunnel's own router (behind /projects/:project_id, no /api prefix).
+func isBlobRoute(fullPath string) bool {
+	return strings.HasPrefix(fullPath, "/store/") ||
+		strings.HasSuffix(fullPath, "/storage/object")
+}
+
 var (
 	httpRequests = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "piper_http_requests_total", Help: "HTTP requests handled by Piper."},
@@ -332,13 +349,19 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		switch c.Request.Method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch:
-			if c.Request.ContentLength > maxBytes {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
+			max := maxBytes
+			if isBlobRoute(c.FullPath()) {
+				max = maxBlobRequestBodyBytes
+			}
+			if c.Request.ContentLength > max {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+					"error": fmt.Sprintf("request body too large (max %d bytes)", max),
+				})
 				c.Abort()
 				return
 			}
 			if c.Request.Body != nil {
-				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max)
 			}
 		}
 		c.Next()

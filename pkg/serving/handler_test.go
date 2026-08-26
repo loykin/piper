@@ -70,6 +70,9 @@ func (r *stubServingRepo) Delete(_ context.Context, _, name string) error {
 	delete(r.services, name)
 	return nil
 }
+func (r *stubServingRepo) AppendHistory(_ context.Context, _ *Service) error {
+	return nil
+}
 func (r *stubServingRepo) ListHistory(_ context.Context, _ string, _, _ int) ([]*ServiceHistory, error) {
 	return nil, nil
 }

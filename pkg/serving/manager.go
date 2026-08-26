@@ -86,6 +86,15 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 		rec.CreatedBy = identity.ID
 	}
 
+	// A redeploy overwrites the current row (Upsert), so the version it
+	// replaces must be preserved in history first — otherwise "v1 -> v2 ->
+	// v3" leaves no trace that v1/v2 ever ran, only the final delete does.
+	if existing, err := m.repo.Get(ctx, projectID, name); err == nil && existing != nil {
+		if err := m.repo.AppendHistory(ctx, existing); err != nil {
+			return fmt.Errorf("archive previous deployment: %w", err)
+		}
+	}
+
 	if err := m.repo.Upsert(ctx, rec); err != nil {
 		return err
 	}

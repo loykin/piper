@@ -1,9 +1,9 @@
 // notebooks feature API
 export type {
-  NotebookServer, NotebookVolume,
+  NotebookServer, NotebookVolume, NotebookHistory,
 } from './types'
 
-import type { NotebookServer, NotebookVolume } from './types'
+import type { NotebookServer, NotebookVolume, NotebookHistory } from './types'
 import { projectApi } from '@/lib/api'
 
 export async function listNotebooks(projectId: string): Promise<NotebookServer[]> {
@@ -36,6 +36,13 @@ export async function startNotebook(projectId: string, name: string): Promise<No
 
 export async function deleteNotebook(projectId: string, name: string): Promise<void> {
   return projectApi(projectId).delete(`/notebooks/${name}`)
+}
+
+/** Like `listNotebooks`, but for a `limit`-paginated page — see `listServingPaged`. */
+export async function listNotebookHistoryPaged(projectId: string, limit: number, offset: number): Promise<{ history: NotebookHistory[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  const { data, total } = await projectApi(projectId).getWithTotal<NotebookHistory[]>(`/notebooks/history?${params.toString()}`)
+  return { history: Array.isArray(data) ? data : [], total: total ?? 0 }
 }
 
 /** Browser proxy URL for opening a notebook in the browser. */

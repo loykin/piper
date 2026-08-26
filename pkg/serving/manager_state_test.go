@@ -12,6 +12,7 @@ import (
 
 type stateTestRepo struct {
 	service *Service
+	history []*Service
 }
 
 func (r *stateTestRepo) Create(_ context.Context, svc *Service) error {
@@ -63,6 +64,10 @@ func (r *stateTestRepo) Count(context.Context, string) (int, error) {
 	return 1, nil
 }
 func (r *stateTestRepo) Delete(context.Context, string, string) error { r.service = nil; return nil }
+func (r *stateTestRepo) AppendHistory(_ context.Context, svc *Service) error {
+	r.history = append(r.history, cloneService(svc))
+	return nil
+}
 func (r *stateTestRepo) ListHistory(context.Context, string, int, int) ([]*ServiceHistory, error) {
 	return nil, nil
 }
@@ -218,6 +223,45 @@ func TestManagerStatusOnlySyncPreservesEndpoint(t *testing.T) {
 	}
 	if repo.service.Endpoint != "http://worker:8080" {
 		t.Fatalf("endpoint = %q, want preserved endpoint", repo.service.Endpoint)
+	}
+}
+
+func TestManagerDeployArchivesPreviousVersionToHistory(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{
+		Name:     "demo",
+		Status:   StatusRunning,
+		Artifact: "step-a/model-v1",
+		RunID:    "run-1",
+	}}
+	driver := &stateTestDriver{deployRec: &Service{Name: "demo", Status: StatusStarting}}
+	m := New(repo, driver)
+	spec := ModelService{}
+	spec.Metadata.Name = "demo"
+	spec.Spec.Model.FromURI = "file:///model-v2"
+	spec.Spec.Run = ModelServiceRun{Command: []string{"serve"}, Port: 8080}
+
+	if err := m.Deploy(context.Background(), "project-a", spec, artifact.Resolved{RunID: "run-2"}, "yaml-v2"); err != nil {
+		t.Fatalf("Deploy() error: %v", err)
+	}
+	if len(repo.history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(repo.history))
+	}
+	if repo.history[0].RunID != "run-1" || repo.history[0].Artifact != "step-a/model-v1" {
+		t.Fatalf("archived history = %+v, want the pre-deploy v1 record", repo.history[0])
+	}
+	// The live row now reflects v2, not the archived v1.
+	if repo.service.RunID != "run-2" {
+		t.Fatalf("current run ID = %q, want run-2", repo.service.RunID)
+	}
+
+	// A first-ever deploy (no existing row) must not touch history.
+	repo2 := &stateTestRepo{}
+	m2 := New(repo2, &stateTestDriver{deployRec: &Service{Name: "demo", Status: StatusStarting}})
+	if err := m2.Deploy(context.Background(), "project-a", spec, artifact.Resolved{RunID: "run-1"}, "yaml-v1"); err != nil {
+		t.Fatalf("Deploy() error: %v", err)
+	}
+	if len(repo2.history) != 0 {
+		t.Fatalf("history len = %d, want 0 on first deploy", len(repo2.history))
 	}
 }
 

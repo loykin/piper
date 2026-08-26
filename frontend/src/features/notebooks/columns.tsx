@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import StatusBadge from '@/shared/components/StatusBadge'
 import { RowActions } from '@/shared/components/RowActions'
 import { notebookProxyURL } from './api'
-import type { NotebookServer, NotebookVolume } from './api'
+import type { NotebookServer, NotebookVolume, NotebookHistory } from './api'
 
 // ── Notebook server columns (state-dependent: busy) ────────────────────────
 
@@ -80,6 +80,81 @@ export function getNotebookColumns(
     },
   ]
 }
+
+// ── Notebook history columns ────────────────────────────────────────────────
+
+function elapsed(deployedAt: string, stoppedAt: string): string {
+  const ms = new Date(stoppedAt).getTime() - new Date(deployedAt).getTime()
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  if (ms < 3_600_000) return `${(ms / 60000).toFixed(1)}m`
+  return `${(ms / 3_600_000).toFixed(1)}h`
+}
+
+export const notebookHistoryColumns: DataGridColumnDef<NotebookHistory>[] = [
+  {
+    accessorKey: 'name',
+    header: 'Notebook',
+    meta: { minWidth: 140 },
+    cell: ({ row }) => (
+      <span className="block truncate font-medium">{row.original.name}</span>
+    ),
+  },
+  {
+    accessorKey: 'status',
+    header: 'Final Status',
+    meta: { minWidth: 120 },
+    cell: ({ row }) => <StatusBadge status={row.original.status} />,
+  },
+  {
+    accessorKey: 'image',
+    header: 'Image',
+    meta: { minWidth: 140, flex: 1 },
+    cell: ({ row }) => (
+      <span className="block truncate font-mono text-xs text-muted-foreground" title={row.original.image || undefined}>
+        {row.original.image || '—'}
+      </span>
+    ),
+  },
+  {
+    id: 'runtime_id',
+    header: 'Runtime',
+    meta: { minWidth: 140 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">{row.original.runtime_id || '—'}</span>
+    ),
+  },
+  {
+    id: 'deployed_at',
+    header: 'Started',
+    meta: { minWidth: 150 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {new Date(row.original.deployed_at).toLocaleString()}
+      </span>
+    ),
+  },
+  {
+    id: 'stopped_at',
+    header: 'Ended',
+    meta: { minWidth: 150 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {new Date(row.original.stopped_at).toLocaleString()}
+      </span>
+    ),
+  },
+  {
+    id: 'duration',
+    header: 'Duration',
+    meta: { minWidth: 90 },
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">
+        {elapsed(row.original.deployed_at, row.original.stopped_at)}
+      </span>
+    ),
+  },
+]
 
 // ── Notebook volume columns (state-dependent: busy) ────────────────────────
 

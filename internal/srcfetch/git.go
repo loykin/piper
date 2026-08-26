@@ -20,9 +20,11 @@ func (f *GitFetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string
 	if run.Repo == "" {
 		return "", fmt.Errorf("git source: repo is required")
 	}
-	if run.Path == "" {
-		return "", fmt.Errorf("git source: path is required")
-	}
+	// run.Path is optional: an empty path resolves to destDir itself (the
+	// checkout root), which command/python steps use as their working
+	// directory anyway. A path is only required by callers — like
+	// NotebookExecutor — that need a specific file, and those enforce it
+	// themselves before calling Fetch.
 
 	branch := run.Branch
 	if branch == "" {

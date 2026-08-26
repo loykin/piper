@@ -23,6 +23,9 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 		}
 		run.Path = run.Notebook
 	}
+	if run.Path == "" {
+		return fmt.Errorf("notebook source: notebook file path is required")
+	}
 	fetcher, err := srcfetch.New(run, cfg.SourceCfg)
 	if err != nil {
 		return err

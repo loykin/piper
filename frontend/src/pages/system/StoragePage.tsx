@@ -589,11 +589,23 @@ function StorageCredentialsSection({
 // RotateCredentialDialog. Triggered from Uploaded Objects' own toolbar since
 // it's that list's create action, not a permanent fixture above the list.
 
+// Mirrors serve.go's maxBlobRequestBodyBytes — the built-in store's blob
+// upload cap. Kept as a client-side estimate only; the server response is
+// still the source of truth if this ever drifts.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+
 function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const uploadObject = useUploadObject()
   const [uploadKey, setUploadKey] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileTooLarge = uploadFile !== null && uploadFile.size > MAX_UPLOAD_BYTES
 
   function handleOpenChange(next: boolean) {
     if (!next) {
@@ -659,6 +671,11 @@ function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOpenChang
             </div>
           </FormField>
 
+          {fileTooLarge && uploadFile && (
+            <p className="text-sm text-destructive">
+              {formatBytes(uploadFile.size)} exceeds the {formatBytes(MAX_UPLOAD_BYTES)} upload limit.
+            </p>
+          )}
           {uploadObject.isError && (
             <p className="text-sm text-destructive">
               {uploadObject.error instanceof Error ? uploadObject.error.message : 'Upload failed.'}
@@ -667,7 +684,7 @@ function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOpenChang
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => void handleUpload()} disabled={!uploadFile || uploadObject.isPending}>
+          <Button onClick={() => void handleUpload()} disabled={!uploadFile || fileTooLarge || uploadObject.isPending}>
             <Save className="mr-2 size-4" />
             {uploadObject.isPending ? 'Uploading…' : 'Upload'}
           </Button>

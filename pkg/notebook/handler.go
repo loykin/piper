@@ -47,6 +47,7 @@ func currentProjectID(c *gin.Context) string {
 // The browser proxy route is registered separately via RegisterProxyRoutes.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/notebooks", h.listNotebooks)
+	rg.GET("/notebooks/history", h.listNotebookHistory)
 	rg.GET("/notebooks/:name", h.getNotebook)
 
 	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
@@ -137,6 +138,26 @@ func (h *Handler) createNotebook(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, nb)
+}
+
+// GET /notebooks/history
+func (h *Handler) listNotebookHistory(c *gin.Context) {
+	limit, offset := httpx.ParseLimitOffset(c)
+	projectID := currentProjectID(c)
+	history, err := h.deps.Notebooks.ListHistory(c.Request.Context(), projectID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if limit > 0 {
+		total, err := h.deps.Notebooks.CountHistory(c.Request.Context(), projectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
+	}
+	c.JSON(http.StatusOK, history)
 }
 
 // GET /notebooks/:name

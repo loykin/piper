@@ -96,8 +96,51 @@ func (r *notebookRepo) GetByVolumeID(ctx context.Context, projectID, volumeID st
 }
 
 func (r *notebookRepo) Delete(ctx context.Context, projectID, name string) error {
+	var nb notebook.NotebookServer
+	if err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &nb,
+			`SELECT `+notebookCols+` FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
+	}); err == nil {
+		_ = r.AppendHistory(ctx, &nb)
+	}
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx, `DELETE FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
 		return err
 	})
+}
+
+func (r *notebookRepo) AppendHistory(ctx context.Context, nb *notebook.NotebookServer) error {
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO notebook_history (project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, image, yaml, created_by, deployed_at, stopped_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML, nb.CreatedBy, nb.CreatedAt, time.Now())
+		return err
+	})
+}
+
+func (r *notebookRepo) ListHistory(ctx context.Context, projectID string, limit, offset int) ([]*notebook.NotebookHistory, error) {
+	query := `SELECT id, project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, image, yaml, created_by, deployed_at, stopped_at
+		 FROM notebook_history WHERE project_id=? ORDER BY stopped_at DESC`
+	args := []any{projectID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
+	var out []*notebook.NotebookHistory
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.SelectContext(ctx, &out, query, args...)
+	})
+	if out == nil {
+		out = []*notebook.NotebookHistory{}
+	}
+	return out, err
+}
+
+func (r *notebookRepo) CountHistory(ctx context.Context, projectID string) (int, error) {
+	var count int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		return db.GetContext(ctx, &count, `SELECT COUNT(*) FROM notebook_history WHERE project_id=?`, projectID)
+	})
+	return count, err
 }

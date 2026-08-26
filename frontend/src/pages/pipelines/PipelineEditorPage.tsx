@@ -1218,7 +1218,7 @@ export default function PipelineEditorPage() {
                   </label>
                   {editingTask.type === 'command' && (
                     <p className="mb-1 text-xs text-muted-foreground">
-                      Required when the pipeline source is Git. Path within the repo to fetch — a directory is fine; the command runs with $PIPER_SCRIPT_PATH pointing here.
+                      Optional. Path within the repo the command should treat as $PIPER_SCRIPT_PATH — a directory is fine. Leave empty to run from the repo root.
                     </p>
                   )}
                   <div ref={fileBrowserRef} className="relative">

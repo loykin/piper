@@ -38,6 +38,7 @@ import (
 	"github.com/loykin/piper/pkg/manifest"
 	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
 	"github.com/loykin/piper/pkg/serving"
+	"github.com/loykin/piper/pkg/serving/servingdriver"
 )
 
 // Config configures a direct, in-process K8s serving driver.
@@ -233,7 +234,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 		if err := d.upsertArtifactSecret(ctx, ns, artifactSecretName, labels, storageURL, storageToken, art.ArtifactKey); err != nil {
 			return nil, err
 		}
-		modelDir = "/piper-model"
+		modelDir = servingdriver.ContainerModelDir
 		command = iprocess.ExpandArgs(rt.Command, map[string]string{
 			"PIPER_MODEL_DIR":    modelDir,
 			"PIPER_SERVICE_NAME": name,

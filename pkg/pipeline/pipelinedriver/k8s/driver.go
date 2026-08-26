@@ -93,8 +93,8 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
-		OutputDir:    "/piper-outputs",
-		InputDir:     "/piper-inputs",
+		OutputDir:    pipelinedriver.ContainerOutputDir,
+		InputDir:     pipelinedriver.ContainerInputDir,
 		TaskFile:     "/piper-task/task.json",
 		ResultFile:   "/dev/termination-log",
 	})

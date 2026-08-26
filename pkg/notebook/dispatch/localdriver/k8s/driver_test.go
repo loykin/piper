@@ -266,6 +266,57 @@ func TestObserveReportsRunningOnceReady(t *testing.T) {
 	expectNoReport(t, reports, 150*time.Millisecond)
 }
 
+func TestObserveReportsFailedOnCrashLoopBackOff(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	d, reports := newTestDriver(t, client, 30*time.Millisecond)
+
+	vol := &notebook.NotebookVolume{ID: "vol-1", WorkDir: notebook.ContainerWorkDir}
+	if _, err := d.Start(context.Background(), testSpec("proj", "nb"), vol, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		d.Observe(ctx)
+	}()
+	t.Cleanup(func() { cancel(); wg.Wait() })
+
+	// First tick observes desired=1, readyReplicas=0 -> starting.
+	r := awaitReport(t, reports)
+	if r.status != notebook.StatusStarting {
+		t.Fatalf("status = %q, want starting", r.status)
+	}
+
+	// Simulate the pod being stuck in CrashLoopBackOff — ReadyReplicas never
+	// moves, so observedStatefulSetStatus alone would report "starting"
+	// forever; podsCrashLooping must catch this and report "failed" instead.
+	name := notebookWorkloadName("proj", "nb")
+	sts, err := client.AppsV1().StatefulSets("nb-ns").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-0", Namespace: "nb-ns", Labels: sts.Labels},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name:  "notebook",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			}},
+		},
+	}
+	if _, err := client.CoreV1().Pods("nb-ns").Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	r = awaitReport(t, reports)
+	if r.status != notebook.StatusFailed {
+		t.Fatalf("status = %q, want failed", r.status)
+	}
+}
+
 func setReadyReplicas(t *testing.T, client kubernetes.Interface, ns, name string, ready int32) {
 	t.Helper()
 	sts, err := client.AppsV1().StatefulSets(ns).Get(context.Background(), name, metav1.GetOptions{})

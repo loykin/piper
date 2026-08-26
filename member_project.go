@@ -49,6 +49,7 @@ func (p *Piper) newMemberProjectRouter() http.Handler {
 	handlers := p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 		return p.runs.StartRunFromAPI(ctx, yaml, params, vars, experiment)
 	})
+	p.registerMemberStorageRoutes(projectAPI)
 	handlers.serving.RegisterProxyRoutes(projectAPI)
 	handlers.notebook.RegisterProxyRoutes(projectAPI)
 	handlers.viewer.RegisterProxyRoutes(projectAPI)
@@ -61,13 +62,20 @@ type memberProjectHandlers struct {
 	viewer   *viewer.Handler
 }
 
-// registerMemberProjectRoutes is the single composition root for domains
-// owned by an execution Member. Home mounts the same handlers after its
-// ownership-aware relay middleware so Local Member projects still execute
-// in-process; a remote Member mounts them only on its private tunnel router.
+// registerMemberProjectRoutes is the composition root for Member-owned JSON
+// API domains (schedules, credentials, serving, notebook, viewer, templates).
+// Home mounts the same handlers after its ownership-aware relay middleware so
+// Local Member projects still execute in-process; a remote Member mounts them
+// only on its private tunnel router.
+//
+// Storage is deliberately NOT registered here — it's wired separately via
+// registerMemberStorageRoutes so Home can relay it through the streaming
+// path (relayRemoteProjectHTTP) instead of the buffered one (relayRemoteProject)
+// this group uses. Storage object payloads are unbounded blobs; the rest of
+// this group is small JSON that benefits from relayRemoteProject's
+// Idempotency-Key replay/conflict protection.
 func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerMgr *viewer.Manager, startRun func(context.Context, string, map[string]any, BuiltinVars, string) (string, error)) memberProjectHandlers {
 	credential.NewHandler(p.credentials).RegisterRoutes(projectAPI)
-	p.registerMemberStorageRoutes(projectAPI)
 
 	schedule.NewHandler(schedule.HandlerDeps{
 		Schedules: p.repos.Schedule,

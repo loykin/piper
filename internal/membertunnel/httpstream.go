@@ -137,14 +137,14 @@ func (r *remoteMemberClient) ServeProjectHTTP(ctx context.Context, auth membercl
 		return err
 	}
 	id := uuid.NewString()
-	frames := make(chan *agentpb.MemberHTTPStreamData, 128)
+	frames := newHTTPFrameQueue()
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
 		return memberclient.ErrMemberUnavailable
 	}
 	if r.streams == nil {
-		r.streams = make(map[string]chan *agentpb.MemberHTTPStreamData)
+		r.streams = make(map[string]*httpFrameQueue)
 	}
 	r.streams[id] = frames
 	r.mu.Unlock()
@@ -159,27 +159,26 @@ func (r *remoteMemberClient) ServeProjectHTTP(ctx context.Context, auth membercl
 	go func() {
 		defer inbound.Close()
 		for {
-			select {
-			case <-ctx.Done():
-				_ = inbound.CloseWithError(ctx.Err())
-				return
-			case frame, ok := <-frames:
-				if !ok {
+			frame, ok := frames.pop(ctx)
+			if !ok {
+				if ctx.Err() != nil {
+					_ = inbound.CloseWithError(ctx.Err())
+				} else {
 					_ = inbound.CloseWithError(memberclient.ErrMemberUnavailable)
+				}
+				return
+			}
+			if frame.Error != "" {
+				_ = inbound.CloseWithError(errors.New(frame.Error))
+				return
+			}
+			if len(frame.Data) > 0 {
+				if _, err := inbound.Write(frame.Data); err != nil {
 					return
 				}
-				if frame.Error != "" {
-					_ = inbound.CloseWithError(errors.New(frame.Error))
-					return
-				}
-				if len(frame.Data) > 0 {
-					if _, err := inbound.Write(frame.Data); err != nil {
-						return
-					}
-				}
-				if frame.End {
-					return
-				}
+			}
+			if frame.End {
+				return
 			}
 		}
 	}()
@@ -189,19 +188,12 @@ func (r *remoteMemberClient) ServeProjectHTTP(ctx context.Context, auth membercl
 
 func (r *remoteMemberClient) deliverHTTP(frame *agentpb.MemberHTTPStreamData) {
 	r.mu.Lock()
-	ch := r.streams[frame.StreamId]
-	if ch == nil {
-		r.mu.Unlock()
+	q := r.streams[frame.StreamId]
+	r.mu.Unlock()
+	if q == nil {
 		return
 	}
-	select {
-	case ch <- frame:
-		r.mu.Unlock()
-	default:
-		delete(r.streams, frame.StreamId)
-		close(ch)
-		r.mu.Unlock()
-	}
+	q.push(frame)
 }
 
 var _ projectclient.StreamClient = (*remoteMemberClient)(nil)

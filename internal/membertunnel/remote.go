@@ -30,7 +30,7 @@ type remoteMemberClient struct {
 
 	mu      sync.Mutex
 	pending map[string]chan *agentpb.MemberRPCResponse
-	streams map[string]chan *agentpb.MemberHTTPStreamData
+	streams map[string]*httpFrameQueue
 	closed  bool
 }
 
@@ -64,8 +64,8 @@ func (r *remoteMemberClient) closeAll() {
 		close(ch)
 		delete(r.pending, id)
 	}
-	for id, ch := range r.streams {
-		close(ch)
+	for id, q := range r.streams {
+		q.close()
 		delete(r.streams, id)
 	}
 }

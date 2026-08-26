@@ -10,11 +10,17 @@ import (
 	"github.com/loykin/piper/pkg/project"
 )
 
-func TestRemoteHTTPBackpressureIsolatedToOneStream(t *testing.T) {
+// deliverHTTP must never block the shared tunnel recv loop, even when the
+// stream's own consumer hasn't caught up yet — but unlike the old
+// bounded-channel design, an unconsumed backlog must queue and eventually be
+// delivered in order, not get silently dropped with the stream torn down
+// (that previously corrupted any large-enough upload/download once its
+// buffer filled, which is exactly what this queue exists to carry).
+func TestRemoteHTTPBackpressureDoesNotBlockOrDropFrames(t *testing.T) {
 	r := newRemoteMemberClient("member-1", "test-token", func(*agentpb.HomeMessage) error { return nil })
-	frames := make(chan *agentpb.MemberHTTPStreamData, 1)
-	frames <- &agentpb.MemberHTTPStreamData{StreamId: "slow", Data: []byte("first")}
-	r.streams = map[string]chan *agentpb.MemberHTTPStreamData{"slow": frames}
+	q := newHTTPFrameQueue()
+	q.push(&agentpb.MemberHTTPStreamData{StreamId: "slow", Data: []byte("first")})
+	r.streams = map[string]*httpFrameQueue{"slow": q}
 
 	done := make(chan struct{})
 	go func() {
@@ -24,21 +30,32 @@ func TestRemoteHTTPBackpressureIsolatedToOneStream(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("full HTTP stream blocked the tunnel receive loop")
+		t.Fatal("delivering to an undrained stream blocked the tunnel receive loop")
 	}
+
 	r.mu.Lock()
 	_, retained := r.streams["slow"]
 	r.mu.Unlock()
-	if retained {
-		t.Fatal("overflowed HTTP stream remained registered")
+	if !retained {
+		t.Fatal("stream was torn down instead of just queuing the extra frame")
+	}
+
+	ctx := context.Background()
+	first, ok := q.pop(ctx)
+	if !ok || string(first.Data) != "first" {
+		t.Fatalf("first popped frame = %+v ok=%v, want data=%q", first, ok, "first")
+	}
+	second, ok := q.pop(ctx)
+	if !ok || string(second.Data) != "overflow" {
+		t.Fatalf("second popped frame = %+v ok=%v, want data=%q", second, ok, "overflow")
 	}
 }
 
-func TestMemberHTTPBackpressureIsolatedToOneStream(t *testing.T) {
+func TestMemberHTTPBackpressureDoesNotBlockOrDropFrames(t *testing.T) {
 	c := NewClient(Config{}, &fakeMember{})
-	frames := make(chan *agentpb.MemberHTTPStreamData, 1)
-	frames <- &agentpb.MemberHTTPStreamData{StreamId: "slow", Data: []byte("first")}
-	c.httpIn["slow"] = frames
+	q := newHTTPFrameQueue()
+	q.push(&agentpb.MemberHTTPStreamData{StreamId: "slow", Data: []byte("first")})
+	c.httpIn["slow"] = q
 
 	done := make(chan struct{})
 	go func() {
@@ -48,13 +65,24 @@ func TestMemberHTTPBackpressureIsolatedToOneStream(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("full HTTP stream blocked the tunnel receive loop")
+		t.Fatal("delivering to an undrained stream blocked the tunnel receive loop")
 	}
+
 	c.httpMu.Lock()
 	_, retained := c.httpIn["slow"]
 	c.httpMu.Unlock()
-	if retained {
-		t.Fatal("overflowed HTTP stream remained registered")
+	if !retained {
+		t.Fatal("stream was torn down instead of just queuing the extra frame")
+	}
+
+	ctx := context.Background()
+	first, ok := q.pop(ctx)
+	if !ok || string(first.Data) != "first" {
+		t.Fatalf("first popped frame = %+v ok=%v, want data=%q", first, ok, "first")
+	}
+	second, ok := q.pop(ctx)
+	if !ok || string(second.Data) != "overflow" {
+		t.Fatalf("second popped frame = %+v ok=%v, want data=%q", second, ok, "overflow")
 	}
 }
 

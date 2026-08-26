@@ -256,6 +256,11 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	// routing fail closed: a newly added Member API cannot silently fall through
 	// to Home merely because somebody forgot to extend a path allowlist.
 	memberProjectAPI := projectAPI.Group("", relayRemoteProject(projectMember, projectRef))
+	// Storage gets its own sibling group relayed through the streaming path
+	// (relayRemoteProjectHTTP) instead of memberProjectAPI's buffered one —
+	// see registerMemberProjectRoutes' doc comment for why.
+	storageRelayAPI := projectAPI.Group("", relayRemoteProjectHTTP(projectMember, projectRef))
+	p.registerMemberStorageRoutes(storageRelayAPI)
 	memberHandlers := p.registerMemberProjectRoutes(memberProjectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 		projectContext, _ := project.FromContext(ctx)
 		auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}

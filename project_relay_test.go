@@ -1,8 +1,10 @@
 package piper
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -160,6 +162,91 @@ func TestMemberProjectRouterRechecksDelegatedMutationRole(t *testing.T) {
 	}
 	if len(templates) != 0 {
 		t.Fatalf("viewer mutation reached repository: %+v", templates)
+	}
+}
+
+// comboProjectClient implements both projectclient.Client and
+// projectclient.StreamClient so a single stub can record which path a given
+// route actually took.
+type comboProjectClient struct {
+	streamCalled bool
+	streamPath   string
+	doCalled     bool
+	doPath       string
+}
+
+func (s *comboProjectClient) DoProjectRequest(_ context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req projectclient.Request) (projectclient.Response, error) {
+	s.doCalled = true
+	s.doPath = req.Path
+	return projectclient.Response{Status: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: []byte(`{"remote":true}`)}, nil
+}
+
+func (s *comboProjectClient) ServeProjectHTTP(_ context.Context, _ memberclient.AuthContext, _ project.ProjectRef, w http.ResponseWriter, req *http.Request) error {
+	s.streamCalled = true
+	s.streamPath = req.URL.Path
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+	return nil
+}
+
+func TestRemoteStorageRoutesUseProjectHTTPStream(t *testing.T) {
+	const projectID = "project-1"
+	home := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}})
+	if err := home.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: "Remote", OwnerMemberID: "member-1"}); err != nil {
+		t.Fatal(err)
+	}
+	combo := &comboProjectClient{}
+	refFor := func(id string) project.ProjectRef {
+		return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
+	}
+	router := home.newRouterWithFederation(nil, nil, nil, combo, refFor, nil, "")
+
+	// Storage object download must go through the streaming relay, not the
+	// buffered one — this is the route that used to fully buffer arbitrary-size
+	// blobs in memory on both the request and response side.
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/object?key=model.bin", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if !combo.streamCalled || combo.doCalled {
+		t.Fatalf("storage GET: streamCalled=%v doCalled=%v, want stream only", combo.streamCalled, combo.doCalled)
+	}
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Fatalf("storage GET status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	*combo = comboProjectClient{}
+	uploadBody := &bytes.Buffer{}
+	mw := multipart.NewWriter(uploadBody)
+	fw, err := mw.CreateFormFile("file", "model.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/storage/object", uploadBody)
+	uploadReq.Header.Set("Content-Type", mw.FormDataContentType())
+	uploadRec := httptest.NewRecorder()
+	router.ServeHTTP(uploadRec, uploadReq)
+	if !combo.streamCalled || combo.doCalled {
+		t.Fatalf("storage POST: streamCalled=%v doCalled=%v, want stream only", combo.streamCalled, combo.doCalled)
+	}
+
+	// A non-storage mutation (template submission) must still go through the
+	// buffered, idempotency-key-aware relay — no regression from the storage split.
+	*combo = comboProjectClient{}
+	pipelineReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(`{"yaml":"metadata:\n  name: x\nspec:\n  steps: []\n"}`))
+	pipelineReq.Header.Set("Content-Type", "application/json")
+	pipelineRec := httptest.NewRecorder()
+	router.ServeHTTP(pipelineRec, pipelineReq)
+	if !combo.doCalled || combo.streamCalled {
+		t.Fatalf("pipelines POST: doCalled=%v streamCalled=%v, want buffered only", combo.doCalled, combo.streamCalled)
+	}
+	if combo.doPath != "/pipelines" {
+		t.Fatalf("pipelines POST relayed path = %q, want /pipelines", combo.doPath)
 	}
 }
 

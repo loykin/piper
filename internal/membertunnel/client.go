@@ -41,7 +41,7 @@ type Client struct {
 	member  memberclient.Client
 	project projectclient.Client
 	httpMu  sync.Mutex
-	httpIn  map[string]chan *agentpb.MemberHTTPStreamData
+	httpIn  map[string]*httpFrameQueue
 }
 
 // NewClient creates a Member-side tunnel client serving member's methods
@@ -51,7 +51,7 @@ func NewClient(cfg Config, member memberclient.Client, projectClients ...project
 	if len(projectClients) > 0 {
 		projectClient = projectClients[0]
 	}
-	return &Client{cfg: cfg, member: member, project: projectClient, httpIn: make(map[string]chan *agentpb.MemberHTTPStreamData)}
+	return &Client{cfg: cfg, member: member, project: projectClient, httpIn: make(map[string]*httpFrameQueue)}
 }
 
 // Run connects to Home and serves RPC commands, reconnecting on disconnect.
@@ -110,8 +110,8 @@ type memberStream interface {
 func (c *Client) serve(ctx context.Context, stream memberStream) error {
 	defer func() {
 		c.httpMu.Lock()
-		for id, frames := range c.httpIn {
-			close(frames)
+		for id, q := range c.httpIn {
+			q.close()
 			delete(c.httpIn, id)
 		}
 		c.httpMu.Unlock()
@@ -188,7 +188,7 @@ func (c *Client) handleHTTPOpen(ctx context.Context, open *agentpb.MemberHTTPStr
 		return
 	}
 	reader, inbound := io.Pipe()
-	frames := make(chan *agentpb.MemberHTTPStreamData, 128)
+	frames := newHTTPFrameQueue()
 	c.httpMu.Lock()
 	c.httpIn[open.StreamId] = frames
 	c.httpMu.Unlock()
@@ -214,27 +214,26 @@ func (c *Client) handleHTTPOpen(ctx context.Context, open *agentpb.MemberHTTPStr
 			_ = inbound.Close()
 		}()
 		for {
-			select {
-			case <-ctx.Done():
-				_ = inbound.CloseWithError(ctx.Err())
-				return
-			case frame, ok := <-frames:
-				if !ok {
+			frame, ok := frames.pop(ctx)
+			if !ok {
+				if ctx.Err() != nil {
+					_ = inbound.CloseWithError(ctx.Err())
+				} else {
 					_ = inbound.CloseWithError(memberclient.ErrMemberUnavailable)
+				}
+				return
+			}
+			if frame.Error != "" {
+				_ = inbound.CloseWithError(fmt.Errorf("%s", frame.Error))
+				return
+			}
+			if len(frame.Data) > 0 {
+				if _, err := inbound.Write(frame.Data); err != nil {
 					return
 				}
-				if frame.Error != "" {
-					_ = inbound.CloseWithError(fmt.Errorf("%s", frame.Error))
-					return
-				}
-				if len(frame.Data) > 0 {
-					if _, err := inbound.Write(frame.Data); err != nil {
-						return
-					}
-				}
-				if frame.End {
-					return
-				}
+			}
+			if frame.End {
+				return
 			}
 		}
 	}()
@@ -247,18 +246,11 @@ func (c *Client) handleHTTPOpen(ctx context.Context, open *agentpb.MemberHTTPStr
 func (c *Client) deliverHTTP(frame *agentpb.MemberHTTPStreamData) {
 	c.httpMu.Lock()
 	frames := c.httpIn[frame.StreamId]
+	c.httpMu.Unlock()
 	if frames == nil {
-		c.httpMu.Unlock()
 		return
 	}
-	select {
-	case frames <- frame:
-		c.httpMu.Unlock()
-	default:
-		delete(c.httpIn, frame.StreamId)
-		close(frames)
-		c.httpMu.Unlock()
-	}
+	frames.push(frame)
 }
 
 func (c *Client) handle(ctx context.Context, cmd *agentpb.MemberRPCCommand) *agentpb.MemberRPCResponse {

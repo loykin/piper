@@ -73,7 +73,8 @@ type ExternalReposConfig struct {
 	PipelineTemplate template.Repository
 	Log              logstore.LogStore
 	Metric           logstore.MetricStore
-	// DeleteRun handles atomic deletion of a run with all its steps, logs, and metrics.
+	// DeleteRun handles atomic deletion of a run and all its steps. Stats have
+	// an independent lifecycle and must not be removed by this callback.
 	// If nil, DeleteRun returns an error — provide an implementation for the target database.
 	DeleteRun func(ctx context.Context, projectID, id string) error
 	// Close is called when Repos.Close() is invoked. May be nil.
@@ -275,7 +276,8 @@ func (r *Repos) Driver() string {
 	}
 }
 
-// DeleteRun removes a run and all its steps, logs, and metrics atomically.
+// DeleteRun removes a run and all its steps atomically. Logs and metrics have
+// their own retention lifecycle and deliberately survive run deletion.
 func (r *Repos) DeleteRun(ctx context.Context, projectID, id string) error {
 	if r.deleteRun != nil {
 		return r.deleteRun(ctx, projectID, id)
@@ -293,7 +295,7 @@ func (r *Repos) DeleteRun(ctx context.Context, projectID, id string) error {
 	})
 }
 
-// DeleteRuns removes multiple runs and all their steps, logs, and metrics atomically.
+// DeleteRuns removes multiple runs and their steps atomically. Stats survive.
 func (r *Repos) DeleteRuns(ctx context.Context, projectID string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
@@ -325,8 +327,6 @@ func (r *Repos) DeleteRuns(ctx context.Context, projectID string, ids []string) 
 
 func deleteRunQueries(db *sqlx.DB) []string {
 	return []string{
-		db.Rebind(`DELETE FROM run_metrics WHERE project_id=? AND run_id=?`),
-		db.Rebind(`DELETE FROM logs WHERE project_id=? AND run_id=?`),
 		db.Rebind(`DELETE FROM steps WHERE project_id=? AND run_id=?`),
 		db.Rebind(`DELETE FROM runs WHERE project_id=? AND id=?`),
 	}
@@ -338,8 +338,6 @@ func deleteRunsQueries() []struct {
 	return []struct {
 		query string
 	}{
-		{`DELETE FROM run_metrics WHERE project_id=? AND run_id IN (?)`},
-		{`DELETE FROM logs WHERE project_id=? AND run_id IN (?)`},
 		{`DELETE FROM steps WHERE project_id=? AND run_id IN (?)`},
 		{`DELETE FROM runs WHERE project_id=? AND id IN (?)`},
 	}

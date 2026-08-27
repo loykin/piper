@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -9,15 +10,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 var validProjectID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 type Handler struct {
-	repo       Repository
-	authorizer security.Authorizer
-	owner      OwnerResolver
-	creator    Creator
+	repo         Repository
+	authorizer   security.Authorizer
+	owner        OwnerResolver
+	creator      Creator
+	beforeDelete BeforeDelete
 }
 
 // OwnerResolver validates and resolves the Owner Member assigned when a Home
@@ -27,6 +30,10 @@ type OwnerResolver func(projectID, requested string) (string, error)
 // Creator lets a Home persist a Project and its directory audit event in one
 // transaction. Standalone handlers use Repository.Create directly.
 type Creator func(ctx context.Context, value *Project, actorID string) error
+
+// BeforeDelete performs ownership-scoped cleanup that must succeed before
+// project metadata is removed, such as purging statistics on the owning Member.
+type BeforeDelete func(ctx context.Context, value *Project) error
 
 // NewHandler creates a project Handler.
 // authorizer may be nil only in trusted mode.
@@ -48,6 +55,11 @@ func NewHandlerWithDirectory(repo Repository, authorizer security.Authorizer, ow
 		}
 	}
 	return &Handler{repo: repo, authorizer: authorizer, owner: owner, creator: creator}
+}
+
+func (h *Handler) WithBeforeDelete(beforeDelete BeforeDelete) *Handler {
+	h.beforeDelete = beforeDelete
+	return h
 }
 
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -242,6 +254,16 @@ func (h *Handler) delete(c *gin.Context) {
 	if len(visibleProjects(projects)) <= 1 {
 		c.JSON(http.StatusConflict, gin.H{"error": "the last project cannot be deleted"})
 		return
+	}
+	if h.beforeDelete != nil {
+		if err := h.beforeDelete(c.Request.Context(), p); err != nil {
+			message := err.Error()
+			if errors.Is(err, statsstore.ErrBackendUnavailable) {
+				message = "statistics backend unavailable"
+			}
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": message})
+			return
+		}
 	}
 	if err := h.repo.Delete(c.Request.Context(), projectID); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})

@@ -82,6 +82,15 @@ async function requestWithTotal<T = unknown>(url: string, init?: RequestInit): P
   }
 }
 
+async function requestWithCursor<T = unknown>(url: string, init?: RequestInit): Promise<{ data: T; nextCursor: string | null }> {
+  const res = await fetchOk(url, init)
+  const text = await res.text()
+  return {
+    data: text ? (JSON.parse(text) as T) : (undefined as T),
+    nextCursor: res.headers.get('X-Next-Cursor'),
+  }
+}
+
 async function upload<T = unknown>(url: string, form: FormData): Promise<T> {
   const res = await fetch(url, { method: 'POST', body: form })
   if (!res.ok) {
@@ -100,6 +109,7 @@ async function requestRaw(url: string, init?: RequestInit): Promise<Response> {
 export const api = {
   get: <T>(path: string) => request<T>(path),
   getWithTotal: <T>(path: string) => requestWithTotal<T>(path),
+  getWithCursor: <T>(path: string) => requestWithCursor<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown) =>
@@ -118,6 +128,7 @@ export function projectApi(projectId: string) {
   return {
     get: <T>(path: string) => request<T>(`${base}${path}`),
     getWithTotal: <T>(path: string) => requestWithTotal<T>(`${base}${path}`),
+    getWithCursor: <T>(path: string) => requestWithCursor<T>(`${base}${path}`),
     post: <T>(path: string, body?: unknown) =>
       request<T>(`${base}${path}`, {
         method: 'POST',

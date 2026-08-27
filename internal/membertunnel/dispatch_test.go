@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 type fakeProjectClient struct {
@@ -90,6 +92,31 @@ func TestDispatchRerunRunAdaptsMultiArgMethod(t *testing.T) {
 	}
 	if newRunID != "run-2" {
 		t.Fatalf("newRunID = %q, want run-2", newRunID)
+	}
+}
+
+func TestDispatchQueryLogsPreservesCursorPage(t *testing.T) {
+	cursor := statsstore.CursorFromID(41)
+	member := &fakeMember{queryLogsFn: func(_ context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+		if ref.ProjectID != "project-1" || req.Cursor != cursor || req.Limit != 25 {
+			t.Fatalf("query ref=%+v req=%+v", ref, req)
+		}
+		return memberclient.QueryLogsResponse{Lines: []*logstore.Line{{ID: 42}}, NextCursor: statsstore.CursorFromID(42)}, nil
+	}}
+	payload, err := encodeCall(memberclient.AuthContext{}, project.ProjectRef{ProjectID: "project-1"}, memberclient.QueryLogsRequest{RunID: "run-1", StepName: "train", Cursor: cursor, Limit: 25})
+	if err != nil {
+		t.Fatal(err)
+	}
+	responsePayload, err := dispatch(context.Background(), member, MethodQueryLogs, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response memberclient.QueryLogsResponse
+	if err := json.Unmarshal(responsePayload, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Lines) != 1 || response.Lines[0].ID != 42 || response.NextCursor != statsstore.CursorFromID(42) {
+		t.Fatalf("response = %+v", response)
 	}
 }
 

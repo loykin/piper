@@ -256,12 +256,12 @@ func (c *Client) deliverHTTP(frame *agentpb.MemberHTTPStreamData) {
 func (c *Client) handle(ctx context.Context, cmd *agentpb.MemberRPCCommand) *agentpb.MemberRPCResponse {
 	resp := &agentpb.MemberRPCResponse{RequestId: cmd.RequestId}
 	if err := verifyCall(cmd.Payload, c.cfg.Token, c.cfg.HomeID, c.cfg.MemberID, cmd.Method, time.Now()); err != nil {
-		resp.Error = err.Error()
+		resp.Error = memberclient.EncodeRPCError(err)
 		return resp
 	}
 	payload, err := dispatch(ctx, c.member, cmd.Method, cmd.Payload, c.project)
 	if err != nil {
-		resp.Error = err.Error()
+		resp.Error = memberclient.EncodeRPCError(err)
 		return resp
 	}
 	resp.Payload = payload

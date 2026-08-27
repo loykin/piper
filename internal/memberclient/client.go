@@ -16,6 +16,7 @@ import (
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // ErrRunNotFound is returned by any Client method whose runID does not
@@ -58,12 +59,45 @@ type Client interface {
 	DeleteRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) error
 	ListSteps(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) ([]StepSummary, error)
 	RetryStep(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID, stepName string) (newRunID string, err error)
-	QueryLogs(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID, stepName string, afterID int64) ([]*logstore.Line, error)
-	QueryMetrics(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID, stepName string) ([]*logstore.Metric, error)
+	QueryLogs(ctx context.Context, auth AuthContext, ref project.ProjectRef, req QueryLogsRequest) (QueryLogsResponse, error)
+	StatsCapabilities(ctx context.Context, auth AuthContext, ref project.ProjectRef) (statsstore.Capabilities, error)
+	PurgeProjectStats(ctx context.Context, auth AuthContext, ref project.ProjectRef) error
+	QueryMetrics(ctx context.Context, auth AuthContext, ref project.ProjectRef, req QueryMetricsRequest) (QueryMetricsResponse, error)
 	ListArtifacts(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) ([]any, error)
 	// ServeArtifact streams bytes directly to w — deliberately not a
 	// request/response DTO. Forcing a large artifact download through a
 	// buffered struct would be wasteful; this mirrors the existing
 	// run.ArtifactProvider.ServeDownload shape.
 	ServeArtifact(ctx context.Context, auth AuthContext, ref project.ProjectRef, w http.ResponseWriter, r *http.Request, runID, step, path string)
+}
+
+type QueryLogsRequest struct {
+	RunID    string    `json:"run_id"`
+	StepName string    `json:"step_name"`
+	Cursor   string    `json:"cursor,omitempty"`
+	AfterID  int64     `json:"after_id,omitempty"`
+	Since    time.Time `json:"since,omitempty"`
+	Until    time.Time `json:"until,omitempty"`
+	Search   string    `json:"search,omitempty"`
+	Limit    int       `json:"limit,omitempty"`
+}
+
+type QueryLogsResponse struct {
+	Lines      []*logstore.Line `json:"lines"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+}
+
+type QueryMetricsRequest struct {
+	RunID    string    `json:"run_id"`
+	StepName string    `json:"step_name,omitempty"`
+	Keys     []string  `json:"keys,omitempty"`
+	Cursor   string    `json:"cursor,omitempty"`
+	Since    time.Time `json:"since,omitempty"`
+	Until    time.Time `json:"until,omitempty"`
+	Limit    int       `json:"limit,omitempty"`
+}
+
+type QueryMetricsResponse struct {
+	Points     []*logstore.Metric `json:"points"`
+	NextCursor string             `json:"next_cursor,omitempty"`
 }

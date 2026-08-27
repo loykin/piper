@@ -33,11 +33,22 @@ export interface RunDetail {
 
 export interface LogLine {
   id: number
+  event_id?: string
   run_id: string
   step_name: string
   ts: string
   stream: 'stdout' | 'stderr'
   line: string
+}
+
+export interface StatsCapabilities {
+  full_text_search: boolean
+  time_range: boolean
+  metric_key_filter: boolean
+  healthy: boolean
+  degraded: boolean
+  pending_bytes: number
+  last_error?: string
 }
 
 export interface CreateRunOptions {
@@ -96,6 +107,7 @@ export interface SweepResponse {
 
 export interface RunMetric {
   id: number
+  event_id?: string
   project_id: string
   run_id: string
   step_name: string

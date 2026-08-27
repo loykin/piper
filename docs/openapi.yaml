@@ -265,15 +265,125 @@ paths:
           schema: { type: string }
         - name: after_id
           in: query
+          deprecated: true
           schema: { type: integer, format: int64 }
+        - name: cursor
+          in: query
+          description: Opaque cursor returned by X-Next-Cursor.
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+        - name: search
+          in: query
+          description: Available only when the project Member advertises full_text_search.
+          schema: { type: string }
       responses:
         "200":
           description: Step logs.
+          headers:
+            X-Next-Cursor:
+              description: Opaque cursor for the next page; absent on the final page.
+              schema: { type: string }
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/LogLine" }
+  /api/projects/{project_id}/runs/{id}/steps/{step}/logs/stream:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: step
+          in: path
+          required: true
+          schema: { type: string }
+        - name: after_id
+          in: query
+          description: Resume after this log ID when Last-Event-ID is not present.
+          schema: { type: integer, format: int64 }
+        - name: Last-Event-ID
+          in: header
+          description: Opaque SSE resume cursor sent automatically by EventSource.
+          schema: { type: string }
+      responses:
+        "200":
+          description: >-
+            Server-sent step log stream. Default messages contain LogLine JSON;
+            each log frame has an SSE id for automatic resume;
+            done marks normal completion; stats_error contains
+            {code,message,retryable} JSON for statistics backend failures.
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /api/projects/{project_id}/stats/capabilities:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      responses:
+        "200":
+          description: Statistics features exposed by the Member that owns this project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [full_text_search, time_range, metric_key_filter, healthy, degraded, pending_bytes]
+                properties:
+                  full_text_search: { type: boolean }
+                  time_range: { type: boolean }
+                  metric_key_filter: { type: boolean }
+                  healthy: { type: boolean }
+                  degraded: { type: boolean }
+                  pending_bytes: { type: integer, format: int64, minimum: 0 }
+                  last_error: { type: string }
+  /api/projects/{project_id}/runs/{id}/metrics:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: step
+          in: query
+          schema: { type: string }
+        - name: key
+          in: query
+          description: Repeat to select multiple metric keys.
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: true
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Run metrics.
+          headers:
+            X-Next-Cursor:
+              description: Opaque cursor for the next page; absent on the final page.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
   /api/projects/{project_id}/schedules:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -771,6 +881,8 @@ components:
       type: object
       properties:
         id: { type: integer, format: int64 }
+        event_id: { type: string }
+        project_id: { type: string }
         run_id: { type: string }
         step_name: { type: string }
         ts: { type: string, format: date-time }

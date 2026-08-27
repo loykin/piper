@@ -219,6 +219,12 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	userAPI := r.Group("/api", p.authenticateUser())
 	p.registerAuthRoutes(r, userAPI)
 	p.registerAdminRoutes(userAPI)
+	if member == nil {
+		member = NewLocalMemberClient(p)
+	}
+	if projectRef == nil {
+		projectRef = project.LocalRef
+	}
 
 	// Project management — logged-in users can list; create/delete is system-admin.
 	var projectCreator project.Creator
@@ -227,15 +233,17 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 			return p.federationSvc.CreateProject(ctx, homeID, value, actorID)
 		}
 	}
-	project.NewHandlerWithDirectory(p.repos.Project, p.cfg.Auth.Authorizer, projectOwner, projectCreator).RegisterRoutes(userAPI)
+	projectHandler := project.NewHandlerWithDirectory(p.repos.Project, p.cfg.Auth.Authorizer, projectOwner, projectCreator)
+	projectHandler.WithBeforeDelete(func(ctx context.Context, value *project.Project) error {
+		ref := projectRef(value.ID)
+		if value.OwnerMemberID != "" {
+			ref.MemberID = value.OwnerMemberID
+		}
+		return member.PurgeProjectStats(ctx, memberclient.AuthContext{Role: security.ProjectRoleAdmin, IssuedAt: time.Now()}, ref)
+	})
+	projectHandler.RegisterRoutes(userAPI)
 	if homeID != "" && p.repos.Federation != nil {
 		federation.NewHandler(p.repos.Federation, homeID, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
-	}
-	if member == nil {
-		member = NewLocalMemberClient(p)
-	}
-	if projectRef == nil {
-		projectRef = project.LocalRef
 	}
 	projectAPI := userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
 	// System-scoped credentials (e.g. the artifact-storage s3 credential).

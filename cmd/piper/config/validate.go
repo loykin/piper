@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 const (
@@ -18,6 +20,21 @@ const (
 )
 
 func ValidateServer(c RootConfig) error {
+	if c.Stats.Spool.MaxBytes < 0 {
+		return fmt.Errorf("config: stats.spool.max_bytes must not be negative")
+	}
+	if c.Stats.Logs.Retention < 0 {
+		return fmt.Errorf("config: stats.logs.retention must not be negative")
+	}
+	if c.Stats.Metrics.Retention < 0 {
+		return fmt.Errorf("config: stats.metrics.retention must not be negative")
+	}
+	if err := statsstore.ValidateBackendURL("logs", c.Stats.Logs.URL); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if err := statsstore.ValidateBackendURL("metrics", c.Stats.Metrics.URL); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 	if c.Server.TLS.Enabled && (c.Server.TLS.CertFile == "" || c.Server.TLS.KeyFile == "") {
 		return fmt.Errorf("config: server.tls requires cert_file and key_file")
 	}

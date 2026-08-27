@@ -5,7 +5,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestLoaderDecodesStatsRetention(t *testing.T) {
+	l := NewLoader()
+	l.SetConfigFile(writeConfig(t, "version: 4\nstats:\n  spool:\n    max_bytes: 4096\n  logs:\n    retention: 24h\n  metrics:\n    retention: 90m\n"))
+	cfg, err := l.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Stats.Spool.MaxBytes != 4096 || cfg.Stats.Logs.Retention != 24*time.Hour || cfg.Stats.Metrics.Retention != 90*time.Minute {
+		t.Fatalf("unexpected stats config: %#v", cfg.Stats)
+	}
+}
 
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()

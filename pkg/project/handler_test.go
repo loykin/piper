@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -134,6 +135,27 @@ func TestDeleteProjectProtectsDefaultAndLastProject(t *testing.T) {
 	router.ServeHTTP(lastRec, httptest.NewRequest(http.MethodDelete, "/api/projects/team-a", nil))
 	if lastRec.Code != http.StatusConflict {
 		t.Fatalf("last delete status = %d, want 409", lastRec.Code)
+	}
+}
+
+func TestDeleteProjectRequiresStatsPurgeSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &memoryRepo{projects: map[string]*Project{
+		DefaultID: {ID: DefaultID, Name: "Default"},
+		"team-a":  {ID: "team-a", Name: "Team A", OwnerMemberID: "member-a"},
+	}}
+	router := gin.New()
+	handler := NewHandler(repo, nil).WithBeforeDelete(func(_ context.Context, value *Project) error {
+		if value.ID != "team-a" || value.OwnerMemberID != "member-a" {
+			t.Fatalf("purge project = %+v", value)
+		}
+		return errors.New("stats purge unavailable")
+	})
+	handler.RegisterRoutes(router.Group("/api"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/projects/team-a", nil))
+	if rec.Code != http.StatusServiceUnavailable || repo.projects["team-a"] == nil {
+		t.Fatalf("status=%d project=%+v body=%s", rec.Code, repo.projects["team-a"], rec.Body.String())
 	}
 }
 

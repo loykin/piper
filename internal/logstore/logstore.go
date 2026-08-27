@@ -1,33 +1,16 @@
-// Package logstore defines the LogStore interface for persisting and querying
-// pipeline step logs. The default implementation uses SQLite, but the interface
-// can be satisfied by any backend (Loki, S3, etc.).
+// Package logstore preserves Piper's legacy repository interfaces while the
+// public backend-neutral contracts live in pkg/statsstore.
 package logstore
 
 import (
 	"context"
 	"time"
+
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
-// Line is a single log line emitted by a pipeline step.
-type Line struct {
-	ID        int64     `json:"id"`
-	ProjectID string    `json:"project_id"`
-	RunID     string    `json:"run_id"`
-	StepName  string    `json:"step_name"`
-	Ts        time.Time `json:"ts"`
-	Stream    string    `json:"stream"` // stdout | stderr
-	Line      string    `json:"line"`
-}
-
-type Metric struct {
-	ID        int64     `json:"id"`
-	ProjectID string    `json:"project_id"`
-	RunID     string    `json:"run_id"`
-	StepName  string    `json:"step_name"`
-	Key       string    `json:"key"`
-	Value     float64   `json:"value"`
-	Ts        time.Time `json:"ts"`
-}
+type Line = statsstore.LogLine
+type Metric = statsstore.MetricPoint
 
 // LogStore is the interface for appending and querying step logs.
 type LogStore interface {
@@ -43,4 +26,25 @@ type LogStore interface {
 type MetricStore interface {
 	AppendMetrics(ctx context.Context, metrics []*Metric) error
 	QueryMetrics(projectID, runID, stepName string) ([]*Metric, error)
+}
+
+// LogPageStore is the bounded query extension implemented by bundled stores.
+// Legacy injected stores may omit it; callers retain a compatibility path.
+type LogPageStore interface {
+	QueryLogPage(ctx context.Context, query statsstore.LogQuery) (statsstore.LogPage, error)
+}
+
+type MetricPageStore interface {
+	QueryMetricPage(ctx context.Context, query statsstore.MetricQuery) (statsstore.MetricPage, error)
+}
+
+// LogRetention deletes log rows solely by their own timestamp. Run deletion,
+// RunTTL, and schedule max_runs must never call it.
+type LogRetention interface {
+	SweepLogs(ctx context.Context, before time.Time, limit int) (int64, error)
+}
+
+// MetricRetention is the metric counterpart to LogRetention.
+type MetricRetention interface {
+	SweepMetrics(ctx context.Context, before time.Time, limit int) (int64, error)
 }

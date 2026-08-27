@@ -16,6 +16,27 @@ log:
 #   token: ""
 #   credentialRef: ""
 
+# Run logs and ML metrics use the primary database when url is empty. Their
+# retention is independent from server.retention.run_ttl and schedule max_runs.
+# Each Member may independently select external statistics backends. Supported
+# schemes are elasticsearch[+https], clickhouse[+https], and (metrics only)
+# influxdb[+https]. Loki is intentionally unsupported. Put secrets in a
+# system-project generic credential and reference it by name.
+# stats:
+#   spool:
+#     dir: ./piper-data/stats-spool
+#     max_bytes: 1073741824
+#   logs:
+#     url: ""
+#     credential_ref: ""
+#     retention: 0s
+#     manage_retention: true
+#   metrics:
+#     url: ""
+#     credential_ref: ""
+#     retention: 0s
+#     manage_retention: true
+
 # Optional Git credentials used when fetching private pipeline sources.
 # Prefer PIPER_SOURCE_GIT_USER and PIPER_SOURCE_GIT_TOKEN.
 # source:

@@ -11,6 +11,7 @@ import (
 	"github.com/loykin/dbstore"
 	storemod "github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/statsstore"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -49,6 +50,10 @@ type Config struct {
 	// Storage selects the artifact store backend.
 	// When empty, falls back to the built-in file server.
 	Storage StorageConfig `yaml:"storage" mapstructure:"storage"`
+
+	// Stats controls retention and future external backends for run logs and metrics.
+	// Empty backend URLs use the primary SQLite/Postgres repositories.
+	Stats StatsConfig `yaml:"stats" mapstructure:"stats"`
 
 	// Server (not required in embedded mode)
 	Server ServerConfig `yaml:"server" mapstructure:"server"`
@@ -198,6 +203,24 @@ type RetentionConfig struct {
 	ArtifactTTL time.Duration `yaml:"artifact_ttl" mapstructure:"artifact_ttl"`
 }
 
+type StatsConfig struct {
+	Spool   StatsSpoolConfig   `yaml:"spool" mapstructure:"spool"`
+	Logs    StatsBackendConfig `yaml:"logs" mapstructure:"logs"`
+	Metrics StatsBackendConfig `yaml:"metrics" mapstructure:"metrics"`
+}
+
+type StatsSpoolConfig struct {
+	Dir      string `yaml:"dir" mapstructure:"dir"`
+	MaxBytes int64  `yaml:"max_bytes" mapstructure:"max_bytes"`
+}
+
+type StatsBackendConfig struct {
+	URL             string        `yaml:"url" mapstructure:"url"`
+	CredentialRef   string        `yaml:"credential_ref" mapstructure:"credential_ref"`
+	Retention       time.Duration `yaml:"retention" mapstructure:"retention"`
+	ManageRetention bool          `yaml:"manage_retention" mapstructure:"manage_retention"`
+}
+
 // QueueConfig controls the master's run/step state machine: retry policy and
 // the grace period a "running" step gets after a server restart before it's
 // treated as failed/retried instead of being re-dispatched immediately.
@@ -248,6 +271,11 @@ func DefaultConfig() Config {
 		Server: ServerConfig{
 			Addr: ":8080",
 		},
+		Stats: StatsConfig{
+			Spool:   StatsSpoolConfig{MaxBytes: 1 << 30},
+			Logs:    StatsBackendConfig{ManageRetention: true},
+			Metrics: StatsBackendConfig{ManageRetention: true},
+		},
 		Schedule: ScheduleConfig{
 			MisfirePolicy:      "run_once",
 			MisfireGracePeriod: 5 * time.Minute,
@@ -256,6 +284,21 @@ func DefaultConfig() Config {
 }
 
 func (c Config) Validate() error {
+	if c.Stats.Spool.MaxBytes < 0 {
+		return fmt.Errorf("stats.spool.max_bytes must not be negative")
+	}
+	if c.Stats.Logs.Retention < 0 {
+		return fmt.Errorf("stats.logs.retention must not be negative")
+	}
+	if c.Stats.Metrics.Retention < 0 {
+		return fmt.Errorf("stats.metrics.retention must not be negative")
+	}
+	if err := statsstore.ValidateBackendURL("logs", c.Stats.Logs.URL); err != nil {
+		return err
+	}
+	if err := statsstore.ValidateBackendURL("metrics", c.Stats.Metrics.URL); err != nil {
+		return err
+	}
 	hasCapabilities := c.Auth.LoginRoutes != nil ||
 		c.Auth.Authenticator != nil ||
 		c.Auth.Authorizer != nil ||

@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // RoutingClient dispatches each Run-domain request to the Member that owns
@@ -131,19 +131,33 @@ func (c *RoutingClient) RetryStep(ctx context.Context, auth AuthContext, ref pro
 	}
 	return m.RetryStep(ctx, auth, ref, runID, stepName)
 }
-func (c *RoutingClient) QueryLogs(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID, stepName string, afterID int64) ([]*logstore.Line, error) {
+func (c *RoutingClient) QueryLogs(ctx context.Context, auth AuthContext, ref project.ProjectRef, req QueryLogsRequest) (QueryLogsResponse, error) {
 	m, err := c.resolve(ref)
 	if err != nil {
-		return nil, err
+		return QueryLogsResponse{}, err
 	}
-	return m.QueryLogs(ctx, auth, ref, runID, stepName, afterID)
+	return m.QueryLogs(ctx, auth, ref, req)
 }
-func (c *RoutingClient) QueryMetrics(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID, stepName string) ([]*logstore.Metric, error) {
+func (c *RoutingClient) StatsCapabilities(ctx context.Context, auth AuthContext, ref project.ProjectRef) (statsstore.Capabilities, error) {
 	m, err := c.resolve(ref)
 	if err != nil {
-		return nil, err
+		return statsstore.Capabilities{}, err
 	}
-	return m.QueryMetrics(ctx, auth, ref, runID, stepName)
+	return m.StatsCapabilities(ctx, auth, ref)
+}
+func (c *RoutingClient) PurgeProjectStats(ctx context.Context, auth AuthContext, ref project.ProjectRef) error {
+	m, err := c.resolve(ref)
+	if err != nil {
+		return err
+	}
+	return m.PurgeProjectStats(ctx, auth, ref)
+}
+func (c *RoutingClient) QueryMetrics(ctx context.Context, auth AuthContext, ref project.ProjectRef, req QueryMetricsRequest) (QueryMetricsResponse, error) {
+	m, err := c.resolve(ref)
+	if err != nil {
+		return QueryMetricsResponse{}, err
+	}
+	return m.QueryMetrics(ctx, auth, ref, req)
 }
 func (c *RoutingClient) ListArtifacts(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) ([]any, error) {
 	m, err := c.resolve(ref)

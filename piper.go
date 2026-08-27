@@ -3,6 +3,7 @@ package piper
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -30,6 +31,7 @@ import (
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/serving"
+	"github.com/loykin/piper/pkg/statsstore"
 	"github.com/loykin/piper/pkg/storage"
 
 	storemod "github.com/loykin/piper/internal/store"
@@ -74,6 +76,7 @@ type Piper struct {
 	repos           *storemod.Repos
 	logs            logstore.LogStore
 	metrics         logstore.MetricStore
+	stats           *statsstore.Store
 	queue           *queue.Queue
 	serving         servingBundle
 	notebookManager *notebook.Manager
@@ -120,6 +123,15 @@ func New(cfg Config) (*Piper, error) {
 	if cfg.Schedule.MisfireGracePeriod == 0 {
 		cfg.Schedule.MisfireGracePeriod = def.Schedule.MisfireGracePeriod
 	}
+	if cfg.Stats.Spool == (StatsSpoolConfig{}) {
+		cfg.Stats.Spool = def.Stats.Spool
+	}
+	if cfg.Stats.Logs == (StatsBackendConfig{}) {
+		cfg.Stats.Logs = def.Stats.Logs
+	}
+	if cfg.Stats.Metrics == (StatsBackendConfig{}) {
+		cfg.Stats.Metrics = def.Stats.Metrics
+	}
 	if persistedStorage, ok, err := loadStorageSettings(filepath.Join(cfg.OutputDir, "storage.yaml"), cfg.Storage); err != nil {
 		return nil, fmt.Errorf("load storage settings: %w", err)
 	} else if ok {
@@ -136,6 +148,17 @@ func New(cfg Config) (*Piper, error) {
 	repos, err := openStore(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
+	}
+	localStats := cfg.Stats
+	if localStats.Logs.URL != "" {
+		localStats.Logs.ManageRetention = false
+	}
+	if localStats.Metrics.URL != "" {
+		localStats.Metrics.ManageRetention = false
+	}
+	if err := validateStatsRetentionSupport(localStats, repos.Log, repos.Metric); err != nil {
+		_ = repos.Close()
+		return nil, err
 	}
 	if err := ensureDefaultProject(context.Background(), repos.Project); err != nil {
 		_ = repos.Close()
@@ -159,6 +182,31 @@ func New(cfg Config) (*Piper, error) {
 		_ = repos.Close()
 		return nil, fmt.Errorf("create credential store: %w", err)
 	}
+	statsBackend := logstore.NewBackend(repos.Log, repos.Metric)
+	spoolDir := cfg.Stats.Spool.Dir
+	if spoolDir == "" {
+		spoolDir = filepath.Join(cfg.OutputDir, "stats-spool")
+	}
+	stats, err := statsstore.Open(statsstore.Config{
+		SpoolDir: spoolDir, SpoolMaxBytes: cfg.Stats.Spool.MaxBytes,
+		Logs:    statsstore.BackendConfig{URL: cfg.Stats.Logs.URL, CredentialRef: cfg.Stats.Logs.CredentialRef, Retention: cfg.Stats.Logs.Retention, ManageRetention: cfg.Stats.Logs.ManageRetention},
+		Metrics: statsstore.BackendConfig{URL: cfg.Stats.Metrics.URL, CredentialRef: cfg.Stats.Metrics.CredentialRef, Retention: cfg.Stats.Metrics.Retention, ManageRetention: cfg.Stats.Metrics.ManageRetention},
+		Resolve: func(ctx context.Context, ref string) (map[string]string, error) {
+			value, resolveErr := credentialStore.Resolve(ctx, project.SystemID, ref)
+			return value.Data, resolveErr
+		},
+	}, statsstore.Fallback{Logs: statsBackend, Metrics: statsBackend, Capabilities: statsBackend.Capabilities()})
+	if err != nil {
+		_ = repos.Close()
+		return nil, fmt.Errorf("open statistics store: %w", err)
+	}
+	statsAdapter := logstore.NewStatsAdapter(stats)
+	if cfg.Stats.Logs.URL != "" {
+		repos.Log = statsAdapter
+	}
+	if cfg.Stats.Metrics.URL != "" {
+		repos.Metric = statsAdapter
+	}
 	if cfg.Auth.Factory != nil {
 		authConfig, err := cfg.Auth.Factory(AuthDependencies{
 			DB:            repos.DB(),
@@ -167,15 +215,18 @@ func New(cfg Config) (*Piper, error) {
 			Executor:      repos.Executor(),
 		})
 		if err != nil {
+			_ = stats.Close()
 			_ = repos.Close()
 			return nil, fmt.Errorf("create auth capabilities: %w", err)
 		}
 		if authConfig.Factory != nil {
+			_ = stats.Close()
 			_ = repos.Close()
 			return nil, fmt.Errorf("create auth capabilities: nested factory is not allowed")
 		}
 		cfg.Auth = authConfig
 		if err := cfg.Validate(); err != nil {
+			_ = stats.Close()
 			_ = repos.Close()
 			return nil, err
 		}
@@ -185,16 +236,20 @@ func New(cfg Config) (*Piper, error) {
 		modelDir = filepath.Join(cfg.OutputDir, "models")
 	}
 	if err := os.MkdirAll(modelDir, 0755); err != nil {
+		_ = stats.Close()
+		_ = repos.Close()
 		return nil, fmt.Errorf("create model dir: %w", err)
 	}
 
 	servingRuntime, err := composeServingRuntime(cfg, repos, credentialStore)
 	if err != nil {
+		_ = stats.Close()
 		_ = repos.Close()
 		return nil, err
 	}
 	notebookRuntime, err := composeNotebookRuntime(cfg, repos, credentialStore)
 	if err != nil {
+		_ = stats.Close()
 		_ = repos.Close()
 		return nil, err
 	}
@@ -211,6 +266,7 @@ func New(cfg Config) (*Piper, error) {
 		repos:         repos,
 		logs:          repos.Log,
 		metrics:       repos.Metric,
+		stats:         stats,
 		credentials:   credentialStore,
 		federationSvc: federation.NewService(repos.Project, repos.Federation),
 		queue:         q,
@@ -401,12 +457,49 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			p.reconcileBackend(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.runs.CleanupRetention(ctx)
+			p.cleanupStats(ctx)
 			p.cleanupOrphanArtifacts(ctx)
 			if tick%recoveryReconcileEvery == 0 {
 				p.runs.RecoverInterruptedRuns(ctx)
 			}
 		}
 	}
+}
+
+const statsRetentionBatch = 1000
+
+// cleanupStats applies log/metric retention strictly by the stats rows' own
+// timestamps. It never consults run existence, RunTTL, or schedule max_runs.
+func (p *Piper) cleanupStats(ctx context.Context) {
+	now := time.Now().UTC()
+	if retention := p.cfg.Stats.Logs.Retention; retention > 0 && p.cfg.Stats.Logs.ManageRetention {
+		if sweeper, ok := p.logs.(logstore.LogRetention); ok {
+			if _, err := sweeper.SweepLogs(ctx, now.Add(-retention), statsRetentionBatch); err != nil {
+				slog.Warn("stats log retention sweep failed", "err", err)
+			}
+		}
+	}
+	if retention := p.cfg.Stats.Metrics.Retention; retention > 0 && p.cfg.Stats.Metrics.ManageRetention {
+		if sweeper, ok := p.metrics.(logstore.MetricRetention); ok {
+			if _, err := sweeper.SweepMetrics(ctx, now.Add(-retention), statsRetentionBatch); err != nil {
+				slog.Warn("stats metric retention sweep failed", "err", err)
+			}
+		}
+	}
+}
+
+func validateStatsRetentionSupport(cfg StatsConfig, logs logstore.LogStore, metrics logstore.MetricStore) error {
+	if cfg.Logs.Retention > 0 && cfg.Logs.ManageRetention {
+		if _, ok := logs.(logstore.LogRetention); !ok {
+			return fmt.Errorf("stats.logs.manage_retention requires a log store with retention support")
+		}
+	}
+	if cfg.Metrics.Retention > 0 && cfg.Metrics.ManageRetention {
+		if _, ok := metrics.(logstore.MetricRetention); !ok {
+			return fmt.Errorf("stats.metrics.manage_retention requires a metric store with retention support")
+		}
+	}
+	return nil
 }
 
 // cleanupOrphanArtifacts sweeps outputDir for run directories with no
@@ -587,7 +680,7 @@ func (p *Piper) Close() error {
 	if closer, ok := p.backend.(interface{ Close() error }); ok {
 		_ = closer.Close()
 	}
-	return p.repos.Close()
+	return errors.Join(p.stats.Close(), p.repos.Close())
 }
 
 // openStore creates a Repos according to the Config priority rules:

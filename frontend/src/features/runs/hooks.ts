@@ -13,6 +13,17 @@ export const runKeys = {
   steps: (projectId: string, id: string) => ['runs', projectId, id, 'steps'] as const,
   metrics: (projectId: string, id: string) => ['runs', projectId, id, 'metrics'] as const,
   artifacts: (projectId: string, runId: string) => ['runs', projectId, runId, 'artifacts'] as const,
+  statsCapabilities: (projectId: string) => ['runs', projectId, 'stats-capabilities'] as const,
+}
+
+export function useStatsCapabilities() {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: runKeys.statsCapabilities(projectId),
+    queryFn: () => api.getStatsCapabilities(projectId),
+    enabled: !!projectId,
+    ...backgroundPolling(5000),
+  })
 }
 
 export function useRuns(filter?: RunFilter) {
@@ -141,24 +152,45 @@ export function useRunLogs(runId: string, stepId: string | null) {
   const projectId = useProjectId()
   const [lines, setLines] = useState<LogLine[]>([])
   const [done, setDone] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setLines([])
     setDone(false)
+    setError(null)
     if (!stepId || !projectId) return
 
-    const url = api.runLogsStreamURL(projectId, runId, stepId)
-    const es = new EventSource(url)
-    es.onmessage = (ev) => {
-      try {
-        const line = JSON.parse(ev.data as string) as LogLine
-        setLines(prev => [...prev, line])
-      } catch { /* ignore */ }
+    let closed = false
+    let cursor = ''
+    let es: EventSource | null = null
+    let retry: ReturnType<typeof setTimeout> | null = null
+    const connect = () => {
+      if (closed) return
+      es = new EventSource(api.runLogsStreamURL(projectId, runId, stepId, cursor))
+      es.onopen = () => setError(null)
+      es.onmessage = (ev) => {
+        if (ev.lastEventId) cursor = ev.lastEventId
+        try {
+          const line = JSON.parse(ev.data as string) as LogLine
+          setLines(prev => [...prev, line])
+        } catch { /* ignore */ }
+      }
+      es.addEventListener('done', () => { setDone(true); es?.close() })
+      es.addEventListener('stats_error', (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent<string>).data) as { message?: string }
+          setError(payload.message ?? 'The statistics backend is unavailable.')
+        } catch {
+          setError('The statistics backend is unavailable.')
+        }
+        es?.close()
+        retry = setTimeout(connect, 2000)
+      })
+      es.onerror = () => setError(prev => prev ?? 'The log stream was disconnected.')
     }
-    es.addEventListener('done', () => { setDone(true); es.close() })
-    es.onerror = () => { setDone(true); es.close() }
-    return () => es.close()
+    connect()
+    return () => { closed = true; es?.close(); if (retry) clearTimeout(retry) }
   }, [projectId, runId, stepId])
 
-  return { lines, done }
+  return { lines, done, error }
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // localMemberClient implements memberclient.Client for the single-install
@@ -205,15 +207,65 @@ func (l *localMemberClient) RetryStep(ctx context.Context, auth memberclient.Aut
 	return l.p.RetryStep(ctx, runID, stepName)
 }
 
-func (l *localMemberClient) QueryLogs(_ context.Context, _ memberclient.AuthContext, ref project.ProjectRef, runID, stepName string, afterID int64) ([]*logstore.Line, error) {
-	return l.p.logs.Query(ref.ProjectID, runID, stepName, afterID)
+func (l *localMemberClient) QueryLogs(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+	cursor := req.Cursor
+	if cursor == "" && req.AfterID > 0 {
+		cursor = statsstore.CursorFromID(req.AfterID)
+	}
+	page, err := l.p.stats.Logs.QueryLogs(ctx, statsstore.LogQuery{ProjectID: ref.ProjectID, RunID: req.RunID, StepName: req.StepName, Cursor: cursor, Since: req.Since, Until: req.Until, Search: req.Search, Limit: req.Limit})
+	if err != nil {
+		if errors.Is(err, statsstore.ErrInvalidCursor) {
+			return memberclient.QueryLogsResponse{}, err
+		}
+		return memberclient.QueryLogsResponse{}, fmt.Errorf("%w: %v", statsstore.ErrBackendUnavailable, err)
+	}
+	lines := make([]*logstore.Line, len(page.Lines))
+	for i := range page.Lines {
+		lines[i] = &page.Lines[i]
+	}
+	return memberclient.QueryLogsResponse{Lines: lines, NextCursor: page.NextCursor}, nil
 }
 
-func (l *localMemberClient) QueryMetrics(_ context.Context, _ memberclient.AuthContext, ref project.ProjectRef, runID, stepName string) ([]*logstore.Metric, error) {
-	if l.p.metrics == nil {
-		return nil, nil
+func (l *localMemberClient) StatsCapabilities(context.Context, memberclient.AuthContext, project.ProjectRef) (statsstore.Capabilities, error) {
+	capabilities := l.p.stats.Capabilities
+	health := l.p.stats.Health()
+	capabilities.Healthy, capabilities.Degraded = health.Healthy, health.Degraded
+	capabilities.PendingBytes, capabilities.LastError = health.PendingBytes, health.LastError
+	return capabilities, nil
+}
+
+func (l *localMemberClient) PurgeProjectStats(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef) error {
+	if purger, ok := l.p.stats.Logs.(statsstore.Purger); ok {
+		if err := purger.PurgeProject(ctx, ref.ProjectID); err != nil {
+			return fmt.Errorf("%w: purge project statistics: %v", statsstore.ErrBackendUnavailable, err)
+		}
+		return nil
 	}
-	return l.p.metrics.QueryMetrics(ref.ProjectID, runID, stepName)
+	if purger, ok := l.p.stats.Metrics.(statsstore.Purger); ok {
+		if err := purger.PurgeProject(ctx, ref.ProjectID); err != nil {
+			return fmt.Errorf("%w: purge project statistics: %v", statsstore.ErrBackendUnavailable, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("statistics backend does not support project purge")
+}
+
+func (l *localMemberClient) QueryMetrics(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error) {
+	if l.p.stats.Metrics == nil {
+		return memberclient.QueryMetricsResponse{}, nil
+	}
+	page, err := l.p.stats.Metrics.QueryMetrics(ctx, statsstore.MetricQuery{ProjectID: ref.ProjectID, RunID: req.RunID, StepName: req.StepName, Keys: req.Keys, Cursor: req.Cursor, Since: req.Since, Until: req.Until, Limit: req.Limit})
+	if err != nil {
+		if errors.Is(err, statsstore.ErrInvalidCursor) {
+			return memberclient.QueryMetricsResponse{}, err
+		}
+		return memberclient.QueryMetricsResponse{}, fmt.Errorf("%w: %v", statsstore.ErrBackendUnavailable, err)
+	}
+	points := make([]*logstore.Metric, len(page.Points))
+	for i := range page.Points {
+		points[i] = &page.Points[i]
+	}
+	return memberclient.QueryMetricsResponse{Points: points, NextCursor: page.NextCursor}, nil
 }
 
 func (l *localMemberClient) ListArtifacts(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) ([]any, error) {

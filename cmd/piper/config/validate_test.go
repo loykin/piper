@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateServerAllowsRuntimeGeneratedSecrets(t *testing.T) {
@@ -15,6 +16,27 @@ func TestValidateServerAllowsRuntimeGeneratedSecrets(t *testing.T) {
 	}
 	if err := ValidateServer(RootConfig{Runtime: baremetal, Server: ServerConfig{AuthSigningKey: "test-signing-key"}}); err != nil {
 		t.Fatalf("signing key rejected: %v", err)
+	}
+}
+
+func TestValidateServerRejectsInvalidStatsConfig(t *testing.T) {
+	base := RootConfig{Runtime: RuntimeConfig{Type: InfrastructureBaremetal}}
+
+	negative := base
+	negative.Stats.Logs.Retention = -time.Second
+	if err := ValidateServer(negative); err == nil || !strings.Contains(err.Error(), "stats.logs.retention") {
+		t.Fatalf("unexpected negative retention error: %v", err)
+	}
+
+	external := base
+	external.Stats.Logs.URL = "loki://stats.example.com"
+	if err := ValidateServer(external); err == nil || !strings.Contains(err.Error(), "unsupported scheme") {
+		t.Fatalf("unexpected Loki URL error: %v", err)
+	}
+	valid := base
+	valid.Stats.Logs.URL = "elasticsearch://stats.example.com/piper"
+	if err := ValidateServer(valid); err != nil {
+		t.Fatalf("valid external URL rejected: %v", err)
 	}
 }
 

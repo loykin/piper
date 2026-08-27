@@ -8,6 +8,7 @@ import (
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // callMethod decodes payload into a callEnvelope[Req], invokes fn with the
@@ -68,6 +69,10 @@ func dispatch(ctx context.Context, member memberclient.Client, method string, pa
 		return callMethod(ctx, payload, adaptQueryLogs(member))
 	case MethodQueryMetrics:
 		return callMethod(ctx, payload, adaptQueryMetrics(member))
+	case MethodStatsCapabilities:
+		return callMethod(ctx, payload, adaptStatsCapabilities(member))
+	case MethodPurgeProjectStats:
+		return callVoidMethod(ctx, payload, adaptPurgeProjectStats(member))
 	case MethodListArtifacts:
 		return callMethod(ctx, payload, member.ListArtifacts)
 	case MethodProjectRequest:
@@ -96,14 +101,22 @@ func adaptRetryStep(member memberclient.Client) func(context.Context, memberclie
 	}
 }
 
-func adaptQueryLogs(member memberclient.Client) func(context.Context, memberclient.AuthContext, project.ProjectRef, QueryLogsRequest) (logLines, error) {
-	return func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req QueryLogsRequest) (logLines, error) {
-		return member.QueryLogs(ctx, auth, ref, req.RunID, req.StepName, req.AfterID)
+func adaptQueryLogs(member memberclient.Client) func(context.Context, memberclient.AuthContext, project.ProjectRef, memberclient.QueryLogsRequest) (queryLogsResponse, error) {
+	return member.QueryLogs
+}
+
+func adaptQueryMetrics(member memberclient.Client) func(context.Context, memberclient.AuthContext, project.ProjectRef, memberclient.QueryMetricsRequest) (queryMetricsResponse, error) {
+	return member.QueryMetrics
+}
+
+func adaptStatsCapabilities(member memberclient.Client) func(context.Context, memberclient.AuthContext, project.ProjectRef, struct{}) (statsstore.Capabilities, error) {
+	return func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, _ struct{}) (statsstore.Capabilities, error) {
+		return member.StatsCapabilities(ctx, auth, ref)
 	}
 }
 
-func adaptQueryMetrics(member memberclient.Client) func(context.Context, memberclient.AuthContext, project.ProjectRef, QueryMetricsRequest) (logMetrics, error) {
-	return func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req QueryMetricsRequest) (logMetrics, error) {
-		return member.QueryMetrics(ctx, auth, ref, req.RunID, req.StepName)
+func adaptPurgeProjectStats(member memberclient.Client) func(context.Context, memberclient.AuthContext, project.ProjectRef, struct{}) error {
+	return func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, _ struct{}) error {
+		return member.PurgeProjectStats(ctx, auth, ref)
 	}
 }

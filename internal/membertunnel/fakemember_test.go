@@ -4,19 +4,22 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // fakeMember is a configurable memberclient.Client double for this
 // package's tests — mirrors the fakeMemberClient pattern used in
 // pkg/pipeline/run/handler_test.go.
 type fakeMember struct {
-	submitRunFn func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error)
-	rerunRunFn  func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string, failedOnly bool) (string, error)
-	cancelRunFn func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) error
-	getRunFn    func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) (memberclient.RunDetail, error)
+	submitRunFn         func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error)
+	rerunRunFn          func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string, failedOnly bool) (string, error)
+	cancelRunFn         func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) error
+	getRunFn            func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) (memberclient.RunDetail, error)
+	queryLogsFn         func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error)
+	statsCapabilitiesFn func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) (statsstore.Capabilities, error)
+	purgeProjectStatsFn func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) error
 }
 
 func (f *fakeMember) SubmitRun(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
@@ -67,12 +70,29 @@ func (f *fakeMember) RetryStep(context.Context, memberclient.AuthContext, projec
 	return "", nil
 }
 
-func (f *fakeMember) QueryLogs(context.Context, memberclient.AuthContext, project.ProjectRef, string, string, int64) ([]*logstore.Line, error) {
-	return nil, nil
+func (f *fakeMember) QueryLogs(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+	if f.queryLogsFn != nil {
+		return f.queryLogsFn(ctx, auth, ref, req)
+	}
+	return memberclient.QueryLogsResponse{}, nil
 }
 
-func (f *fakeMember) QueryMetrics(context.Context, memberclient.AuthContext, project.ProjectRef, string, string) ([]*logstore.Metric, error) {
-	return nil, nil
+func (f *fakeMember) StatsCapabilities(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) (statsstore.Capabilities, error) {
+	if f.statsCapabilitiesFn != nil {
+		return f.statsCapabilitiesFn(ctx, auth, ref)
+	}
+	return statsstore.Capabilities{TimeRange: true}, nil
+}
+
+func (f *fakeMember) PurgeProjectStats(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) error {
+	if f.purgeProjectStatsFn != nil {
+		return f.purgeProjectStatsFn(ctx, auth, ref)
+	}
+	return nil
+}
+
+func (f *fakeMember) QueryMetrics(context.Context, memberclient.AuthContext, project.ProjectRef, memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error) {
+	return memberclient.QueryMetricsResponse{}, nil
 }
 
 func (f *fakeMember) ListArtifacts(context.Context, memberclient.AuthContext, project.ProjectRef, string) ([]any, error) {

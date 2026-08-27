@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/project"
 )
@@ -26,19 +25,21 @@ import (
 // memberclient.Client method 1:1. ServeArtifact has no dedicated method: it
 // reads ranged chunks through MethodProjectRequest (see remote.go).
 const (
-	MethodSubmitRun      = "SubmitRun"
-	MethodSubmitSweep    = "SubmitSweep"
-	MethodListRuns       = "ListRuns"
-	MethodGetRun         = "GetRun"
-	MethodCancelRun      = "CancelRun"
-	MethodRerunRun       = "RerunRun"
-	MethodDeleteRun      = "DeleteRun"
-	MethodListSteps      = "ListSteps"
-	MethodRetryStep      = "RetryStep"
-	MethodQueryLogs      = "QueryLogs"
-	MethodQueryMetrics   = "QueryMetrics"
-	MethodListArtifacts  = "ListArtifacts"
-	MethodProjectRequest = "ProjectRequest"
+	MethodSubmitRun         = "SubmitRun"
+	MethodSubmitSweep       = "SubmitSweep"
+	MethodListRuns          = "ListRuns"
+	MethodGetRun            = "GetRun"
+	MethodCancelRun         = "CancelRun"
+	MethodRerunRun          = "RerunRun"
+	MethodDeleteRun         = "DeleteRun"
+	MethodListSteps         = "ListSteps"
+	MethodRetryStep         = "RetryStep"
+	MethodQueryLogs         = "QueryLogs"
+	MethodQueryMetrics      = "QueryMetrics"
+	MethodStatsCapabilities = "StatsCapabilities"
+	MethodPurgeProjectStats = "PurgeProjectStats"
+	MethodListArtifacts     = "ListArtifacts"
+	MethodProjectRequest    = "ProjectRequest"
 )
 
 // callEnvelope wraps a method's request DTO with the AuthContext/ProjectRef
@@ -64,24 +65,12 @@ type (
 		RunID    string `json:"run_id"`
 		StepName string `json:"step_name"`
 	}
-	QueryLogsRequest struct {
-		RunID    string `json:"run_id"`
-		StepName string `json:"step_name"`
-		AfterID  int64  `json:"after_id"`
-	}
-	QueryMetricsRequest struct {
-		RunID    string `json:"run_id"`
-		StepName string `json:"step_name"`
-	}
 )
 
-// logLines/metrics exist only so QueryLogs/QueryMetrics have a named Resp
-// type to hang generic instantiation on (bare []*logstore.Line works fine
-// as a generic type argument — these aliases just keep call sites in
-// dispatch.go/remote.go readable).
+// Named aliases keep generic dispatch instantiations readable.
 type (
-	logLines   = []*logstore.Line
-	logMetrics = []*logstore.Metric
+	queryLogsResponse    = memberclient.QueryLogsResponse
+	queryMetricsResponse = memberclient.QueryMetricsResponse
 )
 
 // encodeCall marshals (auth, ref, req) into a callEnvelope and returns the

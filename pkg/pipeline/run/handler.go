@@ -18,6 +18,7 @@ import (
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // RunHooks provides pre-request authorization hooks.
@@ -77,7 +78,11 @@ func (h *Handler) ref(c *gin.Context) project.ProjectRef {
 
 func writeMemberError(c *gin.Context, err error, fallbackStatus int, fallbackMessage string) {
 	if errors.Is(err, memberclient.ErrMemberUnavailable) {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "code": memberclient.ErrorCodeMemberUnavailable, "retryable": true})
+		return
+	}
+	if errors.Is(err, statsstore.ErrBackendUnavailable) {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "statistics backend unavailable", "code": memberclient.ErrorCodeStatsBackendUnavailable, "retryable": true})
 		return
 	}
 	if fallbackMessage == "" {
@@ -96,6 +101,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/runs/:id/steps/:step/logs", h.getLogs)
 	rg.GET("/runs/:id/steps/:step/logs/stream", h.streamLogs)
 	rg.GET("/runs/:id/metrics", h.getMetrics)
+	rg.GET("/stats/capabilities", h.statsCapabilities)
 	rg.GET("/runs/:id/artifacts", h.listArtifacts)
 	rg.GET("/runs/:id/artifacts/*path", h.downloadArtifact)
 
@@ -389,13 +395,67 @@ func (h *Handler) getLogs(c *gin.Context) {
 			return
 		}
 	}
-	afterID, _ := strconv.ParseInt(c.Query("after"), 10, 64)
-	lines, err := h.deps.Member.QueryLogs(c.Request.Context(), authFrom(c), h.ref(c), runID, stepName, afterID)
+	req, err := logQueryFromRequest(c, runID, stepName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	page, err := h.deps.Member.QueryLogs(c.Request.Context(), authFrom(c), h.ref(c), req)
+	if err != nil {
+		if errors.Is(err, statsstore.ErrInvalidCursor) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		writeMemberError(c, err, http.StatusInternalServerError, "")
+		return
+	}
+	if page.Lines == nil {
+		page.Lines = []*statsstore.LogLine{}
+	}
+	if page.NextCursor != "" {
+		c.Header("X-Next-Cursor", page.NextCursor)
+	}
+	c.JSON(http.StatusOK, page.Lines)
+}
+
+func logQueryFromRequest(c *gin.Context, runID, stepName string) (memberclient.QueryLogsRequest, error) {
+	req := memberclient.QueryLogsRequest{RunID: runID, StepName: stepName, Cursor: c.Query("cursor"), Search: c.Query("search")}
+	if raw := c.Query("after_id"); raw != "" {
+		afterID, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || afterID < 0 {
+			return req, fmt.Errorf("after_id must be a non-negative integer")
+		}
+		req.AfterID = afterID
+	}
+	if raw := c.Query("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			return req, fmt.Errorf("limit must be a positive integer")
+		}
+		req.Limit = limit
+	}
+	for name, target := range map[string]*time.Time{"since": &req.Since, "until": &req.Until} {
+		if value := c.Query(name); value != "" {
+			parsed, err := time.Parse(time.RFC3339Nano, value)
+			if err != nil {
+				return req, fmt.Errorf("%s must be an RFC3339 timestamp", name)
+			}
+			*target = parsed
+		}
+	}
+	if !req.Since.IsZero() && !req.Until.IsZero() && req.Since.After(req.Until) {
+		return req, fmt.Errorf("since must not be after until")
+	}
+	return req, nil
+}
+
+func (h *Handler) statsCapabilities(c *gin.Context) {
+	capabilities, err := h.deps.Member.StatsCapabilities(c.Request.Context(), authFrom(c), h.ref(c))
 	if err != nil {
 		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
-	c.JSON(http.StatusOK, lines)
+	c.JSON(http.StatusOK, capabilities)
 }
 
 // GET /runs/:id/steps/:step/logs/stream  — SSE
@@ -415,7 +475,17 @@ func (h *Handler) streamLogs(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
+	cursor := c.GetHeader("Last-Event-ID")
 	var afterID int64
+	if cursor == "" {
+		cursor = c.Query("cursor")
+	}
+	if cursor == "" {
+		afterID, _ = strconv.ParseInt(c.Query("after_id"), 10, 64)
+	} else if legacyID, err := strconv.ParseInt(cursor, 10, 64); err == nil {
+		afterID = legacyID
+		cursor = ""
+	}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -424,14 +494,29 @@ func (h *Handler) streamLogs(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			return false
 		case <-ticker.C:
-			lines, err := h.deps.Member.QueryLogs(c.Request.Context(), auth, ref, runID, stepName, afterID)
+			page, err := h.deps.Member.QueryLogs(c.Request.Context(), auth, ref, memberclient.QueryLogsRequest{RunID: runID, StepName: stepName, Cursor: cursor, AfterID: afterID})
 			if err != nil {
-				_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				code := "stats_backend_unavailable"
+				message := "statistics backend unavailable"
+				if errors.Is(err, memberclient.ErrMemberUnavailable) {
+					code = "member_unavailable"
+					message = "member unavailable"
+				} else if errors.Is(err, statsstore.ErrInvalidCursor) {
+					code = "invalid_cursor"
+					message = "invalid statistics cursor"
+				}
+				payload, _ := json.Marshal(gin.H{
+					"code":      code,
+					"message":   message,
+					"retryable": true,
+				})
+				_, _ = fmt.Fprintf(w, "event: stats_error\ndata: %s\n\n", payload)
 				return false
 			}
-			for _, l := range lines {
+			for _, l := range page.Lines {
 				b, _ := json.Marshal(l)
-				_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+				cursor = statsstore.CursorForLogQuery(l.ID, statsstore.LogQuery{ProjectID: ref.ProjectID, RunID: runID, StepName: stepName})
+				_, _ = fmt.Fprintf(w, "id: %s\ndata: %s\n\n", cursor, b)
 				afterID = l.ID
 			}
 
@@ -439,10 +524,12 @@ func (h *Handler) streamLogs(c *gin.Context) {
 			detail, err := h.deps.Member.GetRun(c.Request.Context(), auth, ref, runID)
 			if err == nil && detail.Run.Status != StatusRunning {
 				// Flush remaining logs
-				if tail, err2 := h.deps.Member.QueryLogs(c.Request.Context(), auth, ref, runID, stepName, afterID); err2 == nil {
-					for _, l := range tail {
+				if tail, err2 := h.deps.Member.QueryLogs(c.Request.Context(), auth, ref, memberclient.QueryLogsRequest{RunID: runID, StepName: stepName, Cursor: cursor, AfterID: afterID}); err2 == nil {
+					for _, l := range tail.Lines {
 						b, _ := json.Marshal(l)
-						_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+						cursor = statsstore.CursorForLogQuery(l.ID, statsstore.LogQuery{ProjectID: ref.ProjectID, RunID: runID, StepName: stepName})
+						_, _ = fmt.Fprintf(w, "id: %s\ndata: %s\n\n", cursor, b)
+						afterID = l.ID
 					}
 				}
 				_, _ = fmt.Fprintf(w, "event: done\ndata: {\"status\":%q}\n\n", detail.Run.Status)
@@ -454,16 +541,46 @@ func (h *Handler) streamLogs(c *gin.Context) {
 }
 
 func (h *Handler) getMetrics(c *gin.Context) {
-	metrics, err := h.deps.Member.QueryMetrics(c.Request.Context(), authFrom(c), h.ref(c), c.Param("id"), c.Query("step"))
+	req := memberclient.QueryMetricsRequest{RunID: c.Param("id"), StepName: c.Query("step"), Keys: c.QueryArray("key"), Cursor: c.Query("cursor")}
+	if raw := c.Query("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer"})
+			return
+		}
+		req.Limit = limit
+	}
+	for name, target := range map[string]*time.Time{"since": &req.Since, "until": &req.Until} {
+		if value := c.Query(name); value != "" {
+			parsed, err := time.Parse(time.RFC3339Nano, value)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%s must be an RFC3339 timestamp", name)})
+				return
+			}
+			*target = parsed
+		}
+	}
+	if !req.Since.IsZero() && !req.Until.IsZero() && req.Since.After(req.Until) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "since must not be after until"})
+		return
+	}
+	page, err := h.deps.Member.QueryMetrics(c.Request.Context(), authFrom(c), h.ref(c), req)
 	if err != nil {
+		if errors.Is(err, statsstore.ErrInvalidCursor) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
 	}
-	if metrics == nil {
+	if page.NextCursor != "" {
+		c.Header("X-Next-Cursor", page.NextCursor)
+	}
+	if page.Points == nil {
 		c.JSON(http.StatusOK, []any{})
 		return
 	}
-	c.JSON(http.StatusOK, metrics)
+	c.JSON(http.StatusOK, page.Points)
 }
 
 // GET /runs/:id/artifacts

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import { useRunLogs } from '../hooks'
+import { useRunLogs, useStatsCapabilities } from '../hooks'
 
 interface LogViewerProps {
   runId: string
@@ -11,7 +11,8 @@ interface LogViewerProps {
 }
 
 export function LogViewer({ runId, stepId }: LogViewerProps) {
-  const { lines, done } = useRunLogs(runId, stepId)
+  const { lines, done, error } = useRunLogs(runId, stepId)
+  const { data: stats } = useStatsCapabilities()
   const [autoScroll, setAutoScroll] = useState(true)
   const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all')
   const [logSearch, setLogSearch] = useState('')
@@ -65,6 +66,12 @@ export function LogViewer({ runId, stepId }: LogViewerProps) {
           Auto-scroll
         </label>
       </div>
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+      {stats?.degraded && (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-400" role="status">
+          Statistics delivery is degraded. {stats.pending_bytes > 0 ? `${stats.pending_bytes} bytes are safely queued on this Member.` : 'The backend is unavailable.'}
+        </p>
+      )}
 
       <div className="h-130 overflow-y-auto rounded-xl border border-border bg-muted/20 p-4 font-mono text-xs leading-5">
         {visibleLogs.length === 0 && (

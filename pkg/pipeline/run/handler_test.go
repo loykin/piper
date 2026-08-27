@@ -13,6 +13,7 @@ import (
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // injectProjectContext is a test middleware that injects a project context with admin role.
@@ -40,12 +41,23 @@ type fakeMemberClient struct {
 
 	listRunsReq memberclient.ListRunsRequest
 
-	submitRunFn   func(ctx context.Context, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error)
-	submitSweepFn func(ctx context.Context, req memberclient.SubmitSweepRequest) (memberclient.SubmitSweepResponse, error)
-	cancelRunFn   func(ctx context.Context, runID string) error
-	rerunRunFn    func(ctx context.Context, runID string, failedOnly bool) (string, error)
-	deleteRunFn   func(ctx context.Context, runID string) error
-	retryStepFn   func(ctx context.Context, runID, stepName string) (string, error)
+	submitRunFn       func(ctx context.Context, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error)
+	submitSweepFn     func(ctx context.Context, req memberclient.SubmitSweepRequest) (memberclient.SubmitSweepResponse, error)
+	cancelRunFn       func(ctx context.Context, runID string) error
+	rerunRunFn        func(ctx context.Context, runID string, failedOnly bool) (string, error)
+	deleteRunFn       func(ctx context.Context, runID string) error
+	retryStepFn       func(ctx context.Context, runID, stepName string) (string, error)
+	queryLogsFn       func(ctx context.Context, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error)
+	queryMetricsFn    func(ctx context.Context, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error)
+	statsCapabilities statsstore.Capabilities
+}
+
+type closeNotifyRecorder struct {
+	*httptest.ResponseRecorder
+}
+
+func (r *closeNotifyRecorder) CloseNotify() <-chan bool {
+	return make(chan bool)
 }
 
 func (f *fakeMemberClient) SubmitRun(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error) {
@@ -113,12 +125,159 @@ func (f *fakeMemberClient) RetryStep(ctx context.Context, _ memberclient.AuthCon
 	return "run-3", nil
 }
 
-func (f *fakeMemberClient) QueryLogs(context.Context, memberclient.AuthContext, project.ProjectRef, string, string, int64) ([]*logstore.Line, error) {
-	return nil, nil
+func (f *fakeMemberClient) QueryLogs(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+	if f.queryLogsFn != nil {
+		return f.queryLogsFn(ctx, req)
+	}
+	return memberclient.QueryLogsResponse{}, nil
 }
 
-func (f *fakeMemberClient) QueryMetrics(context.Context, memberclient.AuthContext, project.ProjectRef, string, string) ([]*logstore.Metric, error) {
-	return nil, nil
+func (f *fakeMemberClient) StatsCapabilities(context.Context, memberclient.AuthContext, project.ProjectRef) (statsstore.Capabilities, error) {
+	return f.statsCapabilities, nil
+}
+
+func (f *fakeMemberClient) PurgeProjectStats(context.Context, memberclient.AuthContext, project.ProjectRef) error {
+	return nil
+}
+
+func TestGetLogsUsesDocumentedAfterIDParameter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var gotAfter int64
+	member := &fakeMemberClient{queryLogsFn: func(_ context.Context, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+		gotAfter = req.AfterID
+		return memberclient.QueryLogsResponse{}, nil
+	}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/runs/run-1/steps/train/logs?after_id=42", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if gotAfter != 42 {
+		t.Fatalf("afterID = %d, want 42", gotAfter)
+	}
+}
+
+func TestGetLogsReturnsOpaqueNextCursorWithoutChangingArrayBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	next := statsstore.CursorFromID(8)
+	member := &fakeMemberClient{queryLogsFn: func(_ context.Context, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+		if req.Cursor != statsstore.CursorFromID(7) || req.Limit != 1 {
+			t.Fatalf("query = %+v", req)
+		}
+		return memberclient.QueryLogsResponse{Lines: []*logstore.Line{{ID: 8}}, NextCursor: next}, nil
+	}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	rec := httptest.NewRecorder()
+	path := "/runs/run-1/steps/train/logs?cursor=" + statsstore.CursorFromID(7) + "&limit=1"
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Next-Cursor") != next {
+		t.Fatalf("status=%d next=%q body=%s", rec.Code, rec.Header().Get("X-Next-Cursor"), rec.Body.String())
+	}
+	if !strings.HasPrefix(rec.Body.String(), "[") {
+		t.Fatalf("legacy array response changed: %s", rec.Body.String())
+	}
+}
+
+func TestGetLogsMapsTypedStatsBackendErrorToRetryable503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	member := &fakeMemberClient{queryLogsFn: func(context.Context, memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+		return memberclient.QueryLogsResponse{}, fmt.Errorf("%w: timed out", statsstore.ErrBackendUnavailable)
+	}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/runs/run-1/steps/train/logs", nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"stats_backend_unavailable"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestStatsCapabilitiesAreProjectMemberRouted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	member := &fakeMemberClient{statsCapabilities: statsstore.Capabilities{TimeRange: true, MetricKeyFilter: true}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stats/capabilities", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"metric_key_filter":true`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestStreamLogsUsesDistinctStructuredStatsErrorEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	member := &fakeMemberClient{queryLogsFn: func(context.Context, memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+		return memberclient.QueryLogsResponse{}, fmt.Errorf("backend down\nignored: true")
+	}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/runs/run-1/steps/train/logs/stream", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: stats_error\n") || strings.Contains(body, "event: error\n") {
+		t.Fatalf("unexpected SSE event: %q", body)
+	}
+	if !strings.Contains(body, `"code":"stats_backend_unavailable"`) || !strings.Contains(body, `"message":"statistics backend unavailable"`) || strings.Contains(body, `ignored`) {
+		t.Fatalf("stats error payload is not structured JSON: %q", body)
+	}
+}
+
+func TestStreamLogsResumesFromLastEventIDAndEmitsIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var firstAfter int64
+	queries := 0
+	member := &fakeMemberClient{runOK: true, run: memberclient.RunSummary{Status: StatusSuccess}, queryLogsFn: func(_ context.Context, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+		queries++
+		if queries == 1 {
+			firstAfter = req.AfterID
+			return memberclient.QueryLogsResponse{Lines: []*logstore.Line{{ID: 43, Line: "next"}}}, nil
+		}
+		return memberclient.QueryLogsResponse{}, nil
+	}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+
+	rec := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-1/steps/train/logs/stream", nil)
+	req.Header.Set("Last-Event-ID", "42")
+	router.ServeHTTP(rec, req)
+	if firstAfter != 42 {
+		t.Fatalf("first afterID = %d, want 42", firstAfter)
+	}
+	if !strings.Contains(rec.Body.String(), "id: "+statsstore.CursorForLogQuery(43, statsstore.LogQuery{ProjectID: "test-proj", RunID: "run-1", StepName: "train"})+"\ndata:") {
+		t.Fatalf("SSE log frame has no resume ID: %q", rec.Body.String())
+	}
+}
+
+func (f *fakeMemberClient) QueryMetrics(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error) {
+	if f.queryMetricsFn != nil {
+		return f.queryMetricsFn(ctx, req)
+	}
+	return memberclient.QueryMetricsResponse{}, nil
+}
+
+func TestGetMetricsReturnsCursorPageWithLegacyArrayBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	next := statsstore.CursorFromID(2)
+	member := &fakeMemberClient{queryMetricsFn: func(_ context.Context, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error) {
+		if req.RunID != "run-1" || req.StepName != "train" || len(req.Keys) != 1 || req.Keys[0] != "loss" || req.Limit != 1 {
+			t.Fatalf("query = %+v", req)
+		}
+		return memberclient.QueryMetricsResponse{Points: []*logstore.Metric{{ID: 2, Key: "loss"}}, NextCursor: next}, nil
+	}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/runs/run-1/metrics?step=train&key=loss&limit=1", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Next-Cursor") != next || !strings.HasPrefix(rec.Body.String(), "[") {
+		t.Fatalf("status=%d next=%q body=%s", rec.Code, rec.Header().Get("X-Next-Cursor"), rec.Body.String())
+	}
 }
 
 func (f *fakeMemberClient) ListArtifacts(context.Context, memberclient.AuthContext, project.ProjectRef, string) ([]any, error) {

@@ -98,6 +98,34 @@ func newTestPiper(t *testing.T, cfg Config) *Piper {
 	return p
 }
 
+func TestExternalStatsBackendReceivesRuntimeWritesThroughDurableIngress(t *testing.T) {
+	bulk := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_bulk" {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		bulk <- string(body)
+		_, _ = w.Write([]byte(`{"errors":false}`))
+	}))
+	defer server.Close()
+	backendURL := strings.Replace(server.URL, "http://", "elasticsearch://", 1) + "/piper"
+	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal}, Stats: StatsConfig{Spool: StatsSpoolConfig{MaxBytes: 1 << 20}, Logs: StatsBackendConfig{URL: backendURL, ManageRetention: false}, Metrics: StatsBackendConfig{ManageRetention: false}}})
+	secret := "ghp_abcdefghijklmnopqrstuvwxyz123456"
+	if err := p.logs.Append(context.Background(), []*logstore.Line{{ProjectID: "default", RunID: "run", StepName: "step", Ts: time.Now().UTC(), Stream: "stdout", Line: "token=" + secret}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case body := <-bulk:
+		if strings.Contains(body, secret) || !strings.Contains(body, `"event_id":"`) || !strings.Contains(body, `"id":1`) {
+			t.Fatalf("bulk payload=%s", body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("external backend did not receive spooled log")
+	}
+}
+
 func TestTemplateRunUsesConfiguredMemberRouting(t *testing.T) {
 	const projectID = "remote-project"
 	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal}})
@@ -1283,6 +1311,102 @@ func TestConfigRejectsIncompleteAuthCapabilities(t *testing.T) {
 	authorizerOnly.Auth = AuthConfig{Authorizer: provider}
 	if err := authorizerOnly.Validate(); err == nil {
 		t.Fatal("Validate accepted Authorizer without Authenticator")
+	}
+}
+
+func TestCleanupStatsUsesIndependentRetentionWindows(t *testing.T) {
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Stats: StatsConfig{
+			Logs:    StatsBackendConfig{Retention: 24 * time.Hour, ManageRetention: true},
+			Metrics: StatsBackendConfig{Retention: 72 * time.Hour, ManageRetention: true},
+		},
+	})
+	ctx := context.Background()
+	const projectID = "stats-retention"
+	if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-48 * time.Hour)
+	if err := p.logs.Append(ctx, []*logstore.Line{{ProjectID: projectID, RunID: "gone", StepName: "step", Ts: old, Stream: "stdout", Line: "expired log"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.metrics.AppendMetrics(ctx, []*logstore.Metric{{ProjectID: projectID, RunID: "gone", StepName: "step", Key: "kept", Value: 1, Ts: old}}); err != nil {
+		t.Fatal(err)
+	}
+
+	p.cleanupStats(ctx)
+	logs, err := p.logs.Query(projectID, "gone", "step", 0)
+	if err != nil || len(logs) != 0 {
+		t.Fatalf("expired logs remain: logs=%#v err=%v", logs, err)
+	}
+	metrics, err := p.metrics.QueryMetrics(projectID, "gone", "step")
+	if err != nil || len(metrics) != 1 {
+		t.Fatalf("metric with longer retention was removed: metrics=%#v err=%v", metrics, err)
+	}
+
+	p.cfg.Stats.Logs.ManageRetention = false
+	if err := p.logs.Append(ctx, []*logstore.Line{{ProjectID: projectID, RunID: "gone", StepName: "step", Ts: old, Stream: "stdout", Line: "externally managed"}}); err != nil {
+		t.Fatal(err)
+	}
+	p.cleanupStats(ctx)
+	logs, err = p.logs.Query(projectID, "gone", "step", 0)
+	if err != nil || len(logs) != 1 {
+		t.Fatalf("externally managed logs were swept: logs=%#v err=%v", logs, err)
+	}
+}
+
+func TestLocalMemberLogCursorPaginationHasNoGapsOrDuplicates(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Minute)
+	for i := 0; i < 3; i++ {
+		if err := p.logs.Append(ctx, []*logstore.Line{{ProjectID: project.DefaultID, RunID: "cursor-run", StepName: "step", Ts: base.Add(time.Duration(i) * time.Second), Stream: "stdout", Line: fmt.Sprintf("line-%d", i)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	member := NewLocalMemberClient(p)
+	first, err := member.QueryLogs(ctx, memberclient.AuthContext{}, project.LocalRef(project.DefaultID), memberclient.QueryLogsRequest{RunID: "cursor-run", StepName: "step", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Lines) != 2 || first.NextCursor == "" {
+		t.Fatalf("first page = %+v", first)
+	}
+	second, err := member.QueryLogs(ctx, memberclient.AuthContext{}, project.LocalRef(project.DefaultID), memberclient.QueryLogsRequest{RunID: "cursor-run", StepName: "step", Cursor: first.NextCursor, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Lines) != 1 || second.NextCursor != "" || second.Lines[0].ID <= first.Lines[1].ID {
+		t.Fatalf("second page = %+v after first = %+v", second, first)
+	}
+	if first.Lines[0].EventID == "" || first.Lines[1].EventID == "" || second.Lines[0].EventID == "" {
+		t.Fatal("cursor pages contain a log without an EventID")
+	}
+}
+
+func TestProjectDeletePurgesOwnedStatsBeforeMetadata(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := context.Background()
+	const projectID = "purge-stats"
+	if err := p.repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.logs.Append(ctx, []*logstore.Line{{ProjectID: projectID, RunID: "deleted", StepName: "step", Ts: time.Now(), Stream: "stdout", Line: "log"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.metrics.AppendMetrics(ctx, []*logstore.Metric{{ProjectID: projectID, RunID: "deleted", StepName: "step", Key: "loss", Value: 1, Ts: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	p.Handler(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID, nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	logs, logErr := p.logs.Query(projectID, "deleted", "step", 0)
+	metrics, metricErr := p.metrics.QueryMetrics(projectID, "deleted", "step")
+	if logErr != nil || metricErr != nil || len(logs) != 0 || len(metrics) != 0 {
+		t.Fatalf("logs=%+v metrics=%+v logErr=%v metricErr=%v", logs, metrics, logErr, metricErr)
 	}
 }
 

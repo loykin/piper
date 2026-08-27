@@ -2,10 +2,10 @@
 export type {
   Run, RunDetail, Step, LogLine, CreateRunOptions,
   ArtifactFile, ArtifactEntry, StepArtifacts, RunFilter,
-  SweepRequest, SweepResponse, RunMetrics,
+  SweepRequest, SweepResponse, RunMetric, RunMetrics, StatsCapabilities,
 } from './types'
 
-import type { Run, RunDetail, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, RunMetrics } from './types'
+import type { Run, RunDetail, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, RunMetric, RunMetrics, StatsCapabilities } from './types'
 import { projectApi } from '@/lib/api'
 
 function runListParams(filter?: RunFilter): URLSearchParams {
@@ -83,8 +83,38 @@ export async function getRunLogs(
   return Array.isArray(data) ? data : []
 }
 
-export function runLogsStreamURL(projectId: string, runID: string, step: string): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/runs/${runID}/steps/${step}/logs/stream`
+export interface RunLogPageOptions {
+  cursor?: string
+  limit?: number
+  since?: string
+  until?: string
+}
+
+export async function getRunLogPage(
+  projectId: string,
+  runID: string,
+  step: string,
+  options: RunLogPageOptions = {},
+): Promise<{ lines: LogLine[]; nextCursor: string | null }> {
+  const params = new URLSearchParams()
+  if (options.cursor) params.set('cursor', options.cursor)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.since) params.set('since', options.since)
+  if (options.until) params.set('until', options.until)
+  const query = params.toString()
+  const response = await projectApi(projectId).getWithCursor<LogLine[]>(
+    `/runs/${runID}/steps/${step}/logs${query ? `?${query}` : ''}`,
+  )
+  return { lines: Array.isArray(response.data) ? response.data : [], nextCursor: response.nextCursor }
+}
+
+export async function getStatsCapabilities(projectId: string): Promise<StatsCapabilities> {
+  return projectApi(projectId).get<StatsCapabilities>('/stats/capabilities')
+}
+
+export function runLogsStreamURL(projectId: string, runID: string, step: string, cursor?: string): string {
+  const base = `/api/projects/${encodeURIComponent(projectId)}/runs/${runID}/steps/${step}/logs/stream`
+  return cursor ? `${base}?cursor=${encodeURIComponent(cursor)}` : base
 }
 
 export async function listArtifacts(projectId: string, runID: string): Promise<StepArtifacts[]> {
@@ -111,6 +141,34 @@ export async function retryStep(
 
 export async function getRunMetrics(projectId: string, runID: string): Promise<RunMetrics> {
   return projectApi(projectId).get<RunMetrics>(`/runs/${runID}/metrics`)
+}
+
+export interface RunMetricPageOptions {
+  cursor?: string
+  limit?: number
+  step?: string
+  keys?: string[]
+  since?: string
+  until?: string
+}
+
+export async function getRunMetricPage(
+  projectId: string,
+  runID: string,
+  options: RunMetricPageOptions = {},
+): Promise<{ points: RunMetric[]; nextCursor: string | null }> {
+  const params = new URLSearchParams()
+  if (options.cursor) params.set('cursor', options.cursor)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.step) params.set('step', options.step)
+  for (const key of options.keys ?? []) params.append('key', key)
+  if (options.since) params.set('since', options.since)
+  if (options.until) params.set('until', options.until)
+  const query = params.toString()
+  const response = await projectApi(projectId).getWithCursor<RunMetric[]>(
+    `/runs/${runID}/metrics${query ? `?${query}` : ''}`,
+  )
+  return { points: Array.isArray(response.data) ? response.data : [], nextCursor: response.nextCursor }
 }
 
 /** SSE event stream URL, filtered to a specific project when projectId is provided. */

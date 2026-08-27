@@ -3,7 +3,6 @@ package membertunnel
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -18,6 +17,7 @@ import (
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/statsstore"
 )
 
 // remoteMemberClient implements memberclient.Client for one enrolled
@@ -120,7 +120,7 @@ func call[Req, Resp any](ctx context.Context, r *remoteMemberClient, method stri
 			return zero, fmt.Errorf("%w: connection to member %q closed", memberclient.ErrMemberUnavailable, r.memberID)
 		}
 		if resp.Error != "" {
-			return zero, errors.New(resp.Error)
+			return zero, memberclient.DecodeRPCError(resp.Error)
 		}
 		var out Resp
 		if len(resp.Payload) > 0 {
@@ -172,12 +172,21 @@ func (r *remoteMemberClient) RetryStep(ctx context.Context, auth memberclient.Au
 	return call[RetryStepRequest, string](ctx, r, MethodRetryStep, auth, ref, RetryStepRequest{RunID: runID, StepName: stepName})
 }
 
-func (r *remoteMemberClient) QueryLogs(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID, stepName string, afterID int64) (logLines, error) {
-	return call[QueryLogsRequest, logLines](ctx, r, MethodQueryLogs, auth, ref, QueryLogsRequest{RunID: runID, StepName: stepName, AfterID: afterID})
+func (r *remoteMemberClient) QueryLogs(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+	return call[memberclient.QueryLogsRequest, memberclient.QueryLogsResponse](ctx, r, MethodQueryLogs, auth, ref, req)
 }
 
-func (r *remoteMemberClient) QueryMetrics(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID, stepName string) (logMetrics, error) {
-	return call[QueryMetricsRequest, logMetrics](ctx, r, MethodQueryMetrics, auth, ref, QueryMetricsRequest{RunID: runID, StepName: stepName})
+func (r *remoteMemberClient) StatsCapabilities(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) (statsstore.Capabilities, error) {
+	return call[struct{}, statsstore.Capabilities](ctx, r, MethodStatsCapabilities, auth, ref, struct{}{})
+}
+
+func (r *remoteMemberClient) PurgeProjectStats(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) error {
+	_, err := call[struct{}, struct{}](ctx, r, MethodPurgeProjectStats, auth, ref, struct{}{})
+	return err
+}
+
+func (r *remoteMemberClient) QueryMetrics(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error) {
+	return call[memberclient.QueryMetricsRequest, memberclient.QueryMetricsResponse](ctx, r, MethodQueryMetrics, auth, ref, req)
 }
 
 func (r *remoteMemberClient) ListArtifacts(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) ([]any, error) {

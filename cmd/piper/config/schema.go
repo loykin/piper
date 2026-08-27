@@ -6,6 +6,7 @@ type RootConfig struct {
 	Version    int              `mapstructure:"version" yaml:"version"`
 	Log        LogConfig        `mapstructure:"log" yaml:"log"`
 	Storage    StorageConfig    `mapstructure:"storage" yaml:"storage"`
+	Stats      StatsConfig      `mapstructure:"stats" yaml:"stats"`
 	Source     SourceConfig     `mapstructure:"source" yaml:"source"`
 	Server     ServerConfig     `mapstructure:"server" yaml:"server"`
 	Runtime    RuntimeConfig    `mapstructure:"runtime" yaml:"runtime"`
@@ -85,6 +86,24 @@ type StorageConfig struct {
 	Disabled      bool   `mapstructure:"disabled" yaml:"disabled"`
 	Token         string `mapstructure:"token" yaml:"token"`
 	CredentialRef string `mapstructure:"credentialRef" yaml:"credentialRef"`
+}
+
+type StatsConfig struct {
+	Spool   StatsSpoolConfig   `mapstructure:"spool" yaml:"spool"`
+	Logs    StatsBackendConfig `mapstructure:"logs" yaml:"logs"`
+	Metrics StatsBackendConfig `mapstructure:"metrics" yaml:"metrics"`
+}
+
+type StatsSpoolConfig struct {
+	Dir      string `mapstructure:"dir" yaml:"dir"`
+	MaxBytes int64  `mapstructure:"max_bytes" yaml:"max_bytes"`
+}
+
+type StatsBackendConfig struct {
+	URL             string        `mapstructure:"url" yaml:"url"`
+	CredentialRef   string        `mapstructure:"credential_ref" yaml:"credential_ref"`
+	Retention       time.Duration `mapstructure:"retention" yaml:"retention"`
+	ManageRetention bool          `mapstructure:"manage_retention" yaml:"manage_retention"`
 }
 
 type SourceConfig struct {

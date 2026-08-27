@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/loykin/piper/pkg/storage"
@@ -137,8 +139,7 @@ func (m *Manager) MarkStaleFailed(ctx context.Context) {
 // For object storage, files are downloaded to a temp dir (returned as second value).
 func (m *Manager) materialize(ctx context.Context, v *Viewer) (localPath, tempDir string, err error) {
 	if m.store == nil {
-		// Local filesystem: outputDir/runID/stepName/artifact/
-		return filepath.Join(m.outputDir, v.RunID, v.StepName, v.Artifact), "", nil
+		return m.materializeLocal(v)
 	}
 
 	prefix := v.RunID + "/" + v.StepName + "/" + v.Artifact + "/"
@@ -151,14 +152,28 @@ func (m *Manager) materialize(ctx context.Context, v *Viewer) (localPath, tempDi
 	if err != nil {
 		return "", "", err
 	}
+	destination, err := os.OpenRoot(tmp)
+	if err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", "", err
+	}
+	defer func() { _ = destination.Close() }()
 
 	for _, obj := range objs {
-		rel := obj.Key[len(prefix):]
+		if !strings.HasPrefix(obj.Key, prefix) {
+			_ = os.RemoveAll(tmp)
+			return "", "", fmt.Errorf("object key %q is outside requested prefix", obj.Key)
+		}
+		rel := strings.TrimPrefix(obj.Key, prefix)
 		if rel == "" {
 			continue
 		}
-		dst := filepath.Join(tmp, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		name, err := cleanMaterializedPath(rel)
+		if err != nil {
+			_ = os.RemoveAll(tmp)
+			return "", "", fmt.Errorf("unsafe object key %q: %w", obj.Key, err)
+		}
+		if err := destination.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 			_ = os.RemoveAll(tmp)
 			return "", "", err
 		}
@@ -167,7 +182,7 @@ func (m *Manager) materialize(ctx context.Context, v *Viewer) (localPath, tempDi
 			_ = os.RemoveAll(tmp)
 			return "", "", err
 		}
-		f, err := os.Create(dst)
+		f, err := destination.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			_ = rc.Close()
 			_ = os.RemoveAll(tmp)
@@ -183,6 +198,42 @@ func (m *Manager) materialize(ctx context.Context, v *Viewer) (localPath, tempDi
 	}
 
 	return tmp, tmp, nil
+}
+
+func (m *Manager) materializeLocal(v *Viewer) (string, string, error) {
+	sourceRoot, err := os.OpenRoot(m.outputDir)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = sourceRoot.Close() }()
+	rel, err := cleanMaterializedPath(path.Join(v.RunID, v.StepName, v.Artifact))
+	if err != nil {
+		return "", "", err
+	}
+	source, err := sourceRoot.OpenRoot(rel)
+	if os.IsNotExist(err) {
+		// Preserve the historical lazy-start behavior for drivers that can
+		// tolerate an artifact appearing after startup, without handing them an
+		// unchecked request-derived host path.
+		return sourceRoot.Name(), "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = source.Close() }()
+	return source.Name(), "", nil
+}
+
+func cleanMaterializedPath(value string) (string, error) {
+	raw := strings.ReplaceAll(strings.TrimSpace(value), `\`, "/")
+	if strings.HasPrefix(raw, "/") {
+		return "", fmt.Errorf("path must be relative")
+	}
+	clean := path.Clean(raw)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path escapes materialization root")
+	}
+	return filepath.FromSlash(clean), nil
 }
 
 func genID() string {

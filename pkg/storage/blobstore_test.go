@@ -154,6 +154,43 @@ func TestLocalStore_CreatesDir(t *testing.T) {
 	}
 }
 
+func TestLocalStoreRejectsTraversalAndSymlinkEscapes(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "outside")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := storage.NewLocal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, key := range []string{"../escape.txt", "/tmp/escape.txt", `..\escape.txt`} {
+		if err := st.Put(ctx, key, strings.NewReader("bad"), 3); err == nil {
+			t.Fatalf("Put accepted escaping key %q", key)
+		}
+	}
+	if err := st.Put(ctx, "outside/new.txt", strings.NewReader("bad"), 3); err == nil {
+		t.Fatal("Put followed a symlink outside the store")
+	}
+	if _, err := st.Get(ctx, "outside/secret.txt"); err == nil {
+		t.Fatal("Get followed a symlink outside the store")
+	}
+	if err := st.Delete(ctx, "outside/secret.txt"); err == nil {
+		t.Fatal("Delete followed a symlink outside the store")
+	}
+	if data, err := os.ReadFile(secret); err != nil || string(data) != "secret" {
+		t.Fatalf("outside file changed: %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("outside file was created: %v", err)
+	}
+}
+
 // ─── Open factory ────────────────────────────────────────────────────────────
 
 func TestOpen_file_scheme(t *testing.T) {

@@ -17,9 +17,10 @@ import (
 // ── fake repository ───────────────────────────────────────────────────────────
 
 type fakeRepo struct {
-	viewers     map[string]*Viewer
-	updateErr   error
-	findRunning *Viewer
+	viewers          map[string]*Viewer
+	updateErr        error
+	findRunning      *Viewer
+	attemptedWorkDir string
 }
 
 func newFakeRepo() *fakeRepo {
@@ -48,6 +49,7 @@ func (r *fakeRepo) FindRunning(_ context.Context, _, _, _, _, _ string) (*Viewer
 }
 
 func (r *fakeRepo) UpdateStatus(_ context.Context, id string, status Status, endpoint string, pid int, workDir string) error {
+	r.attemptedWorkDir = workDir
 	if r.updateErr != nil {
 		return r.updateErr
 	}
@@ -159,10 +161,6 @@ func TestOpen_UpdateStatusFails_RemovesTempDirFromObjectStore(t *testing.T) {
 	mgr := NewManager(repo, store, t.TempDir())
 	mgr.RegisterDriver(drv)
 
-	// First prepare the successful UpdateStatus path, then inject a failure.
-	var capturedWorkDir string
-	repo.updateErr = nil
-
 	// Set updateErr in advance so the failure occurs after Start and immediately
 	// before UpdateStatus. It must be set from the beginning because Start must
 	// return before UpdateStatus runs.
@@ -172,20 +170,49 @@ func TestOpen_UpdateStatusFails_RemovesTempDirFromObjectStore(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_ = capturedWorkDir
-
 	// Verify that the driver was stopped.
 	if len(drv.stopped) == 0 {
 		t.Error("driver.Stop was not called")
 	}
 
-	// The temporary directory should have been created with the
-	// /tmp/piper-viewer-* pattern and then removed. Verify that none remain.
-	matches, _ := filepath.Glob(os.TempDir() + "/piper-viewer-*")
-	for _, m := range matches {
-		if _, err := os.Stat(m); err == nil {
-			t.Errorf("temp dir not cleaned up: %s", m)
+	if repo.attemptedWorkDir == "" {
+		t.Fatal("UpdateStatus did not receive the materialized work directory")
+	}
+	if _, err := os.Stat(repo.attemptedWorkDir); !os.IsNotExist(err) {
+		t.Errorf("temp dir not cleaned up: %s (%v)", repo.attemptedWorkDir, err)
+	}
+}
+
+func TestMaterializeRejectsObjectKeyTraversal(t *testing.T) {
+	prefix := "run-1/train/tb/"
+	store := &stubStore{
+		keys: []string{prefix + "../../escape.txt"},
+		data: map[string][]byte{prefix + "../../escape.txt": []byte("secret")},
+	}
+	mgr := NewManager(newFakeRepo(), store, t.TempDir())
+	viewer := &Viewer{ID: "unsafe", RunID: "run-1", StepName: "train", Artifact: "tb"}
+	if _, tmp, err := mgr.materialize(context.Background(), viewer); err == nil {
+		if tmp != "" {
+			_ = os.RemoveAll(tmp)
 		}
+		t.Fatal("materialize accepted an object key that escapes its prefix")
+	}
+}
+
+func TestMaterializeRejectsLocalArtifactSymlinkEscape(t *testing.T) {
+	output := t.TempDir()
+	outside := t.TempDir()
+	artifactParent := filepath.Join(output, "run-1", "train")
+	if err := os.MkdirAll(artifactParent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(artifactParent, "tb")); err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(newFakeRepo(), nil, output)
+	viewer := &Viewer{ID: "unsafe-local", RunID: "run-1", StepName: "train", Artifact: "tb"}
+	if _, _, err := mgr.materialize(context.Background(), viewer); err == nil {
+		t.Fatal("materialize followed a local artifact symlink outside output_dir")
 	}
 }
 

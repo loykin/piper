@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,11 +42,12 @@ type WorkspaceReader interface {
 type LocalWorkspaceReader struct{}
 
 func (LocalWorkspaceReader) Stat(_ context.Context, vol *NotebookVolume, path string) (bool, int64, error) {
-	full, err := localWorkspacePath(vol, path)
+	root, name, err := openLocalWorkspace(vol, path)
 	if err != nil {
 		return false, 0, err
 	}
-	info, err := os.Stat(full)
+	defer func() { _ = root.Close() }()
+	info, err := root.Stat(name)
 	if err != nil {
 		return false, 0, err
 	}
@@ -53,37 +55,47 @@ func (LocalWorkspaceReader) Stat(_ context.Context, vol *NotebookVolume, path st
 }
 
 func (LocalWorkspaceReader) Open(_ context.Context, vol *NotebookVolume, path string) (io.ReadCloser, error) {
-	full, err := localWorkspacePath(vol, path)
+	root, name, err := openLocalWorkspace(vol, path)
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(full)
+	file, err := root.Open(name)
+	_ = root.Close()
+	return file, err
 }
 
 func (LocalWorkspaceReader) ListFiles(_ context.Context, vol *NotebookVolume, path string) ([]WorkspaceFile, error) {
-	root, err := localWorkspacePath(vol, path)
+	root, name, err := openLocalWorkspace(vol, path)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = root.Close() }()
 	var files []WorkspaceFile
-	err = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+	err = fs.WalkDir(root.FS(), name, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			if info.IsDir() {
+		if entry.Type()&os.ModeSymlink != 0 {
+			if entry.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if info.IsDir() {
+		if entry.IsDir() {
 			return nil
 		}
-		rel, relErr := filepath.Rel(root, p)
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, relErr := pathpkgRel(filepath.ToSlash(name), filepath.ToSlash(current))
 		if relErr != nil {
 			return relErr
 		}
-		files = append(files, WorkspaceFile{Rel: filepath.ToSlash(rel), Size: info.Size()})
+		files = append(files, WorkspaceFile{Rel: rel, Size: info.Size()})
 		return nil
 	})
 	return files, err
@@ -108,41 +120,29 @@ func CleanWorkspacePath(p string) (string, error) {
 	return clean, nil
 }
 
-func localWorkspacePath(vol *NotebookVolume, requested string) (string, error) {
+func openLocalWorkspace(vol *NotebookVolume, requested string) (*os.Root, string, error) {
 	if vol == nil || strings.TrimSpace(vol.WorkDir) == "" {
-		return "", fmt.Errorf("notebook: workspace directory is empty")
+		return nil, "", fmt.Errorf("notebook: workspace directory is empty")
 	}
 	rel, err := CleanWorkspacePath(requested)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	root, err := filepath.Abs(vol.WorkDir)
+	root, err := os.OpenRoot(vol.WorkDir)
 	if err != nil {
-		return "", fmt.Errorf("notebook: resolve workspace root: %w", err)
+		return nil, "", fmt.Errorf("notebook: open workspace root: %w", err)
 	}
-	full, err := filepath.Abs(filepath.Join(root, filepath.FromSlash(rel)))
-	if err != nil {
-		return "", fmt.Errorf("notebook: resolve workspace path: %w", err)
+	name := filepath.FromSlash(rel)
+	if name == "" {
+		name = "."
 	}
-	within, err := filepath.Rel(root, full)
-	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("notebook: workspace path escapes volume")
-	}
+	return root, name, nil
+}
 
-	// Resolve existing symlinks before opening the target. Without this check,
-	// a path such as workspace/link/secret could pass the lexical containment
-	// test while link points outside the volume.
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("notebook: resolve workspace root symlinks: %w", err)
-	}
-	realFull, err := filepath.EvalSymlinks(full)
-	if err != nil {
-		return "", err
-	}
-	realWithin, err := filepath.Rel(realRoot, realFull)
-	if err != nil || realWithin == ".." || strings.HasPrefix(realWithin, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("notebook: workspace path escapes volume through symlink")
-	}
-	return realFull, nil
+// pathpkgRel is a small wrapper around path.Rel semantics. path has no Rel,
+// so filepath.Rel is used only after both operands are normalized to slashes;
+// the resulting value is normalized again for the API response.
+func pathpkgRel(base, target string) (string, error) {
+	rel, err := filepath.Rel(filepath.FromSlash(base), filepath.FromSlash(target))
+	return filepath.ToSlash(rel), err
 }

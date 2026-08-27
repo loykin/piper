@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -12,7 +14,8 @@ import (
 // LocalStore implements Store using the local filesystem.
 // Suitable for single-machine development, testing, and NFS-mounted shared volumes.
 type LocalStore struct {
-	root string // absolute path
+	root       string // absolute path exposed to callers
+	secureRoot string // symlink-resolved path used for capability operations
 }
 
 // NewLocal creates a LocalStore rooted at the given directory.
@@ -22,32 +25,94 @@ func NewLocal(root string) (*LocalStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(abs, 0755); err != nil {
+	if err := mkdirAllBeneathExistingRoot(abs, 0o755); err != nil {
 		return nil, err
 	}
-	return &LocalStore{root: abs}, nil
-}
-
-// fullPath resolves key to an absolute path and rejects any key that would
-// escape s.root (e.g. via ".." segments) — key generally comes from run IDs
-// and artifact names that ultimately trace back to HTTP request input.
-func (s *LocalStore) fullPath(key string) (string, error) {
-	p := filepath.Join(s.root, filepath.FromSlash(key))
-	if p != s.root && !strings.HasPrefix(p, s.root+string(os.PathSeparator)) {
-		return "", fmt.Errorf("storage: key %q escapes store root", key)
+	realRoot, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
 	}
-	return p, nil
+	return &LocalStore{root: abs, secureRoot: realRoot}, nil
 }
 
-func (s *LocalStore) Put(_ context.Context, key string, r io.Reader, _ int64) error {
-	p, err := s.fullPath(key)
+// mkdirAllBeneathExistingRoot finds the nearest existing ancestor and uses an
+// os.Root capability for the remaining creation. This preserves support for a
+// new nested store directory without performing filesystem mutations through
+// an unchecked request-derived path.
+func mkdirAllBeneathExistingRoot(target string, perm os.FileMode) error {
+	ancestor := filepath.Clean(target)
+	for {
+		info, err := os.Stat(ancestor)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("storage: root ancestor %q is not a directory", ancestor)
+			}
+			break
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return err
+		}
+		ancestor = parent
+	}
+	realAncestor, err := filepath.EvalSymlinks(ancestor)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	rel, err := filepath.Rel(ancestor, filepath.Clean(target))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("storage: invalid root path %q", target)
+	}
+	root, err := os.OpenRoot(realAncestor)
+	if err != nil {
 		return err
 	}
-	f, err := os.Create(p)
+	defer func() { _ = root.Close() }()
+	if rel == "." {
+		return nil
+	}
+	return root.MkdirAll(rel, perm)
+}
+
+func cleanLocalKey(key string, allowRoot bool) (string, error) {
+	raw := strings.ReplaceAll(strings.TrimSpace(key), `\`, "/")
+	if strings.HasPrefix(raw, "/") {
+		return "", fmt.Errorf("storage: key %q must be relative", key)
+	}
+	clean := path.Clean(raw)
+	if clean == "." {
+		if allowRoot {
+			return ".", nil
+		}
+		return "", fmt.Errorf("storage: key is empty")
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("storage: key %q escapes store root", key)
+	}
+	return filepath.FromSlash(clean), nil
+}
+
+func (s *LocalStore) openRoot() (*os.Root, error) {
+	return os.OpenRoot(s.secureRoot)
+}
+
+func (s *LocalStore) Put(_ context.Context, key string, r io.Reader, _ int64) error {
+	name, err := cleanLocalKey(key, false)
+	if err != nil {
+		return err
+	}
+	root, err := s.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
 		return err
 	}
@@ -57,11 +122,16 @@ func (s *LocalStore) Put(_ context.Context, key string, r io.Reader, _ int64) er
 }
 
 func (s *LocalStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
-	p, err := s.fullPath(key)
+	name, err := cleanLocalKey(key, false)
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(p)
+	root, err := s.openRoot()
+	if err != nil {
+		return nil, err
+	}
+	f, err := root.Open(name)
+	_ = root.Close()
 	if os.IsNotExist(err) {
 		return nil, ErrNotFound
 	}
@@ -69,50 +139,56 @@ func (s *LocalStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
 }
 
 func (s *LocalStore) List(_ context.Context, prefix, delimiter string) ([]ObjectInfo, error) {
-	searchRoot, err := s.fullPath(prefix)
+	name, err := cleanLocalKey(prefix, true)
 	if err != nil {
 		return nil, err
 	}
-	if delimiter == "" {
-		return s.listRecursive(searchRoot)
+	root, err := s.openRoot()
+	if err != nil {
+		return nil, err
 	}
-	return s.listOneLevel(searchRoot, prefix, delimiter)
+	defer func() { _ = root.Close() }()
+	if delimiter == "" {
+		return s.listRecursive(root, name)
+	}
+	return s.listOneLevel(root, name, prefix, delimiter)
 }
 
-func (s *LocalStore) listRecursive(searchRoot string) ([]ObjectInfo, error) {
+func (s *LocalStore) listRecursive(root *os.Root, searchRoot string) ([]ObjectInfo, error) {
 	var result []ObjectInfo
-	err := filepath.Walk(searchRoot, func(path string, info os.FileInfo, err error) error {
+	err := fs.WalkDir(root.FS(), searchRoot, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
 			}
 			return err
 		}
-		if info.IsDir() {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
-		rel, _ := filepath.Rel(s.root, path)
-		result = append(result, ObjectInfo{
-			Key:        filepath.ToSlash(rel),
-			Size:       info.Size(),
-			ModifiedAt: info.ModTime().UTC(),
-		})
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		result = append(result, ObjectInfo{Key: filepath.ToSlash(name), Size: info.Size(), ModifiedAt: info.ModTime().UTC()})
 		return nil
 	})
 	return result, err
 }
 
-// listOneLevel lists only the immediate children of searchRoot — the
-// filesystem already IS a real tree here, so a delimiter-scoped listing is
-// just os.ReadDir instead of a recursive Walk. Subdirectories become IsDir
-// entries named prefix+name+delimiter, matching S3 Delimiter semantics so
-// callers can treat every backend identically.
-func (s *LocalStore) listOneLevel(searchRoot, prefix, delimiter string) ([]ObjectInfo, error) {
-	entries, err := os.ReadDir(searchRoot)
+// listOneLevel lists only the immediate children of searchRoot. Directories
+// become IsDir entries matching S3 Delimiter semantics.
+func (s *LocalStore) listOneLevel(root *os.Root, searchRoot, prefix, delimiter string) ([]ObjectInfo, error) {
+	dir, err := root.Open(searchRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
 		return nil, err
 	}
 	keyPrefix := prefix
@@ -121,6 +197,9 @@ func (s *LocalStore) listOneLevel(searchRoot, prefix, delimiter string) ([]Objec
 	}
 	var result []ObjectInfo
 	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		if entry.IsDir() {
 			result = append(result, ObjectInfo{Key: keyPrefix + entry.Name() + delimiter, IsDir: true})
 			continue
@@ -129,22 +208,23 @@ func (s *LocalStore) listOneLevel(searchRoot, prefix, delimiter string) ([]Objec
 		if err != nil {
 			continue
 		}
-		result = append(result, ObjectInfo{
-			Key:        keyPrefix + entry.Name(),
-			Size:       info.Size(),
-			ModifiedAt: info.ModTime().UTC(),
-		})
+		result = append(result, ObjectInfo{Key: keyPrefix + entry.Name(), Size: info.Size(), ModifiedAt: info.ModTime().UTC()})
 	}
 	return result, nil
 }
 
 func (s *LocalStore) Delete(_ context.Context, keys ...string) error {
+	root, err := s.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
 	for _, key := range keys {
-		p, err := s.fullPath(key)
+		name, err := cleanLocalKey(key, false)
 		if err != nil {
 			return err
 		}
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		if err := root.Remove(name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}

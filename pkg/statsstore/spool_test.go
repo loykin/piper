@@ -15,6 +15,34 @@ type memoryBackend struct {
 	metrics map[string]MetricPoint
 }
 
+type queryBarrierBackend struct {
+	*memoryBackend
+	queryStarted chan struct{}
+	releaseQuery chan struct{}
+	appendDone   chan struct{}
+	queryOnce    sync.Once
+	appendOnce   sync.Once
+}
+
+func (b *queryBarrierBackend) AppendLogs(ctx context.Context, lines []LogLine) error {
+	err := b.memoryBackend.AppendLogs(ctx, lines)
+	if err == nil {
+		b.appendOnce.Do(func() { close(b.appendDone) })
+	}
+	return err
+}
+
+func (b *queryBarrierBackend) QueryLogs(ctx context.Context, q LogQuery) (LogPage, error) {
+	page, err := b.memoryBackend.QueryLogs(ctx, q)
+	b.queryOnce.Do(func() { close(b.queryStarted) })
+	select {
+	case <-b.releaseQuery:
+	case <-ctx.Done():
+		return LogPage{}, ctx.Err()
+	}
+	return page, err
+}
+
 func newMemoryBackend() *memoryBackend {
 	return &memoryBackend{logs: map[string]LogLine{}, metrics: map[string]MetricPoint{}}
 }
@@ -127,6 +155,61 @@ func TestSpoolFullIsExplicitAndDegraded(t *testing.T) {
 	health := wrapped.health()
 	if !health.Degraded || health.LastError != "statistics spool is full" {
 		t.Fatalf("health=%+v", health)
+	}
+}
+
+func TestQueryDoesNotLoseRecordMovedFromSpoolToBackend(t *testing.T) {
+	backend := &queryBarrierBackend{
+		memoryBackend: newMemoryBackend(),
+		queryStarted:  make(chan struct{}),
+		releaseQuery:  make(chan struct{}),
+		appendDone:    make(chan struct{}),
+	}
+	backend.fail = true
+	spool, err := openDiskSpool(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := newSpooledBackend(backend, backend, spool, true, false)
+	defer wrapped.close()
+	if err := wrapped.AppendLogs(context.Background(), []LogLine{{ProjectID: "p", RunID: "r", StepName: "s", Ts: time.Now(), Line: "queued"}}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, func() bool { return wrapped.health().LastError == "statistics backend unavailable" })
+	backend.mu.Lock()
+	backend.fail = false
+	backend.mu.Unlock()
+
+	result := make(chan LogPage, 1)
+	go func() {
+		page, _ := wrapped.QueryLogs(context.Background(), LogQuery{ProjectID: "p", RunID: "r", StepName: "s"})
+		result <- page
+	}()
+	<-backend.queryStarted
+	wrapped.signal()
+	select {
+	case <-backend.appendDone:
+		// An unlocked query allows delivery to move and acknowledge the record
+		// while the query still holds an older backend snapshot.
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(backend.releaseQuery)
+	page := <-result
+	if len(page.Lines) != 1 || page.Lines[0].Line != "queued" {
+		t.Fatalf("record disappeared during delivery: %+v", page.Lines)
+	}
+}
+
+func TestSuccessfulFlushDoesNotClearNewerError(t *testing.T) {
+	b := &spooledBackend{}
+	generation := b.errorGeneration()
+	b.setError(ErrSpoolFull)
+	b.clearErrorIfGeneration(generation)
+	b.mu.RLock()
+	err := b.lastErr
+	b.mu.RUnlock()
+	if !errors.Is(err, ErrSpoolFull) {
+		t.Fatalf("newer error was cleared by stale success: %v", err)
 	}
 }
 

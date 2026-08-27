@@ -25,6 +25,7 @@ type spooledBackend struct {
 
 	mu      sync.RWMutex
 	lastErr error
+	errGen  uint64
 }
 
 func newSpooledBackend(logs LogBackend, metrics MetricBackend, spool *diskSpool, spoolLogs, spoolMetrics bool) *spooledBackend {
@@ -78,6 +79,11 @@ func (b *spooledBackend) QueryLogs(ctx context.Context, query LogQuery) (LogPage
 	if !b.spoolLogs {
 		return b.logs.QueryLogs(ctx, query)
 	}
+	// Keep the backend read and spool snapshot in the same delivery epoch. Without
+	// this lock, flush can insert a record into the backend and acknowledge its
+	// spool file between the two reads, making the record temporarily invisible.
+	b.deliveryMu.Lock()
+	defer b.deliveryMu.Unlock()
 	page, err := b.logs.QueryLogs(ctx, withLogLimit(query, MaxPageLimit))
 	backendErr := err
 	if err != nil {
@@ -117,6 +123,8 @@ func (b *spooledBackend) QueryMetrics(ctx context.Context, query MetricQuery) (M
 	if !b.spoolMetrics {
 		return b.metrics.QueryMetrics(ctx, query)
 	}
+	b.deliveryMu.Lock()
+	defer b.deliveryMu.Unlock()
 	page, err := b.metrics.QueryMetrics(ctx, withMetricLimit(query, MaxPageLimit))
 	backendErr := err
 	if err != nil {
@@ -163,6 +171,7 @@ func (b *spooledBackend) loop() {
 		case <-b.wake:
 		case <-ticker.C:
 		}
+		errGen := b.errorGeneration()
 		var flushErrors []error
 		if b.spoolLogs {
 			flushErrors = append(flushErrors, b.flushKind("logs"))
@@ -170,7 +179,11 @@ func (b *spooledBackend) loop() {
 		if b.spoolMetrics {
 			flushErrors = append(flushErrors, b.flushKind("metrics"))
 		}
-		b.setError(errors.Join(flushErrors...))
+		if err := errors.Join(flushErrors...); err != nil {
+			b.setError(err)
+		} else {
+			b.clearErrorIfGeneration(errGen)
+		}
 	}
 }
 
@@ -244,11 +257,34 @@ func (b *spooledBackend) setError(err error) {
 	b.mu.Lock()
 	wasDegraded := b.lastErr != nil
 	b.lastErr = err
+	b.errGen++
 	b.mu.Unlock()
 	if err != nil && !wasDegraded {
 		slog.Warn("statistics delivery degraded", "reason", publicStatsError(err))
 	}
 	if err == nil && wasDegraded {
+		slog.Info("statistics delivery recovered")
+	}
+}
+
+func (b *spooledBackend) errorGeneration() uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.errGen
+}
+
+// clearErrorIfGeneration applies a successful flush only when no newer
+// operation has reported an error since that flush began.
+func (b *spooledBackend) clearErrorIfGeneration(generation uint64) {
+	b.mu.Lock()
+	if b.errGen != generation {
+		b.mu.Unlock()
+		return
+	}
+	wasDegraded := b.lastErr != nil
+	b.lastErr = nil
+	b.mu.Unlock()
+	if wasDegraded {
 		slog.Info("statistics delivery recovered")
 	}
 }

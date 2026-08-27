@@ -414,7 +414,7 @@ For stored pipeline artifacts:
 - a bare-metal serving process receives a local model directory directly
 - a Docker serving container receives the artifact via its normal storage path
 - a Kubernetes serving Pod uses an init container and mounts the model at
-  `/piper-model`
+  `/piper/model`
 
 ### External model URIs
 

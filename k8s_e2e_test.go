@@ -18,6 +18,7 @@ import (
 
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/serving/servingdriver"
 	"gopkg.in/yaml.v3"
 )
 
@@ -315,7 +316,7 @@ spec:
 
 	// Exercise the local-store path end to end: notebook PVC -> pipeline
 	// snapshot -> master /store -> pipeline Job reads it -> pipeline artifact
-	// -> serving container downloads it from /piper-model.
+	// -> serving container downloads it into servingdriver.ContainerModelDir.
 	nb := k8sE2EGetNotebook(t, serverURL, nbName)
 	volumeID, _ := nb["volume_id"].(string)
 	if volumeID == "" {
@@ -418,7 +419,7 @@ spec:
       artifact: model
       run: %s
   run:
-    command: ["sh", "-c", "test -f /piper-model/model.txt && sleep 3600"]
+    command: ["sh", "-c", "test -f %s/model.txt && sleep 3600"]
     port: 8080
   driver:
     placement:
@@ -426,10 +427,10 @@ spec:
     k8s:
       image: alpine:3.20
       namespace: %s
-`, triggered.ID, ns))
+`, triggered.ID, servingdriver.ContainerModelDir, ns))
 	servingName := k8sE2EServingResourceName("local-store-serving")
 	waitK8sE2EDeployment(t, ns, servingName, 2*time.Minute)
-	modelContents := strings.TrimSpace(kubectl(t, "-n", ns, "exec", "deployment/"+servingName, "-c", "serving", "--", "cat", "/piper-model/model.txt"))
+	modelContents := strings.TrimSpace(kubectl(t, "-n", ns, "exec", "deployment/"+servingName, "-c", "serving", "--", "cat", servingdriver.ContainerModelDir+"/model.txt"))
 	if modelContents != "local-store-model" {
 		t.Fatalf("downloaded serving artifact = %q, want local-store-model", modelContents)
 	}

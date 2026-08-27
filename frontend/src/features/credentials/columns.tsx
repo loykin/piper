@@ -31,6 +31,9 @@ export const credentialColumns: DataGridColumnDef<Credential>[] = [
       if (credential.kind === 'generic') {
         return <span className="font-mono text-xs text-muted-foreground">{credential.keys?.join(', ') || '-'}</span>
       }
+      if (credential.kind === 'slack' || credential.kind === 'webhook') {
+        return <span className="text-xs text-muted-foreground">Encrypted endpoint</span>
+      }
       return (
         <span className="font-mono text-xs text-muted-foreground">
           {credential.endpoint || <em className="not-italic text-muted-foreground/60">any repo</em>}

@@ -45,15 +45,19 @@ export default function TestCredentialDialog({
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <FormField label="Repository URL" htmlFor="test-repo">
-            <Input
-              id="test-repo"
-              value={repo}
-              onChange={e => setRepo(e.target.value)}
-              placeholder="https://github.com/myorg/myrepo"
-              className="font-mono text-sm"
-            />
-          </FormField>
+          {target?.kind === 'git' ? (
+            <FormField label="Repository URL" htmlFor="test-repo">
+              <Input
+                id="test-repo"
+                value={repo}
+                onChange={e => setRepo(e.target.value)}
+                placeholder="https://github.com/myorg/myrepo"
+                className="font-mono text-sm"
+              />
+            </FormField>
+          ) : (
+            <p className="text-sm text-muted-foreground">This sends a real test notification to the configured endpoint.</p>
+          )}
           {result && (
             <div className="flex items-start gap-2 rounded-md border p-3 text-sm">
               {result.ok
@@ -70,7 +74,7 @@ export default function TestCredentialDialog({
           <Button variant="outline" onClick={onClose}>Close</Button>
           <Button
             onClick={() => void runTest()}
-            disabled={testCredential.isPending || !repo.trim()}
+            disabled={testCredential.isPending || (target?.kind === 'git' && !repo.trim())}
           >
             {testCredential.isPending ? 'Testing...' : 'Run Test'}
           </Button>

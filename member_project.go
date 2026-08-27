@@ -11,6 +11,7 @@ import (
 
 	"github.com/loykin/piper/internal/httpx"
 	"github.com/loykin/piper/internal/runlifecycle"
+	"github.com/loykin/piper/pkg/alerting"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -76,6 +77,9 @@ type memberProjectHandlers struct {
 // Idempotency-Key replay/conflict protection.
 func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerMgr *viewer.Manager, startRun func(context.Context, string, map[string]any, BuiltinVars, string) (string, error)) memberProjectHandlers {
 	credential.NewHandler(p.credentials).RegisterRoutes(projectAPI)
+	if p.alerts != nil {
+		alerting.NewHandler(p.alerts).RegisterRoutes(projectAPI)
+	}
 
 	schedule.NewHandler(schedule.HandlerDeps{
 		Schedules: p.repos.Schedule,

@@ -1397,6 +1397,29 @@ func TestCompleteDuplicateResultIsIgnored(t *testing.T) {
 	}
 }
 
+func TestFinalizeCASNoOpDoesNotEmitOutcomeCallback(t *testing.T) {
+	ctx := context.Background()
+	repo := &memoryRunRepo{status: map[string]string{"already-done": run.StatusSuccess}}
+	q := NewQueue(ctx, repo, &memoryStepRepo{})
+	var callbacks atomic.Int32
+	q.OnRunOutcome = func(context.Context, string, string, string, *pipeline.Pipeline) {
+		callbacks.Add(1)
+	}
+	entry := &runEntry{
+		projectID: "project-a",
+		runID:     "already-done",
+		pl:        singleStepPipeline("already-done"),
+	}
+	q.mu.Lock()
+	q.finalizeRunLocked(entry, run.StatusFailed, "run.completed")
+	out := q.takePendingLocked()
+	q.mu.Unlock()
+	flushPending(ctx, out)
+	if got := callbacks.Load(); got != 0 {
+		t.Fatalf("outcome callback count = %d, want 0 for a CAS no-op", got)
+	}
+}
+
 func TestCompleteStaleAttemptIsIgnored(t *testing.T) {
 	ctx := context.Background()
 	pl := singleStepPipeline("stale")

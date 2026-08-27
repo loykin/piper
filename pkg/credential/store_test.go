@@ -71,6 +71,32 @@ func TestStoreCreateListGetAndRotate(t *testing.T) {
 	}
 }
 
+func TestStoreValidatesNotificationCredentialShapeAndDestination(t *testing.T) {
+	store, _ := newTestStore(t)
+	for _, tc := range []struct {
+		name string
+		req  CreateRequest
+	}{
+		{"insecure webhook", CreateRequest{Name: "hook", Kind: KindWebhook, Data: map[string]string{"url": "http://example.com/hook"}}},
+		{"local webhook", CreateRequest{Name: "hook", Kind: KindWebhook, Data: map[string]string{"url": "https://localhost/hook"}}},
+		{"private webhook", CreateRequest{Name: "hook", Kind: KindWebhook, Data: map[string]string{"url": "https://10.0.0.1/hook"}}},
+		{"unsupported webhook field", CreateRequest{Name: "hook", Kind: KindWebhook, Data: map[string]string{"url": "https://example.com/hook", "token": "secret"}}},
+		{"unsupported slack field", CreateRequest{Name: "slack", Kind: KindSlack, Data: map[string]string{"webhook_url": "https://hooks.slack.com/services/test", "token": "secret"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.Create(context.Background(), testProjectID, tc.req); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Create() error = %v, want %v", err, ErrInvalid)
+			}
+		})
+	}
+	if _, err := store.Create(context.Background(), testProjectID, CreateRequest{
+		Name: "ops", Kind: KindWebhook,
+		Data: map[string]string{"url": "https://example.com/hook", "header_Authorization": "Bearer secret"},
+	}); err != nil {
+		t.Fatalf("Create valid webhook: %v", err)
+	}
+}
+
 func TestStoreDeleteHardDeletesMetadataAndValue(t *testing.T) {
 	ctx := context.Background()
 	store, repo := newTestStore(t)

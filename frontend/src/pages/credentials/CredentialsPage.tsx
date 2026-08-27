@@ -93,7 +93,7 @@ function CredentialsPageInner() {
             icon={<FlaskConical />}
             label="Test"
             onClick={e => { e.stopPropagation(); setTestTarget(row.original) }}
-            disabled={row.original.disabled || row.original.kind !== 'git'}
+            disabled={row.original.disabled || !['git', 'slack', 'webhook'].includes(row.original.kind)}
           />
           <IconButton
             icon={<RotateCw />}
@@ -158,6 +158,8 @@ function CredentialsPageInner() {
                   <SelectItem value="all">All kinds</SelectItem>
                   <SelectItem value="generic">Generic</SelectItem>
                   <SelectItem value="git">Git</SelectItem>
+                  <SelectItem value="slack">Slack</SelectItem>
+                  <SelectItem value="webhook">Webhook</SelectItem>
                 </SelectContent>
               </Select>
             </>

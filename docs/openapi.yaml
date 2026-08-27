@@ -129,6 +129,73 @@ paths:
               schema: { $ref: "#/components/schemas/TestCredentialResult" }
         "502":
           description: Credential test failed.
+  /api/projects/{project_id}/alert-rules:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        "200":
+          description: Project alert rules.
+          headers:
+            X-Total-Count: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AlertRule" } }
+    post:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAlertRuleRequest" }
+      responses:
+        "201":
+          description: Alert rule created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+        "400": { description: Invalid condition, cooldown, or notification credential. }
+        "409": { description: Rule name already exists. }
+  /api/projects/{project_id}/alert-rules/{id}:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/AlertRuleID"
+      responses:
+        "200":
+          description: Alert rule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+        "404": { description: Alert rule not found. }
+    patch:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/AlertRuleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchAlertRuleRequest" }
+      responses:
+        "200":
+          description: Alert rule updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertRule" }
+        "400": { description: Invalid rule. }
+        "404": { description: Alert rule not found. }
+        "409": { description: Rule name already exists. }
+    delete:
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/AlertRuleID"
+      responses:
+        "204": { description: Alert rule deleted. }
+        "404": { description: Alert rule not found. }
   /api/projects/{project_id}/runs:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -708,6 +775,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    AlertRuleID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     RunID:
       name: id
       in: path
@@ -723,7 +795,7 @@ components:
       type: object
       properties:
         name: { type: string }
-        kind: { type: string, enum: [generic, git, s3] }
+        kind: { type: string, enum: [generic, git, s3, gcs, azure, slack, webhook] }
         endpoint: { type: string }
         keys:
           type: array
@@ -740,7 +812,7 @@ components:
       required: [name, kind, data]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [generic, git, s3] }
+        kind: { type: string, enum: [generic, git, s3, gcs, azure, slack, webhook] }
         endpoint: { type: string }
         data:
           type: object
@@ -766,6 +838,53 @@ components:
       properties:
         ok: { type: boolean }
         message: { type: string }
+    AlertRule:
+      type: object
+      required: [id, project_id, name, on, notify, cooldown_seconds, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string }
+        name: { type: string }
+        on: { type: string, enum: [event, metric] }
+        event_type: { type: string, enum: [run.completed, service.status, notebook.running, notebook.stopped, notebook.failed] }
+        when: { type: string, description: 'Optional strict comparison such as fields.status == "failed".' }
+        metric_key: { type: string }
+        condition: { type: string, description: "Numeric comparison such as < 0.8." }
+        notify: { type: array, minItems: 1, items: { type: string } }
+        cooldown_seconds: { type: integer, minimum: 10 }
+        enabled: { type: boolean }
+        created_by: { type: string }
+        last_matched_at: { type: string, format: date-time }
+        last_attempted_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateAlertRuleRequest:
+      type: object
+      required: [name, on, notify]
+      properties:
+        name: { type: string }
+        on: { type: string, enum: [event, metric] }
+        event_type: { type: string }
+        when: { type: string }
+        metric_key: { type: string }
+        condition: { type: string }
+        notify: { type: array, minItems: 1, items: { type: string } }
+        cooldown_seconds: { type: integer, minimum: 10 }
+        enabled: { type: boolean, default: true }
+    PatchAlertRuleRequest:
+      type: object
+      properties:
+        name: { type: string }
+        on: { type: string, enum: [event, metric] }
+        event_type: { type: string }
+        when: { type: string }
+        metric_key: { type: string }
+        condition: { type: string }
+        notify: { type: array, minItems: 1, items: { type: string } }
+        cooldown_seconds: { type: integer, minimum: 10 }
+        enabled: { type: boolean }
     Run:
       type: object
       properties:

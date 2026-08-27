@@ -22,6 +22,7 @@ import (
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/internal/runlifecycle"
+	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
@@ -306,10 +307,20 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	push := localLogPushClient{store: p.logs, metrics: p.metrics}
+	events, unsubscribe := p.events.Subscribe()
+	defer unsubscribe()
+	push := localLogPushClient{store: p.logs, metrics: p.metrics, events: p.events}
 	batch := logsink.LogBatch{ProjectID: projectID, RunID: "run-metric", StepName: "train", Lines: []logsink.LogLine{{Ts: time.Date(2026, 5, 29, 10, 0, 0, 0, time.UTC), Stream: "stdout", Text: "PIPER_METRIC loss=0.312"}}}
 	if err := push.SendPush(iagent.MethodLogAppend, batch); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case got := <-events:
+		if got.Type != "metric.recorded" || got.ProjectID != projectID || got.Fields["key"] != "loss" || got.Fields["value"] != 0.312 {
+			t.Fatalf("metric event = %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("metric.recorded event was not published")
 	}
 
 	router := p.Handler(nil)
@@ -325,6 +336,56 @@ func TestHandlerParsesMetricsFromIngestedLogs(t *testing.T) {
 	}
 	if len(metrics) != 1 || metrics[0].Key != "loss" || metrics[0].Value != 0.312 {
 		t.Fatalf("metrics = %#v, want loss=0.312", metrics)
+	}
+}
+
+func TestAlertRuleAPIUsesProjectNotificationCredentials(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	const projectID = "alert-project"
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.credentials.Create(context.Background(), projectID, credential.CreateRequest{
+		Name: "ops",
+		Kind: credential.KindWebhook,
+		Data: map[string]string{"url": "https://example.com/piper-alerts"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	router := p.Handler(nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/alert-rules", strings.NewReader(`{
+		"name":"failed-runs","on":"event","event_type":"run.completed",
+		"when":"fields.status == \"failed\"","notify":["ops"],"cooldown_seconds":60
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" || !created.Enabled {
+		t.Fatalf("created rule = %#v", created)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/alert-rules?limit=20&offset=0", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Total-Count") != "1" {
+		t.Fatalf("list status=%d total=%q body=%s", rec.Code, rec.Header().Get("X-Total-Count"), rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/alert-rules/"+created.ID, nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204: %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -631,6 +692,55 @@ func TestStartRunPersistsExperiment(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].ID != runID {
 		t.Fatalf("filtered runs = %#v, want %s", runs, runID)
+	}
+}
+
+func TestOnRunEndHookReceivesPersistedRunResult(t *testing.T) {
+	results := make(chan *pipeline.RunResult, 1)
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(),
+		Hooks: Hooks{OnRunEnd: func(_ context.Context, _ string, result *pipeline.RunResult) {
+			results <- result
+		}},
+	})
+	const projectID = "hook-project"
+	if err := p.repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	pl := &pipeline.Pipeline{
+		Metadata: manifest.ObjectMeta{Name: "hook-pipeline"},
+		Spec: pipeline.PipelineSpec{Steps: []pipeline.Step{{
+			Name: "step",
+			Run:  pipeline.Run{Command: []string{"true"}},
+		}}},
+	}
+	dag, err := pipeline.BuildDAG(pl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := p.runs.StartRun(context.Background(), pl, dag, runlifecycle.StartRunOptions{
+		ProjectID: projectID,
+		YAML:      "metadata:\n  name: hook-pipeline\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRunTerminal(t, p, projectID, runID, 5*time.Second)
+
+	select {
+	case result := <-results:
+		if result.PipelineName != "hook-pipeline" {
+			t.Fatalf("pipeline name = %q, want hook-pipeline", result.PipelineName)
+		}
+		step := result.Steps["step"]
+		if step == nil || step.Status != pipeline.StatusDone {
+			t.Fatalf("step result = %#v, want done", step)
+		}
+		if result.EndedAt.IsZero() {
+			t.Fatal("run result has no end time")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnRunEnd hook was not called")
 	}
 }
 

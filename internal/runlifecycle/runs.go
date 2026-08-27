@@ -63,6 +63,16 @@ func (m *Manager) StartRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipe
 	if err := pipeline.ValidateRuntime(pl, m.deps.RuntimeType); err != nil {
 		return "", err
 	}
+	for _, outcome := range []*pipeline.OnOutcome{pl.Spec.OnSuccess, pl.Spec.OnFailure} {
+		if outcome == nil {
+			continue
+		}
+		for _, action := range outcome.Notify {
+			if err := m.deps.Credentials.ValidateNotificationCredential(ctx, opts.ProjectID, action.CredentialRef); err != nil {
+				return "", fmt.Errorf("notification credential %q: %w", action.CredentialRef, err)
+			}
+		}
+	}
 	runID := opts.RunID
 	if runID == "" {
 		runID = genRunID()

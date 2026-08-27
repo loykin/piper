@@ -18,10 +18,17 @@ const GIT_FIELDS: DataEntry[] = [
   { key: 'username', value: '' },
   { key: 'token', value: '' },
 ]
+const SLACK_FIELDS: DataEntry[] = [{ key: 'webhook_url', value: '' }]
+const WEBHOOK_FIELDS: DataEntry[] = [
+  { key: 'url', value: '' },
+  { key: 'header_Authorization', value: '' },
+]
 // s3 credentials are system-scoped (managed on the Storage page), so this
 // project-scoped form only creates generic and git credentials.
 function fieldsForKind(kind: CredentialKind): DataEntry[] {
   if (kind === 'git') return GIT_FIELDS.map(e => ({ ...e }))
+  if (kind === 'slack') return SLACK_FIELDS.map(e => ({ ...e }))
+  if (kind === 'webhook') return WEBHOOK_FIELDS.map(e => ({ ...e }))
   return GENERIC_FIELDS.map(e => ({ ...e }))
 }
 
@@ -113,6 +120,8 @@ export default function CredentialCreatePage() {
               <SelectContent>
                 <SelectItem value="generic">Generic</SelectItem>
                 <SelectItem value="git">Git</SelectItem>
+                <SelectItem value="slack">Slack</SelectItem>
+                <SelectItem value="webhook">Webhook</SelectItem>
               </SelectContent>
             </Select>
           </FormField>
@@ -133,7 +142,7 @@ export default function CredentialCreatePage() {
           )}
 
           <div className="space-y-1.5">
-            <Label className="text-xs">{kind === 'generic' ? 'Data' : 'Credentials'}</Label>
+            <Label className="text-xs">{kind === 'generic' ? 'Data' : kind === 'git' ? 'Credentials' : 'Notification endpoint'}</Label>
             <div className="grid grid-cols-[1fr_1fr_auto] gap-x-2 pb-1">
               <span className="text-xs text-muted-foreground">Key</span>
               <span className="text-xs text-muted-foreground">Value</span>
@@ -144,7 +153,7 @@ export default function CredentialCreatePage() {
                 <Input
                   value={entry.key}
                   onChange={e => updateEntry(idx, 'key', e.target.value)}
-                  placeholder={kind === 'git' ? 'token' : 'api_key'}
+                  placeholder={kind === 'git' ? 'token' : kind === 'slack' ? 'webhook_url' : kind === 'webhook' ? 'url' : 'api_key'}
                   className="h-8 font-mono text-sm"
                 />
                 <Input

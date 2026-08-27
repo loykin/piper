@@ -15,6 +15,7 @@ import (
 	"time"
 
 	iagent "github.com/loykin/piper/internal/agent"
+	ialerting "github.com/loykin/piper/internal/alerting"
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/logsink"
@@ -25,6 +26,7 @@ import (
 	"github.com/loykin/piper/internal/runlifecycle"
 	ischeduler "github.com/loykin/piper/internal/scheduler"
 	"github.com/loykin/piper/internal/srcfetch"
+	"github.com/loykin/piper/pkg/alerting"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/notebook"
@@ -83,6 +85,8 @@ type Piper struct {
 	nbWorkspace     notebook.WorkspaceReader // reads a notebook volume's live workspace files, for pipeline template snapshotting
 	store           storage.Store            // nil when no artifact store configured
 	credentials     *credential.Store
+	alerts          *alerting.Service
+	alertEngine     *ialerting.Engine
 	federationSvc   *federation.Service
 	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
 	storageErr      error             // last artifact store open error, if any
@@ -279,6 +283,16 @@ func New(cfg Config) (*Piper, error) {
 		stopCtx:         stopFn,
 		events:          event.NewHub(),
 	}
+	if repos.AlertRule != nil {
+		p.alertEngine = ialerting.NewEngine(repos.AlertRule, credentialStore)
+		p.alerts = alerting.NewService(repos.AlertRule, credentialStore, p.alertEngine.Refresh)
+		if err := p.alertEngine.Refresh(context.Background()); err != nil {
+			stopFn()
+			_ = stats.Close()
+			_ = repos.Close()
+			return nil, fmt.Errorf("load alert rules: %w", err)
+		}
+	}
 	storageURL := resolveStorageURL(cfg)
 	if storageURL != "" && strings.TrimSpace(cfg.Storage.CredentialRef) != "" {
 		injected, err := injectStorageCredential(context.Background(), credentialStore, storageURL, cfg.Storage.CredentialRef)
@@ -328,7 +342,7 @@ func New(cfg Config) (*Piper, error) {
 		DeleteArtifacts:    deleteArtifactsFromStore,
 		DeleteWorkspace:    deleteRunWorkspace,
 	})
-	backend, pipelineObserver, err := composePipelineRuntime(cfg, bgCtx, repos, q)
+	backend, pipelineObserver, err := composePipelineRuntime(cfg, bgCtx, repos, q, p.events)
 	if err != nil {
 		stopFn()
 		_ = repos.Close()
@@ -336,9 +350,29 @@ func New(cfg Config) (*Piper, error) {
 	}
 	p.SetBackend(backend)
 	q.OnRunSuccess = p.runs.HandleRunSuccess
+	if p.alertEngine != nil || cfg.Hooks.OnRunEnd != nil {
+		q.OnRunOutcome = func(ctx context.Context, projectID, runID, status string, pl *pipeline.Pipeline) {
+			if p.alertEngine != nil {
+				p.alertEngine.NotifyPipelineOutcome(ctx, projectID, runID, status, pl)
+			}
+			if cfg.Hooks.OnRunEnd != nil {
+				result, err := p.buildRunResult(ctx, projectID, runID)
+				if err != nil {
+					slog.Warn("build OnRunEnd result failed", "run_id", runID, "err", err)
+					return
+				}
+				cfg.Hooks.OnRunEnd(project.WithContext(ctx, project.Context{ID: projectID}), runID, result)
+			}
+		}
+	}
 	q.SetEventPublisher(p.events)
 	p.serving.manager.SetEventPublisher(p.events)
 	p.notebookManager.SetEventPublisher(p.events)
+	if p.alertEngine != nil {
+		done := p.alertEngine.Start(p.ctx, p.events)
+		p.wg.Add(1)
+		go func() { defer p.wg.Done(); <-done }()
+	}
 	p.runs.RecoverInterruptedRuns(context.Background())
 	if pipelineObserver != nil {
 		p.wg.Add(1)
@@ -570,6 +604,7 @@ type jobReconciler interface {
 type localLogPushClient struct {
 	store   logstore.LogStore
 	metrics logstore.MetricStore
+	events  event.Publisher
 }
 
 func (c localLogPushClient) SendPush(method string, payload any) error {
@@ -598,6 +633,8 @@ func (c localLogPushClient) SendPush(method string, payload any) error {
 	if c.metrics != nil && len(metricRows) > 0 {
 		if err := c.metrics.AppendMetrics(context.Background(), metricRows); err != nil {
 			slog.Warn("metric append failed", "run_id", batch.RunID, "err", err)
+		} else {
+			publishMetricEvents(c.events, metricRows)
 		}
 	}
 	if len(lines) == 0 || c.store == nil {
@@ -610,7 +647,7 @@ func (c localLogPushClient) SendPush(method string, payload any) error {
 // by the runner from the step's metrics file, see
 // pkg/pipeline/worker/agent/runner.go's readFinalMetrics) to the metric
 // store before the result reaches Queue.Complete.
-func persistTaskMetrics(ctx context.Context, metrics logstore.MetricStore, result proto.TaskResult) {
+func persistTaskMetrics(ctx context.Context, metrics logstore.MetricStore, publisher event.Publisher, result proto.TaskResult) {
 	if metrics == nil || len(result.Metrics) == 0 {
 		return
 	}
@@ -625,6 +662,17 @@ func persistTaskMetrics(ctx context.Context, metrics logstore.MetricStore, resul
 	}
 	if err := metrics.AppendMetrics(ctx, rows); err != nil {
 		slog.Warn("pipeline metrics persist failed", "task_id", result.TaskID, "err", err)
+	} else {
+		publishMetricEvents(publisher, rows)
+	}
+}
+
+func publishMetricEvents(publisher event.Publisher, rows []*logstore.Metric) {
+	if publisher == nil {
+		return
+	}
+	for _, row := range rows {
+		publisher.Publish(event.New(row.ProjectID, "metric.recorded", map[string]any{"run_id": row.RunID, "step_name": row.StepName, "key": row.Key, "value": row.Value, "recorded_at": row.Ts}))
 	}
 }
 

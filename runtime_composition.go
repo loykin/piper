@@ -6,6 +6,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/pipelinedispatch"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/internal/queue"
@@ -147,12 +148,12 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 	return result, nil
 }
 
-func composePipelineRuntime(cfg Config, ctx context.Context, repos *storemod.Repos, q *queue.Queue) (pipelinedispatch.ExecutionBackend, runtimeObserver, error) {
+func composePipelineRuntime(cfg Config, ctx context.Context, repos *storemod.Repos, q *queue.Queue, publisher event.Publisher) (pipelinedispatch.ExecutionBackend, runtimeObserver, error) {
 	complete := func(result proto.TaskResult) error {
-		persistTaskMetrics(context.Background(), repos.Metric, result)
+		persistTaskMetrics(context.Background(), repos.Metric, publisher, result)
 		return q.Complete(context.Background(), result)
 	}
-	logClient := localLogPushClient{store: repos.Log, metrics: repos.Metric}
+	logClient := localLogPushClient{store: repos.Log, metrics: repos.Metric, events: publisher}
 
 	switch cfg.Runtime.Type {
 	case RuntimeK8s:

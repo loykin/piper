@@ -43,7 +43,7 @@ export function CredentialDetailPanel({ credential, onTest, onRotate, onToggle, 
             icon={<FlaskConical />}
             label="Test"
             onClick={() => onTest(credential)}
-            disabled={credential.disabled || credential.kind !== 'git'}
+            disabled={credential.disabled || !['git', 'slack', 'webhook'].includes(credential.kind)}
           />
           <IconButton
             icon={<RotateCw />}
@@ -73,11 +73,11 @@ export function CredentialDetailPanel({ credential, onTest, onRotate, onToggle, 
       <PanelTemplate.Section title="Details">
         <dl className="space-y-2">
           <PanelTemplate.Row label="Kind"><Badge variant="outline">{credential.kind}</Badge></PanelTemplate.Row>
-          <PanelTemplate.Row label={credential.kind === 'generic' ? 'Keys' : 'Endpoint'}>
+          <PanelTemplate.Row label={credential.kind === 'generic' ? 'Keys' : credential.kind === 'git' ? 'Endpoint' : 'Configuration'}>
             <span className="font-mono text-xs text-muted-foreground">
               {credential.kind === 'generic'
                 ? (credential.keys?.join(', ') || '—')
-                : (credential.endpoint || 'any repo')}
+                : credential.kind === 'git' ? (credential.endpoint || 'any repo') : 'Encrypted and write-only'}
             </span>
           </PanelTemplate.Row>
           <PanelTemplate.Row label="Last Used">{fmtDate(credential.last_used_at)}</PanelTemplate.Row>

@@ -10,6 +10,8 @@ const (
 	KindS3      Kind = "s3"
 	KindGCS     Kind = "gcs"
 	KindAzure   Kind = "azure"
+	KindSlack   Kind = "slack"
+	KindWebhook Kind = "webhook"
 )
 
 type Metadata struct {
@@ -59,4 +61,9 @@ type TestRequest struct {
 type TestResult struct {
 	OK      bool   `json:"ok"`
 	Message string `json:"message"`
+}
+
+type NotificationCredential struct {
+	Kind Kind
+	Data map[string]string
 }

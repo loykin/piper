@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -179,6 +180,38 @@ func (s *Store) ResolveAzure(ctx context.Context, projectID, name string) (Value
 	return s.resolve(ctx, projectID, name, string(KindAzure), "")
 }
 
+func (s *Store) ValidateNotificationCredential(ctx context.Context, projectID, name string) error {
+	meta, err := s.repo.Get(ctx, projectID, strings.TrimSpace(name))
+	if err != nil {
+		return err
+	}
+	if meta == nil {
+		return ErrNotFound
+	}
+	if meta.Disabled {
+		return ErrDisabled
+	}
+	if meta.Kind != KindSlack && meta.Kind != KindWebhook {
+		return fmt.Errorf("%w: credential %q is kind %q, expected slack or webhook", ErrInvalid, name, meta.Kind)
+	}
+	return nil
+}
+
+func (s *Store) ResolveNotification(ctx context.Context, projectID, name string) (NotificationCredential, error) {
+	if err := s.ValidateNotificationCredential(ctx, projectID, name); err != nil {
+		return NotificationCredential{}, err
+	}
+	meta, err := s.repo.Get(ctx, projectID, name)
+	if err != nil || meta == nil {
+		return NotificationCredential{}, err
+	}
+	value, err := s.resolve(ctx, projectID, name, string(meta.Kind), "")
+	if err != nil {
+		return NotificationCredential{}, err
+	}
+	return NotificationCredential{Kind: meta.Kind, Data: value.Data}, nil
+}
+
 func (s *Store) resolve(ctx context.Context, projectID, name, expectedKind, repoURL string) (Value, error) {
 	meta, err := s.repo.Get(ctx, projectID, name)
 	if err != nil {
@@ -277,8 +310,8 @@ func normalizeCreate(projectID string, req CreateRequest) (*Metadata, Value, err
 	if req.Kind == "" {
 		req.Kind = KindGeneric
 	}
-	if req.Kind != KindGeneric && req.Kind != KindGit && req.Kind != KindS3 && req.Kind != KindGCS && req.Kind != KindAzure {
-		return nil, Value{}, fmt.Errorf("kind must be generic, git, s3, gcs, or azure")
+	if req.Kind != KindGeneric && req.Kind != KindGit && req.Kind != KindS3 && req.Kind != KindGCS && req.Kind != KindAzure && req.Kind != KindSlack && req.Kind != KindWebhook {
+		return nil, Value{}, fmt.Errorf("kind must be generic, git, s3, gcs, azure, slack, or webhook")
 	}
 	if err := validateEndpoint(req.Kind, req.Endpoint); err != nil {
 		return nil, Value{}, err
@@ -324,6 +357,45 @@ func validateData(kind Kind, data map[string]string) error {
 		if data["account_name"] == "" || data["account_key"] == "" {
 			return fmt.Errorf("azure credential requires account_name and account_key")
 		}
+	case KindSlack:
+		if data["webhook_url"] == "" {
+			return fmt.Errorf("slack credential requires webhook_url")
+		}
+		if err := validateNotificationURL(data["webhook_url"]); err != nil {
+			return fmt.Errorf("slack webhook_url: %w", err)
+		}
+		for key := range data {
+			if key != "webhook_url" {
+				return fmt.Errorf("slack credential field %q is not supported", key)
+			}
+		}
+	case KindWebhook:
+		if data["url"] == "" {
+			return fmt.Errorf("webhook credential requires url")
+		}
+		if err := validateNotificationURL(data["url"]); err != nil {
+			return fmt.Errorf("webhook url: %w", err)
+		}
+		for key := range data {
+			if key != "url" && !strings.HasPrefix(key, "header_") {
+				return fmt.Errorf("webhook credential field %q is not supported", key)
+			}
+		}
+	}
+	return nil
+}
+
+func validateNotificationURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+		return fmt.Errorf("must be an https URL without userinfo")
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return fmt.Errorf("must not target a private or local address")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()) {
+		return fmt.Errorf("must not target a private or local address")
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"text/template"
 
 	"github.com/loykin/piper/pkg/manifest"
 )
@@ -105,6 +106,27 @@ func (p *Pipeline) Validate() error {
 			return fmt.Errorf("step %q: unsupported driver.placement.runtime %q", s.Name, s.Driver.Placement.Runtime)
 		}
 	}
+	if p.Spec.OnFailure != nil && p.Spec.OnFailure.Deploy != nil {
+		return fmt.Errorf("on_failure.deploy is not supported")
+	}
+	for outcome, actions := range map[string]*OnOutcome{"on_success": p.Spec.OnSuccess, "on_failure": p.Spec.OnFailure} {
+		if actions == nil {
+			continue
+		}
+		for i, action := range actions.Notify {
+			if strings.TrimSpace(action.CredentialRef) == "" {
+				return fmt.Errorf("%s.notify[%d].credential_ref is required", outcome, i)
+			}
+			if len(action.Message) > 4096 {
+				return fmt.Errorf("%s.notify[%d].message must not exceed 4096 bytes", outcome, i)
+			}
+			if action.Message != "" {
+				if _, err := template.New("notification").Option("missingkey=error").Parse(action.Message); err != nil {
+					return fmt.Errorf("%s.notify[%d].message: %w", outcome, i, err)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -143,7 +165,8 @@ func validateRelativePath(label, value string, allowEmpty bool) error {
 type PipelineSpec struct {
 	Defaults  *PipelineDefaults `yaml:"defaults,omitempty"`
 	Steps     []Step            `yaml:"steps"`
-	OnSuccess *OnSuccess        `yaml:"on_success,omitempty"`
+	OnSuccess *OnOutcome        `yaml:"on_success,omitempty"`
+	OnFailure *OnOutcome        `yaml:"on_failure,omitempty"`
 }
 
 // PipelineDefaults provides step-level defaults applied when a step omits driver fields.
@@ -152,9 +175,18 @@ type PipelineDefaults struct {
 	Driver manifest.DriverSpec `yaml:"driver,omitempty"`
 }
 
-// OnSuccess defines actions to run when all pipeline steps succeed.
-type OnSuccess struct {
+// OnOutcome defines best-effort actions to run after a terminal outcome.
+type OnOutcome struct {
 	Deploy *DeployTrigger `yaml:"deploy,omitempty"`
+	Notify []NotifyAction `yaml:"notify,omitempty"`
+}
+
+// OnSuccess is retained as a source-compatible alias for embedders.
+type OnSuccess = OnOutcome
+
+type NotifyAction struct {
+	CredentialRef string `yaml:"credential_ref" json:"credential_ref"`
+	Message       string `yaml:"message,omitempty" json:"message,omitempty"`
 }
 
 // DeployTrigger automatically redeploys a ModelService after a successful run.

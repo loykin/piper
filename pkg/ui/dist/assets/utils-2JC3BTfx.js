@@ -1,0 +1,1 @@
+import{ir as e,or as t}from"./vendor-loykin-DcN3zhre.js";function n(...n){return e(t(n))}export{n as t};

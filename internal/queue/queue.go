@@ -83,6 +83,7 @@ type Queue struct {
 	storageURL    string
 	storageToken  string
 	OnRunSuccess  func(ctx context.Context, runID string, pl *pipeline.Pipeline) // called (async) when a run succeeds
+	OnRunOutcome  func(ctx context.Context, projectID, runID, status string, pl *pipeline.Pipeline)
 	events        event.Publisher
 	// pendingWrites accumulates repository writes decided by the current
 	// locked call while q.mu is held (see appendWrite). Only ever touched
@@ -664,8 +665,10 @@ func (q *Queue) finalizeRunLocked(r *runEntry, status, eventType string) {
 	projectID := r.projectID
 	pl := r.pl
 	finishedAt := time.Now()
+	applied := false
 	q.appendWrite("run finalized "+runID, func(ctx context.Context) error {
-		applied, err := q.runRepo.FinalizeStatusCAS(ctx, projectID, runID, status, &finishedAt)
+		var err error
+		applied, err = q.runRepo.FinalizeStatusCAS(ctx, projectID, runID, status, &finishedAt)
 		if err != nil {
 			return err
 		}
@@ -679,12 +682,25 @@ func (q *Queue) finalizeRunLocked(r *runEntry, status, eventType string) {
 		owner.ReleaseRun(runID)
 	}
 	q.appendEffect(func(context.Context) {
-		q.emit(projectID, eventType, map[string]any{"run_id": runID, "status": status})
+		if applied {
+			q.emit(projectID, eventType, map[string]any{"run_id": runID, "status": status})
+		}
 	})
+	if q.OnRunOutcome != nil {
+		onOutcome := q.OnRunOutcome
+		q.appendEffect(func(context.Context) {
+			if applied {
+				onOutcome(context.Background(), projectID, runID, status, pl)
+			}
+		})
+	}
 
 	if status == run.StatusSuccess && q.OnRunSuccess != nil {
 		onSuccess := q.OnRunSuccess
 		q.appendEffect(func(context.Context) {
+			if !applied {
+				return
+			}
 			// Use a detached context so the callback isn't cancelled when the
 			// HTTP request context that triggered this call ends.
 			onSuccess(project.WithContext(context.Background(), project.Context{ID: projectID}), runID, pl)

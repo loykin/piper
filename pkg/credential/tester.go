@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/loykin/piper/pkg/notify"
 )
 
 func (s *Store) Test(ctx context.Context, projectID, name string, req TestRequest) (TestResult, error) {
@@ -17,7 +19,7 @@ func (s *Store) Test(ctx context.Context, projectID, name string, req TestReques
 	if meta == nil {
 		return TestResult{}, ErrNotFound
 	}
-	if meta.Kind != KindGit {
+	if meta.Kind != KindGit && meta.Kind != KindSlack && meta.Kind != KindWebhook {
 		return TestResult{}, fmt.Errorf("%w: credential kind %q is not testable", ErrInvalid, meta.Kind)
 	}
 
@@ -26,7 +28,12 @@ func (s *Store) Test(ctx context.Context, projectID, name string, req TestReques
 		return TestResult{}, err
 	}
 
-	result := testGit(ctx, req.Repo, value)
+	var result TestResult
+	if meta.Kind == KindGit {
+		result = testGit(ctx, req.Repo, value)
+	} else {
+		result = testNotification(ctx, meta.Kind, value)
+	}
 
 	msg := result.Message
 	if result.OK {
@@ -34,6 +41,17 @@ func (s *Store) Test(ctx context.Context, projectID, name string, req TestReques
 	}
 	_ = s.repo.RecordTestResult(ctx, projectID, name, result.OK, msg)
 	return result, nil
+}
+
+func testNotification(ctx context.Context, kind Kind, value Value) TestResult {
+	n, err := notify.Open(string(kind), value.Data, nil)
+	if err == nil {
+		err = n.Send(ctx, notify.Message{Title: "Piper notification test", Body: "This test confirms that the notification credential is reachable."})
+	}
+	if err != nil {
+		return TestResult{OK: false, Message: err.Error()}
+	}
+	return TestResult{OK: true, Message: "notification credential successful"}
 }
 
 func testGit(ctx context.Context, repo string, value Value) TestResult {

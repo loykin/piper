@@ -16,6 +16,7 @@ import (
 	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/internal/store/postgres"
 	"github.com/loykin/piper/internal/store/sqlite"
+	"github.com/loykin/piper/pkg/alerting"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/notebook"
@@ -37,6 +38,7 @@ type Repos struct {
 	ProjectMutation  projectclient.MutationRepository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
+	AlertRule        alerting.Repository
 	Credential       credential.Repository
 	Viewer           viewer.Repository
 	Serving          serving.Repository
@@ -66,6 +68,7 @@ type ExternalReposConfig struct {
 	ProjectMutation  projectclient.MutationRepository
 	Step             run.StepRepository
 	Schedule         schedule.Repository
+	AlertRule        alerting.Repository
 	Credential       credential.Repository
 	Serving          serving.Repository
 	Notebook         notebook.Repository
@@ -198,6 +201,7 @@ func buildRepos(db *sqlx.DB, driver string, adapter *sqlxadapter.Adapter, execut
 			ProjectMutation:  sqlite.NewProjectMutationRepo(executor, PrimarySource),
 			Step:             sqlite.NewStepRepo(executor, PrimarySource),
 			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
+			AlertRule:        sqlite.NewAlertRuleRepo(executor, PrimarySource),
 			Credential:       sqlite.NewCredentialRepo(executor, PrimarySource),
 			Serving:          sqlite.NewServingRepo(executor, PrimarySource),
 			Notebook:         sqlite.NewNotebookRepo(executor, PrimarySource),
@@ -220,6 +224,7 @@ func buildRepos(db *sqlx.DB, driver string, adapter *sqlxadapter.Adapter, execut
 			ProjectMutation:  postgres.NewProjectMutationRepo(executor, PrimarySource),
 			Step:             postgres.NewStepRepo(executor, PrimarySource),
 			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
+			AlertRule:        postgres.NewAlertRuleRepo(executor, PrimarySource),
 			Credential:       postgres.NewCredentialRepo(executor, PrimarySource),
 			Serving:          postgres.NewServingRepo(executor, PrimarySource),
 			Notebook:         postgres.NewNotebookRepo(executor, PrimarySource),

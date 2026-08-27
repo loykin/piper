@@ -2,6 +2,7 @@ package k8sdriver
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/serving"
+	"github.com/loykin/piper/pkg/serving/servingdriver"
 )
 
 type statusReport struct {
@@ -142,6 +144,29 @@ func TestDeployWithStoredArtifactCreatesSecretAndInitContainer(t *testing.T) {
 	}
 	if dep.Spec.Template.Spec.InitContainers[0].Image != "piper:test" {
 		t.Fatalf("init container image = %q, want piper:test", dep.Spec.Template.Spec.InitContainers[0].Image)
+	}
+	init := dep.Spec.Template.Spec.InitContainers[0]
+	if len(init.VolumeMounts) != 1 || init.VolumeMounts[0].MountPath != artifactDownloadDir {
+		t.Fatalf("init container model mount = %+v, want %q", init.VolumeMounts, artifactDownloadDir)
+	}
+	if artifactDownloadDir == "/piper" || strings.HasPrefix(artifactDownloadDir, "/piper/") {
+		t.Fatalf("artifact download mount %q collides with the /piper executable", artifactDownloadDir)
+	}
+	foundDest := false
+	for _, env := range init.Env {
+		if env.Name == "PIPER_ARTIFACT_DEST" {
+			foundDest = true
+			if env.Value != artifactDownloadDir {
+				t.Fatalf("PIPER_ARTIFACT_DEST = %q, want %q", env.Value, artifactDownloadDir)
+			}
+		}
+	}
+	if !foundDest {
+		t.Fatal("PIPER_ARTIFACT_DEST is missing")
+	}
+	servingContainer := dep.Spec.Template.Spec.Containers[0]
+	if len(servingContainer.VolumeMounts) != 1 || servingContainer.VolumeMounts[0].MountPath != servingdriver.ContainerModelDir {
+		t.Fatalf("serving container model mount = %+v, want %s", servingContainer.VolumeMounts, servingdriver.ContainerModelDir)
 	}
 
 	secret, err := client.CoreV1().Secrets("svc-ns").Get(context.Background(), name+"-artifact", metav1.GetOptions{})

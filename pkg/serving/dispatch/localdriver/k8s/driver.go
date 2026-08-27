@@ -41,6 +41,12 @@ import (
 	"github.com/loykin/piper/pkg/serving/servingdriver"
 )
 
+// artifactDownloadDir is the artifact volume mount inside the fetcher image.
+// It must not be below /piper: that path is the piper executable in the
+// fetcher image, so an OCI runtime cannot create /piper/model as a mountpoint.
+// The serving container mounts the same volume at ContainerModelDir.
+const artifactDownloadDir = "/piper-artifact"
+
 // Config configures a direct, in-process K8s serving driver.
 type Config struct {
 	RuntimeID   string
@@ -253,9 +259,9 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 				{Name: "PIPER_STORAGE_URL", ValueFrom: secretEnv(artifactSecretName, "storage-url")},
 				{Name: "PIPER_STORAGE_TOKEN", ValueFrom: secretEnv(artifactSecretName, "storage-token")},
 				{Name: "PIPER_ARTIFACT_KEY", ValueFrom: secretEnv(artifactSecretName, "artifact-key")},
-				{Name: "PIPER_ARTIFACT_DEST", Value: modelDir},
+				{Name: "PIPER_ARTIFACT_DEST", Value: artifactDownloadDir},
 			},
-			VolumeMounts: []corev1.VolumeMount{{Name: "model", MountPath: modelDir}},
+			VolumeMounts: []corev1.VolumeMount{{Name: "model", MountPath: artifactDownloadDir}},
 		}}
 		podSpec.Volumes = []corev1.Volume{{Name: "model", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
 	}

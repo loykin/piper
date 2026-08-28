@@ -28,6 +28,18 @@ var ErrRunNotFound = errors.New("run not found")
 // as 503 rather than disguising it as a missing run or a generic 500.
 var ErrMemberUnavailable = errors.New("member unavailable")
 
+// ErrStorageBackendMismatch marks an artifact read (Run artifact download,
+// viewer materialization, pipeline template snapshot, ModelService
+// from_artifact resolution) that failed to find data because it was written
+// under a storage backend that is no longer the live one — see the
+// storage-identity stamp recorded at write time (pkg/pipeline/run.Run's and
+// pkg/template.Template's StorageBackend fields, computed by
+// storageIdentity() in settings.go). Distinct from a genuine "nothing here"
+// 404 so callers can explain the situation honestly instead of implying
+// data loss or corruption. Never occurs for a row whose stamp is empty
+// (predates this feature — no baseline to compare against).
+var ErrStorageBackendMismatch = errors.New("artifacts were written under a storage backend that is no longer active")
+
 // AuthContext is the authorization context Home resolves once (via its
 // project-membership middleware) and hands to Member on every call, so
 // Member never looks up membership itself. Remote calls bind the context to

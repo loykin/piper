@@ -136,6 +136,12 @@ func scanPipelines(ctx context.Context, repos *storemod.Repos, apply bool, proje
 					YAML:        stripped,
 					SnapshotID:  t.SnapshotID,
 					VolumeID:    t.VolumeID,
+					// This version reuses t's existing snapshot files
+					// unchanged (only the placement field in the YAML text
+					// is being fixed, nothing is re-uploaded), so it
+					// inherits t's own storage-identity stamp rather than
+					// getting a fresh "" (unknown) one.
+					StorageBackend: t.StorageBackend,
 				}
 				if err := repos.PipelineTemplate.Create(ctx, newT); err != nil {
 					f.Err = fmt.Errorf("create v%d: %w", nv, err)

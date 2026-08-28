@@ -27,6 +27,12 @@ type Template struct {
 	VolumeID    string    `json:"volume_id"   db:"volume_id"`
 	CreatedAt   time.Time `json:"created_at"  db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"  db:"updated_at"`
+	// StorageBackend is the storage-identity (see storageIdentity() in
+	// settings.go) that was live when this version's snapshot (if any) was
+	// uploaded. Diagnostic metadata only — never exposed through the REST
+	// API. Empty means unknown/predates this field and must never be
+	// treated as a mismatch.
+	StorageBackend string `json:"-" db:"storage_backend"`
 }
 
 // AfterScan populates Tags from the raw TagsJSON string after a DB scan.

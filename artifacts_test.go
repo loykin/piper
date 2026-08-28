@@ -2,6 +2,9 @@ package piper
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +12,9 @@ import (
 	"time"
 
 	"github.com/loykin/piper/internal/artifact"
+	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/pkg/pipeline/run"
+	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/storage"
 )
 
@@ -386,6 +392,107 @@ func TestDeleteRunWorkspace_IndependentOfStore(t *testing.T) {
 func TestDeleteArtifactsFromStore_NilStoreIsNoop(t *testing.T) {
 	if err := deleteArtifactsFromStore(context.Background(), nil, "run-1"); err != nil {
 		t.Fatalf("nil store should be a no-op, got: %v", err)
+	}
+}
+
+// ─── storage-backend mismatch diagnostic (docs/backend/develop.md's
+// storage-identity stamp) ───────────────────────────────────────────────────
+
+// createTestRun inserts a minimal Run row directly through the repository
+// (bypassing the queue/runlifecycle machinery, which isn't needed to
+// exercise the artifact-read mismatch diagnostic) with the given
+// StorageBackend stamp, and returns a context carrying the default project.
+func createTestRun(t *testing.T, p *Piper, runID, storageBackend string) context.Context {
+	t.Helper()
+	ctx := project.WithContext(context.Background(), project.Context{ID: project.DefaultID})
+	r := &run.Run{
+		ID:             runID,
+		ProjectID:      project.DefaultID,
+		PipelineName:   "mismatch-test",
+		Status:         run.StatusSuccess,
+		StartedAt:      time.Now().UTC(),
+		StorageBackend: storageBackend,
+	}
+	if err := p.repos.Run.Create(ctx, r); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	return ctx
+}
+
+func TestPiperArtifacts_List_StorageBackendMismatch(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	// The default config provisions a LocalStore; stamp the run with a
+	// deliberately different identity so the live backend never matches.
+	ctx := createTestRun(t, p, "run-mismatch", "s3:some-other-bucket")
+
+	_, err := (&piperArtifacts{p: p}).List(ctx, "run-mismatch")
+	if err == nil {
+		t.Fatal("expected an error for a run with no artifacts under a mismatched storage backend")
+	}
+	if !errors.Is(err, memberclient.ErrStorageBackendMismatch) {
+		t.Fatalf("expected memberclient.ErrStorageBackendMismatch, got: %v", err)
+	}
+}
+
+func TestPiperArtifacts_List_EmptyStampNeverMismatches(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	// No StorageBackend set (predates this feature) — must never be flagged
+	// as a mismatch, even though the run has no artifacts.
+	ctx := createTestRun(t, p, "run-unstamped", "")
+
+	result, err := (&piperArtifacts{p: p}).List(ctx, "run-unstamped")
+	if err != nil {
+		t.Fatalf("expected no error for an unstamped run, got: %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected an empty artifact list, got %d entries", len(result))
+	}
+}
+
+func TestPiperArtifacts_List_MatchingStampNeverMismatches(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	// Stamped with exactly the live identity — a run with genuinely no
+	// artifacts must still resolve as a plain empty list, not an error.
+	ctx := createTestRun(t, p, "run-matching", p.storageIdentity)
+
+	result, err := (&piperArtifacts{p: p}).List(ctx, "run-matching")
+	if err != nil {
+		t.Fatalf("expected no error when the stamp matches the live backend, got: %v", err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected an empty artifact list, got %d entries", len(result))
+	}
+}
+
+func TestPiperArtifacts_ServeDownload_StorageBackendMismatch(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := createTestRun(t, p, "run-mismatch-dl", "s3:some-other-bucket")
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-mismatch-dl/artifacts/step/missing.txt", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	(&piperArtifacts{p: p}).ServeDownload(rec, req, "run-mismatch-dl", "step", "missing.txt")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rec.Body.String(), "storage_backend_mismatch") {
+		t.Fatalf("body = %q, want it to mention storage_backend_mismatch", rec.Body.String())
+	}
+}
+
+func TestPiperArtifacts_ServeDownload_GenericNotFoundWhenUnstamped(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+	ctx := createTestRun(t, p, "run-unstamped-dl", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/run-unstamped-dl/artifacts/step/missing.txt", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	(&piperArtifacts{p: p}).ServeDownload(rec, req, "run-unstamped-dl", "step", "missing.txt")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if strings.Contains(rec.Body.String(), "storage_backend_mismatch") {
+		t.Fatalf("body = %q should NOT mention storage_backend_mismatch for an unstamped run", rec.Body.String())
 	}
 }
 

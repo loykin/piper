@@ -13,8 +13,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/storage"
 )
+
+// RunStorageLookup returns the storage-identity stamp recorded on runID's
+// row (see pkg/pipeline/run.Run.StorageBackend) — the narrow slice of the
+// run repository a Manager needs to diagnose a mismatch, without pulling in
+// pkg/pipeline/run.Repository's full querying surface. Returns ("", nil)
+// when the run itself can't be found.
+type RunStorageLookup func(ctx context.Context, projectID, runID string) (string, error)
 
 // Manager orchestrates viewer lifecycle: start, stop, TTL cleanup, and artifact materialization.
 type Manager struct {
@@ -22,6 +30,13 @@ type Manager struct {
 	drivers   map[string]Driver
 	store     storage.Store // nil for local-only deployments
 	outputDir string
+
+	// runStorage and liveIdentity are wired post-construction via
+	// SetStorageDiagnostics (mirrors *queue.Queue's own post-New() setter
+	// idiom). runStorage nil means no diagnostic is available — Open behaves
+	// exactly as it did before this field existed.
+	runStorage   RunStorageLookup
+	liveIdentity string
 }
 
 func NewManager(repo Repository, store storage.Store, outputDir string) *Manager {
@@ -31,6 +46,34 @@ func NewManager(repo Repository, store storage.Store, outputDir string) *Manager
 		store:     store,
 		outputDir: outputDir,
 	}
+}
+
+// SetStorageDiagnostics wires the run-storage-backend lookup and the live
+// storage identity so a materialize/Start failure can distinguish "artifact
+// legitimately absent" from "artifact unreachable because the storage
+// backend changed since this run's data was written" (see docs on the
+// storage-identity stamp). Optional — a Manager without this wired behaves
+// exactly as before, with no mismatch diagnostic.
+func (m *Manager) SetStorageDiagnostics(lookup RunStorageLookup, liveIdentity string) {
+	m.runStorage = lookup
+	m.liveIdentity = liveIdentity
+}
+
+// storageBackendMismatch reports whether v's run was created under a
+// storage backend that's no longer the live one, using the Run's own stamp
+// — a viewer never has an independent stamp, since it always resolves
+// through a Run's artifacts (see RunID/StepName/Artifact in materialize). A
+// run with no stamp (predates this feature) or whose stamp matches the live
+// backend never mismatches.
+func (m *Manager) storageBackendMismatch(ctx context.Context, v *Viewer) bool {
+	if m.runStorage == nil {
+		return false
+	}
+	backend, err := m.runStorage(ctx, v.ProjectID, v.RunID)
+	if err != nil || backend == "" {
+		return false
+	}
+	return backend != m.liveIdentity
 }
 
 func (m *Manager) RegisterDriver(d Driver) {
@@ -71,6 +114,9 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 	localPath, tempDir, err := m.materialize(ctx, v)
 	if err != nil {
 		_ = m.repo.UpdateStatus(ctx, v.ID, StatusFailed, "", 0, "")
+		if m.storageBackendMismatch(ctx, v) {
+			return nil, false, fmt.Errorf("materialize artifact: %w", memberclient.ErrStorageBackendMismatch)
+		}
 		return nil, false, fmt.Errorf("materialize artifact: %w", err)
 	}
 	v.WorkDir = tempDir // temp dir to clean up on stop (empty for local storage)
@@ -80,6 +126,9 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 			_ = os.RemoveAll(tempDir)
 		}
 		_ = m.repo.UpdateStatus(ctx, v.ID, StatusFailed, "", 0, "")
+		if m.storageBackendMismatch(ctx, v) {
+			return nil, false, fmt.Errorf("start viewer: %w", memberclient.ErrStorageBackendMismatch)
+		}
 		return nil, false, fmt.Errorf("start viewer: %w", err)
 	}
 

@@ -33,6 +33,12 @@ type HandlerDeps struct {
 	Store        storage.Store // nil when object storage is not configured
 	StorageURL   string
 	StorageToken string
+	// StorageIdentity is the non-secret storage-identity (storageIdentity()
+	// in piper's settings.go) live at construction time. New template
+	// versions are stamped with it at submit time so a later storage-backend
+	// migration can be told apart from data loss when a snapshot is used
+	// again (see Template.StorageBackend).
+	StorageIdentity string
 	// Workspace reads a notebook volume's live workspace files, for
 	// snapshotting local-source pipeline steps into object storage.
 	Workspace notebook.WorkspaceReader
@@ -165,16 +171,17 @@ func (h *Handler) submit(c *gin.Context) {
 	}
 
 	t := &Template{
-		ProjectID:   projectContext.ID,
-		ID:          uuid.New().String(),
-		Name:        pl.Metadata.Name,
-		Version:     version,
-		Description: pl.Metadata.Description,
-		Tags:        pl.Metadata.Tags,
-		YAML:        string(versionedYAML),
-		SnapshotID:  snapshotID,
-		VolumeID:    req.VolumeID,
-		CreatedAt:   time.Now().UTC(),
+		ProjectID:      projectContext.ID,
+		ID:             uuid.New().String(),
+		Name:           pl.Metadata.Name,
+		Version:        version,
+		Description:    pl.Metadata.Description,
+		Tags:           pl.Metadata.Tags,
+		YAML:           string(versionedYAML),
+		SnapshotID:     snapshotID,
+		VolumeID:       req.VolumeID,
+		CreatedAt:      time.Now().UTC(),
+		StorageBackend: h.deps.StorageIdentity,
 	}
 	if err := h.deps.Templates.Create(c.Request.Context(), t); err != nil {
 		if len(localPaths) > 0 && h.deps.Store != nil {
@@ -267,6 +274,10 @@ func (h *Handler) triggerRun(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	rewrittenYAML := rewriteLocalSources(t.YAML, t.SnapshotID, t.Name)
+	if h.storageBackendMismatch(t, rewrittenYAML) {
+		c.JSON(http.StatusNotFound, gin.H{"error": memberclient.ErrStorageBackendMismatch.Error(), "code": memberclient.ErrorCodeStorageBackendMismatch, "retryable": false})
+		return
+	}
 
 	runID, err := h.deps.StartRun(c.Request.Context(), rewrittenYAML, req.Params, proto.BuiltinVars{}, "")
 	if err != nil {
@@ -313,6 +324,10 @@ func (h *Handler) deploy(c *gin.Context) {
 	}
 
 	rewrittenYAML := rewriteLocalSources(t.YAML, t.SnapshotID, t.Name)
+	if h.storageBackendMismatch(t, rewrittenYAML) {
+		c.JSON(http.StatusNotFound, gin.H{"error": memberclient.ErrStorageBackendMismatch.Error(), "code": memberclient.ErrorCodeStorageBackendMismatch, "retryable": false})
+		return
+	}
 
 	paramsJSON := "{}"
 	if req.Params != nil {
@@ -465,4 +480,35 @@ func rewriteLocalSources(yamlText, snapshotID, templateName string) string {
 		return yamlText
 	}
 	return string(b)
+}
+
+// storageBackendMismatch reports whether t's snapshot (if the rewritten
+// pipeline actually references one — see rewriteLocalSources's
+// SnapshotPrefix) was uploaded under a storage backend that is no longer
+// live. There is no dedicated snapshot-file-serving read endpoint in this
+// handler to hang the check on (triggerRun/deploy only ever kick off
+// pipeline execution, which downloads the snapshot asynchronously deep
+// inside the runner — see internal/srcfetch/s3.go's fetchSnapshot, which
+// has no HTTP request to answer by the time it would discover the same
+// mismatch); checking here, before StartRun/Schedules.Create, surfaces the
+// same diagnostic immediately instead of letting the run fail later with an
+// unexplained download error. A template whose pipeline has no local-source
+// steps never references a snapshot at all, so it never mismatches
+// regardless of SnapshotID/StorageBackend (submit() unconditionally
+// generates both). A stamp of "" (predates this feature) never mismatches
+// either — there's no baseline to compare against.
+func (h *Handler) storageBackendMismatch(t *Template, rewrittenYAML string) bool {
+	if t.StorageBackend == "" || t.StorageBackend == h.deps.StorageIdentity {
+		return false
+	}
+	pl, err := pipeline.Parse([]byte(rewrittenYAML))
+	if err != nil {
+		return false
+	}
+	for _, step := range pl.Spec.Steps {
+		if step.Run.SnapshotPrefix != "" {
+			return true
+		}
+	}
+	return false
 }

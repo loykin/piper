@@ -15,6 +15,7 @@ import (
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/template"
 )
 
 func FederationRepoSuite(t *testing.T, repo federation.Repository) {
@@ -252,6 +253,67 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 		}
 		if got.Status != r.Status {
 			t.Errorf("Status mismatch: got %q want %q", got.Status, r.Status)
+		}
+	})
+
+	t.Run("StorageBackend_roundtrips_through_Create_Get_and_List", func(t *testing.T) {
+		r := &run.Run{
+			ID:             uuid.NewString(),
+			ProjectID:      projectID,
+			PipelineName:   "storage-backend-test",
+			Status:         run.StatusRunning,
+			StartedAt:      time.Now().UTC().Truncate(time.Millisecond),
+			StorageBackend: "s3:my-bucket",
+		}
+		if err := repo.Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := repo.Get(ctx, projectID, r.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.StorageBackend != "s3:my-bucket" {
+			t.Errorf("Get: StorageBackend = %q, want %q", got.StorageBackend, "s3:my-bucket")
+		}
+
+		rows, err := repo.List(ctx, projectID, run.RunFilter{PipelineName: "storage-backend-test"})
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		found := false
+		for _, row := range rows {
+			if row.ID == r.ID {
+				found = true
+				if row.StorageBackend != "s3:my-bucket" {
+					t.Errorf("List: StorageBackend = %q, want %q", row.StorageBackend, "s3:my-bucket")
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("List did not return created run %q", r.ID)
+		}
+
+		// A run created without an explicit StorageBackend (the common case
+		// for rows written before this field existed) must round-trip as ""
+		// — never silently defaulted to something else — since the read-time
+		// mismatch check treats "" as "unknown, don't flag" rather than "no
+		// backend".
+		unstamped := &run.Run{
+			ID:           uuid.NewString(),
+			ProjectID:    projectID,
+			PipelineName: "storage-backend-unstamped-test",
+			Status:       run.StatusRunning,
+			StartedAt:    time.Now().UTC().Truncate(time.Millisecond),
+		}
+		if err := repo.Create(ctx, unstamped); err != nil {
+			t.Fatalf("Create (unstamped): %v", err)
+		}
+		gotUnstamped, err := repo.Get(ctx, projectID, unstamped.ID)
+		if err != nil {
+			t.Fatalf("Get (unstamped): %v", err)
+		}
+		if gotUnstamped.StorageBackend != "" {
+			t.Errorf("Get (unstamped): StorageBackend = %q, want empty", gotUnstamped.StorageBackend)
 		}
 	})
 
@@ -736,6 +798,99 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		}
 		if len(steps) != 0 {
 			t.Errorf("expected 0 steps after DeleteByRun, got %d", len(steps))
+		}
+	})
+}
+
+// TemplateRepoSuite exercises template.Repository's Create/Get/List contract,
+// with particular attention to the StorageBackend stamp (see
+// Template.StorageBackend / storageIdentity() in piper's settings.go)
+// round-tripping correctly through both driver implementations.
+func TemplateRepoSuite(t *testing.T, repo template.Repository, projectID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	t.Run("Create_and_Get", func(t *testing.T) {
+		tmpl := &template.Template{
+			ProjectID: projectID,
+			Name:      "storage-backend-test",
+			Version:   1,
+			YAML:      "metadata:\n  name: storage-backend-test\n",
+			Tags:      []string{},
+		}
+		if err := repo.Create(ctx, tmpl); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if tmpl.ID == "" {
+			t.Fatal("Create did not assign an ID")
+		}
+		got, err := repo.Get(ctx, projectID, tmpl.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.Name != tmpl.Name || got.Version != tmpl.Version {
+			t.Errorf("Get = %+v, want Name=%q Version=%d", got, tmpl.Name, tmpl.Version)
+		}
+	})
+
+	t.Run("StorageBackend_roundtrips_through_Create_Get_and_List", func(t *testing.T) {
+		tmpl := &template.Template{
+			ProjectID:      projectID,
+			Name:           "storage-backend-stamped",
+			Version:        1,
+			YAML:           "metadata:\n  name: storage-backend-stamped\n",
+			Tags:           []string{},
+			SnapshotID:     "snap-1",
+			StorageBackend: "s3:my-bucket",
+		}
+		if err := repo.Create(ctx, tmpl); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := repo.Get(ctx, projectID, tmpl.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.StorageBackend != "s3:my-bucket" {
+			t.Errorf("Get: StorageBackend = %q, want %q", got.StorageBackend, "s3:my-bucket")
+		}
+
+		rows, err := repo.List(ctx, projectID, template.Filter{Name: "storage-backend-stamped"})
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		found := false
+		for _, row := range rows {
+			if row.ID == tmpl.ID {
+				found = true
+				if row.StorageBackend != "s3:my-bucket" {
+					t.Errorf("List: StorageBackend = %q, want %q", row.StorageBackend, "s3:my-bucket")
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("List did not return created template %q", tmpl.ID)
+		}
+
+		// A template created without an explicit StorageBackend (the common
+		// case for rows written before this field existed, or a submit with
+		// no local-source steps) must round-trip as "" — the read-time
+		// mismatch check treats "" as "unknown, don't flag".
+		unstamped := &template.Template{
+			ProjectID: projectID,
+			Name:      "storage-backend-unstamped",
+			Version:   1,
+			YAML:      "metadata:\n  name: storage-backend-unstamped\n",
+			Tags:      []string{},
+		}
+		if err := repo.Create(ctx, unstamped); err != nil {
+			t.Fatalf("Create (unstamped): %v", err)
+		}
+		gotUnstamped, err := repo.Get(ctx, projectID, unstamped.ID)
+		if err != nil {
+			t.Fatalf("Get (unstamped): %v", err)
+		}
+		if gotUnstamped.StorageBackend != "" {
+			t.Errorf("Get (unstamped): StorageBackend = %q, want empty", gotUnstamped.StorageBackend)
 		}
 	})
 }

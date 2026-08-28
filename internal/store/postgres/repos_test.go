@@ -57,6 +57,17 @@ func TestRunRepo_Postgres(t *testing.T) {
 	repotest.RunRepoSuite(t, repos.Run, projectID)
 }
 
+func TestPipelineTemplateRepo_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+
+	const projectID = "template-repo"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.TemplateRepoSuite(t, repos.PipelineTemplate, projectID)
+}
+
 func TestProjectRepo_Postgres(t *testing.T) {
 	ctx := context.Background()
 	repos := openPostgresRepos(t, ctx)

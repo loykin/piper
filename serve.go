@@ -104,6 +104,7 @@ type ServeOption struct {
 func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 	// Build the viewer manager once and share it between the cleanup loop and the HTTP handler.
 	viewerMgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
+	viewerMgr.SetStorageDiagnostics(p.runStorageBackend, p.storageIdentity)
 	viewerMgr.RegisterDriver(viewertb.New())
 	viewerMgr.RegisterDriver(viewerhtml.New())
 
@@ -465,6 +466,7 @@ func (p *Piper) HandlerContext(_ context.Context, extra http.Handler) http.Handl
 
 func (p *Piper) handlerContext(extra http.Handler) http.Handler {
 	mgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
+	mgr.SetStorageDiagnostics(p.runStorageBackend, p.storageIdentity)
 	mgr.RegisterDriver(viewertb.New())
 	mgr.RegisterDriver(viewerhtml.New())
 	return p.newRouter(extra, mgr)
@@ -814,6 +816,14 @@ func (a *piperArtifacts) List(ctx context.Context, runID string) ([]any, error) 
 	if err != nil {
 		return nil, err
 	}
+	// An empty result is normally just "this run produced no artifacts" —
+	// but if the run's storage-backend stamp no longer matches the live
+	// backend, the emptiness may instead mean the data is unreachable, not
+	// that it never existed. Surface that distinguishably instead of a
+	// silent empty list (see docs on the storage-identity stamp).
+	if len(result) == 0 && a.p.storageBackendMismatch(ctx, runID) {
+		return nil, memberclient.ErrStorageBackendMismatch
+	}
 
 	// Enrich artifact entries with viewer type hints from the pipeline YAML.
 	typeHints := a.artifactTypeHints(ctx, runID)
@@ -861,9 +871,18 @@ func (a *piperArtifacts) ServeDownload(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
+	var notFound bool
 	if a.p.store != nil {
-		downloadArtifactStore(w, r, a.p.store, runID, step, rest)
+		notFound = downloadArtifactStore(w, r, a.p.store, runID, step, rest)
+	} else {
+		notFound = downloadArtifactLocal(w, r, a.p.cfg.OutputDir, runID, step, rest)
+	}
+	if !notFound {
 		return
 	}
-	downloadArtifactLocal(w, r, a.p.cfg.OutputDir, runID, step, rest)
+	if a.p.storageBackendMismatch(r.Context(), runID) {
+		writeStorageBackendMismatchJSON(w)
+		return
+	}
+	http.Error(w, "artifact not found", http.StatusNotFound)
 }

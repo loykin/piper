@@ -54,6 +54,19 @@ func TestRunRepo_SQLite(t *testing.T) {
 	repotest.RunRepoSuite(t, repos.Run, projectID)
 }
 
+func TestPipelineTemplateRepo_SQLite(t *testing.T) {
+	repos, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+	const projectID = "template-repo"
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.TemplateRepoSuite(t, repos.PipelineTemplate, projectID)
+}
+
 func TestProjectRepo_SQLite(t *testing.T) {
 	repos, err := store.Open(":memory:")
 	if err != nil {

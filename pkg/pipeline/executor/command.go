@@ -16,32 +16,36 @@ import (
 
 type CommandExecutor struct{}
 
-func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) error {
+func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) (string, error) {
 	if len(step.Run.Command) == 0 {
-		return fmt.Errorf("step %q: command is empty", step.Name)
+		return "", fmt.Errorf("step %q: command is empty", step.Name)
 	}
 
 	workDir := cfg.WorkDir
 	extraEnv := cfg.Env()
 
-	// If a source is specified, fetch it and run from fetchDir
+	// If a source is specified, fetch it and run from fetchDir. The
+	// command's actual cwd — and therefore where any relative-path output
+	// it writes (.metrics.json, outputs: artifacts) ends up — moves to
+	// fetchDir along with it. Callers must read those outputs back from the
+	// same workDir this function returns, not from cfg.OutputDir.
 	if step.Run.Source != "" && step.Run.Source != "local" {
 		fetcher, err := srcfetch.New(step.Run, cfg.SourceCfg)
 		if err != nil {
-			return err
+			return "", err
 		}
 		fetchDir := cfg.fetchDir(step.Run)
 		scriptPath, err := fetcher.Fetch(ctx, step.Run, fetchDir)
 		if err != nil {
-			return fmt.Errorf("fetch failed: %w", err)
+			return "", fmt.Errorf("fetch failed: %w", err)
 		}
 		scriptPath, err = filepath.Abs(scriptPath)
 		if err != nil {
-			return fmt.Errorf("resolve source path: %w", err)
+			return "", fmt.Errorf("resolve source path: %w", err)
 		}
 		workDir, err = filepath.Abs(fetchDir)
 		if err != nil {
-			return fmt.Errorf("resolve source work dir: %w", err)
+			return "", fmt.Errorf("resolve source work dir: %w", err)
 		}
 		extraEnv = append(extraEnv, "PIPER_SCRIPT_PATH="+scriptPath)
 	}
@@ -57,7 +61,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	}
 
 	if err := runPrepare(ctx, step, cfg, workDir, stdout, stderr); err != nil {
-		return err
+		return "", err
 	}
 
 	cmd := exec.Command(step.Run.Command[0], step.Run.Command[1:]...)
@@ -85,7 +89,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	}
 
 	if err := cmd.Start(); err != nil {
-		return err
+		return "", err
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -93,13 +97,13 @@ func (e *CommandExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg 
 	}()
 	select {
 	case err := <-done:
-		return err
+		return workDir, err
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			_ = syscall.Kill(cmd.Process.Pid, syscall.SIGKILL)
 		}
 		<-done
-		return ctx.Err()
+		return workDir, ctx.Err()
 	}
 }
 

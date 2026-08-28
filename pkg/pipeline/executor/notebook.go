@@ -14,7 +14,7 @@ import (
 
 type NotebookExecutor struct{}
 
-func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) error {
+func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) (string, error) {
 	run := step.Run
 	// Notebook field is a shorthand for: type=notebook, source=local, path=<value>
 	if run.Notebook != "" && run.Path == "" {
@@ -24,25 +24,25 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 		run.Path = run.Notebook
 	}
 	if run.Path == "" {
-		return fmt.Errorf("notebook source: notebook file path is required")
+		return "", fmt.Errorf("notebook source: notebook file path is required")
 	}
 	fetcher, err := srcfetch.New(run, cfg.SourceCfg)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	notebookPath, err := fetcher.Fetch(ctx, run, cfg.fetchDir(run))
 	if err != nil {
-		return fmt.Errorf("fetch failed: %w", err)
+		return "", fmt.Errorf("fetch failed: %w", err)
 	}
 	notebookPath, err = filepath.Abs(notebookPath)
 	if err != nil {
-		return fmt.Errorf("resolve notebook path: %w", err)
+		return "", fmt.Errorf("resolve notebook path: %w", err)
 	}
 
 	outputNb, err := filepath.Abs(filepath.Join(cfg.OutputDir, filepath.Base(notebookPath)))
 	if err != nil {
-		return fmt.Errorf("resolve notebook output path: %w", err)
+		return "", fmt.Errorf("resolve notebook output path: %w", err)
 	}
 
 	args := []string{notebookPath, outputNb, "--log-output"}
@@ -60,10 +60,10 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 
 	workDir, err := filepath.Abs(cfg.fetchDir(run))
 	if err != nil {
-		return fmt.Errorf("resolve notebook work dir: %w", err)
+		return "", fmt.Errorf("resolve notebook work dir: %w", err)
 	}
 	if err := runPrepare(ctx, step, cfg, workDir, stdout, stderr); err != nil {
-		return err
+		return "", err
 	}
 
 	slog.Info("running papermill", "notebook", notebookPath, "output", outputNb)
@@ -74,5 +74,5 @@ func (e *NotebookExecutor) Execute(ctx context.Context, step *pipeline.Step, cfg
 	cmd.Stderr = stderr
 	cmd.Env = cfg.Environ(step.Options.Env)
 
-	return cmd.Run()
+	return workDir, cmd.Run()
 }

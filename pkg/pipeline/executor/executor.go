@@ -154,7 +154,15 @@ func stepEnv(env []manifest.EnvVar) []string {
 }
 
 type Executor interface {
-	Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) error
+	// Execute runs step.Run and returns the absolute directory the command
+	// actually ran in — the same directory any relative-path output the
+	// command writes (.metrics.json, outputs: artifacts) lands in. For a
+	// step with no source fetch (or source: local) this is cfg.OutputDir
+	// unchanged; for a git/s3/http-sourced step it is the fetch/checkout
+	// directory the command's cwd was reassigned to. Callers must read
+	// metrics/outputs from this directory, not from cfg.OutputDir, so the
+	// two never silently disagree.
+	Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) (string, error)
 }
 
 func New(step *pipeline.Step) Executor {

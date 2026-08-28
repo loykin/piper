@@ -342,8 +342,25 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   })
   const form = useWatch({ control, defaultValue: DEFAULT_FORM }) as FormState
 
-  const pipelines = Array.from(new Set(allRuns.map(r => r.pipeline_name))).sort()
-  const pipelineRuns = allRuns.filter(r => r.pipeline_name === form.pipeline)
+  // Stable array identities, same reasoning as `steps`/`artifactNames` below:
+  // DeployForm re-renders on every keystroke/dropdown interaction (useWatch
+  // snapshot changes each time), and a fresh array every render — even one
+  // that's shallow-equal in content — makes Select re-register its options,
+  // which can transiently desync the trigger's displayed value from the
+  // still-correct react-hook-form value (the trigger flashes back to its
+  // placeholder for a render even though `form.pipeline` never actually
+  // changed). This was the root cause of the Pipeline field appearing to
+  // reset the instant the Step Select was touched: `pipelines`/`pipelineRuns`
+  // were recomputed as new arrays on every render, unlike `steps`/
+  // `artifactNames` which already got this fix.
+  const pipelines = useMemo(
+    () => Array.from(new Set(allRuns.map(r => r.pipeline_name))).sort(),
+    [allRuns],
+  )
+  const pipelineRuns = useMemo(
+    () => allRuns.filter(r => r.pipeline_name === form.pipeline),
+    [allRuns, form.pipeline],
+  )
   const selectedRunID = form.pipeline
     ? (form.run === 'latest' ? pipelineRuns[0]?.id : form.run)
     : undefined

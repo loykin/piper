@@ -75,7 +75,7 @@ func TestCommandExecutor_success(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "hello") {
@@ -93,7 +93,7 @@ func TestCommandExecutor_capturesEnv(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), c.OutputDir) {
@@ -123,7 +123,7 @@ func TestCommandExecutor_processGPUs(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); got != "0,1" {
@@ -154,7 +154,7 @@ func TestCommandExecutor_resourcesGPUNotInjectedAsCUDA(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); got != "unset" {
@@ -176,7 +176,7 @@ func TestCommandExecutor_stepEnv(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); got != "trainer-0:4" {
@@ -195,7 +195,7 @@ func TestCommandExecutor_resolvedEnv(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if got := buf.String(); got != "from-credential" {
@@ -206,7 +206,7 @@ func TestCommandExecutor_resolvedEnv(t *testing.T) {
 func TestCommandExecutor_emptyCommand(t *testing.T) {
 	step := &pipeline.Step{Name: "empty", Run: pipeline.Run{Command: nil}}
 	ex := &CommandExecutor{}
-	err := ex.Execute(context.Background(), step, cfg(t))
+	_, err := ex.Execute(context.Background(), step, cfg(t))
 	if err == nil {
 		t.Fatal("expected error for empty command")
 	}
@@ -218,7 +218,7 @@ func TestCommandExecutor_nonZeroExit(t *testing.T) {
 		Run:  pipeline.Run{Command: []string{"sh", "-c", "exit 1"}},
 	}
 	ex := &CommandExecutor{}
-	err := ex.Execute(context.Background(), step, cfg(t))
+	_, err := ex.Execute(context.Background(), step, cfg(t))
 	if err == nil {
 		t.Fatal("expected error for non-zero exit")
 	}
@@ -233,7 +233,7 @@ func TestCommandExecutor_contextCancel(t *testing.T) {
 		Run:  pipeline.Run{Command: []string{"sleep", "10"}},
 	}
 	ex := &CommandExecutor{}
-	err := ex.Execute(ctx, step, cfg(t))
+	_, err := ex.Execute(ctx, step, cfg(t))
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -249,7 +249,7 @@ func TestCommandExecutor_nilWriters(t *testing.T) {
 	c.Stderr = nil
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -276,7 +276,7 @@ func TestCommandExecutor_httpSource_scriptPath(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "run.sh") {
@@ -304,7 +304,7 @@ func TestCommandExecutor_httpSource_workDirIsFetchDir(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "hello content") {
@@ -330,7 +330,7 @@ func TestCommandExecutor_gitSourceWithBasicAuth(t *testing.T) {
 	c.SourceCfg = srcfetch.Config{GitUser: "git-user", GitToken: "git-token"}
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "git-source-ok") {
@@ -344,7 +344,7 @@ func TestCommandExecutor_unknownSource(t *testing.T) {
 		Run:  pipeline.Run{Source: "ftp", Command: []string{"echo", "x"}},
 	}
 	ex := &CommandExecutor{}
-	err := ex.Execute(context.Background(), step, cfg(t))
+	_, err := ex.Execute(context.Background(), step, cfg(t))
 	if err == nil {
 		t.Fatal("expected error for unknown source")
 	}
@@ -472,7 +472,7 @@ func TestCommandExecutor_localSource_usesWorkDir(t *testing.T) {
 	c.Stdout = &buf
 
 	ex := &CommandExecutor{}
-	if err := ex.Execute(context.Background(), step, c); err != nil {
+	if _, err := ex.Execute(context.Background(), step, c); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "local script") {
@@ -552,7 +552,7 @@ func TestNotebookExecutor_unknownSource(t *testing.T) {
 		Run:  pipeline.Run{Type: "notebook", Source: "ftp"},
 	}
 	ex := &NotebookExecutor{}
-	err := ex.Execute(context.Background(), step, cfg(t))
+	_, err := ex.Execute(context.Background(), step, cfg(t))
 	if err == nil {
 		t.Fatal("expected error for unknown source")
 	}
@@ -564,7 +564,7 @@ func TestNotebookExecutor_emptyPath(t *testing.T) {
 		Run:  pipeline.Run{Type: "notebook", Source: "local", Path: ""},
 	}
 	ex := &NotebookExecutor{}
-	err := ex.Execute(context.Background(), step, cfg(t))
+	_, err := ex.Execute(context.Background(), step, cfg(t))
 	if err == nil {
 		t.Fatal("expected error for empty path")
 	}

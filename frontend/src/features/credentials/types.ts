@@ -1,4 +1,4 @@
-export type CredentialKind = 'generic' | 'git' | 's3' | 'gcs' | 'azure' | 'slack' | 'webhook'
+export type CredentialKind = 'generic' | 'git' | 's3' | 'gcs' | 'azure' | 'slack' | 'webhook' | 'mlflow'
 
 export interface Credential {
   name: string

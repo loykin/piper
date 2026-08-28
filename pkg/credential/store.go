@@ -31,9 +31,26 @@ const (
 	credentialKDFIterations = 600_000
 )
 
+// InUseChecker reports whether (projectID, name) is still referenced by
+// something outside this store's own records — e.g. the server's live or
+// pending storage.CredentialRef — that Delete alone can't see, since this
+// package is generic and deliberately has no knowledge of any specific
+// consumer. A non-empty reason means "in use"; Delete refuses with
+// ErrInUse wrapping it. Register via Store.AddInUseChecker.
+type InUseChecker func(ctx context.Context, projectID, name string) (reason string, inUse bool)
+
 type Store struct {
-	repo Repository
-	aead cipher.AEAD
+	repo          Repository
+	aead          cipher.AEAD
+	inUseCheckers []InUseChecker
+}
+
+// AddInUseChecker registers an additional guard Delete consults before
+// removing a credential. Intended for the embedding application (e.g. Piper
+// wiring a check against its own storage.CredentialRef) — this package
+// itself never calls it.
+func (s *Store) AddInUseChecker(c InUseChecker) {
+	s.inUseCheckers = append(s.inUseCheckers, c)
 }
 
 func NewStore(repo Repository, key string) (*Store, error) {
@@ -151,6 +168,11 @@ func (s *Store) Patch(ctx context.Context, projectID, name string, req PatchRequ
 }
 
 func (s *Store) Delete(ctx context.Context, projectID, name string) error {
+	for _, check := range s.inUseCheckers {
+		if reason, inUse := check(ctx, projectID, name); inUse {
+			return fmt.Errorf("%w: %s", ErrInUse, reason)
+		}
+	}
 	return s.repo.Delete(ctx, projectID, name)
 }
 

@@ -118,9 +118,16 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 
 	// Execute the command. execDir is the directory the command's process
 	// actually ran in — for a git/s3/http-sourced step this is the fetch/
-	// checkout directory, not stepOutputDir (see executor.Executor.Execute).
-	// Metrics and outputs the command writes with a relative path land
-	// there, so that's what must be read back, not stepOutputDir.
+	// checkout directory, not stepOutputDir. A relative-path write lands
+	// there, but $PIPER_OUTPUT_DIR (set to stepOutputDir unconditionally,
+	// see ExecConfig.Env) always still points at stepOutputDir regardless of
+	// cwd — and docs/backend/develop.md documents stepOutputDir as the
+	// canonical, unconditional root for outputs[].path. So both locations
+	// are legitimate depending on how the step's command was written;
+	// readFinalMetrics/uploadOutputs check stepOutputDir first (the
+	// documented contract) and fall back to execDir only when the file
+	// isn't there, rather than picking just one root and silently breaking
+	// the other convention.
 	execDir, execErr := r.execute(ctx, &step, task, stepOutputDir, logger)
 	if execDir == "" {
 		execDir = stepOutputDir
@@ -128,7 +135,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 
 	// Upload output artifacts to the store (on success)
 	if execErr == nil && r.store != nil && len(step.Outputs) > 0 {
-		if err := r.uploadOutputs(ctx, task.RunID, step.Name, execDir, step.Outputs); err != nil {
+		if err := r.uploadOutputs(ctx, task.RunID, step.Name, stepOutputDir, execDir, step.Outputs); err != nil {
 			slog.Error("upload outputs failed", "task_id", task.ID, "err", err)
 			execErr = err
 		}
@@ -138,12 +145,40 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 		return r.failedResult(task, execErr, startedAt)
 	}
 	result := r.doneResult(task, startedAt)
-	result.Metrics = readFinalMetrics(task.RunID, step.Name, execDir)
+	result.Metrics = readFinalMetrics(task.RunID, step.Name, stepOutputDir, execDir)
 	return result
 }
 
-func readFinalMetrics(runID, stepName, outputDir string) map[string]float64 {
-	data, err := os.ReadFile(filepath.Join(outputDir, ".metrics.json"))
+// resolveOutputPath finds rel under stepOutputDir first — the documented,
+// unconditional root for outputs[].path and where $PIPER_OUTPUT_DIR always
+// points regardless of cwd (docs/backend/develop.md) — and falls back to
+// execDir (the source-fetched step's actual cwd, which a relative-path
+// write like `> out.txt` with no explicit $PIPER_OUTPUT_DIR lands in)
+// only when it isn't there. If rel exists under both, stepOutputDir always
+// wins and the ambiguity is logged rather than silently picking one.
+func resolveOutputPath(runID, stepName, stepOutputDir, execDir, rel string) string {
+	primary := filepath.Join(stepOutputDir, rel)
+	if execDir == "" || execDir == stepOutputDir {
+		return primary
+	}
+	fallback := filepath.Join(execDir, rel)
+	_, primaryErr := os.Stat(primary)
+	_, fallbackErr := os.Stat(fallback)
+	switch {
+	case primaryErr == nil && fallbackErr == nil:
+		slog.Warn("output found in both stepOutputDir and the source fetch dir; using stepOutputDir",
+			"run_id", runID, "step", stepName, "path", rel, "stepOutputDir", primary, "fetchDir", fallback)
+		return primary
+	case primaryErr != nil && fallbackErr == nil:
+		return fallback
+	default:
+		return primary
+	}
+}
+
+func readFinalMetrics(runID, stepName, stepOutputDir, execDir string) map[string]float64 {
+	path := resolveOutputPath(runID, stepName, stepOutputDir, execDir, ".metrics.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -439,14 +474,17 @@ func (r *Runner) downloadInputs(ctx context.Context, runID, stepName string, inp
 }
 
 // uploadOutputs uploads step output artifacts to the store.
-// Local:      {outputDir}/{artifact.Path}
+// Local:      resolveOutputPath(stepOutputDir, execDir, artifact.Path) — see
+//
+//	its doc comment for the stepOutputDir-first, execDir-fallback rule.
+//
 // Store key:  {runID}/{stepName}/{artifactName}/…
-func (r *Runner) uploadOutputs(ctx context.Context, runID, stepName, outputDir string, outputs []pipeline.Artifact) error {
+func (r *Runner) uploadOutputs(ctx context.Context, runID, stepName, stepOutputDir, execDir string, outputs []pipeline.Artifact) error {
 	for _, art := range outputs {
 		if art.Path == "" {
 			continue
 		}
-		localPath := filepath.Join(outputDir, art.Path)
+		localPath := resolveOutputPath(runID, stepName, stepOutputDir, execDir, art.Path)
 		prefix := fmt.Sprintf("%s/%s/%s", runID, stepName, art.Name)
 
 		if err := storage.UploadPath(ctx, r.store, localPath, prefix); err != nil {

@@ -6,6 +6,7 @@ package repotest
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -941,6 +942,60 @@ func MLflowRepoSuite(t *testing.T, repo mlflow.Repository, projectID string) {
 		}
 	})
 
+	// Regression for the adversarial-review finding that
+	// idx_mlflow_integrations_default was a plain (non-unique) index, so
+	// "at most one Default=true integration per project" was only enforced
+	// by CreateIntegration/UpdateIntegration's "clear, then set"
+	// transactional logic — not the database itself — and two concurrent
+	// transactions targeting two *different* rows could each successfully
+	// commit their own row as Default=true. Fired concurrently against a
+	// real connection pool, this exercises the actual race rather than just
+	// the sequential app-level logic ("At_most_one_default_per_project"
+	// above already covers the sequential case). The partial unique index
+	// (project_id) WHERE is_default=TRUE AND deleted_at IS NULL now makes
+	// this a DB-enforced invariant: one of the two concurrent updates must
+	// fail rather than both silently succeeding.
+	t.Run("Concurrent_default_updates_never_leave_two_defaults", func(t *testing.T) {
+		a := newIntegration("concurrent-default-a", false)
+		if err := repo.CreateIntegration(ctx, a); err != nil {
+			t.Fatalf("CreateIntegration a: %v", err)
+		}
+		b := newIntegration("concurrent-default-b", false)
+		if err := repo.CreateIntegration(ctx, b); err != nil {
+			t.Fatalf("CreateIntegration b: %v", err)
+		}
+
+		a.Default = true
+		b.Default = true
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		wg.Add(2)
+		go func() { defer wg.Done(); errs[0] = repo.UpdateIntegration(ctx, a) }()
+		go func() { defer wg.Done(); errs[1] = repo.UpdateIntegration(ctx, b) }()
+		wg.Wait()
+
+		// Both calls are allowed to succeed (the second's transaction can
+		// simply run after the first's commits, clearing it in the normal
+		// sequential way) — what must never happen is both landing as
+		// Default=true at once. Whichever ends up default, there must be
+		// exactly one.
+		list, err := repo.ListIntegrations(ctx, projectID, 0, 0)
+		if err != nil {
+			t.Fatalf("ListIntegrations: %v", err)
+		}
+		defaultCount := 0
+		for _, row := range list {
+			if row.ID == a.ID || row.ID == b.ID {
+				if row.Default {
+					defaultCount++
+				}
+			}
+		}
+		if defaultCount != 1 {
+			t.Fatalf("found %d default integrations among the two concurrently-updated rows, want exactly 1 (update errs: %v, %v)", defaultCount, errs[0], errs[1])
+		}
+	})
+
 	t.Run("Update_and_delete_integration", func(t *testing.T) {
 		m := newIntegration("updatable", false)
 		if err := repo.CreateIntegration(ctx, m); err != nil {
@@ -967,6 +1022,92 @@ func MLflowRepoSuite(t *testing.T, repo mlflow.Repository, projectID string) {
 		}
 		if err := repo.UpdateIntegration(ctx, m); !errors.Is(err, mlflow.ErrNotFound) {
 			t.Fatalf("UpdateIntegration after delete: err = %v, want ErrNotFound", err)
+		}
+	})
+
+	// Regression for the adversarial-review finding that DeleteIntegration
+	// was a hard DELETE cascading through both mapping tables' FK, silently
+	// erasing experiment/run mapping history — contradicting the documented
+	// contract (design doc section 11.1: "Piper→MLflow mapping 보존").
+	t.Run("Delete_integration_preserves_experiment_and_run_link_mappings", func(t *testing.T) {
+		m := newIntegration("mapping-survivor", false)
+		if err := repo.CreateIntegration(ctx, m); err != nil {
+			t.Fatalf("CreateIntegration: %v", err)
+		}
+
+		expLink := &mlflow.MLflowExperimentLink{
+			IntegrationID:      m.ID,
+			ProjectID:          projectID,
+			PiperGroupKey:      "pipeline:survive",
+			MLflowExperimentID: "42",
+			MLflowName:         "piper/proj/survive",
+		}
+		if err := repo.UpsertExperimentLink(ctx, expLink); err != nil {
+			t.Fatalf("UpsertExperimentLink: %v", err)
+		}
+		runID := uuid.NewString()
+		runLink := &mlflow.MLflowRunLink{
+			IntegrationID:      m.ID,
+			ProjectID:          projectID,
+			SourceType:         string(mlflow.SourceTypePipeline),
+			SourceID:           runID,
+			MLflowExperimentID: "42",
+			MLflowRunID:        "run-survive",
+			SyncStatus:         string(mlflow.SyncStatusSynced),
+		}
+		if err := repo.UpsertRunLink(ctx, runLink); err != nil {
+			t.Fatalf("UpsertRunLink: %v", err)
+		}
+
+		if err := repo.DeleteIntegration(ctx, projectID, m.ID); err != nil {
+			t.Fatalf("DeleteIntegration: %v", err)
+		}
+
+		// Both mappings must still resolve after the owning integration is
+		// deleted — a hard DELETE with ON DELETE CASCADE would have erased
+		// them along with the integration row.
+		gotExp, err := repo.GetExperimentLink(ctx, m.ID, projectID, "pipeline:survive")
+		if err != nil {
+			t.Fatalf("GetExperimentLink after delete: %v", err)
+		}
+		if gotExp == nil || gotExp.MLflowExperimentID != "42" {
+			t.Fatalf("GetExperimentLink after delete = %#v, want the mapping to survive", gotExp)
+		}
+		gotRun, err := repo.GetRunLink(ctx, m.ID, projectID, string(mlflow.SourceTypePipeline), runID)
+		if err != nil {
+			t.Fatalf("GetRunLink after delete: %v", err)
+		}
+		if gotRun == nil || gotRun.MLflowRunID != "run-survive" {
+			t.Fatalf("GetRunLink after delete = %#v, want the mapping to survive", gotRun)
+		}
+
+		// The integration row itself survives too (soft-deleted), which is
+		// what makes the FK-referencing mappings above resolvable at all —
+		// GetIntegration (unlike ListIntegrations) deliberately still finds
+		// it, disabled and no longer default.
+		gotIntegration, err := repo.GetIntegration(ctx, projectID, m.ID)
+		if err != nil {
+			t.Fatalf("GetIntegration after delete: %v", err)
+		}
+		if gotIntegration == nil || !gotIntegration.IsDeleted() || gotIntegration.Enabled || gotIntegration.Default {
+			t.Fatalf("GetIntegration after delete = %#v, want a soft-deleted, disabled, non-default row", gotIntegration)
+		}
+
+		// A soft-deleted integration must not appear in the active list...
+		list, err := repo.ListIntegrations(ctx, projectID, 0, 0)
+		if err != nil {
+			t.Fatalf("ListIntegrations: %v", err)
+		}
+		for _, row := range list {
+			if row.ID == m.ID {
+				t.Fatalf("ListIntegrations still returned the soft-deleted integration %q", m.ID)
+			}
+		}
+
+		// ...and its name must be free for a brand new integration to reuse.
+		reused := newIntegration("mapping-survivor", false)
+		if err := repo.CreateIntegration(ctx, reused); err != nil {
+			t.Fatalf("CreateIntegration reusing a soft-deleted integration's name: %v", err)
 		}
 	})
 

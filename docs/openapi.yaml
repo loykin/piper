@@ -795,7 +795,7 @@ components:
       type: object
       properties:
         name: { type: string }
-        kind: { type: string, enum: [generic, git, s3, gcs, azure, slack, webhook] }
+        kind: { type: string, enum: [generic, git, s3, gcs, azure, slack, webhook, mlflow] }
         endpoint: { type: string }
         keys:
           type: array
@@ -812,7 +812,7 @@ components:
       required: [name, kind, data]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [generic, git, s3, gcs, azure, slack, webhook] }
+        kind: { type: string, enum: [generic, git, s3, gcs, azure, slack, webhook, mlflow] }
         endpoint: { type: string }
         data:
           type: object

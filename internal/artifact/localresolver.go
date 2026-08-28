@@ -111,6 +111,17 @@ func (r *localResolver) Resolve(ctx context.Context, pipeline, step, artName, ru
 // it right after upload (see pkg/pipeline/worker/agent's cleanWorkdir), so
 // it cannot be treated as a durable copy (fed.md §13.6).
 func (r *localResolver) resolveLocal(ctx context.Context, runID, step, artKey string) (Resolved, error) {
+	// Checked before any store access, not only as a fallback explanation
+	// for a download failure: the *storage.LocalStore branch below performs
+	// no existence check at all — it just constructs a path a caller (e.g. a
+	// ModelService deploy bind-mounting from_artifact) then reads from
+	// directly — so if the live backend happens to hold different data at
+	// this exact key after a migration (e.g. pre-seeded from a stale copy),
+	// skipping this check would let the wrong model/artifact be used as if
+	// it were this run's own, with no error at all.
+	if r.storageBackendMismatch(ctx, runID) {
+		return Resolved{}, fmt.Errorf("resolve %s: %w", artKey, memberclient.ErrStorageBackendMismatch)
+	}
 	if ls, ok := r.store.(*storage.LocalStore); ok {
 		// Same host, same disk: the store already holds a durable copy under
 		// this exact key — use it directly, no copy needed.
@@ -126,9 +137,6 @@ func (r *localResolver) resolveLocal(ctx context.Context, runID, step, artKey st
 			return Resolved{RunID: runID, LocalPath: dest}, nil
 		}
 		if err := storage.DownloadDir(ctx, r.store, artKey+"/", dest); err != nil {
-			if r.storageBackendMismatch(ctx, runID) {
-				return Resolved{}, fmt.Errorf("stage local copy of %s: %w", artKey, memberclient.ErrStorageBackendMismatch)
-			}
 			return Resolved{}, fmt.Errorf("stage local copy of %s: %w", artKey, err)
 		}
 		return Resolved{RunID: runID, LocalPath: dest}, nil

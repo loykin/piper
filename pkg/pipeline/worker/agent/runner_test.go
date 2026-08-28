@@ -236,6 +236,97 @@ func TestRun_gitSourceCommandStep_metricsAndOutputsFoundInFetchDir(t *testing.T)
 	}
 }
 
+// TestRun_gitSourceCommandStep_explicitPiperOutputDirStillWorks guards the
+// other documented convention (docs/backend/develop.md): outputs[].path is
+// always relative to stepOutputDir, and $PIPER_OUTPUT_DIR always points
+// there regardless of cwd — even for a git-sourced step whose cwd moved to
+// the fetch dir. A command that explicitly writes to $PIPER_OUTPUT_DIR must
+// still be found; the fetch-dir fallback added for the cwd-relative
+// convention (the sibling test above) must not break this one.
+func TestRun_gitSourceCommandStep_explicitPiperOutputDirStillWorks(t *testing.T) {
+	repoDir := initGitRepoWithCommit(t)
+
+	out := t.TempDir()
+	store := t.TempDir()
+	r, err := agent.New(agent.Config{OutputDir: out, StorageURL: "file://" + store})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	step := pipeline.Step{
+		Name: "task-1",
+		Run: pipeline.Run{
+			Type:   "command",
+			Source: "git",
+			Repo:   repoDir,
+			Branch: "main",
+			Command: []string{"sh", "-c",
+				`echo '{"acc": 0.7}' > "$PIPER_OUTPUT_DIR/.metrics.json" && echo pod-content > "$PIPER_OUTPUT_DIR/out.txt"`},
+		},
+		Outputs: []pipeline.Artifact{
+			{Name: "out", Path: "out.txt"},
+		},
+	}
+	task := makeTaskWithRunID(t, step, "run-git-explicit")
+
+	result := r.Run(context.Background(), task)
+	if result.Status != proto.TaskStatusDone {
+		t.Fatalf("run failed: %+v", result)
+	}
+
+	if got := result.Metrics["acc"]; got != 0.7 {
+		t.Fatalf("metrics[acc] = %v, want 0.7 (result.Metrics = %v)", got, result.Metrics)
+	}
+
+	uploaded := filepath.Join(store, "run-git-explicit", "task-1", "out", "out.txt")
+	if got := readFile(t, uploaded); got != "pod-content\n" {
+		t.Fatalf("artifact content = %q", got)
+	}
+}
+
+// TestRun_gitSourceCommandStep_bothLocationsPrefersStepOutputDir covers the
+// conflict case: a step whose command writes the same output path to both
+// stepOutputDir (via $PIPER_OUTPUT_DIR) and the fetch dir (via a bare
+// relative path) must resolve deterministically to stepOutputDir — the
+// documented, unconditional contract — not whichever the fallback happens
+// to find first.
+func TestRun_gitSourceCommandStep_bothLocationsPrefersStepOutputDir(t *testing.T) {
+	repoDir := initGitRepoWithCommit(t)
+
+	out := t.TempDir()
+	store := t.TempDir()
+	r, err := agent.New(agent.Config{OutputDir: out, StorageURL: "file://" + store})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	step := pipeline.Step{
+		Name: "task-1",
+		Run: pipeline.Run{
+			Type:   "command",
+			Source: "git",
+			Repo:   repoDir,
+			Branch: "main",
+			Command: []string{"sh", "-c",
+				`echo step-output-dir-content > "$PIPER_OUTPUT_DIR/out.txt" && echo fetch-dir-content > out.txt`},
+		},
+		Outputs: []pipeline.Artifact{
+			{Name: "out", Path: "out.txt"},
+		},
+	}
+	task := makeTaskWithRunID(t, step, "run-git-conflict")
+
+	result := r.Run(context.Background(), task)
+	if result.Status != proto.TaskStatusDone {
+		t.Fatalf("run failed: %+v", result)
+	}
+
+	uploaded := filepath.Join(store, "run-git-conflict", "task-1", "out", "out.txt")
+	if got := readFile(t, uploaded); got != "step-output-dir-content\n" {
+		t.Fatalf("artifact content = %q, want the stepOutputDir copy to win", got)
+	}
+}
+
 func initGitRepoWithCommit(t *testing.T) string {
 	t.Helper()
 	repoDir := t.TempDir()

@@ -59,17 +59,24 @@ func (m *Manager) SetStorageDiagnostics(lookup RunStorageLookup, liveIdentity st
 	m.liveIdentity = liveIdentity
 }
 
-// storageBackendMismatch reports whether v's run was created under a
+// storageBackendMismatch reports whether runID's run was created under a
 // storage backend that's no longer the live one, using the Run's own stamp
 // — a viewer never has an independent stamp, since it always resolves
 // through a Run's artifacts (see RunID/StepName/Artifact in materialize). A
 // run with no stamp (predates this feature) or whose stamp matches the live
 // backend never mismatches.
-func (m *Manager) storageBackendMismatch(ctx context.Context, v *Viewer) bool {
+//
+// Callers must check this *before* attempting to read anything, not only as
+// a post-hoc explanation for a not-found: if the live backend happens to
+// hold different data at the same runID/step/artifact key (e.g. after a
+// migration to a backend that was pre-seeded from a stale copy), reading
+// first and only checking on failure would silently serve that wrong data
+// as if it were this run's own artifact.
+func (m *Manager) storageBackendMismatch(ctx context.Context, projectID, runID string) bool {
 	if m.runStorage == nil {
 		return false
 	}
-	backend, err := m.runStorage(ctx, v.ProjectID, v.RunID)
+	backend, err := m.runStorage(ctx, projectID, runID)
 	if err != nil || backend == "" {
 		return false
 	}
@@ -90,6 +97,15 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 	d, ok := m.drivers[typ]
 	if !ok {
 		return nil, false, fmt.Errorf("unsupported viewer type %q", typ)
+	}
+
+	// Check the storage-backend stamp before attempting any read — not only
+	// as a fallback explanation for a not-found — so a backend that happens
+	// to hold different data at this runID/step/artifact key after a
+	// migration can never be silently served as if it were this run's own
+	// artifact. See storageBackendMismatch's doc comment.
+	if m.storageBackendMismatch(ctx, projectID, runID) {
+		return nil, false, fmt.Errorf("open viewer: %w", memberclient.ErrStorageBackendMismatch)
 	}
 
 	now := time.Now().UTC()
@@ -114,9 +130,6 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 	localPath, tempDir, err := m.materialize(ctx, v)
 	if err != nil {
 		_ = m.repo.UpdateStatus(ctx, v.ID, StatusFailed, "", 0, "")
-		if m.storageBackendMismatch(ctx, v) {
-			return nil, false, fmt.Errorf("materialize artifact: %w", memberclient.ErrStorageBackendMismatch)
-		}
 		return nil, false, fmt.Errorf("materialize artifact: %w", err)
 	}
 	v.WorkDir = tempDir // temp dir to clean up on stop (empty for local storage)
@@ -126,9 +139,6 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 			_ = os.RemoveAll(tempDir)
 		}
 		_ = m.repo.UpdateStatus(ctx, v.ID, StatusFailed, "", 0, "")
-		if m.storageBackendMismatch(ctx, v) {
-			return nil, false, fmt.Errorf("start viewer: %w", memberclient.ErrStorageBackendMismatch)
-		}
 		return nil, false, fmt.Errorf("start viewer: %w", err)
 	}
 

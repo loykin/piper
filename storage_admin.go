@@ -110,8 +110,23 @@ func (p *Piper) StorageSettings() (StorageSettingsView, error) {
 	return view, nil
 }
 
-// UpdateStorageSettings persists the edited storage config for the next restart.
+// UpdateStorageSettings persists the edited storage config for the next
+// restart. Before writing, it validates cfg against the *whole* effective
+// Config (runtime, TLS, everything Config.Validate checks) — not just cfg in
+// isolation — because storage isn't validated on its own: e.g.
+// runtime.k8s.workload_url/runtime.docker.workload_url are only required
+// when the built-in file store is in play (see config.go's Validate). A
+// candidate that would fail Config.Validate on the next boot is rejected
+// here instead, before it's ever written to storage.yaml — previously the
+// UI could save a File-backend config on a Docker/K8s installation whose
+// workload_url wasn't set, and the *next restart* is what discovered the
+// mistake, refusing to come up at all.
 func (p *Piper) UpdateStorageSettings(cfg StorageConfig) (StorageSettingsView, error) {
+	candidate := p.cfg
+	candidate.Storage = cfg
+	if err := candidate.Validate(); err != nil {
+		return StorageSettingsView{}, fmt.Errorf("storage config would fail validation on restart: %w", err)
+	}
 	if err := p.writeStorageSettings(cfg); err != nil {
 		return StorageSettingsView{}, err
 	}

@@ -13,16 +13,30 @@ import (
 	"github.com/loykin/piper/pkg/integration/mlflow"
 )
 
-type mlflowRepo struct{ sqlxadapter.Source }
-
-func NewMlflowRepo(exec *dbstore.Executor[*sqlx.DB], source string) mlflow.Repository {
-	return &mlflowRepo{Source: sqlxadapter.NewSource(source, exec)}
+type mlflowRepo struct {
+	sqlxadapter.Source
+	policy mlflow.SSRFPolicy
 }
 
-const mlflowIntegrationCols = `id, project_id, name, tracking_uri, credential_ref, enabled, is_default, export_pipelines, export_notebook_executions, experiment_template, artifact_mode, created_by, created_at, updated_at`
+// NewMlflowRepo wires the repository's write-time SSRF validation to
+// policy — see mlflow.SSRFPolicy's doc comment: TrackingURI is a genuine
+// SSRF boundary, and this repository is the enforcement floor until a
+// future exporter/dispatcher service layer exists to own
+// `integrations.mlflow.*` server config itself. Callers that don't have an
+// explicit policy yet (which today is every caller — see
+// internal/store/store.go's buildRepos) should pass
+// mlflow.DefaultSSRFPolicy(), not a zero-value SSRFPolicy{} that happens to
+// equal it today: DefaultSSRFPolicy is the one place that decides what
+// "strict" means, and a caller hardcoding the equivalent literal would
+// silently stop tracking that decision if it ever changed.
+func NewMlflowRepo(exec *dbstore.Executor[*sqlx.DB], source string, policy mlflow.SSRFPolicy) mlflow.Repository {
+	return &mlflowRepo{Source: sqlxadapter.NewSource(source, exec), policy: policy}
+}
+
+const mlflowIntegrationCols = `id, project_id, name, tracking_uri, credential_ref, enabled, is_default, export_pipelines, export_notebook_executions, experiment_template, artifact_mode, created_by, created_at, updated_at, deleted_at`
 
 func (r *mlflowRepo) CreateIntegration(ctx context.Context, m *mlflow.MLflowIntegration) error {
-	if err := m.Validate(mlflow.DefaultSSRFPolicy()); err != nil {
+	if err := m.Validate(r.policy); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -36,14 +50,14 @@ func (r *mlflowRepo) CreateIntegration(ctx context.Context, m *mlflow.MLflowInte
 		defer func() { _ = tx.Rollback() }()
 		if m.Default {
 			if _, err := tx.ExecContext(ctx, db.Rebind(
-				`UPDATE mlflow_integrations SET is_default=FALSE, updated_at=? WHERE project_id=? AND is_default=TRUE`),
+				`UPDATE mlflow_integrations SET is_default=FALSE, updated_at=? WHERE project_id=? AND is_default=TRUE AND deleted_at IS NULL`),
 				now, m.ProjectID,
 			); err != nil {
 				return err
 			}
 		}
 		_, err = tx.ExecContext(ctx, db.Rebind(
-			`INSERT INTO mlflow_integrations (`+mlflowIntegrationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+			`INSERT INTO mlflow_integrations (`+mlflowIntegrationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`),
 			m.ID, m.ProjectID, m.Name, m.TrackingURI, m.CredentialRef, m.Enabled, m.Default,
 			m.ExportPipelines, m.ExportNotebookExecutions, m.ExperimentTemplate, m.ArtifactMode,
 			m.CreatedBy, m.CreatedAt, m.UpdatedAt,
@@ -58,16 +72,24 @@ func (r *mlflowRepo) CreateIntegration(ctx context.Context, m *mlflow.MLflowInte
 	})
 }
 
+// GetIntegration looks up by immutable (projectID, id) and deliberately does
+// not filter on deleted_at: a mapping row (MLflowExperimentLink/
+// MLflowRunLink) needs to resolve its owning integration's identity/name
+// regardless of whether that integration has since been soft-deleted.
 func (r *mlflowRepo) GetIntegration(ctx context.Context, projectID, id string) (*mlflow.MLflowIntegration, error) {
 	return r.getIntegrationWhere(ctx, `project_id=? AND id=?`, projectID, id)
 }
 
+// GetIntegrationByName excludes soft-deleted rows — this is the lookup
+// CreateIntegration effectively relies on to know whether a name is free to
+// reuse (a soft-deleted row's name is no longer considered "taken", see the
+// partial unique index on (project_id, name) WHERE deleted_at IS NULL).
 func (r *mlflowRepo) GetIntegrationByName(ctx context.Context, projectID, name string) (*mlflow.MLflowIntegration, error) {
-	return r.getIntegrationWhere(ctx, `project_id=? AND name=?`, projectID, name)
+	return r.getIntegrationWhere(ctx, `project_id=? AND name=? AND deleted_at IS NULL`, projectID, name)
 }
 
 func (r *mlflowRepo) GetDefaultIntegration(ctx context.Context, projectID string) (*mlflow.MLflowIntegration, error) {
-	return r.getIntegrationWhere(ctx, `project_id=? AND is_default=TRUE`, projectID)
+	return r.getIntegrationWhere(ctx, `project_id=? AND is_default=TRUE AND deleted_at IS NULL`, projectID)
 }
 
 func (r *mlflowRepo) getIntegrationWhere(ctx context.Context, where string, args ...any) (*mlflow.MLflowIntegration, error) {
@@ -85,7 +107,7 @@ func (r *mlflowRepo) getIntegrationWhere(ctx context.Context, where string, args
 }
 
 func (r *mlflowRepo) ListIntegrations(ctx context.Context, projectID string, limit, offset int) ([]*mlflow.MLflowIntegration, error) {
-	query := `SELECT ` + mlflowIntegrationCols + ` FROM mlflow_integrations WHERE project_id=? ORDER BY name`
+	query := `SELECT ` + mlflowIntegrationCols + ` FROM mlflow_integrations WHERE project_id=? AND deleted_at IS NULL ORDER BY name`
 	args := []any{projectID}
 	if limit > 0 {
 		query += " LIMIT ? OFFSET ?"
@@ -104,13 +126,13 @@ func (r *mlflowRepo) ListIntegrations(ctx context.Context, projectID string, lim
 func (r *mlflowRepo) CountIntegrations(ctx context.Context, projectID string) (int, error) {
 	var count int
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		return db.GetContext(ctx, &count, db.Rebind(`SELECT COUNT(*) FROM mlflow_integrations WHERE project_id=?`), projectID)
+		return db.GetContext(ctx, &count, db.Rebind(`SELECT COUNT(*) FROM mlflow_integrations WHERE project_id=? AND deleted_at IS NULL`), projectID)
 	})
 	return count, err
 }
 
 func (r *mlflowRepo) UpdateIntegration(ctx context.Context, m *mlflow.MLflowIntegration) error {
-	if err := m.Validate(mlflow.DefaultSSRFPolicy()); err != nil {
+	if err := m.Validate(r.policy); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -123,15 +145,18 @@ func (r *mlflowRepo) UpdateIntegration(ctx context.Context, m *mlflow.MLflowInte
 		defer func() { _ = tx.Rollback() }()
 		if m.Default {
 			if _, err := tx.ExecContext(ctx, db.Rebind(
-				`UPDATE mlflow_integrations SET is_default=FALSE, updated_at=? WHERE project_id=? AND is_default=TRUE AND id<>?`),
+				`UPDATE mlflow_integrations SET is_default=FALSE, updated_at=? WHERE project_id=? AND is_default=TRUE AND id<>? AND deleted_at IS NULL`),
 				now, m.ProjectID, m.ID,
 			); err != nil {
 				return err
 			}
 		}
+		// deleted_at IS NULL: a soft-deleted integration can't be
+		// "updated" back to life through this path — ErrNotFound below
+		// matches the same signal a genuinely nonexistent row gives.
 		res, err := tx.ExecContext(ctx, db.Rebind(
 			`UPDATE mlflow_integrations SET name=?, tracking_uri=?, credential_ref=?, enabled=?, is_default=?, export_pipelines=?, export_notebook_executions=?, experiment_template=?, artifact_mode=?, updated_at=?
-			 WHERE project_id=? AND id=?`),
+			 WHERE project_id=? AND id=? AND deleted_at IS NULL`),
 			m.Name, m.TrackingURI, m.CredentialRef, m.Enabled, m.Default,
 			m.ExportPipelines, m.ExportNotebookExecutions, m.ExperimentTemplate, m.ArtifactMode,
 			m.UpdatedAt, m.ProjectID, m.ID,
@@ -149,9 +174,17 @@ func (r *mlflowRepo) UpdateIntegration(ctx context.Context, m *mlflow.MLflowInte
 	})
 }
 
+// DeleteIntegration soft-deletes: see the DeletedAt field's doc comment on
+// MLflowIntegration for why this must not be a hard DELETE (both mapping
+// tables' FK are ON DELETE CASCADE, which would silently erase mapping
+// history a hard delete here would otherwise preserve).
 func (r *mlflowRepo) DeleteIntegration(ctx context.Context, projectID, id string) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		res, err := db.ExecContext(ctx, db.Rebind(`DELETE FROM mlflow_integrations WHERE project_id=? AND id=?`), projectID, id)
+		now := time.Now().UTC()
+		res, err := db.ExecContext(ctx, db.Rebind(
+			`UPDATE mlflow_integrations SET deleted_at=?, enabled=FALSE, is_default=FALSE, updated_at=? WHERE project_id=? AND id=? AND deleted_at IS NULL`),
+			now, now, projectID, id,
+		)
 		if err != nil {
 			return err
 		}

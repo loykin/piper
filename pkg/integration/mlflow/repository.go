@@ -40,12 +40,19 @@ type Repository interface {
 	// requirements as CreateIntegration. Returns ErrNotFound if no row
 	// matches.
 	UpdateIntegration(ctx context.Context, m *MLflowIntegration) error
-	// DeleteIntegration removes the integration. Per design doc section
-	// 11.1, deleting an integration must not delete its
+	// DeleteIntegration soft-deletes the integration: it sets DeletedAt,
+	// clears Enabled and Default, but does not remove the row. Per design
+	// doc section 11.1, deleting an integration must not delete its
 	// MLflowExperimentLink/MLflowRunLink rows (mapping history is
-	// preserved) — callers that want a full purge use a separate,
-	// explicit admin operation (out of scope for this phase). Returns
-	// ErrNotFound if no row matches.
+	// preserved) — since both mapping tables' FK reference this row, a
+	// hard DELETE would cascade and erase that history, so the row itself
+	// must survive. Callers that want a full purge (removing the row and
+	// its mappings together) use a separate, explicit admin operation (out
+	// of scope for this phase). A soft-deleted integration's name becomes
+	// available for reuse by a new integration (implementations scope the
+	// name-uniqueness constraint to DeletedAt IS NULL). Returns
+	// ErrNotFound if no non-deleted row matches (deleting an already
+	// soft-deleted or nonexistent row is indistinguishable to the caller).
 	DeleteIntegration(ctx context.Context, projectID, id string) error
 
 	// GetExperimentLink returns the experiment mapping for

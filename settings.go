@@ -35,20 +35,50 @@ func storageIdentity(rawURL string) string {
 			root = u.Host + u.Path
 		}
 		return "file:" + root
-	case "s3", "gs", "azblob":
-		// Confirmed against pkg/storage/s3store.go (openS3: bucket := u.Host)
-		// and cloudstore.go (openCloud: blob.OpenBucket(ctx, rawURL) with
-		// gocloud.dev/blob resolving gs://bucket and azblob://container from
-		// u.Host) — the bucket/container name lives in u.Host for all three
-		// schemes Piper supports, never in u.Path or the query string, so
-		// credentials/tokens carried as query params (accessKey, secretKey,
-		// serviceAccountKey, accountKey, …) never leak into the identity.
-		return u.Scheme + ":" + u.Host
+	case "gs":
+		// gs://bucket — GCS bucket names are globally unique across all of
+		// GCS (gocloud.dev/blob resolves the bucket from u.Host), so the
+		// bucket name alone is a sufficient, unambiguous identity: two
+		// different "gs://data" URLs are necessarily the same bucket.
+		return "gs:" + u.Host
+	case "s3":
+		// s3://bucket?region=…&endpoint=…&s3ForcePathStyle=…&accessKey=…&secretKey=…
+		// (pkg/storage/s3store.go's openS3). Unlike GCS, S3 bucket names are
+		// only globally unique against AWS itself — an S3-*compatible*
+		// custom endpoint (MinIO, R2, SeaweedFS, …) has its own separate
+		// bucket namespace, so "s3://data" against one MinIO server and
+		// "s3://data" against a completely different one must NOT collapse
+		// to the same identity. Include endpoint and region (both routing
+		// info, never secrets) alongside the bucket; accessKey/secretKey and
+		// any other query param are deliberately excluded.
+		q := u.Query()
+		id := "s3:" + u.Host
+		if endpoint := q.Get("endpoint"); endpoint != "" {
+			id += "@" + endpoint
+		}
+		if region := q.Get("region"); region != "" {
+			id += "#" + region
+		}
+		return id
+	case "azblob":
+		// azblob://container?accountName=…&accountKey=… (pkg/storage/
+		// cloudstore.go's doc comment on openCloud). Container names are
+		// only unique *within* a storage account, not globally — two
+		// different accounts can each have a "data" container — so the
+		// container alone (u.Host) is not a sufficient identity; accountName
+		// (routing info) must be included, accountKey (secret) must not.
+		q := u.Query()
+		id := "azblob:" + u.Host
+		if account := q.Get("accountName"); account != "" {
+			id += "@" + account
+		}
+		return id
 	case "http", "https":
-		// No path, no query — some deployments put auth tokens in the query
-		// string for an http(s) artifact endpoint; only scheme+host identify
-		// the practical target without risking a leak.
-		return u.Scheme + "://" + u.Host
+		// Path included (but not the query string, where some deployments
+		// put auth tokens): two different base paths on the same host are
+		// genuinely different artifact roots, e.g. https://host/store-a vs
+		// https://host/store-b must not collapse to the same identity.
+		return u.Scheme + "://" + u.Host + u.Path
 	default:
 		return u.Scheme
 	}

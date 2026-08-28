@@ -2,13 +2,30 @@ package artifact
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/storage"
 )
+
+// stubRunRepoWithStamp is a minimal run.Repository double whose only
+// meaningful behavior is Get returning a fixed StorageBackend stamp — the
+// only method storageBackendMismatch calls. Any other method panics via the
+// nil embedded interface if accidentally invoked, which is fine: no test
+// using it should reach one.
+type stubRunRepoWithStamp struct {
+	run.Repository
+	storageBackend string
+}
+
+func (s *stubRunRepoWithStamp) Get(_ context.Context, _, id string) (*run.Run, error) {
+	return &run.Run{ID: id, StorageBackend: s.storageBackend}, nil
+}
 
 func TestArtifactURIForRemoteServing(t *testing.T) {
 	tests := []struct {
@@ -118,6 +135,70 @@ func TestResolveLocal_RemoteStoreStagesLocalCacheAndReusesIt(t *testing.T) {
 	}
 	if string(data2) != "from-remote" {
 		t.Fatalf("cached content = %q, want from-remote", string(data2))
+	}
+}
+
+// TestResolveLocal_StorageBackendMismatchCaughtEvenWhenDataExistsAtTheKey is
+// the core regression for the adversarial-review finding that the mismatch
+// check only ran as a fallback after a not-found: if the live backend
+// happens to hold *different* data at the exact same runID/step/artifact
+// key (e.g. a migration to a backend pre-seeded from a stale copy), a
+// check-only-on-failure design would silently return that wrong data as if
+// it were this run's own — a wrong model deployed as if it were correct in
+// the ModelService from_artifact case. The live store here genuinely has
+// data at the key (Get would succeed), but the run's stamp doesn't match
+// the live identity, so Resolve must still refuse it up front.
+func TestResolveLocal_StorageBackendMismatchCaughtEvenWhenDataExistsAtTheKey(t *testing.T) {
+	outputDir := t.TempDir()
+	ls, err := storage.NewLocal(filepath.Join(outputDir, "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	// The live backend genuinely has *something* at this exact key — data
+	// that belongs to a different backend generation, not this run.
+	if err := ls.Put(ctx, "run-1/train/model/weights.bin", strings.NewReader("wrong-generation-data"), -1); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &localResolver{
+		outputDir:    outputDir,
+		store:        ls,
+		liveIdentity: "s3:new-bucket",
+		runRepo:      &stubRunRepoWithStamp{storageBackend: "s3:old-bucket"},
+	}
+	_, err = r.Resolve(ctx, "pl", "train", "model", "run-1", TargetLocal)
+	if !errors.Is(err, memberclient.ErrStorageBackendMismatch) {
+		t.Fatalf("Resolve() error = %v, want ErrStorageBackendMismatch — must refuse before returning the live store's data", err)
+	}
+}
+
+// TestResolveLocal_EmptyStampNeverMismatches is the "predates this feature"
+// rule: a run with no stamp at all must resolve normally against whatever
+// the live backend has, not be treated as an automatic mismatch.
+func TestResolveLocal_EmptyStampNeverMismatches(t *testing.T) {
+	outputDir := t.TempDir()
+	ls, err := storage.NewLocal(filepath.Join(outputDir, "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := ls.Put(ctx, "run-1/train/model/weights.bin", strings.NewReader("data"), -1); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &localResolver{
+		outputDir:    outputDir,
+		store:        ls,
+		liveIdentity: "s3:new-bucket",
+		runRepo:      &stubRunRepoWithStamp{storageBackend: ""},
+	}
+	resolved, err := r.Resolve(ctx, "pl", "train", "model", "run-1", TargetLocal)
+	if err != nil {
+		t.Fatalf("Resolve() with an unstamped run should not be treated as a mismatch: %v", err)
+	}
+	if resolved.LocalPath == "" {
+		t.Fatal("Resolve() returned an empty LocalPath")
 	}
 }
 

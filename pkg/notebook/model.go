@@ -36,7 +36,7 @@ type NotebookServer struct {
 // carries:
 //
 //   - Token: a live Jupyter connection secret. It must never leave Piper in
-//     any REST/MCP response, log line, or audit event (see a.md §3.1/§7,
+//     any REST/MCP response, log line, or audit event (see docs/jupyter-mcp-execution.md §3.1/§7,
 //     "Jupyter 접속 토큰은 Piper 내부 비밀이다").
 //   - PID: an internal OS process identifier with no product use — the
 //     frontend type (frontend/src/features/notebooks/types.ts) declares it
@@ -48,7 +48,7 @@ type NotebookServer struct {
 // the notebook list columns display them today for the project
 // member/admin managing that notebook server, and both are already part of
 // the documented OpenAPI schema. This is a REST-only decision — a future
-// MCP public model (a.md §4.2/§8.3) is a separate, stricter DTO for
+// MCP public model (docs/jupyter-mcp-execution.md §4.2/§8.3) is a separate, stricter DTO for
 // external AI clients and must not reuse this type.
 //
 // Every REST handler that returns a NotebookServer (or a slice of them)

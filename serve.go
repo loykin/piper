@@ -806,6 +806,15 @@ type piperArtifacts struct {
 }
 
 func (a *piperArtifacts) List(ctx context.Context, runID string) ([]any, error) {
+	// Checked before any read, not only as a fallback explanation for an
+	// empty result: if the live backend happens to hold different data at
+	// this run's key (e.g. after a migration to a backend pre-seeded from a
+	// stale copy), listing first and only checking on emptiness would leave
+	// that wrong data looking like a normal, non-empty artifact list.
+	if a.p.storageBackendMismatch(ctx, runID) {
+		return nil, memberclient.ErrStorageBackendMismatch
+	}
+
 	var result []stepArtifacts
 	var err error
 	if a.p.store != nil {
@@ -815,14 +824,6 @@ func (a *piperArtifacts) List(ctx context.Context, runID string) ([]any, error) 
 	}
 	if err != nil {
 		return nil, err
-	}
-	// An empty result is normally just "this run produced no artifacts" —
-	// but if the run's storage-backend stamp no longer matches the live
-	// backend, the emptiness may instead mean the data is unreachable, not
-	// that it never existed. Surface that distinguishably instead of a
-	// silent empty list (see docs on the storage-identity stamp).
-	if len(result) == 0 && a.p.storageBackendMismatch(ctx, runID) {
-		return nil, memberclient.ErrStorageBackendMismatch
 	}
 
 	// Enrich artifact entries with viewer type hints from the pipeline YAML.
@@ -871,18 +872,24 @@ func (a *piperArtifacts) ServeDownload(w http.ResponseWriter, r *http.Request, r
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
+	// Checked before any read, not only as a fallback explanation for a
+	// not-found: if the live backend happens to hold different data at this
+	// exact runID/step/path key (e.g. after a migration to a backend
+	// pre-seeded from a stale copy), downloading first and only checking on
+	// failure would silently serve that wrong data as this run's artifact —
+	// see storageBackendMismatch's doc comment on pkg/viewer.Manager for the
+	// same reasoning applied there.
+	if a.p.storageBackendMismatch(r.Context(), runID) {
+		writeStorageBackendMismatchJSON(w)
+		return
+	}
 	var notFound bool
 	if a.p.store != nil {
 		notFound = downloadArtifactStore(w, r, a.p.store, runID, step, rest)
 	} else {
 		notFound = downloadArtifactLocal(w, r, a.p.cfg.OutputDir, runID, step, rest)
 	}
-	if !notFound {
-		return
+	if notFound {
+		http.Error(w, "artifact not found", http.StatusNotFound)
 	}
-	if a.p.storageBackendMismatch(r.Context(), runID) {
-		writeStorageBackendMismatchJSON(w)
-		return
-	}
-	http.Error(w, "artifact not found", http.StatusNotFound)
 }

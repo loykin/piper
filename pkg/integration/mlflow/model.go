@@ -60,20 +60,36 @@ const (
 // must enforce this (see repository.go's Repository.CreateIntegration /
 // UpdateIntegration doc comments).
 type MLflowIntegration struct {
-	ID                       string    `json:"id"                          db:"id"`
-	ProjectID                string    `json:"project_id"                  db:"project_id"`
-	Name                     string    `json:"name"                        db:"name"`
-	TrackingURI              string    `json:"tracking_uri"                db:"tracking_uri"`
-	CredentialRef            string    `json:"credential_ref"              db:"credential_ref"`
-	Enabled                  bool      `json:"enabled"                     db:"enabled"`
-	Default                  bool      `json:"default"                     db:"is_default"`
-	ExportPipelines          bool      `json:"export_pipelines"            db:"export_pipelines"`
-	ExportNotebookExecutions bool      `json:"export_notebook_executions"  db:"export_notebook_executions"`
-	ExperimentTemplate       string    `json:"experiment_template"         db:"experiment_template"`
-	ArtifactMode             string    `json:"artifact_mode"               db:"artifact_mode"`
-	CreatedBy                string    `json:"created_by,omitempty"        db:"created_by"`
-	CreatedAt                time.Time `json:"created_at"                  db:"created_at"`
-	UpdatedAt                time.Time `json:"updated_at"                  db:"updated_at"`
+	ID                       string     `json:"id"                          db:"id"`
+	ProjectID                string     `json:"project_id"                  db:"project_id"`
+	Name                     string     `json:"name"                        db:"name"`
+	TrackingURI              string     `json:"tracking_uri"                db:"tracking_uri"`
+	CredentialRef            string     `json:"credential_ref"              db:"credential_ref"`
+	Enabled                  bool       `json:"enabled"                     db:"enabled"`
+	Default                  bool       `json:"default"                     db:"is_default"`
+	ExportPipelines          bool       `json:"export_pipelines"            db:"export_pipelines"`
+	ExportNotebookExecutions bool       `json:"export_notebook_executions"  db:"export_notebook_executions"`
+	ExperimentTemplate       string     `json:"experiment_template"         db:"experiment_template"`
+	ArtifactMode             string     `json:"artifact_mode"               db:"artifact_mode"`
+	CreatedBy                string     `json:"created_by,omitempty"        db:"created_by"`
+	CreatedAt                time.Time  `json:"created_at"                  db:"created_at"`
+	UpdatedAt                time.Time  `json:"updated_at"                  db:"updated_at"`
+	// DeletedAt is set by DeleteIntegration instead of removing the row
+	// outright (design doc section 11.1: deleting an integration must
+	// preserve its experiment/run mapping history, and both mapping tables'
+	// FK reference mlflow_integrations — hard-deleting the row would cascade
+	// and erase that history). A deleted integration is inert: dispatchers
+	// must treat it as disabled regardless of the Enabled flag's stored
+	// value. GetIntegration (primary-key lookup) still returns a deleted
+	// row, since mapping records need to resolve their owning integration's
+	// identity/name regardless of its deletion status; ListIntegrations and
+	// GetIntegrationByName exclude deleted rows.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"        db:"deleted_at"`
+}
+
+// IsDeleted reports whether this integration has been soft-deleted.
+func (m *MLflowIntegration) IsDeleted() bool {
+	return m != nil && m.DeletedAt != nil
 }
 
 // DefaultExperimentTemplate is the template used when ExperimentTemplate is

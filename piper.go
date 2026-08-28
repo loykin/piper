@@ -290,6 +290,27 @@ func New(cfg Config) (*Piper, error) {
 		stopCtx:         stopFn,
 		events:          event.NewHub(),
 	}
+	// Registered here (as opposed to inline in pkg/credential) so the
+	// generic credential package stays free of any specific consumer's
+	// knowledge — this closure is Piper's own storage-config awareness.
+	// Checked against both the live (booted) CredentialRef and whatever is
+	// currently *pending* in storage.yaml (UpdateStorageSettings may have
+	// saved a not-yet-applied change that references this credential, even
+	// if the running process itself booted with a different one) — deleting
+	// either would break the credential resolution the next restart, or the
+	// current one, depends on. See ErrInUse's doc comment.
+	credentialStore.AddInUseChecker(func(_ context.Context, projectID, name string) (string, bool) {
+		if projectID != project.SystemID {
+			return "", false
+		}
+		if strings.TrimSpace(p.cfg.Storage.CredentialRef) == name {
+			return "referenced by the running server's storage.credentialRef", true
+		}
+		if pending, exists, err := p.readStorageSettings(); err == nil && exists && strings.TrimSpace(pending.CredentialRef) == name {
+			return "referenced by a pending (not yet applied) storage config change", true
+		}
+		return "", false
+	})
 	if repos.AlertRule != nil {
 		p.alertEngine = ialerting.NewEngine(repos.AlertRule, credentialStore)
 		p.alerts = alerting.NewService(repos.AlertRule, credentialStore, p.alertEngine.Refresh)
@@ -318,7 +339,17 @@ func New(cfg Config) (*Piper, error) {
 			p.storageURL = storageURL
 		}
 	}
-	p.storageIdentity = storageIdentity(p.storageURL)
+	// Stamp with the *configured* URL (storageURL, still in scope even when
+	// Open above failed), not p.storageURL (only ever set on a successful
+	// Open). Using p.storageURL here would make a transient open failure —
+	// wrong credentials, a network hiccup — collapse the identity to the
+	// same "file" constant used for "no object storage configured at all",
+	// masking the real intended backend and letting an unrelated
+	// mismatch/match comparison happen by coincidence later. storageIdentity
+	// only ever reads scheme/host/specific non-secret query keys, so it's
+	// safe to pass the post-credential-injection URL here even though that
+	// URL itself may carry injected secrets in its query string.
+	p.storageIdentity = storageIdentity(storageURL)
 	q.SetStorageConfig(p.storageURL, cfg.Storage.Token)
 	if servingRuntime.k8sDriver != nil {
 		servingRuntime.k8sDriver.WithStorage(p.storageURL, cfg.Storage.Token)

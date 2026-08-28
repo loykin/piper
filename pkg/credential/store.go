@@ -180,6 +180,12 @@ func (s *Store) ResolveAzure(ctx context.Context, projectID, name string) (Value
 	return s.resolve(ctx, projectID, name, string(KindAzure), "")
 }
 
+// ResolveMlflow returns the decrypted values of an mlflow credential (token,
+// or username/password, and optional ca_cert).
+func (s *Store) ResolveMlflow(ctx context.Context, projectID, name string) (Value, error) {
+	return s.resolve(ctx, projectID, name, string(KindMlflow), "")
+}
+
 func (s *Store) ValidateNotificationCredential(ctx context.Context, projectID, name string) error {
 	meta, err := s.repo.Get(ctx, projectID, strings.TrimSpace(name))
 	if err != nil {
@@ -310,8 +316,8 @@ func normalizeCreate(projectID string, req CreateRequest) (*Metadata, Value, err
 	if req.Kind == "" {
 		req.Kind = KindGeneric
 	}
-	if req.Kind != KindGeneric && req.Kind != KindGit && req.Kind != KindS3 && req.Kind != KindGCS && req.Kind != KindAzure && req.Kind != KindSlack && req.Kind != KindWebhook {
-		return nil, Value{}, fmt.Errorf("kind must be generic, git, s3, gcs, azure, slack, or webhook")
+	if req.Kind != KindGeneric && req.Kind != KindGit && req.Kind != KindS3 && req.Kind != KindGCS && req.Kind != KindAzure && req.Kind != KindSlack && req.Kind != KindWebhook && req.Kind != KindMlflow {
+		return nil, Value{}, fmt.Errorf("kind must be generic, git, s3, gcs, azure, slack, webhook, or mlflow")
 	}
 	if err := validateEndpoint(req.Kind, req.Endpoint); err != nil {
 		return nil, Value{}, err
@@ -379,6 +385,22 @@ func validateData(kind Kind, data map[string]string) error {
 		for key := range data {
 			if key != "url" && !strings.HasPrefix(key, "header_") {
 				return fmt.Errorf("webhook credential field %q is not supported", key)
+			}
+		}
+	case KindMlflow:
+		hasToken := data["token"] != ""
+		hasBasic := data["username"] != "" || data["password"] != ""
+		switch {
+		case !hasToken && !hasBasic:
+			return fmt.Errorf("mlflow credential requires token or username/password")
+		case hasToken && hasBasic:
+			return fmt.Errorf("mlflow credential token is mutually exclusive with username/password")
+		case hasBasic && (data["username"] == "" || data["password"] == ""):
+			return fmt.Errorf("mlflow credential requires both username and password for HTTP Basic auth")
+		}
+		for key := range data {
+			if key != "token" && key != "username" && key != "password" && key != "ca_cert" {
+				return fmt.Errorf("mlflow credential field %q is not supported", key)
 			}
 		}
 	}

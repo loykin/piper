@@ -12,6 +12,7 @@ const (
 	KindAzure   Kind = "azure"
 	KindSlack   Kind = "slack"
 	KindWebhook Kind = "webhook"
+	KindMlflow  Kind = "mlflow"
 )
 
 type Metadata struct {

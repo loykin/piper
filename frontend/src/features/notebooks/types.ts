@@ -1,14 +1,16 @@
 // notebooks feature types
 
+// NotebookServer mirrors the backend's NotebookServerResponse DTO
+// (pkg/notebook/model.go), not the internal storage model — `token` (a live
+// Jupyter connection secret) and `pid` (internal-only, never rendered) are
+// never sent over the wire. See docs/openapi.yaml's NotebookServer schema.
 export interface NotebookServer {
   name: string
   status: 'provisioning' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
   env: string
   image: string
   endpoint: string
-  pid: number
   work_dir: string
-  token: string
   runtime_id?: string
   volume_id: string
   yaml: string

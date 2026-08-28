@@ -79,7 +79,7 @@ func (h *Handler) listNotebooks(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, nbs)
+	c.JSON(http.StatusOK, NewNotebookServerResponses(nbs))
 }
 
 // POST /notebooks — body: {"yaml": "...", "volume_id": "optional-uuid"}
@@ -137,7 +137,7 @@ func (h *Handler) createNotebook(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, nb)
+	c.JSON(http.StatusCreated, NewNotebookServerResponse(nb))
 }
 
 // GET /notebooks/history
@@ -172,7 +172,7 @@ func (h *Handler) getNotebook(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "notebook not found"})
 		return
 	}
-	c.JSON(http.StatusOK, nb)
+	c.JSON(http.StatusOK, NewNotebookServerResponse(nb))
 }
 
 // POST /notebooks/:name/stop — halts the process, preserves record and work dir.

@@ -20,6 +20,7 @@ import (
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/notebook/execution"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/schedule"
@@ -31,22 +32,23 @@ import (
 // Repos holds all repository implementations for the selected driver.
 // Add new drivers by implementing each Repository interface and registering here.
 type Repos struct {
-	Project          project.Repository
-	Federation       federation.Repository
-	Run              run.Repository
-	Submission       run.SubmissionRepository
-	ProjectMutation  projectclient.MutationRepository
-	Step             run.StepRepository
-	Schedule         schedule.Repository
-	AlertRule        alerting.Repository
-	Credential       credential.Repository
-	Viewer           viewer.Repository
-	Serving          serving.Repository
-	Notebook         notebook.Repository
-	NotebookVolume   notebook.VolumeRepository
-	PipelineTemplate template.Repository
-	Log              logstore.LogStore
-	Metric           logstore.MetricStore
+	Project           project.Repository
+	Federation        federation.Repository
+	Run               run.Repository
+	Submission        run.SubmissionRepository
+	ProjectMutation   projectclient.MutationRepository
+	Step              run.StepRepository
+	Schedule          schedule.Repository
+	AlertRule         alerting.Repository
+	Credential        credential.Repository
+	Viewer            viewer.Repository
+	Serving           serving.Repository
+	Notebook          notebook.Repository
+	NotebookVolume    notebook.VolumeRepository
+	NotebookExecution execution.Repository
+	PipelineTemplate  template.Repository
+	Log               logstore.LogStore
+	Metric            logstore.MetricStore
 
 	// db is owned by pool; retained here for DB() and deleteRunQueries rebind.
 	// Callers must not use DB() after Close.
@@ -61,21 +63,22 @@ type Repos struct {
 // ExternalReposConfig is used to build a Repos from externally supplied implementations.
 // Use this when embedding piper in an application that already manages its own database.
 type ExternalReposConfig struct {
-	Project          project.Repository
-	Federation       federation.Repository
-	Run              run.Repository
-	Submission       run.SubmissionRepository
-	ProjectMutation  projectclient.MutationRepository
-	Step             run.StepRepository
-	Schedule         schedule.Repository
-	AlertRule        alerting.Repository
-	Credential       credential.Repository
-	Serving          serving.Repository
-	Notebook         notebook.Repository
-	NotebookVolume   notebook.VolumeRepository
-	PipelineTemplate template.Repository
-	Log              logstore.LogStore
-	Metric           logstore.MetricStore
+	Project           project.Repository
+	Federation        federation.Repository
+	Run               run.Repository
+	Submission        run.SubmissionRepository
+	ProjectMutation   projectclient.MutationRepository
+	Step              run.StepRepository
+	Schedule          schedule.Repository
+	AlertRule         alerting.Repository
+	Credential        credential.Repository
+	Serving           serving.Repository
+	Notebook          notebook.Repository
+	NotebookVolume    notebook.VolumeRepository
+	NotebookExecution execution.Repository
+	PipelineTemplate  template.Repository
+	Log               logstore.LogStore
+	Metric            logstore.MetricStore
 	// DeleteRun handles atomic deletion of a run and all its steps. Stats have
 	// an independent lifecycle and must not be removed by this callback.
 	// If nil, DeleteRun returns an error — provide an implementation for the target database.
@@ -194,49 +197,51 @@ func buildRepos(db *sqlx.DB, driver string, adapter *sqlxadapter.Adapter, execut
 	switch driver {
 	case "sqlite", "sqlite3", "":
 		return &Repos{
-			Project:          sqlite.NewProjectRepo(executor, PrimarySource),
-			Federation:       sqlite.NewFederationRepo(executor, PrimarySource),
-			Run:              sqlite.NewRunRepo(executor, PrimarySource),
-			Submission:       sqlite.NewSubmissionRepo(executor, PrimarySource),
-			ProjectMutation:  sqlite.NewProjectMutationRepo(executor, PrimarySource),
-			Step:             sqlite.NewStepRepo(executor, PrimarySource),
-			Schedule:         sqlite.NewScheduleRepo(executor, PrimarySource),
-			AlertRule:        sqlite.NewAlertRuleRepo(executor, PrimarySource),
-			Credential:       sqlite.NewCredentialRepo(executor, PrimarySource),
-			Serving:          sqlite.NewServingRepo(executor, PrimarySource),
-			Notebook:         sqlite.NewNotebookRepo(executor, PrimarySource),
-			NotebookVolume:   sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
-			PipelineTemplate: sqlite.NewPipelineRepo(executor, PrimarySource),
-			Viewer:           sqlite.NewViewerRepo(executor, PrimarySource),
-			Log:              logstore.NewSQLite(executor, PrimarySource),
-			Metric:           logstore.NewSQLite(executor, PrimarySource),
-			db:               db,
-			adapter:          adapter,
-			executor:         executor,
-			driver:           driver,
+			Project:           sqlite.NewProjectRepo(executor, PrimarySource),
+			Federation:        sqlite.NewFederationRepo(executor, PrimarySource),
+			Run:               sqlite.NewRunRepo(executor, PrimarySource),
+			Submission:        sqlite.NewSubmissionRepo(executor, PrimarySource),
+			ProjectMutation:   sqlite.NewProjectMutationRepo(executor, PrimarySource),
+			Step:              sqlite.NewStepRepo(executor, PrimarySource),
+			Schedule:          sqlite.NewScheduleRepo(executor, PrimarySource),
+			AlertRule:         sqlite.NewAlertRuleRepo(executor, PrimarySource),
+			Credential:        sqlite.NewCredentialRepo(executor, PrimarySource),
+			Serving:           sqlite.NewServingRepo(executor, PrimarySource),
+			Notebook:          sqlite.NewNotebookRepo(executor, PrimarySource),
+			NotebookVolume:    sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
+			NotebookExecution: sqlite.NewNotebookExecutionRepo(executor, PrimarySource),
+			PipelineTemplate:  sqlite.NewPipelineRepo(executor, PrimarySource),
+			Viewer:            sqlite.NewViewerRepo(executor, PrimarySource),
+			Log:               logstore.NewSQLite(executor, PrimarySource),
+			Metric:            logstore.NewSQLite(executor, PrimarySource),
+			db:                db,
+			adapter:           adapter,
+			executor:          executor,
+			driver:            driver,
 		}
 	case "postgres", "postgresql":
 		return &Repos{
-			Project:          postgres.NewProjectRepo(executor, PrimarySource),
-			Federation:       postgres.NewFederationRepo(executor, PrimarySource),
-			Run:              postgres.NewRunRepo(executor, PrimarySource),
-			Submission:       postgres.NewSubmissionRepo(executor, PrimarySource),
-			ProjectMutation:  postgres.NewProjectMutationRepo(executor, PrimarySource),
-			Step:             postgres.NewStepRepo(executor, PrimarySource),
-			Schedule:         postgres.NewScheduleRepo(executor, PrimarySource),
-			AlertRule:        postgres.NewAlertRuleRepo(executor, PrimarySource),
-			Credential:       postgres.NewCredentialRepo(executor, PrimarySource),
-			Serving:          postgres.NewServingRepo(executor, PrimarySource),
-			Notebook:         postgres.NewNotebookRepo(executor, PrimarySource),
-			NotebookVolume:   postgres.NewNotebookVolumeRepo(executor, PrimarySource),
-			PipelineTemplate: postgres.NewPipelineRepo(executor, PrimarySource),
-			Viewer:           postgres.NewViewerRepo(executor, PrimarySource),
-			Log:              logstore.NewPostgres(executor, PrimarySource),
-			Metric:           logstore.NewPostgres(executor, PrimarySource),
-			db:               db,
-			adapter:          adapter,
-			executor:         executor,
-			driver:           driver,
+			Project:           postgres.NewProjectRepo(executor, PrimarySource),
+			Federation:        postgres.NewFederationRepo(executor, PrimarySource),
+			Run:               postgres.NewRunRepo(executor, PrimarySource),
+			Submission:        postgres.NewSubmissionRepo(executor, PrimarySource),
+			ProjectMutation:   postgres.NewProjectMutationRepo(executor, PrimarySource),
+			Step:              postgres.NewStepRepo(executor, PrimarySource),
+			Schedule:          postgres.NewScheduleRepo(executor, PrimarySource),
+			AlertRule:         postgres.NewAlertRuleRepo(executor, PrimarySource),
+			Credential:        postgres.NewCredentialRepo(executor, PrimarySource),
+			Serving:           postgres.NewServingRepo(executor, PrimarySource),
+			Notebook:          postgres.NewNotebookRepo(executor, PrimarySource),
+			NotebookVolume:    postgres.NewNotebookVolumeRepo(executor, PrimarySource),
+			NotebookExecution: postgres.NewNotebookExecutionRepo(executor, PrimarySource),
+			PipelineTemplate:  postgres.NewPipelineRepo(executor, PrimarySource),
+			Viewer:            postgres.NewViewerRepo(executor, PrimarySource),
+			Log:               logstore.NewPostgres(executor, PrimarySource),
+			Metric:            logstore.NewPostgres(executor, PrimarySource),
+			db:                db,
+			adapter:           adapter,
+			executor:          executor,
+			driver:            driver,
 		}
 	}
 	return &Repos{db: db, adapter: adapter, executor: executor, driver: driver}

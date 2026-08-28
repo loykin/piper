@@ -662,6 +662,280 @@ paths:
     post:
       responses:
         "204": { description: Notebook stop requested. }
+  /api/projects/{project_id}/notebooks/{name}/contents:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: path
+        in: query
+        required: false
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Directory listing (or a single file's metadata) under the notebook's workspace.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotebookContentEntry" }
+  /api/projects/{project_id}/notebooks/{name}/documents:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: path
+        in: query
+        required: true
+        schema: { type: string, description: "Must end in .ipynb." }
+    get:
+      responses:
+        "200":
+          description: Notebook document and its content hash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotebookDocument" }
+    put:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: object, description: "Full .ipynb JSON document." }
+                base_hash:
+                  type: string
+                  description: >-
+                    Content hash the caller last read. If set and the document already
+                    exists with a different current hash, the write is rejected with
+                    content_conflict instead of silently overwriting a concurrent edit.
+      responses:
+        "204": { description: Notebook document created or replaced. }
+  /api/projects/{project_id}/notebooks/{name}/kernel-sessions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Kernel sessions (own sessions for member; all sessions for admin).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/KernelSession" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string, description: "Target .ipynb path the session is bound to." }
+                kernel_name: { type: string, description: "Defaults to python3." }
+      responses:
+        "201":
+          description: Kernel session created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KernelSession" }
+  /api/projects/{project_id}/notebooks/{name}/kernel-sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Kernel session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KernelSession" }
+    delete:
+      responses:
+        "204": { description: Kernel session closed. }
+  /api/projects/{project_id}/notebooks/{name}/kernel-sessions/{id}/interrupt:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204": { description: Interrupt sent to the kernel. }
+  /api/projects/{project_id}/notebooks/{name}/kernel-sessions/{id}/restart:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204": { description: Kernel restarted in place. }
+  /api/projects/{project_id}/notebooks/{name}/executions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Execution history, most recently queued first. X-Total-Count header set when limit is provided.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotebookExecution" }
+    post:
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotebookExecutionRequest" }
+      responses:
+        "201":
+          description: Execution created (queued or awaiting_approval, per notebook_execution.mcp_policy).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotebookExecution" }
+        "200":
+          description: Idempotency-Key replay — the existing execution for the same request is returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotebookExecution" }
+        "409":
+          description: Idempotency-Key reused with a different request payload, or a genuine content conflict.
+        "429":
+          description: notebook_execution concurrency limit reached (max_queued_per_project).
+  /api/projects/{project_id}/notebooks/{name}/executions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Execution status, progress, and result location.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotebookExecution" }
+  /api/projects/{project_id}/notebooks/{name}/executions/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204": { description: Cancellation requested (own execution, or any execution for admin). }
+  /api/projects/{project_id}/notebooks/{name}/executions/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204": { description: awaiting_approval execution approved and queued (admin only). }
+  /api/projects/{project_id}/notebooks/{name}/executions/{id}/deny:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204": { description: awaiting_approval execution denied and cancelled (admin only). }
+  /api/projects/{project_id}/notebook-execution-policy:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      responses:
+        "200":
+          description: Effective notebook_execution.mcp_policy for this project (project override, or the system default).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mcp_policy: { type: string, enum: [disabled, approval_required, allowed] }
+    put:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mcp_policy]
+              properties:
+                mcp_policy: { type: string, enum: [disabled, approval_required, allowed] }
+      responses:
+        "204": { description: Project-level policy override set (admin only). }
   /api/projects/{project_id}/services:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -980,6 +1254,100 @@ components:
         yaml: { type: string }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    NotebookContentEntry:
+      type: object
+      properties:
+        name: { type: string }
+        path: { type: string }
+        type: { type: string, enum: [directory, notebook, file] }
+        size: { type: integer, format: int64 }
+        last_modified: { type: string, format: date-time }
+    NotebookDocument:
+      type: object
+      properties:
+        content: { type: object, description: "Full .ipynb JSON document (nbformat v4)." }
+        content_hash: { type: string, description: "sha256 hex digest of the document's canonical encoding." }
+    KernelSession:
+      type: object
+      description: >-
+        A Piper-owned Jupyter kernel session. Jupyter-native session/kernel
+        IDs are never exposed — see docs/jupyter-mcp-execution.md §5.1.
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        notebook_name: { type: string }
+        notebook_path: { type: string }
+        kernel_name: { type: string }
+        status: { type: string, enum: [starting, idle, busy, restarting, closed, failed] }
+        created_by: { type: string }
+        client_id: { type: string }
+        last_activity_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
+    NotebookExecutionEdit:
+      type: object
+      required: [mode, code]
+      properties:
+        mode: { type: string, enum: [append, replace] }
+        code: { type: string }
+        cell_id: { type: string, description: "Required when mode is replace." }
+    NotebookExecutionRequest:
+      type: object
+      required: [kind, path]
+      properties:
+        kind: { type: string, enum: [notebook, cell] }
+        path: { type: string, description: "Target .ipynb path." }
+        kernel_session_id: { type: string, description: "Reuse an existing Piper kernel session; a new one is created when omitted." }
+        edit: { $ref: "#/components/schemas/NotebookExecutionEdit" }
+        create_if_missing: { type: boolean, description: "cell kind only — create path if it doesn't exist yet." }
+        timeout_seconds: { type: integer }
+    NotebookExecution:
+      type: object
+      description: >-
+        See docs/jupyter-mcp-execution.md §5.2 for the full status state
+        machine and §11.3 for the stable error_code values.
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        notebook_name: { type: string }
+        notebook_path: { type: string }
+        result_path: { type: string, description: ".piper/executions/{id}/result.ipynb — always written, even on conflict/failure." }
+        kernel_session_id: { type: string }
+        kind: { type: string, enum: [notebook, cell] }
+        status:
+          type: string
+          enum: [awaiting_approval, queued, running, succeeded, conflicted, failed, timed_out, cancelling, cancelled]
+        requested_by: { type: string }
+        client_id: { type: string }
+        source_sha256: { type: string, description: "sha256 of the executed source — raw code is never stored." }
+        base_content_hash: { type: string }
+        current_cell: { type: integer }
+        total_cells: { type: integer }
+        error_code:
+          type: string
+          enum:
+            - notebook_not_running
+            - kernel_unavailable
+            - kernel_died
+            - execution_timeout
+            - execution_cancelled
+            - content_conflict
+            - path_invalid
+            - output_too_large
+            - approval_required
+            - approval_denied
+            - runtime_unavailable
+            - recovery_uncertain
+        error_message: { type: string }
+        output_summary: { type: object, description: "Capped structured status summary, not the full notebook output." }
+        approved_by: { type: string }
+        approved_at: { type: string, format: date-time }
+        denied_by: { type: string }
+        denied_at: { type: string, format: date-time }
+        queued_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     Viewer:
       type: object

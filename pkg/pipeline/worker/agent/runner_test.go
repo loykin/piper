@@ -186,6 +186,84 @@ func TestRun_commandCwdMatchesWorkspaceOutputDir(t *testing.T) {
 	}
 }
 
+// TestRun_gitSourceCommandStep_metricsAndOutputsFoundInFetchDir guards
+// against a regression where a Command step with source: git writes
+// .metrics.json and its outputs: artifacts into the git checkout directory
+// (fetchDir, {stepOutputDir}/_source/{step}) — since that's the command's
+// actual cwd — while Run() kept reading metrics/uploading outputs from the
+// unchanged stepOutputDir. That mismatch silently dropped every metric
+// (readFinalMetrics found nothing, no error) and would fail outputs: upload
+// outright ("step did not produce X in its output directory"). Both metrics
+// and outputs must be found in the directory the command actually ran in.
+func TestRun_gitSourceCommandStep_metricsAndOutputsFoundInFetchDir(t *testing.T) {
+	repoDir := initGitRepoWithCommit(t)
+
+	out := t.TempDir()
+	store := t.TempDir()
+	r, err := agent.New(agent.Config{OutputDir: out, StorageURL: "file://" + store})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	step := pipeline.Step{
+		Name: "task-1",
+		Run: pipeline.Run{
+			Type:   "command",
+			Source: "git",
+			Repo:   repoDir,
+			Branch: "main",
+			Command: []string{"sh", "-c",
+				`echo '{"acc": 0.9}' > .metrics.json && echo out-content > out.txt`},
+		},
+		Outputs: []pipeline.Artifact{
+			{Name: "out", Path: "out.txt"},
+		},
+	}
+	task := makeTaskWithRunID(t, step, "run-git")
+
+	result := r.Run(context.Background(), task)
+	if result.Status != proto.TaskStatusDone {
+		t.Fatalf("run failed: %+v", result)
+	}
+
+	if got := result.Metrics["acc"]; got != 0.9 {
+		t.Fatalf("metrics[acc] = %v, want 0.9 (result.Metrics = %v)", got, result.Metrics)
+	}
+
+	uploaded := filepath.Join(store, "run-git", "task-1", "out", "out.txt")
+	if got := readFile(t, uploaded); got != "out-content\n" {
+		t.Fatalf("artifact content = %q", got)
+	}
+}
+
+func initGitRepoWithCommit(t *testing.T) string {
+	t.Helper()
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init", "-b", "main")
+	runGit(t, repoDir, "config", "user.email", "test@test")
+	runGit(t, repoDir, "config", "user.name", "test")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("placeholder"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repoDir, "add", "README.md")
+	runGit(t, repoDir, "commit", "-m", "init")
+	return repoDir
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

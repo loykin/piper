@@ -116,12 +116,19 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 
 	logger := newLineLogger(logFile)
 
-	// Execute the command
-	execErr := r.execute(ctx, &step, task, stepOutputDir, logger)
+	// Execute the command. execDir is the directory the command's process
+	// actually ran in — for a git/s3/http-sourced step this is the fetch/
+	// checkout directory, not stepOutputDir (see executor.Executor.Execute).
+	// Metrics and outputs the command writes with a relative path land
+	// there, so that's what must be read back, not stepOutputDir.
+	execDir, execErr := r.execute(ctx, &step, task, stepOutputDir, logger)
+	if execDir == "" {
+		execDir = stepOutputDir
+	}
 
 	// Upload output artifacts to the store (on success)
 	if execErr == nil && r.store != nil && len(step.Outputs) > 0 {
-		if err := r.uploadOutputs(ctx, task.RunID, step.Name, stepOutputDir, step.Outputs); err != nil {
+		if err := r.uploadOutputs(ctx, task.RunID, step.Name, execDir, step.Outputs); err != nil {
 			slog.Error("upload outputs failed", "task_id", task.ID, "err", err)
 			execErr = err
 		}
@@ -131,7 +138,7 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 		return r.failedResult(task, execErr, startedAt)
 	}
 	result := r.doneResult(task, startedAt)
-	result.Metrics = readFinalMetrics(task.RunID, step.Name, stepOutputDir)
+	result.Metrics = readFinalMetrics(task.RunID, step.Name, execDir)
 	return result
 }
 
@@ -156,16 +163,19 @@ func (r *Runner) execute(
 	task *proto.Task,
 	outputDir string,
 	logger *lineLogger,
-) error {
+) (string, error) {
 	// io.Writer that intercepts stdout/stderr line by line
 	stdoutW := &lineWriter{stream: "stdout", logger: logger, tee: os.Stdout}
 	stderrW := &lineWriter{stream: "stderr", logger: logger, tee: os.Stderr}
 
 	cfg := executor.ExecConfig{
 		// Steps without an explicit source (task.WorkDir is otherwise unset)
-		// must run inside their own isolated per-run/per-step workspace, the
-		// same directory uploadOutputs later reads "outputs:" files from —
-		// not whatever directory the agent process happened to be launched in.
+		// must run inside their own isolated per-run/per-step workspace —
+		// not whatever directory the agent process happened to be launched
+		// in. A source-fetched step's Executor reassigns its own effective
+		// workDir away from this (see Executor.Execute's returned dir); the
+		// caller (Run) reads metrics/outputs back from that returned dir,
+		// not from this field.
 		WorkDir:     outputDir,
 		SourceDir:   filepath.Join(outputDir, "_source"),
 		InputDir:    filepath.Join(r.cfg.InputDir, task.RunID, step.Name),
@@ -193,7 +203,7 @@ func (r *Runner) execute(
 		if err != nil {
 			stdoutW.Close()
 			stderrW.Close()
-			return err
+			return "", err
 		}
 		cfg.PythonBin = pyEnv.python
 		cfg.PapermillBin = pyEnv.papermill
@@ -201,10 +211,10 @@ func (r *Runner) execute(
 		cfg.EnvPathPrepend = []string{pyEnv.binDir}
 	}
 
-	err := executor.New(step).Execute(ctx, step, cfg)
+	execDir, err := executor.New(step).Execute(ctx, step, cfg)
 	stdoutW.Close()
 	stderrW.Close()
-	return err
+	return execDir, err
 }
 
 type isolatedPythonEnv struct {

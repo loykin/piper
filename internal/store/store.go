@@ -20,6 +20,7 @@ import (
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/integration/mlflow"
+	"github.com/loykin/piper/pkg/integration/outbox"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
@@ -47,6 +48,7 @@ type Repos struct {
 	NotebookVolume   notebook.VolumeRepository
 	PipelineTemplate template.Repository
 	Mlflow           mlflow.Repository
+	Outbox           outbox.Repository
 	Log              logstore.LogStore
 	Metric           logstore.MetricStore
 
@@ -77,6 +79,7 @@ type ExternalReposConfig struct {
 	NotebookVolume   notebook.VolumeRepository
 	PipelineTemplate template.Repository
 	Mlflow           mlflow.Repository
+	Outbox           outbox.Repository
 	Log              logstore.LogStore
 	Metric           logstore.MetricStore
 	// DeleteRun handles atomic deletion of a run and all its steps. Stats have
@@ -211,6 +214,7 @@ func buildRepos(db *sqlx.DB, driver string, adapter *sqlxadapter.Adapter, execut
 			NotebookVolume:   sqlite.NewNotebookVolumeRepo(executor, PrimarySource),
 			PipelineTemplate: sqlite.NewPipelineRepo(executor, PrimarySource),
 			Mlflow:           sqlite.NewMlflowRepo(executor, PrimarySource, mlflow.DefaultSSRFPolicy()),
+			Outbox:           sqlite.NewOutboxRepo(executor, PrimarySource),
 			Viewer:           sqlite.NewViewerRepo(executor, PrimarySource),
 			Log:              logstore.NewSQLite(executor, PrimarySource),
 			Metric:           logstore.NewSQLite(executor, PrimarySource),
@@ -235,6 +239,7 @@ func buildRepos(db *sqlx.DB, driver string, adapter *sqlxadapter.Adapter, execut
 			NotebookVolume:   postgres.NewNotebookVolumeRepo(executor, PrimarySource),
 			PipelineTemplate: postgres.NewPipelineRepo(executor, PrimarySource),
 			Mlflow:           postgres.NewMlflowRepo(executor, PrimarySource, mlflow.DefaultSSRFPolicy()),
+			Outbox:           postgres.NewOutboxRepo(executor, PrimarySource),
 			Viewer:           postgres.NewViewerRepo(executor, PrimarySource),
 			Log:              logstore.NewPostgres(executor, PrimarySource),
 			Metric:           logstore.NewPostgres(executor, PrimarySource),

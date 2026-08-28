@@ -150,6 +150,19 @@ func TestMlflowRepo_SQLite(t *testing.T) {
 	repotest.MLflowRepoSuite(t, repos.Mlflow, projectID)
 }
 
+func TestOutboxRepo_SQLite(t *testing.T) {
+	repos, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+	const projectID = "outbox-repo"
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.OutboxRepoSuite(t, repos.Outbox, repos.Mlflow, projectID)
+}
+
 // TestScheduleTimeRoundTrip verifies that time.Time values stored via ClaimRun
 // are correctly read back by ListEnabled. A failed round-trip would cause
 // LoadFromRepo to see a wrong NextRunAt after server restart.

@@ -102,6 +102,11 @@ func (m *Manager) StartRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipe
 	if err := m.deps.RunRepo.Create(ctx, r); err != nil {
 		return "", fmt.Errorf("create run: %w", err)
 	}
+	if m.deps.EnqueuePipelineCreated != nil {
+		if err := m.deps.EnqueuePipelineCreated(ctx, r, pl.Metadata.Version); err != nil {
+			slog.Warn("mlflow export enqueue failed", "run_id", runID, "err", err)
+		}
+	}
 
 	for _, s := range pl.Spec.Steps {
 		if err := m.deps.StepRepo.Upsert(ctx, &run.Step{
@@ -205,6 +210,11 @@ func (m *Manager) StartRunFromAPIWithID(ctx context.Context, runID, yaml string,
 		}
 		if err := m.deps.RunRepo.Create(ctx, newRun); err != nil {
 			return "", err
+		}
+		if m.deps.EnqueuePipelineCreated != nil {
+			if err := m.deps.EnqueuePipelineCreated(ctx, newRun, pl.Metadata.Version); err != nil {
+				slog.Warn("mlflow export enqueue failed", "run_id", runID, "err", err)
+			}
 		}
 		return runID, nil
 	}

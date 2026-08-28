@@ -75,6 +75,57 @@ type Config struct {
 
 	// Runtime selects the required in-process execution backend.
 	Runtime RuntimeConfig `yaml:"runtime" mapstructure:"runtime"`
+
+	// Integrations configures external system export adapters (MLflow
+	// today — docs/mlflow-tracking-adapter.md).
+	Integrations IntegrationsConfig `yaml:"integrations" mapstructure:"integrations"`
+}
+
+// IntegrationsConfig holds server-level operational limits and SSRF policy
+// for external integration adapters. Per-project connection details
+// (tracking URI, credential, export toggles) are DB resources
+// (mlflow.MLflowIntegration), not server config — see design doc section
+// 13.
+type IntegrationsConfig struct {
+	Mlflow MlflowIntegrationsConfig `yaml:"mlflow" mapstructure:"mlflow"`
+}
+
+// MlflowIntegrationsConfig mirrors design doc section 13's
+// `integrations.mlflow.*` server config block: dispatcher operational
+// limits and the TrackingURI SSRF policy. It does not include a
+// project-level connection — those live in the mlflow_integrations table.
+type MlflowIntegrationsConfig struct {
+	// Enabled gates the dispatcher only — project integration CRUD is
+	// always available; when false, outbox events accumulate as pending
+	// (never processed) instead of being rejected at creation time (design
+	// doc section 13).
+	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
+	// DispatcherConcurrency is the number of events processed in parallel.
+	// Forced to 1 when the primary DB driver is sqlite regardless of this
+	// value (design doc section 6.3).
+	DispatcherConcurrency int `yaml:"dispatcher_concurrency" mapstructure:"dispatcher_concurrency"`
+	// BatchSize is the number of outbox events claimed per dispatcher poll.
+	BatchSize int `yaml:"batch_size" mapstructure:"batch_size"`
+	// RequestTimeout bounds each individual MLflow REST call.
+	RequestTimeout time.Duration `yaml:"request_timeout" mapstructure:"request_timeout"`
+	// MaxAttemptsBeforeDead caps outbox retries before an event is marked
+	// dead (design doc section 10.5).
+	MaxAttemptsBeforeDead int `yaml:"max_attempts_before_dead" mapstructure:"max_attempts_before_dead"`
+	// LeaseDuration is how long a claimed outbox event's lease is held
+	// before another dispatcher instance may reclaim it.
+	LeaseDuration time.Duration `yaml:"lease_duration" mapstructure:"lease_duration"`
+	// PollInterval is how often the dispatcher polls when idle.
+	PollInterval time.Duration `yaml:"poll_interval" mapstructure:"poll_interval"`
+	// AllowInsecureHTTP permits a project admin to register an http://
+	// (not https://) TrackingURI. Must only ever be true for local/trusted
+	// development (mlflow.SSRFPolicy's doc comment).
+	AllowInsecureHTTP bool `yaml:"allow_insecure_http" mapstructure:"allow_insecure_http"`
+	// AllowedHosts, when non-empty, restricts every project's TrackingURI
+	// to these exact hostnames.
+	AllowedHosts []string `yaml:"allowed_hosts" mapstructure:"allowed_hosts"`
+	// AllowedCIDRs, when non-empty, restricts a literal-IP TrackingURI host
+	// to these ranges.
+	AllowedCIDRs []string `yaml:"allowed_cidrs" mapstructure:"allowed_cidrs"`
 }
 
 type RuntimeConfig struct {
@@ -280,6 +331,26 @@ func DefaultConfig() Config {
 			MisfirePolicy:      "run_once",
 			MisfireGracePeriod: 5 * time.Minute,
 		},
+		Integrations: IntegrationsConfig{
+			Mlflow: MlflowIntegrationsConfig{
+				// Default off (design doc section 15: "두 기능은 기본
+				// 비활성화한다") — an operator must opt in explicitly.
+				// Project integration CRUD/connection-test still work
+				// either way (member_project.go registers the handler
+				// unconditionally); this flag only gates whether the
+				// background dispatcher goroutine runs at all, so an
+				// existing installation upgrading past this feature
+				// doesn't silently start a new poll loop it never asked
+				// for.
+				Enabled:               false,
+				DispatcherConcurrency: 2,
+				BatchSize:             100,
+				RequestTimeout:        10 * time.Second,
+				MaxAttemptsBeforeDead: 20,
+				LeaseDuration:         30 * time.Second,
+				PollInterval:          5 * time.Second,
+			},
+		},
 	}
 }
 
@@ -376,6 +447,25 @@ func (c Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("runtime.type must be k8s, docker, baremetal, or empty")
+	}
+
+	if c.Integrations.Mlflow.DispatcherConcurrency < 0 {
+		return fmt.Errorf("integrations.mlflow.dispatcher_concurrency must not be negative")
+	}
+	if c.Integrations.Mlflow.BatchSize < 0 {
+		return fmt.Errorf("integrations.mlflow.batch_size must not be negative")
+	}
+	if c.Integrations.Mlflow.RequestTimeout < 0 {
+		return fmt.Errorf("integrations.mlflow.request_timeout must not be negative")
+	}
+	if c.Integrations.Mlflow.MaxAttemptsBeforeDead < 0 {
+		return fmt.Errorf("integrations.mlflow.max_attempts_before_dead must not be negative")
+	}
+	if c.Integrations.Mlflow.LeaseDuration < 0 {
+		return fmt.Errorf("integrations.mlflow.lease_duration must not be negative")
+	}
+	if c.Integrations.Mlflow.PollInterval < 0 {
+		return fmt.Errorf("integrations.mlflow.poll_interval must not be negative")
 	}
 
 	return nil

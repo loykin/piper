@@ -15,6 +15,7 @@ import (
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
 	"github.com/loykin/piper/pkg/integration/mlflow"
+	"github.com/loykin/piper/pkg/integration/outbox"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/template"
@@ -1303,4 +1304,341 @@ func TemplateRepoSuite(t *testing.T, repo template.Repository, projectID string)
 			t.Errorf("Get (unstamped): StorageBackend = %q, want empty", gotUnstamped.StorageBackend)
 		}
 	})
+}
+
+// OutboxRepoSuite exercises outbox.Repository: auto-assigned per-aggregate
+// sequence, the claim/lease/reclaim lifecycle, the per-aggregate ordering
+// gate (design doc section 10.3 — a later-sequence event is never claimable
+// while an earlier one for the same aggregate is still pending/delivering,
+// but a StatusDead earlier event does not block a later one — see
+// pkg/integration/mlflow/exporter.go's handlePipelineRunFinished doc
+// comment for why that's the deliberate, documented behavior), dead-letter,
+// and DisableIntegrationEvents (design doc section 11.1's integration
+// delete semantics). mlflowRepo is used only to create the owning
+// MLflowIntegration row the outbox table's FK requires — this suite does
+// not otherwise exercise mlflow.Repository.
+func OutboxRepoSuite(t *testing.T, outboxRepo outbox.Repository, mlflowRepo mlflow.Repository, projectID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	newIntegration := func(t *testing.T) *mlflow.MLflowIntegration {
+		t.Helper()
+		m := &mlflow.MLflowIntegration{
+			ID:                 uuid.NewString(),
+			ProjectID:          projectID,
+			Name:               "outbox-" + uuid.NewString(),
+			TrackingURI:        "https://mlflow.example.com",
+			CredentialRef:      "mlflow-cred",
+			Enabled:            true,
+			ExperimentTemplate: mlflow.DefaultExperimentTemplate,
+			ArtifactMode:       string(mlflow.ArtifactModeReference),
+		}
+		if err := mlflowRepo.CreateIntegration(ctx, m); err != nil {
+			t.Fatalf("CreateIntegration (fixture): %v", err)
+		}
+		return m
+	}
+
+	newEvent := func(integrationID, aggregateID, eventType string) *outbox.Event {
+		return &outbox.Event{
+			ID:            uuid.NewString(),
+			IntegrationID: integrationID,
+			ProjectID:     projectID,
+			AggregateType: outbox.AggregateTypePipelineRun,
+			AggregateID:   aggregateID,
+			EventType:     eventType,
+			PayloadJSON:   []byte(`{"k":"v"}`),
+		}
+	}
+
+	containsID := func(events []*outbox.Event, id string) bool {
+		for _, e := range events {
+			if e.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("Enqueue_auto_assigns_sequence_and_claim_enforces_ordering_gate", func(t *testing.T) {
+		integration := newIntegration(t)
+		aggID := uuid.NewString()
+		created := newEvent(integration.ID, aggID, "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, created); err != nil {
+			t.Fatalf("Enqueue created: %v", err)
+		}
+		if created.Sequence != 1 {
+			t.Fatalf("created.Sequence = %d, want 1", created.Sequence)
+		}
+		if created.Status != string(outbox.StatusPending) {
+			t.Fatalf("created.Status = %q, want pending", created.Status)
+		}
+		finished := newEvent(integration.ID, aggID, "pipeline_run.finished")
+		if err := outboxRepo.Enqueue(ctx, finished); err != nil {
+			t.Fatalf("Enqueue finished: %v", err)
+		}
+		if finished.Sequence != 2 {
+			t.Fatalf("finished.Sequence = %d, want 2", finished.Sequence)
+		}
+
+		claimed, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		if !containsID(claimed, created.ID) {
+			t.Fatalf("ClaimBatch did not claim the lowest-sequence event %q; claimed=%v", created.ID, ids(claimed))
+		}
+		if containsID(claimed, finished.ID) {
+			t.Fatalf("ClaimBatch claimed the later-sequence event %q while the earlier one is still delivering — ordering gate violated", finished.ID)
+		}
+
+		if err := outboxRepo.MarkDelivered(ctx, created.ID, "worker-a"); err != nil {
+			t.Fatalf("MarkDelivered created: %v", err)
+		}
+
+		claimed2, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch (2nd): %v", err)
+		}
+		if !containsID(claimed2, finished.ID) {
+			t.Fatalf("finished event not claimable after the earlier event was delivered; claimed=%v", ids(claimed2))
+		}
+		if err := outboxRepo.MarkDelivered(ctx, finished.ID, "worker-a"); err != nil {
+			t.Fatalf("MarkDelivered finished: %v", err)
+		}
+	})
+
+	t.Run("Dead_earlier_event_does_not_block_a_later_one", func(t *testing.T) {
+		integration := newIntegration(t)
+		aggID := uuid.NewString()
+		e1 := newEvent(integration.ID, aggID, "pipeline_run.created")
+		e2 := newEvent(integration.ID, aggID, "pipeline_run.finished")
+		if err := outboxRepo.Enqueue(ctx, e1); err != nil {
+			t.Fatalf("Enqueue e1: %v", err)
+		}
+		if err := outboxRepo.Enqueue(ctx, e2); err != nil {
+			t.Fatalf("Enqueue e2: %v", err)
+		}
+
+		claimed, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		if !containsID(claimed, e1.ID) {
+			t.Fatalf("expected e1 claimed first; claimed=%v", ids(claimed))
+		}
+		if err := outboxRepo.MarkDead(ctx, e1.ID, "worker-a", "validation_error", "bad payload"); err != nil {
+			t.Fatalf("MarkDead e1: %v", err)
+		}
+
+		claimed2, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch (2nd): %v", err)
+		}
+		if !containsID(claimed2, e2.ID) {
+			t.Fatalf("e2 should become claimable once e1 is dead (dead events don't hold the ordering gate); claimed=%v", ids(claimed2))
+		}
+		if err := outboxRepo.MarkDelivered(ctx, e2.ID, "worker-a"); err != nil {
+			t.Fatalf("MarkDelivered e2: %v", err)
+		}
+	})
+
+	t.Run("Expired_lease_is_reclaimed_by_another_owner", func(t *testing.T) {
+		integration := newIntegration(t)
+		ev := newEvent(integration.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, ev); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		claimed, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Millisecond, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		if !containsID(claimed, ev.ID) {
+			t.Fatalf("expected initial claim to succeed; claimed=%v", ids(claimed))
+		}
+		time.Sleep(5 * time.Millisecond) // let the 1ms lease expire
+
+		reclaimed, err := outboxRepo.ClaimBatch(ctx, "worker-b", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch (reclaim): %v", err)
+		}
+		var got *outbox.Event
+		for _, e := range reclaimed {
+			if e.ID == ev.ID {
+				got = e
+			}
+		}
+		if got == nil {
+			t.Fatalf("expired lease was not reclaimed by worker-b; reclaimed=%v", ids(reclaimed))
+		}
+		if got.Attempts != 2 {
+			t.Errorf("Attempts = %d, want 2 (claimed twice)", got.Attempts)
+		}
+		// The original owner can no longer resolve it — its lease is gone.
+		if err := outboxRepo.MarkDelivered(ctx, ev.ID, "worker-a"); !errors.Is(err, outbox.ErrNotFound) {
+			t.Errorf("MarkDelivered by the original (reclaimed-from) owner: err = %v, want ErrNotFound", err)
+		}
+		if err := outboxRepo.MarkDelivered(ctx, ev.ID, "worker-b"); err != nil {
+			t.Fatalf("MarkDelivered by worker-b: %v", err)
+		}
+	})
+
+	t.Run("MarkRetry_returns_to_pending_and_honors_next_attempt_at", func(t *testing.T) {
+		integration := newIntegration(t)
+
+		// Case 1: retry scheduled in the future must not be claimable yet.
+		notDueEvent := newEvent(integration.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, notDueEvent); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		claimed, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10)
+		if err != nil || !containsID(claimed, notDueEvent.ID) {
+			t.Fatalf("initial claim failed: claimed=%v err=%v", ids(claimed), err)
+		}
+		future := time.Now().UTC().Add(time.Hour)
+		if err := outboxRepo.MarkRetry(ctx, notDueEvent.ID, "worker-a", future, "HTTP_503", "temporarily unavailable"); err != nil {
+			t.Fatalf("MarkRetry: %v", err)
+		}
+		notYet, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch (not due): %v", err)
+		}
+		if containsID(notYet, notDueEvent.ID) {
+			t.Fatalf("event claimed before its NextAttemptAt was due")
+		}
+		// MarkRetry only applies to a currently-delivering (claimed) event;
+		// the event above is back to StatusPending, so a second MarkRetry
+		// against it must fail rather than silently reschedule a
+		// not-actually-in-flight event.
+		if err := outboxRepo.MarkRetry(ctx, notDueEvent.ID, "worker-a", time.Now().UTC(), "HTTP_503", "still unavailable"); !errors.Is(err, outbox.ErrNotFound) {
+			t.Fatalf("MarkRetry on a non-delivering (already-pending) event: err = %v, want ErrNotFound", err)
+		}
+
+		// Case 2: retry scheduled at (or before) now must be immediately
+		// reclaimable.
+		dueEvent := newEvent(integration.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, dueEvent); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if _, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10); err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		if err := outboxRepo.MarkRetry(ctx, dueEvent.ID, "worker-a", time.Now().UTC(), "HTTP_503", "temporarily unavailable"); err != nil {
+			t.Fatalf("MarkRetry (due now): %v", err)
+		}
+		reclaimed, err := outboxRepo.ClaimBatch(ctx, "worker-b", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch (reclaim after due retry): %v", err)
+		}
+		if !containsID(reclaimed, dueEvent.ID) {
+			t.Fatalf("event scheduled for now was not immediately reclaimable; claimed=%v", ids(reclaimed))
+		}
+		if err := outboxRepo.MarkDelivered(ctx, dueEvent.ID, "worker-b"); err != nil {
+			t.Fatalf("MarkDelivered: %v", err)
+		}
+		// Hygiene: resolve the still-future-scheduled event too, so it
+		// doesn't linger as a permanently-pending row for the rest of this
+		// suite's shared DB.
+		if err := outboxRepo.MarkDead(ctx, notDueEvent.ID, "worker-a", "test_cleanup", "unused after future MarkRetry assertion"); err == nil {
+			t.Fatalf("MarkDead on a pending (not delivering) event unexpectedly succeeded")
+		}
+	})
+
+	t.Run("DisableIntegrationEvents_transitions_pending_and_delivering_only", func(t *testing.T) {
+		integration := newIntegration(t)
+		aggID := uuid.NewString()
+		pending := newEvent(integration.ID, aggID, "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, pending); err != nil {
+			t.Fatalf("Enqueue pending: %v", err)
+		}
+		delivered := newEvent(integration.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, delivered); err != nil {
+			t.Fatalf("Enqueue delivered: %v", err)
+		}
+		if _, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10); err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		if err := outboxRepo.MarkDelivered(ctx, delivered.ID, "worker-a"); err != nil {
+			t.Fatalf("MarkDelivered: %v", err)
+		}
+
+		n, err := outboxRepo.DisableIntegrationEvents(ctx, integration.ID)
+		if err != nil {
+			t.Fatalf("DisableIntegrationEvents: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("DisableIntegrationEvents transitioned %d rows, want 1 (only the still-pending one)", n)
+		}
+
+		rows, err := outboxRepo.ListByAggregate(ctx, integration.ID, outbox.AggregateTypePipelineRun, aggID)
+		if err != nil {
+			t.Fatalf("ListByAggregate: %v", err)
+		}
+		if len(rows) != 1 || rows[0].Status != string(outbox.StatusDisabled) {
+			t.Fatalf("ListByAggregate after disable = %+v, want one StatusDisabled row", rows)
+		}
+
+		// Idempotent: disabling again transitions nothing further.
+		n2, err := outboxRepo.DisableIntegrationEvents(ctx, integration.ID)
+		if err != nil {
+			t.Fatalf("DisableIntegrationEvents (2nd): %v", err)
+		}
+		if n2 != 0 {
+			t.Fatalf("DisableIntegrationEvents (2nd) transitioned %d rows, want 0", n2)
+		}
+	})
+
+	t.Run("CountByStatus_and_OldestPending", func(t *testing.T) {
+		integration := newIntegration(t)
+		before := time.Now().UTC()
+		ev := newEvent(integration.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, ev); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+
+		pendingCount, err := outboxRepo.CountByStatus(ctx, integration.ID, string(outbox.StatusPending))
+		if err != nil {
+			t.Fatalf("CountByStatus pending: %v", err)
+		}
+		if pendingCount != 1 {
+			t.Fatalf("CountByStatus pending = %d, want 1", pendingCount)
+		}
+
+		oldest, err := outboxRepo.OldestPending(ctx, integration.ID)
+		if err != nil {
+			t.Fatalf("OldestPending: %v", err)
+		}
+		if oldest == nil || oldest.Before(before.Add(-time.Second)) {
+			t.Fatalf("OldestPending = %v, want a timestamp near %v", oldest, before)
+		}
+
+		if _, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10); err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		if err := outboxRepo.MarkDead(ctx, ev.ID, "worker-a", "invalid_payload", "bad"); err != nil {
+			t.Fatalf("MarkDead: %v", err)
+		}
+		deadCount, err := outboxRepo.CountByStatus(ctx, integration.ID, string(outbox.StatusDead))
+		if err != nil {
+			t.Fatalf("CountByStatus dead: %v", err)
+		}
+		if deadCount != 1 {
+			t.Fatalf("CountByStatus dead = %d, want 1", deadCount)
+		}
+		oldestAfter, err := outboxRepo.OldestPending(ctx, integration.ID)
+		if err != nil {
+			t.Fatalf("OldestPending (after dead): %v", err)
+		}
+		if oldestAfter != nil {
+			t.Fatalf("OldestPending after the only event went dead = %v, want nil", oldestAfter)
+		}
+	})
+}
+
+func ids(events []*outbox.Event) []string {
+	out := make([]string, len(events))
+	for i, e := range events {
+		out[i] = e.ID
+	}
+	return out
 }

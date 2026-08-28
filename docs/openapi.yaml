@@ -129,6 +129,119 @@ paths:
               schema: { $ref: "#/components/schemas/TestCredentialResult" }
         "502":
           description: Credential test failed.
+  /api/projects/{project_id}/mlflow-integrations:
+    get:
+      summary: List MLflow tracking integrations (docs/mlflow-tracking-adapter.md section 11.1).
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project MLflow integrations. Credential values are never returned — only credential_ref, a name reference into /credentials.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MlflowIntegration" }
+    post:
+      summary: Create an MLflow tracking integration. Requires project admin.
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrUpdateMlflowIntegrationRequest" }
+      responses:
+        "201":
+          description: Created MLflow integration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MlflowIntegration" }
+        "400": { description: Invalid tracking_uri, artifact_mode, or other field. }
+        "403": { description: Project admin role required. }
+        "409": { description: An integration with this name already exists. }
+  /api/projects/{project_id}/mlflow-integrations/{id}:
+    get:
+      summary: Get an MLflow integration with its health/backlog snapshot.
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/MlflowIntegrationID"
+      responses:
+        "200":
+          description: MLflow integration detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MlflowIntegrationDetail" }
+        "404": { description: Integration not found. }
+    put:
+      summary: Replace an MLflow integration's configuration. Requires project admin.
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/MlflowIntegrationID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrUpdateMlflowIntegrationRequest" }
+      responses:
+        "200":
+          description: Updated MLflow integration.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MlflowIntegration" }
+        "400": { description: Invalid tracking_uri, artifact_mode, or other field. }
+        "403": { description: Project admin role required. }
+        "404": { description: Integration not found. }
+        "409": { description: Another integration already uses this name. }
+    delete:
+      summary: |
+        Delete (soft-delete) an MLflow integration. Requires project admin.
+        Stops the dispatcher for this integration, preserves pending outbox
+        events as `disabled` rather than losing them, preserves the
+        experiment/run mapping history, and never deletes anything on the
+        remote MLflow server (docs/mlflow-tracking-adapter.md section 11.1).
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/MlflowIntegrationID"
+      responses:
+        "204": { description: Integration deleted. }
+        "403": { description: Project admin role required. }
+        "404": { description: Integration not found. }
+  /api/projects/{project_id}/mlflow-integrations/{id}/test:
+    post:
+      summary: |
+        Test connectivity to the integration's TrackingURI. Performs a single
+        bounded experiment lookup — never creates an experiment or run.
+        Requires project admin.
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/MlflowIntegrationID"
+      responses:
+        "200":
+          description: Connection test result (ok may be false — the request itself still succeeded).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MlflowConnectionTestResult" }
+        "403": { description: Project admin role required. }
+        "404": { description: Integration not found. }
+  /api/projects/{project_id}/runs/{id}/mlflow-links:
+    get:
+      summary: MLflow sync status and UI link(s) for a pipeline run (docs/mlflow-tracking-adapter.md section 11.2).
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: |
+            MLflow run links for this run, one per integration it has been
+            exported to (in practice at most one — v1 allows only a single
+            default integration per project). Never includes an MLflow API
+            credential or raw artifact URI.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MlflowRunLink" }
   /api/projects/{project_id}/alert-rules:
     get:
       parameters:
@@ -790,6 +903,11 @@ components:
       in: path
       required: true
       schema: { type: string }
+    MlflowIntegrationID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
   schemas:
     Credential:
       type: object
@@ -838,6 +956,69 @@ components:
       properties:
         ok: { type: boolean }
         message: { type: string }
+    MlflowIntegration:
+      type: object
+      description: |
+        A project-scoped connection to an external MLflow Tracking Server
+        (docs/mlflow-tracking-adapter.md section 5.1). credential_ref is a
+        name reference into /credentials — the credential value itself is
+        never included here.
+      required: [id, project_id, name, tracking_uri, credential_ref, enabled, default, export_pipelines, export_notebook_executions, artifact_mode, created_at, updated_at]
+      properties:
+        id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        tracking_uri: { type: string, format: uri }
+        credential_ref: { type: string }
+        enabled: { type: boolean }
+        default: { type: boolean }
+        export_pipelines: { type: boolean }
+        export_notebook_executions: { type: boolean }
+        experiment_template: { type: string, description: 'Default: "piper/{project_id}/{experiment_or_pipeline}".' }
+        artifact_mode: { type: string, enum: [reference], description: "v1 only supports reference; mirror_selected/mirror_all are reserved for a later phase." }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time }
+    CreateOrUpdateMlflowIntegrationRequest:
+      type: object
+      required: [name, tracking_uri, credential_ref]
+      properties:
+        name: { type: string }
+        tracking_uri: { type: string, format: uri, description: "Must be https (http only via a system-level development override); no userinfo/credentials; no private, loopback, or link-local address." }
+        credential_ref: { type: string, description: "Name of an existing mlflow-kind credential (/credentials)." }
+        enabled: { type: boolean, default: true }
+        default: { type: boolean, default: false, description: "At most one Default=true integration per project." }
+        export_pipelines: { type: boolean, default: true }
+        export_notebook_executions: { type: boolean, default: false }
+        experiment_template: { type: string }
+        artifact_mode: { type: string, enum: [reference], default: reference }
+    MlflowIntegrationDetail:
+      allOf:
+        - { $ref: "#/components/schemas/MlflowIntegration" }
+        - type: object
+          properties:
+            health: { type: string, enum: [healthy, degraded, disabled] }
+            pending_events: { type: integer }
+            dead_events: { type: integer }
+            oldest_pending_age_seconds: { type: number }
+    MlflowConnectionTestResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        message: { type: string, description: "Redacted — never includes the raw remote response body or any credential." }
+    MlflowRunLink:
+      type: object
+      description: Sync status mapping a Piper pipeline run to an MLflow run (docs/mlflow-tracking-adapter.md section 6.2).
+      required: [integration_id, sync_status]
+      properties:
+        integration_id: { type: string }
+        mlflow_run_id: { type: string }
+        mlflow_run_url: { type: string, format: uri, description: "Best-effort browser-facing MLflow UI link." }
+        sync_status: { type: string, enum: [pending, syncing, synced, degraded, disabled] }
+        last_error_code: { type: string }
+        last_error_message: { type: string }
+        last_synced_at: { type: string, format: date-time }
     AlertRule:
       type: object
       required: [id, project_id, name, on, notify, cooldown_seconds, enabled, created_at, updated_at]

@@ -395,6 +395,69 @@ func TestStoreCreateAzureRequiresAccountNameAndKey(t *testing.T) {
 	}
 }
 
+func TestStoreCreateAndResolveMlflowToken(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+
+	if _, err := store.Create(ctx, testProjectID, CreateRequest{
+		Name: "mlflow-cred",
+		Kind: KindMlflow,
+		Data: map[string]string{"token": "mytoken", "ca_cert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	value, err := store.ResolveMlflow(ctx, testProjectID, "mlflow-cred")
+	if err != nil {
+		t.Fatalf("ResolveMlflow: %v", err)
+	}
+	if value.Data["token"] != "mytoken" || value.Data["ca_cert"] == "" {
+		t.Fatalf("value = %#v", value.Data)
+	}
+}
+
+func TestStoreCreateAndResolveMlflowBasicAuth(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+
+	if _, err := store.Create(ctx, testProjectID, CreateRequest{
+		Name: "mlflow-basic",
+		Kind: KindMlflow,
+		Data: map[string]string{"username": "user", "password": "pass"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	value, err := store.ResolveMlflow(ctx, testProjectID, "mlflow-basic")
+	if err != nil {
+		t.Fatalf("ResolveMlflow: %v", err)
+	}
+	if value.Data["username"] != "user" || value.Data["password"] != "pass" {
+		t.Fatalf("value = %#v", value.Data)
+	}
+}
+
+func TestStoreCreateMlflowRejectsInvalidShapes(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t)
+
+	cases := map[string]map[string]string{
+		"missing everything":        {},
+		"token and username mixed":  {"token": "t", "username": "u"},
+		"token and password mixed":  {"token": "t", "password": "p"},
+		"username without password": {"username": "u"},
+		"password without username": {"password": "p"},
+		"unsupported field":         {"token": "t", "header_x": "y"},
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.Create(ctx, testProjectID, CreateRequest{Name: "x", Kind: KindMlflow, Data: data}); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Create: err = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
 func TestScrubCredentialsMasksRawAndEncodedToken(t *testing.T) {
 	token := "tok@:/% space"
 	msg := "raw tok@:/% space encoded tok%40%3A%2F%25%20space"

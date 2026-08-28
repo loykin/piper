@@ -13,6 +13,7 @@ import (
 	"github.com/loykin/piper/internal/projectclient"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
+	"github.com/loykin/piper/pkg/integration/mlflow"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 )
@@ -736,6 +737,274 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		}
 		if len(steps) != 0 {
 			t.Errorf("expected 0 steps after DeleteByRun, got %d", len(steps))
+		}
+	})
+}
+
+// MLflowRepoSuite exercises mlflow.Repository: MLflowIntegration CRUD
+// (including the "at most one Default=true integration per project"
+// invariant, design doc section 5.1) plus the experiment/run link mapping
+// tables (design doc section 6).
+func MLflowRepoSuite(t *testing.T, repo mlflow.Repository, projectID string) {
+	t.Helper()
+	ctx := context.Background()
+
+	newIntegration := func(name string, isDefault bool) *mlflow.MLflowIntegration {
+		return &mlflow.MLflowIntegration{
+			ID:                 uuid.NewString(),
+			ProjectID:          projectID,
+			Name:               name,
+			TrackingURI:        "https://" + name + ".mlflow.example.com",
+			CredentialRef:      "mlflow-cred",
+			Enabled:            true,
+			Default:            isDefault,
+			ExportPipelines:    true,
+			ExperimentTemplate: mlflow.DefaultExperimentTemplate,
+			ArtifactMode:       string(mlflow.ArtifactModeReference),
+		}
+	}
+
+	t.Run("Create_get_and_list_integrations", func(t *testing.T) {
+		a := newIntegration("alpha", false)
+		if err := repo.CreateIntegration(ctx, a); err != nil {
+			t.Fatalf("CreateIntegration: %v", err)
+		}
+		if a.CreatedAt.IsZero() || a.UpdatedAt.IsZero() {
+			t.Fatalf("CreateIntegration did not stamp timestamps: %+v", a)
+		}
+
+		got, err := repo.GetIntegration(ctx, projectID, a.ID)
+		if err != nil {
+			t.Fatalf("GetIntegration: %v", err)
+		}
+		if got == nil || got.Name != "alpha" || got.TrackingURI != a.TrackingURI {
+			t.Fatalf("GetIntegration = %#v, want alpha", got)
+		}
+
+		byName, err := repo.GetIntegrationByName(ctx, projectID, "alpha")
+		if err != nil || byName == nil || byName.ID != a.ID {
+			t.Fatalf("GetIntegrationByName = %#v, err=%v", byName, err)
+		}
+
+		missing, err := repo.GetIntegration(ctx, projectID, "does-not-exist")
+		if err != nil || missing != nil {
+			t.Fatalf("GetIntegration(missing) = %#v, err=%v, want nil, nil", missing, err)
+		}
+
+		b := newIntegration("beta", false)
+		if err := repo.CreateIntegration(ctx, b); err != nil {
+			t.Fatalf("CreateIntegration beta: %v", err)
+		}
+
+		list, err := repo.ListIntegrations(ctx, projectID, 0, 0)
+		if err != nil {
+			t.Fatalf("ListIntegrations: %v", err)
+		}
+		if len(list) != 2 {
+			t.Fatalf("ListIntegrations returned %d integrations, want 2", len(list))
+		}
+
+		count, err := repo.CountIntegrations(ctx, projectID)
+		if err != nil {
+			t.Fatalf("CountIntegrations: %v", err)
+		}
+		if count != 2 {
+			t.Fatalf("CountIntegrations = %d, want 2", count)
+		}
+	})
+
+	t.Run("Create_duplicate_name_rejected", func(t *testing.T) {
+		first := newIntegration("dup", false)
+		if err := repo.CreateIntegration(ctx, first); err != nil {
+			t.Fatalf("CreateIntegration: %v", err)
+		}
+		second := newIntegration("dup", false)
+		if err := repo.CreateIntegration(ctx, second); !errors.Is(err, mlflow.ErrAlreadyExists) {
+			t.Fatalf("CreateIntegration duplicate: err = %v, want ErrAlreadyExists", err)
+		}
+	})
+
+	t.Run("Create_rejects_invalid_tracking_uri", func(t *testing.T) {
+		bad := newIntegration("insecure", false)
+		bad.TrackingURI = "http://insecure.mlflow.example.com"
+		if err := repo.CreateIntegration(ctx, bad); !errors.Is(err, mlflow.ErrInvalid) {
+			t.Fatalf("CreateIntegration(http): err = %v, want ErrInvalid", err)
+		}
+	})
+
+	t.Run("At_most_one_default_per_project", func(t *testing.T) {
+		first := newIntegration("default-one", true)
+		if err := repo.CreateIntegration(ctx, first); err != nil {
+			t.Fatalf("CreateIntegration first default: %v", err)
+		}
+		second := newIntegration("default-two", true)
+		if err := repo.CreateIntegration(ctx, second); err != nil {
+			t.Fatalf("CreateIntegration second default: %v", err)
+		}
+
+		gotFirst, err := repo.GetIntegration(ctx, projectID, first.ID)
+		if err != nil {
+			t.Fatalf("GetIntegration first: %v", err)
+		}
+		if gotFirst.Default {
+			t.Fatalf("first integration still default after second was created as default")
+		}
+		gotSecond, err := repo.GetIntegration(ctx, projectID, second.ID)
+		if err != nil {
+			t.Fatalf("GetIntegration second: %v", err)
+		}
+		if !gotSecond.Default {
+			t.Fatalf("second integration is not the default")
+		}
+
+		def, err := repo.GetDefaultIntegration(ctx, projectID)
+		if err != nil {
+			t.Fatalf("GetDefaultIntegration: %v", err)
+		}
+		if def == nil || def.ID != second.ID {
+			t.Fatalf("GetDefaultIntegration = %#v, want %s", def, second.ID)
+		}
+
+		// Flipping first back to default should reclaim it from second.
+		gotFirst.Default = true
+		if err := repo.UpdateIntegration(ctx, gotFirst); err != nil {
+			t.Fatalf("UpdateIntegration reclaim default: %v", err)
+		}
+		def, err = repo.GetDefaultIntegration(ctx, projectID)
+		if err != nil {
+			t.Fatalf("GetDefaultIntegration after reclaim: %v", err)
+		}
+		if def == nil || def.ID != first.ID {
+			t.Fatalf("GetDefaultIntegration after reclaim = %#v, want %s", def, first.ID)
+		}
+	})
+
+	t.Run("Update_and_delete_integration", func(t *testing.T) {
+		m := newIntegration("updatable", false)
+		if err := repo.CreateIntegration(ctx, m); err != nil {
+			t.Fatalf("CreateIntegration: %v", err)
+		}
+		m.Enabled = false
+		m.ExperimentTemplate = "custom/{project_id}"
+		if err := repo.UpdateIntegration(ctx, m); err != nil {
+			t.Fatalf("UpdateIntegration: %v", err)
+		}
+		got, err := repo.GetIntegration(ctx, projectID, m.ID)
+		if err != nil || got == nil {
+			t.Fatalf("GetIntegration after update: %#v, err=%v", got, err)
+		}
+		if got.Enabled || got.ExperimentTemplate != "custom/{project_id}" {
+			t.Fatalf("GetIntegration after update = %#v, want disabled+custom template", got)
+		}
+
+		if err := repo.DeleteIntegration(ctx, projectID, m.ID); err != nil {
+			t.Fatalf("DeleteIntegration: %v", err)
+		}
+		if err := repo.DeleteIntegration(ctx, projectID, m.ID); !errors.Is(err, mlflow.ErrNotFound) {
+			t.Fatalf("DeleteIntegration again: err = %v, want ErrNotFound", err)
+		}
+		if err := repo.UpdateIntegration(ctx, m); !errors.Is(err, mlflow.ErrNotFound) {
+			t.Fatalf("UpdateIntegration after delete: err = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("Experiment_link_upsert_and_get", func(t *testing.T) {
+		integration := newIntegration("exp-link-owner", false)
+		if err := repo.CreateIntegration(ctx, integration); err != nil {
+			t.Fatalf("CreateIntegration: %v", err)
+		}
+
+		missing, err := repo.GetExperimentLink(ctx, integration.ID, projectID, "pipeline:train")
+		if err != nil || missing != nil {
+			t.Fatalf("GetExperimentLink(missing) = %#v, err=%v, want nil, nil", missing, err)
+		}
+
+		link := &mlflow.MLflowExperimentLink{
+			IntegrationID:      integration.ID,
+			ProjectID:          projectID,
+			PiperGroupKey:      "pipeline:train",
+			MLflowExperimentID: "1",
+			MLflowName:         "piper/proj/train",
+		}
+		if err := repo.UpsertExperimentLink(ctx, link); err != nil {
+			t.Fatalf("UpsertExperimentLink: %v", err)
+		}
+		got, err := repo.GetExperimentLink(ctx, integration.ID, projectID, "pipeline:train")
+		if err != nil || got == nil || got.MLflowExperimentID != "1" {
+			t.Fatalf("GetExperimentLink = %#v, err=%v", got, err)
+		}
+
+		// Upsert again with a different MLflowExperimentID must update in place.
+		link.MLflowExperimentID = "2"
+		if err := repo.UpsertExperimentLink(ctx, link); err != nil {
+			t.Fatalf("UpsertExperimentLink (update): %v", err)
+		}
+		got, err = repo.GetExperimentLink(ctx, integration.ID, projectID, "pipeline:train")
+		if err != nil || got == nil || got.MLflowExperimentID != "2" {
+			t.Fatalf("GetExperimentLink after update = %#v, err=%v", got, err)
+		}
+	})
+
+	t.Run("Run_link_upsert_get_and_list_by_status", func(t *testing.T) {
+		integration := newIntegration("run-link-owner", false)
+		if err := repo.CreateIntegration(ctx, integration); err != nil {
+			t.Fatalf("CreateIntegration: %v", err)
+		}
+		runID := uuid.NewString()
+
+		missing, err := repo.GetRunLink(ctx, integration.ID, projectID, string(mlflow.SourceTypePipeline), runID)
+		if err != nil || missing != nil {
+			t.Fatalf("GetRunLink(missing) = %#v, err=%v, want nil, nil", missing, err)
+		}
+
+		link := &mlflow.MLflowRunLink{
+			IntegrationID:      integration.ID,
+			ProjectID:          projectID,
+			SourceType:         string(mlflow.SourceTypePipeline),
+			SourceID:           runID,
+			MLflowExperimentID: "1",
+			MLflowRunID:        "run-abc",
+			SyncStatus:         string(mlflow.SyncStatusPending),
+		}
+		if err := repo.UpsertRunLink(ctx, link); err != nil {
+			t.Fatalf("UpsertRunLink: %v", err)
+		}
+		got, err := repo.GetRunLink(ctx, integration.ID, projectID, string(mlflow.SourceTypePipeline), runID)
+		if err != nil || got == nil || got.SyncStatus != string(mlflow.SyncStatusPending) {
+			t.Fatalf("GetRunLink = %#v, err=%v", got, err)
+		}
+
+		link.SyncStatus = string(mlflow.SyncStatusSynced)
+		link.LastSequence = 3
+		if err := repo.UpsertRunLink(ctx, link); err != nil {
+			t.Fatalf("UpsertRunLink (update): %v", err)
+		}
+
+		pending, err := repo.ListRunLinksByStatus(ctx, projectID, string(mlflow.SyncStatusPending), 0, 0)
+		if err != nil {
+			t.Fatalf("ListRunLinksByStatus(pending): %v", err)
+		}
+		for _, l := range pending {
+			if l.IntegrationID == integration.ID && l.SourceID == runID {
+				t.Fatalf("run link still listed under pending after moving to synced: %#v", l)
+			}
+		}
+
+		synced, err := repo.ListRunLinksByStatus(ctx, projectID, string(mlflow.SyncStatusSynced), 0, 0)
+		if err != nil {
+			t.Fatalf("ListRunLinksByStatus(synced): %v", err)
+		}
+		found := false
+		for _, l := range synced {
+			if l.IntegrationID == integration.ID && l.SourceID == runID {
+				found = true
+				if l.LastSequence != 3 {
+					t.Fatalf("run link LastSequence = %d, want 3", l.LastSequence)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("run link not found under synced status")
 		}
 	})
 }

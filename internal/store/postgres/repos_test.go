@@ -111,3 +111,14 @@ func TestCredentialRepo_Postgres(t *testing.T) {
 	}
 	repotest.CredentialRepoSuite(t, repos.Credential, projectID)
 }
+
+func TestMlflowRepo_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+
+	const projectID = "mlflow-repo"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.MLflowRepoSuite(t, repos.Mlflow, projectID)
+}

@@ -29,6 +29,14 @@ type Run struct {
 	PipelineYAML    string     `json:"pipeline_yaml,omitempty"   db:"pipeline_yaml"`
 	ParamsJSON      string     `json:"params_json,omitempty"     db:"params_json"`
 	CreatedBy       string     `json:"created_by,omitempty"      db:"created_by"`
+	// StorageBackend is the storage-identity (see storageIdentity() in
+	// settings.go) that was live when this run's artifacts were written. It
+	// is diagnostic metadata only — never exposed through the REST API —
+	// used to tell "artifacts legitimately absent" apart from "artifacts
+	// unreachable because the storage backend changed since this run's data
+	// was written" on the artifact read paths. Empty means unknown/predates
+	// this field and must never be treated as a mismatch.
+	StorageBackend string `json:"-" db:"storage_backend"`
 }
 
 // VersionFromYAML extracts metadata.version from the stored pipeline YAML.

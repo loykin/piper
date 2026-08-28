@@ -2,6 +2,7 @@ package piper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/loykin/piper/internal/memberclient"
+	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/storage"
 )
 
@@ -264,28 +267,95 @@ func deleteRunWorkspace(outputDir, runID string) error {
 	return nil
 }
 
-// downloadArtifactStore streams an artifact from the store to an http.ResponseWriter.
-func downloadArtifactStore(w http.ResponseWriter, r *http.Request, st storage.Store, runID, step, rest string) {
+// downloadArtifactStore streams an artifact from the store to an
+// http.ResponseWriter. It returns notFound=true (writing nothing) when the
+// object cannot be found, so the caller can decide between the generic
+// "artifact not found" response and a storage-backend-mismatch diagnostic
+// before anything is written.
+func downloadArtifactStore(w http.ResponseWriter, r *http.Request, st storage.Store, runID, step, rest string) (notFound bool) {
 	key := fmt.Sprintf("%s/%s/%s", runID, step, rest)
 	filename := filepath.Base(rest)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	if err := storage.ServeHTTP(r.Context(), st, key, w); err != nil {
-		http.Error(w, "artifact not found", http.StatusNotFound)
+		return true
 	}
+	return false
 }
 
-// downloadArtifactLocal streams a local artifact file to an http.ResponseWriter.
-func downloadArtifactLocal(w http.ResponseWriter, r *http.Request, outputDir, runID, step, rest string) {
+// downloadArtifactLocal streams a local artifact file to an
+// http.ResponseWriter. It returns notFound=true (writing nothing) when the
+// file does not exist, so the caller can decide between the generic
+// "artifact not found" response and a storage-backend-mismatch diagnostic.
+// An invalid path is fully handled here (400 already written) and always
+// reports notFound=false so the caller does nothing further.
+func downloadArtifactLocal(w http.ResponseWriter, r *http.Request, outputDir, runID, step, rest string) (notFound bool) {
 	localPath := filepath.Join(outputDir, runID, step, filepath.FromSlash(rest))
 	absPath, err := filepath.Abs(localPath)
 	if err != nil {
 		http.Error(w, "invalid path", http.StatusBadRequest)
-		return
+		return false
 	}
 	baseAbs, _ := filepath.Abs(outputDir)
 	if !strings.HasPrefix(absPath, baseAbs+string(filepath.Separator)) {
 		http.Error(w, "invalid path", http.StatusBadRequest)
-		return
+		return false
+	}
+	if _, statErr := os.Stat(absPath); statErr != nil {
+		return true
 	}
 	http.ServeFile(w, r, absPath)
+	return false
+}
+
+// runStorageBackend implements viewer.RunStorageLookup: it returns the
+// storage-identity stamp recorded on runID's row (see run.Run.StorageBackend),
+// so a consumer of that run's artifacts (viewer materialization, artifact
+// download/list) can tell a legitimately-missing artifact apart from one
+// made unreachable by a storage backend change since the run's data was
+// written. Returns ("", nil) when the run itself can't be found — the
+// caller's own not-found handling already covers that case.
+func (p *Piper) runStorageBackend(ctx context.Context, projectID, runID string) (string, error) {
+	r, err := p.repos.Run.Get(ctx, projectID, runID)
+	if err != nil || r == nil {
+		return "", err
+	}
+	return r.StorageBackend, nil
+}
+
+// storageBackendMismatch reports whether runID's stored artifacts were
+// written under a storage backend that is no longer the live one. A run
+// with no stamp (predates this feature) or whose stamp matches the live
+// backend never mismatches — see docs on the storage-identity stamp.
+func (p *Piper) storageBackendMismatch(ctx context.Context, runID string) bool {
+	pctx, _ := project.FromContext(ctx)
+	backend, err := p.runStorageBackend(ctx, pctx.ID, runID)
+	if err != nil || backend == "" {
+		return false
+	}
+	return backend != p.storageIdentity
+}
+
+// writeStorageBackendMismatchJSON writes the same {error, code, retryable}
+// shape run.Handler's writeMemberError uses for
+// memberclient.ErrStorageBackendMismatch, for callers (like ServeDownload)
+// that write directly to an http.ResponseWriter instead of going through a
+// gin.Context.
+func writeStorageBackendMismatchJSON(w http.ResponseWriter) {
+	body := struct {
+		Error     string `json:"error"`
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+	}{
+		Error:     memberclient.ErrStorageBackendMismatch.Error(),
+		Code:      memberclient.ErrorCodeStorageBackendMismatch,
+		Retryable: false,
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		http.Error(w, "artifact not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(b)
 }

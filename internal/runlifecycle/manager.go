@@ -45,6 +45,12 @@ type Deps struct {
 	Credentials *credential.Store
 	Store       storage.Store         // nil when no artifact store configured
 	Scheduler   *ischeduler.Scheduler // wired post-construction, see SetScheduler
+	// StorageIdentity is the non-secret storage-identity (storageIdentity()
+	// in piper's settings.go, computed once when Store above is opened) that
+	// each newly created run is stamped with, so a later storage-backend
+	// migration can be told apart from data loss when its artifacts are read
+	// back (see run.Run.StorageBackend).
+	StorageIdentity string
 
 	OutputDir          string
 	RuntimeType        string

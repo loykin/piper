@@ -14,6 +14,7 @@ const (
 	ErrorCodeMemberUnavailable       = "member_unavailable"
 	ErrorCodeStatsBackendUnavailable = "stats_backend_unavailable"
 	ErrorCodeInvalidStatsCursor      = "invalid_stats_cursor"
+	ErrorCodeStorageBackendMismatch  = "storage_backend_mismatch"
 )
 
 type RPCErrorEnvelope struct {
@@ -36,6 +37,8 @@ func EncodeRPCError(err error) string {
 		envelope.Retryable = true
 	case errors.Is(err, statsstore.ErrInvalidCursor):
 		envelope.Code = ErrorCodeInvalidStatsCursor
+	case errors.Is(err, ErrStorageBackendMismatch):
+		envelope.Code = ErrorCodeStorageBackendMismatch
 	}
 	encoded, marshalErr := json.Marshal(envelope)
 	if marshalErr != nil {
@@ -59,6 +62,8 @@ func DecodeRPCError(encoded string) error {
 		sentinel = statsstore.ErrBackendUnavailable
 	case ErrorCodeInvalidStatsCursor:
 		sentinel = statsstore.ErrInvalidCursor
+	case ErrorCodeStorageBackendMismatch:
+		sentinel = ErrStorageBackendMismatch
 	default:
 		return errors.New(envelope.Message)
 	}

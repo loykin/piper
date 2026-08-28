@@ -85,6 +85,10 @@ func writeMemberError(c *gin.Context, err error, fallbackStatus int, fallbackMes
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "statistics backend unavailable", "code": memberclient.ErrorCodeStatsBackendUnavailable, "retryable": true})
 		return
 	}
+	if errors.Is(err, memberclient.ErrStorageBackendMismatch) {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": memberclient.ErrorCodeStorageBackendMismatch, "retryable": false})
+		return
+	}
 	if fallbackMessage == "" {
 		fallbackMessage = err.Error()
 	}

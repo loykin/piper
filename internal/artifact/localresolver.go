@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/storage"
@@ -26,16 +27,39 @@ type localResolver struct {
 	outputDir  string
 	storageURL string        // resolved storage URL; empty means local-only
 	store      storage.Store // nil when storage is disabled
+	// liveIdentity is the current effective storage-identity (storageIdentity()
+	// in piper's settings.go), compared against a Run's own StorageBackend
+	// stamp when an artifact can't be found, to tell a legitimately-missing
+	// artifact apart from one made unreachable by a storage backend change
+	// since the run's data was written.
+	liveIdentity string
 }
 
 // NewResolver returns the default Resolver implementation.
-func NewResolver(runRepo run.Repository, outputDir, storageURL string, store storage.Store) Resolver {
+func NewResolver(runRepo run.Repository, outputDir, storageURL string, store storage.Store, liveIdentity string) Resolver {
 	return &localResolver{
-		runRepo:    runRepo,
-		outputDir:  outputDir,
-		storageURL: storageURL,
-		store:      store,
+		runRepo:      runRepo,
+		outputDir:    outputDir,
+		storageURL:   storageURL,
+		store:        store,
+		liveIdentity: liveIdentity,
 	}
+}
+
+// storageBackendMismatch reports whether runID's artifacts were written
+// under a storage backend that is no longer the live one, using the Run's
+// own stamp — a run with no stamp (predates this feature) or whose stamp
+// matches the live backend never mismatches.
+func (r *localResolver) storageBackendMismatch(ctx context.Context, runID string) bool {
+	if r.runRepo == nil {
+		return false
+	}
+	projectContext, _ := project.FromContext(ctx)
+	rec, err := r.runRepo.Get(ctx, projectContext.ID, runID)
+	if err != nil || rec == nil || rec.StorageBackend == "" {
+		return false
+	}
+	return rec.StorageBackend != r.liveIdentity
 }
 
 func (r *localResolver) Resolve(ctx context.Context, pipeline, step, artName, runRef string, target Target) (Resolved, error) {
@@ -102,6 +126,9 @@ func (r *localResolver) resolveLocal(ctx context.Context, runID, step, artKey st
 			return Resolved{RunID: runID, LocalPath: dest}, nil
 		}
 		if err := storage.DownloadDir(ctx, r.store, artKey+"/", dest); err != nil {
+			if r.storageBackendMismatch(ctx, runID) {
+				return Resolved{}, fmt.Errorf("stage local copy of %s: %w", artKey, memberclient.ErrStorageBackendMismatch)
+			}
 			return Resolved{}, fmt.Errorf("stage local copy of %s: %w", artKey, err)
 		}
 		return Resolved{RunID: runID, LocalPath: dest}, nil

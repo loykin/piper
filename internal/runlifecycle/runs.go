@@ -84,16 +84,17 @@ func (m *Manager) StartRun(ctx context.Context, pl *pipeline.Pipeline, dag *pipe
 	}
 
 	r := &run.Run{
-		ID:           runID,
-		ProjectID:    opts.ProjectID,
-		ScheduleID:   opts.ScheduleID,
-		Experiment:   opts.Experiment,
-		PipelineName: pl.Metadata.Name,
-		Status:       run.StatusRunning,
-		StartedAt:    now,
-		ScheduledAt:  opts.Vars.ScheduledAt,
-		PipelineYAML: opts.YAML,
-		ParamsJSON:   encodeParams(opts.Params),
+		ID:             runID,
+		ProjectID:      opts.ProjectID,
+		ScheduleID:     opts.ScheduleID,
+		Experiment:     opts.Experiment,
+		PipelineName:   pl.Metadata.Name,
+		Status:         run.StatusRunning,
+		StartedAt:      now,
+		ScheduledAt:    opts.Vars.ScheduledAt,
+		PipelineYAML:   opts.YAML,
+		ParamsJSON:     encodeParams(opts.Params),
+		StorageBackend: m.deps.StorageIdentity,
 	}
 	if identity, ok := security.IdentityFromContext(ctx); ok {
 		r.CreatedBy = identity.ID
@@ -188,15 +189,16 @@ func (m *Manager) StartRunFromAPIWithID(ctx context.Context, runID, yaml string,
 			runID = genRunID()
 		}
 		newRun := &run.Run{
-			ID:           runID,
-			ProjectID:    projectContext.ID,
-			Experiment:   experiment,
-			PipelineName: pl.Metadata.Name,
-			Status:       run.StatusScheduled,
-			StartedAt:    now,
-			ScheduledAt:  vars.ScheduledAt,
-			PipelineYAML: yaml,
-			ParamsJSON:   encodeParams(params),
+			ID:             runID,
+			ProjectID:      projectContext.ID,
+			Experiment:     experiment,
+			PipelineName:   pl.Metadata.Name,
+			Status:         run.StatusScheduled,
+			StartedAt:      now,
+			ScheduledAt:    vars.ScheduledAt,
+			PipelineYAML:   yaml,
+			ParamsJSON:     encodeParams(params),
+			StorageBackend: m.deps.StorageIdentity,
 		}
 		if identity, ok := security.IdentityFromContext(ctx); ok {
 			newRun.CreatedBy = identity.ID

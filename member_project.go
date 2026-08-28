@@ -45,6 +45,7 @@ func (p *Piper) newMemberProjectRouter() http.Handler {
 		(&piperArtifacts{p: p}).ServeDownload(c.Writer, c.Request, c.Param("id"), step, rest)
 	})
 	viewerMgr := viewer.NewManager(p.repos.Viewer, p.store, p.cfg.OutputDir)
+	viewerMgr.SetStorageDiagnostics(p.runStorageBackend, p.storageIdentity)
 	viewerMgr.RegisterDriver(viewertb.New())
 	viewerMgr.RegisterDriver(viewerhtml.New())
 	handlers := p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
@@ -119,15 +120,16 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 	viewerHandler.RegisterRoutes(projectAPI)
 
 	template.NewHandler(template.HandlerDeps{
-		Templates:    p.repos.PipelineTemplate,
-		Volumes:      p.repos.NotebookVolume,
-		Notebooks:    p.repos.Notebook,
-		Schedules:    p.repos.Schedule,
-		Store:        p.store,
-		StorageURL:   p.storageURL,
-		StorageToken: p.cfg.Storage.Token,
-		Workspace:    p.nbWorkspace,
-		Sched:        p.scheduler,
+		Templates:       p.repos.PipelineTemplate,
+		Volumes:         p.repos.NotebookVolume,
+		Notebooks:       p.repos.Notebook,
+		Schedules:       p.repos.Schedule,
+		Store:           p.store,
+		StorageURL:      p.storageURL,
+		StorageToken:    p.cfg.Storage.Token,
+		StorageIdentity: p.storageIdentity,
+		Workspace:       p.nbWorkspace,
+		Sched:           p.scheduler,
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},

@@ -18,7 +18,7 @@ func NewPipelineRepo(exec *dbstore.Executor[*sqlx.DB], source string) template.R
 	return &pipelineRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
-const selectCols = `project_id, id, name, version, description, tags, yaml, snapshot_id, volume_id, created_at, updated_at`
+const selectCols = `project_id, id, name, version, description, tags, yaml, snapshot_id, volume_id, created_at, updated_at, storage_backend`
 
 func (r *pipelineRepo) NextVersion(ctx context.Context, projectID, name string) (int, error) {
 	var maxVer int
@@ -51,11 +51,11 @@ func (r *pipelineRepo) Create(ctx context.Context, t *template.Template) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx, `
 			INSERT INTO pipeline_templates
-			    (project_id, id, name, version, description, tags, yaml, snapshot_id, volume_id, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    (project_id, id, name, version, description, tags, yaml, snapshot_id, volume_id, created_at, updated_at, storage_backend)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			t.ProjectID, t.ID, t.Name, t.Version,
 			t.Description, t.TagsJSON, t.YAML, t.SnapshotID, t.VolumeID,
-			t.CreatedAt, t.UpdatedAt)
+			t.CreatedAt, t.UpdatedAt, t.StorageBackend)
 		if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return template.ErrVersionExists
 		}

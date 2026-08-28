@@ -2,10 +2,12 @@ package serving
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/loykin/piper/internal/httpx"
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 )
@@ -98,6 +100,10 @@ func (h *Handler) createService(c *gin.Context) {
 	}
 	svc, err := h.deps.Deploy(c.Request.Context(), currentProjectID(c), []byte(req.YAML))
 	if err != nil {
+		if errors.Is(err, memberclient.ErrStorageBackendMismatch) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": memberclient.ErrorCodeStorageBackendMismatch, "retryable": false})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

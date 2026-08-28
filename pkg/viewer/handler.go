@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/tunnelproxy"
 	"github.com/loykin/piper/pkg/project"
 )
@@ -52,6 +54,10 @@ func (h *Handler) openViewer(c *gin.Context) {
 
 	v, created, err := h.mgr.Open(c.Request.Context(), projectID, runID, stepName, artifact, req.Type)
 	if err != nil {
+		if errors.Is(err, memberclient.ErrStorageBackendMismatch) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": memberclient.ErrorCodeStorageBackendMismatch, "retryable": false})
+			return
+		}
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "unsupported viewer type") {
 			status = http.StatusBadRequest

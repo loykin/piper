@@ -88,8 +88,15 @@ type Piper struct {
 	alerts          *alerting.Service
 	alertEngine     *ialerting.Engine
 	federationSvc   *federation.Service
-	storageURL      string            // resolved storage URL (for K8s launcher, artifact resolver)
-	storageErr      error             // last artifact store open error, if any
+	storageURL      string // resolved storage URL (for K8s launcher, artifact resolver)
+	storageErr      error  // last artifact store open error, if any
+	// storageIdentity is the non-secret storage-identity (storageIdentity()
+	// in settings.go) computed from storageURL at the same point p.store is
+	// assigned, below. It is the single source of truth both the
+	// stamping-at-write-time code (Run/Template Create) and the
+	// mismatch-check-at-read-time code (artifact download, viewer, template
+	// snapshot, ModelService from_artifact) compare against.
+	storageIdentity string
 	resolver        artifact.Resolver // central artifact resolver
 	backend         pipelinedispatch.ExecutionBackend
 	events          *event.Hub
@@ -311,11 +318,12 @@ func New(cfg Config) (*Piper, error) {
 			p.storageURL = storageURL
 		}
 	}
+	p.storageIdentity = storageIdentity(p.storageURL)
 	q.SetStorageConfig(p.storageURL, cfg.Storage.Token)
 	if servingRuntime.k8sDriver != nil {
 		servingRuntime.k8sDriver.WithStorage(p.storageURL, cfg.Storage.Token)
 	}
-	p.resolver = artifact.NewResolver(repos.Run, cfg.OutputDir, p.storageURL, p.store)
+	p.resolver = artifact.NewResolver(repos.Run, cfg.OutputDir, p.storageURL, p.store, p.storageIdentity)
 	// startedAt is set before the scheduler exists so misfire detection works
 	// on its first Add (see the scheduler wiring below).
 	p.startedAt = time.Now().UTC()
@@ -330,6 +338,7 @@ func New(cfg Config) (*Piper, error) {
 		Queue:              q,
 		Credentials:        credentialStore,
 		Store:              p.store,
+		StorageIdentity:    p.storageIdentity,
 		OutputDir:          cfg.OutputDir,
 		RuntimeType:        cfg.Runtime.Type,
 		RunTTL:             cfg.Retention.RunTTL,

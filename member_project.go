@@ -13,6 +13,7 @@ import (
 	"github.com/loykin/piper/internal/runlifecycle"
 	"github.com/loykin/piper/pkg/alerting"
 	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/integration/mlflow"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/project"
@@ -118,6 +119,12 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 
 	viewerHandler := viewer.NewHandler(viewerMgr, p.repos.Viewer)
 	viewerHandler.RegisterRoutes(projectAPI)
+
+	mlflow.NewHandler(mlflow.HandlerDeps{
+		Repo:    p.repos.Mlflow,
+		Outbox:  p.repos.Outbox,
+		Clients: p.mlflowClients,
+	}).RegisterRoutes(projectAPI)
 
 	template.NewHandler(template.HandlerDeps{
 		Templates:       p.repos.PipelineTemplate,

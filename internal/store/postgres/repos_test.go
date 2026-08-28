@@ -133,3 +133,14 @@ func TestMlflowRepo_Postgres(t *testing.T) {
 	}
 	repotest.MLflowRepoSuite(t, repos.Mlflow, projectID)
 }
+
+func TestOutboxRepo_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+
+	const projectID = "outbox-repo"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.OutboxRepoSuite(t, repos.Outbox, repos.Mlflow, projectID)
+}

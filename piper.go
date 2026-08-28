@@ -3,6 +3,7 @@ package piper
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	iagent "github.com/loykin/piper/internal/agent"
 	ialerting "github.com/loykin/piper/internal/alerting"
@@ -29,8 +32,11 @@ import (
 	"github.com/loykin/piper/pkg/alerting"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
+	"github.com/loykin/piper/pkg/integration/mlflow"
+	"github.com/loykin/piper/pkg/integration/outbox"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/serving"
 	"github.com/loykin/piper/pkg/statsstore"
@@ -103,6 +109,7 @@ type Piper struct {
 	scheduler       *ischeduler.Scheduler
 	startedAt       time.Time // wall-clock when New() ran; used for misfire detection
 	runs            *runlifecycle.Manager
+	mlflowClients   mlflow.ClientFactory // per-integration MLflow REST client factory; used by both the dispatcher (piper.go's New) and the Integrations REST handler's connection-test endpoint (member_project.go)
 
 	stopCtx context.CancelFunc // cancels ctx on Close
 	wg      sync.WaitGroup
@@ -358,29 +365,81 @@ func New(cfg Config) (*Piper, error) {
 	// startedAt is set before the scheduler exists so misfire detection works
 	// on its first Add (see the scheduler wiring below).
 	p.startedAt = time.Now().UTC()
+
+	// MLflow tracking export (docs/mlflow-tracking-adapter.md, Phase 1):
+	// resolve-per-integration Client factory (credential lookup +
+	// SSRF-policy-bound HTTP client), the Exporter (outbox.Handler), and the
+	// enqueue closure wired into runlifecycle.Deps below. None of this talks
+	// to MLflow on this synchronous construction/request path — only the
+	// Dispatcher goroutine started further down does, and only once an
+	// event has actually been claimed (design doc section 4.3).
+	mlflowSSRFPolicy := mlflow.SSRFPolicy{
+		AllowInsecureHTTP: cfg.Integrations.Mlflow.AllowInsecureHTTP,
+		AllowedHosts:      cfg.Integrations.Mlflow.AllowedHosts,
+		AllowedCIDRs:      cfg.Integrations.Mlflow.AllowedCIDRs,
+	}
+	mlflowClients := func(ctx context.Context, integration *mlflow.MLflowIntegration) (mlflow.Client, error) {
+		cred, err := credentialStore.ResolveMlflow(ctx, integration.ProjectID, integration.CredentialRef)
+		if err != nil {
+			return nil, err
+		}
+		return mlflow.NewHTTPClient(mlflow.HTTPClientConfig{
+			TrackingURI: integration.TrackingURI,
+			Token:       cred.Data["token"],
+			Username:    cred.Data["username"],
+			Password:    cred.Data["password"],
+			CACertPEM:   cred.Data["ca_cert"],
+			Policy:      mlflowSSRFPolicy,
+			Timeout:     cfg.Integrations.Mlflow.RequestTimeout,
+		})
+	}
+	p.mlflowClients = mlflowClients
+	mlflowExporter := mlflow.NewExporter(repos.Mlflow, mlflowClients)
+	enqueuePipelineCreated := func(ctx context.Context, r *run.Run, version int) error {
+		var params map[string]any
+		if r.ParamsJSON != "" {
+			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
+		}
+		startTime := r.StartedAt
+		if r.ScheduledAt != nil {
+			startTime = *r.ScheduledAt
+		}
+		// Piper has no configured public base URL (see config.go) — this is
+		// a relative API path, matching mlflow.PipelineRunCreatedPayload's
+		// RunURL doc comment.
+		runURL := fmt.Sprintf("/api/projects/%s/runs/%s", r.ProjectID, r.ID)
+		return mlflow.EnqueuePipelineRunCreated(ctx, repos.Mlflow, repos.Outbox, r.ProjectID, r.ID, params, r.PipelineName, version, r.Experiment, r.CreatedBy, cfg.Runtime.Type, runURL, startTime)
+	}
+	enqueuePipelineFinished := func(ctx context.Context, projectID, runID, status string) {
+		if err := mlflow.EnqueuePipelineRunFinished(ctx, repos.Mlflow, repos.Outbox, projectID, runID, status, time.Now().UTC()); err != nil {
+			slog.Warn("mlflow export enqueue failed", "run_id", runID, "err", err)
+		}
+	}
+
 	p.runs = runlifecycle.New(runlifecycle.Deps{
-		RunRepo:            repos.Run,
-		StepRepo:           repos.Step,
-		ScheduleRepo:       repos.Schedule,
-		SubmissionRepo:     repos.Submission,
-		ProjectRepo:        repos.Project,
-		ServingRepo:        repos.Serving,
-		RunDeleter:         repos,
-		Queue:              q,
-		Credentials:        credentialStore,
-		Store:              p.store,
-		StorageIdentity:    p.storageIdentity,
-		OutputDir:          cfg.OutputDir,
-		RuntimeType:        cfg.Runtime.Type,
-		RunTTL:             cfg.Retention.RunTTL,
-		ArtifactTTL:        cfg.Retention.ArtifactTTL,
-		MisfirePolicy:      cfg.Schedule.MisfirePolicy,
-		MisfireGracePeriod: cfg.Schedule.MisfireGracePeriod,
-		StartedAt:          p.startedAt,
-		OnRunStart:         cfg.Hooks.OnRunStart,
-		DeployService:      p.DeployService,
-		DeleteArtifacts:    deleteArtifactsFromStore,
-		DeleteWorkspace:    deleteRunWorkspace,
+		RunRepo:                repos.Run,
+		StepRepo:               repos.Step,
+		ScheduleRepo:           repos.Schedule,
+		SubmissionRepo:         repos.Submission,
+		ProjectRepo:            repos.Project,
+		ServingRepo:            repos.Serving,
+		RunDeleter:             repos,
+		Queue:                  q,
+		Credentials:            credentialStore,
+		Store:                  p.store,
+		StorageIdentity:        p.storageIdentity,
+		OutputDir:              cfg.OutputDir,
+		RuntimeType:            cfg.Runtime.Type,
+		RunTTL:                 cfg.Retention.RunTTL,
+		ArtifactTTL:            cfg.Retention.ArtifactTTL,
+		MisfirePolicy:          cfg.Schedule.MisfirePolicy,
+		MisfireGracePeriod:     cfg.Schedule.MisfireGracePeriod,
+		StartedAt:              p.startedAt,
+		OnRunStart:             cfg.Hooks.OnRunStart,
+		DeployService:          p.DeployService,
+		DeleteArtifacts:        deleteArtifactsFromStore,
+		DeleteWorkspace:        deleteRunWorkspace,
+		EnqueuePipelineCreated: enqueuePipelineCreated,
 	})
 	backend, pipelineObserver, err := composePipelineRuntime(cfg, bgCtx, repos, q, p.events)
 	if err != nil {
@@ -390,19 +449,26 @@ func New(cfg Config) (*Piper, error) {
 	}
 	p.SetBackend(backend)
 	q.OnRunSuccess = p.runs.HandleRunSuccess
-	if p.alertEngine != nil || cfg.Hooks.OnRunEnd != nil {
-		q.OnRunOutcome = func(ctx context.Context, projectID, runID, status string, pl *pipeline.Pipeline) {
-			if p.alertEngine != nil {
-				p.alertEngine.NotifyPipelineOutcome(ctx, projectID, runID, status, pl)
+	// pipeline_run.finished (design doc section 7.4) is wired into
+	// OnRunOutcome — queue.go's finalizeRunLocked fires this only after the
+	// DB CAS committing the terminal status has already applied
+	// (finalizeRunLocked's `applied` check), asynchronously via
+	// appendEffect, so this is fully decoupled from the synchronous run
+	// lifecycle path (design doc section 4.3) the same way the alerting/
+	// OnRunEnd hooks below already are — composed into the same closure
+	// rather than a second field on queue.Queue.
+	q.OnRunOutcome = func(ctx context.Context, projectID, runID, status string, pl *pipeline.Pipeline) {
+		enqueuePipelineFinished(ctx, projectID, runID, status)
+		if p.alertEngine != nil {
+			p.alertEngine.NotifyPipelineOutcome(ctx, projectID, runID, status, pl)
+		}
+		if cfg.Hooks.OnRunEnd != nil {
+			result, err := p.buildRunResult(ctx, projectID, runID)
+			if err != nil {
+				slog.Warn("build OnRunEnd result failed", "run_id", runID, "err", err)
+				return
 			}
-			if cfg.Hooks.OnRunEnd != nil {
-				result, err := p.buildRunResult(ctx, projectID, runID)
-				if err != nil {
-					slog.Warn("build OnRunEnd result failed", "run_id", runID, "err", err)
-					return
-				}
-				cfg.Hooks.OnRunEnd(project.WithContext(ctx, project.Context{ID: projectID}), runID, result)
-			}
+			cfg.Hooks.OnRunEnd(project.WithContext(ctx, project.Context{ID: projectID}), runID, result)
 		}
 	}
 	q.SetEventPublisher(p.events)
@@ -412,6 +478,29 @@ func New(cfg Config) (*Piper, error) {
 		done := p.alertEngine.Start(p.ctx, p.events)
 		p.wg.Add(1)
 		go func() { defer p.wg.Done(); <-done }()
+	}
+	if cfg.Integrations.Mlflow.Enabled {
+		dispatcherConcurrency := cfg.Integrations.Mlflow.DispatcherConcurrency
+		// SQLite has no SKIP LOCKED equivalent; the outbox.Repository
+		// contract (design doc section 6.3) requires concurrency 1 there
+		// regardless of configured value — internal/store/sqlite's
+		// ClaimBatch does a plain SELECT-then-UPDATE, not a locking claim.
+		if repos.Driver() == "sqlite" {
+			dispatcherConcurrency = 1
+		}
+		mlflowDispatcher := outbox.NewDispatcher(repos.Outbox, mlflowExporter, outbox.Config{
+			Owner:                 "piper-" + uuid.NewString(),
+			Concurrency:           dispatcherConcurrency,
+			BatchSize:             cfg.Integrations.Mlflow.BatchSize,
+			PollInterval:          cfg.Integrations.Mlflow.PollInterval,
+			LeaseDuration:         cfg.Integrations.Mlflow.LeaseDuration,
+			MaxAttemptsBeforeDead: cfg.Integrations.Mlflow.MaxAttemptsBeforeDead,
+		})
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			mlflowDispatcher.Run(p.ctx)
+		}()
 	}
 	p.runs.RecoverInterruptedRuns(context.Background())
 	if pipelineObserver != nil {

@@ -65,6 +65,19 @@ type Deps struct {
 	DeployService   func(ctx context.Context, projectID string, yamlBytes []byte) (*serving.Service, error)
 	DeleteArtifacts func(ctx context.Context, store storage.Store, runID string) error
 	DeleteWorkspace func(outputDir, runID string) error
+	// EnqueuePipelineCreated durably records a pipeline_run.created MLflow
+	// export event (docs/mlflow-tracking-adapter.md section 7.1) for a
+	// newly created run, if the project has an MLflow integration
+	// configured to export pipelines. A plain func value so this package
+	// doesn't import pkg/integration/mlflow — piper.go wires the real
+	// implementation (mlflow.EnqueuePipelineRunCreated closed over the
+	// mlflow/outbox repositories). nil is a valid no-op (e.g. embedders that
+	// never call piper.New's MLflow wiring path). Must be fast (a local DB
+	// read + durable write only, never an outbound MLflow call — see design
+	// doc section 4.3) and must never fail run creation: runs.go's call
+	// sites only log a returned error. version is the pipeline's
+	// metadata.version (0 if absent — see run.Run.VersionFromYAML).
+	EnqueuePipelineCreated func(ctx context.Context, r *run.Run, version int) error
 }
 
 // Manager owns run creation, mutation, recovery, retention, and scheduled

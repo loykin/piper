@@ -15,6 +15,7 @@ import (
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/integration/mlflow"
 	"github.com/loykin/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/notebook/execution"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/schedule"
@@ -116,6 +117,16 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 		PurgeVolume:      p.notebookManager.PurgeVolume,
 	})
 	notebookHandler.RegisterRoutes(projectAPI)
+
+	// docs/jupyter-mcp-execution.md Phase 1 — Kernel session / Notebook
+	// execution REST API (§7). Registered here, not on its own group, so it
+	// gets the exact same Home relay / Local-Member-in-process treatment
+	// every other domain in this composition root gets — see this
+	// function's doc comment. Guarded like alerting above: nil when the
+	// embedding Repos didn't supply a NotebookExecution repository.
+	if p.notebookExecutions != nil {
+		execution.NewHandler(p.notebookExecutions).RegisterRoutes(projectAPI)
+	}
 
 	viewerHandler := viewer.NewHandler(viewerMgr, p.repos.Viewer)
 	viewerHandler.RegisterRoutes(projectAPI)

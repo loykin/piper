@@ -35,6 +35,7 @@ import (
 	"github.com/loykin/piper/pkg/integration/mlflow"
 	"github.com/loykin/piper/pkg/integration/outbox"
 	"github.com/loykin/piper/pkg/notebook"
+	"github.com/loykin/piper/pkg/notebook/execution"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
@@ -79,23 +80,24 @@ type servingBundle struct {
 //	p, err := piper.New(cfg)
 //	result, err := p.RunFile(ctx, "train.yaml")
 type Piper struct {
-	cfg             Config
-	ctx             context.Context // cancelled on Close; passed to background goroutines and hooks
-	repos           *storemod.Repos
-	logs            logstore.LogStore
-	metrics         logstore.MetricStore
-	stats           *statsstore.Store
-	queue           *queue.Queue
-	serving         servingBundle
-	notebookManager *notebook.Manager
-	nbWorkspace     notebook.WorkspaceReader // reads a notebook volume's live workspace files, for pipeline template snapshotting
-	store           storage.Store            // nil when no artifact store configured
-	credentials     *credential.Store
-	alerts          *alerting.Service
-	alertEngine     *ialerting.Engine
-	federationSvc   *federation.Service
-	storageURL      string // resolved storage URL (for K8s launcher, artifact resolver)
-	storageErr      error  // last artifact store open error, if any
+	cfg                Config
+	ctx                context.Context // cancelled on Close; passed to background goroutines and hooks
+	repos              *storemod.Repos
+	logs               logstore.LogStore
+	metrics            logstore.MetricStore
+	stats              *statsstore.Store
+	queue              *queue.Queue
+	serving            servingBundle
+	notebookManager    *notebook.Manager
+	notebookExecutions *execution.Service       // docs/jupyter-mcp-execution.md Phase 1: Kernel session / NotebookExecution domain service
+	nbWorkspace        notebook.WorkspaceReader // reads a notebook volume's live workspace files, for pipeline template snapshotting
+	store              storage.Store            // nil when no artifact store configured
+	credentials        *credential.Store
+	alerts             *alerting.Service
+	alertEngine        *ialerting.Engine
+	federationSvc      *federation.Service
+	storageURL         string // resolved storage URL (for K8s launcher, artifact resolver)
+	storageErr         error  // last artifact store open error, if any
 	// storageIdentity is the non-secret storage-identity (storageIdentity()
 	// in settings.go) computed from storageURL at the same point p.store is
 	// assigned, below. It is the single source of truth both the
@@ -318,6 +320,25 @@ func New(cfg Config) (*Piper, error) {
 		}
 		return "", false
 	})
+	// docs/jupyter-mcp-execution.md Phase 1. bgCtx (== p.ctx) is passed
+	// explicitly rather than reading p.ctx back off the struct: execution
+	// runs asynchronously in goroutines that must outlive any single HTTP
+	// request and must observe Close()'s cancellation the same way every
+	// other background component here does (see NewService's doc comment).
+	//
+	// Guarded like repos.AlertRule below: an embedder supplying its own
+	// cfg.Repos (see ExternalReposConfig) may not populate this brand-new
+	// field, and the feature must degrade to "not available" rather than
+	// panic on first use.
+	if repos.NotebookExecution != nil {
+		p.notebookExecutions = execution.NewService(bgCtx, execution.Deps{
+			Repo:      repos.NotebookExecution,
+			Notebooks: repos.Notebook,
+			Gateway:   execution.NewGateway(),
+			Events:    p.events,
+			Limits:    execution.DefaultLimits(),
+		})
+	}
 	if repos.AlertRule != nil {
 		p.alertEngine = ialerting.NewEngine(repos.AlertRule, credentialStore)
 		p.alerts = alerting.NewService(repos.AlertRule, credentialStore, p.alertEngine.Refresh)
@@ -503,6 +524,11 @@ func New(cfg Config) (*Piper, error) {
 		}()
 	}
 	p.runs.RecoverInterruptedRuns(context.Background())
+	if p.notebookExecutions != nil {
+		if err := p.notebookExecutions.RecoverOnStartup(context.Background()); err != nil {
+			slog.Warn("notebook execution recovery failed", "err", err)
+		}
+	}
 	if pipelineObserver != nil {
 		p.wg.Add(1)
 		go func() {
@@ -850,8 +876,19 @@ func (p *Piper) Close() error {
 	if err := p.queue.Close(drainCtx); err != nil {
 		slog.Warn("queue drain did not finish before shutdown grace expired", "err", err)
 	}
-	p.stopCtx() // cancel runCleanup and any pending dispatches
+	p.stopCtx() // cancel runCleanup and any pending dispatches — also cancels notebookExecutions' background context
 	p.wg.Wait()
+	// Wait for any in-flight NotebookExecution runs to observe the
+	// cancellation above and unwind before the DB closes underneath them.
+	// finishExecution itself always persists through a fresh
+	// context.Background()-derived context (see service_run.go), so this is
+	// purely about not racing repos.Close() with those writers, not about
+	// giving them extra time to finish executing code.
+	if p.notebookExecutions != nil {
+		execShutdownCtx, execCancel := context.WithTimeout(context.Background(), queueDrainGrace)
+		p.notebookExecutions.Shutdown(execShutdownCtx)
+		execCancel()
+	}
 	// DockerBackend holds a real Docker daemon client connection that must be
 	// closed explicitly (unlike kubernetes.Interface, which needs no closing).
 	if closer, ok := p.backend.(interface{ Close() error }); ok {

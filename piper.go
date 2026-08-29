@@ -36,6 +36,7 @@ import (
 	"github.com/loykin/piper/pkg/integration/outbox"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/notebook/execution"
+	notebookmcp "github.com/loykin/piper/pkg/notebook/execution/mcp"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
@@ -90,6 +91,7 @@ type Piper struct {
 	serving            servingBundle
 	notebookManager    *notebook.Manager
 	notebookExecutions *execution.Service       // docs/jupyter-mcp-execution.md Phase 1: Kernel session / NotebookExecution domain service
+	notebookMCP        *notebookmcp.Handler     // docs/jupyter-mcp-execution.md Phase 2: read-only MCP endpoint over notebookExecutions; nil unless cfg.MCP.Enabled and notebookExecutions is available
 	nbWorkspace        notebook.WorkspaceReader // reads a notebook volume's live workspace files, for pipeline template snapshotting
 	store              storage.Store            // nil when no artifact store configured
 	credentials        *credential.Store
@@ -338,6 +340,22 @@ func New(cfg Config) (*Piper, error) {
 			Events:    p.events,
 			Limits:    execution.DefaultLimits(),
 		})
+		// docs/jupyter-mcp-execution.md Phase 2. Guarded by both
+		// cfg.MCP.Enabled (an operator must opt in explicitly, default
+		// off — same convention as Integrations.Mlflow.Enabled) and this
+		// same repos.NotebookExecution != nil precondition
+		// notebookExecutions itself needed, since every Phase 2 tool calls
+		// straight into that Service.
+		if cfg.MCP.Enabled {
+			p.notebookMCP = notebookmcp.NewHandler(notebookmcp.Deps{
+				Notebooks:  repos.Notebook,
+				Executions: p.notebookExecutions,
+			}, notebookmcp.Config{
+				AllowedOrigins: cfg.MCP.AllowedOrigins,
+				AllowedHosts:   cfg.MCP.AllowedHosts,
+				SessionTTL:     cfg.MCP.SessionTTL,
+			})
+		}
 	}
 	if repos.AlertRule != nil {
 		p.alertEngine = ialerting.NewEngine(repos.AlertRule, credentialStore)

@@ -175,6 +175,15 @@ func (s *Service) GetPolicy(ctx context.Context, projectID string) (string, erro
 	return s.resolvePolicy(ctx, projectID)
 }
 
+// Limits exposes the configured design doc §11.1 concurrency/size limits —
+// notably InlineOutputBytes and FileReadBytes, which a later MCP phase
+// layer (pkg/notebook/execution/mcp) needs to decide whether a resource
+// read should inline its content or return a piper:// resource link instead
+// (design doc §8.3), without duplicating the limit as a second hardcoded
+// constant that could drift from what this Service was actually configured
+// with.
+func (s *Service) Limits() Limits { return s.scheduler.Limits() }
+
 // SetPolicy sets a project-level policy override. Callers must already have
 // enforced admin role (design doc §9.1: "MCP 정책과 무인 실행 권한 관리" is
 // admin-only) via the REST route's middleware — Service does not re-check

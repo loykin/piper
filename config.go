@@ -79,6 +79,16 @@ type Config struct {
 	// Integrations configures external system export adapters (MLflow
 	// today — docs/mlflow-tracking-adapter.md).
 	Integrations IntegrationsConfig `yaml:"integrations" mapstructure:"integrations"`
+
+	// MCP configures the project-scoped MCP (Model Context Protocol)
+	// Streamable HTTP endpoint (docs/jupyter-mcp-execution.md §8, §15).
+	// Phase 2 scope only: read-only tools/resources over the notebook
+	// execution domain. Top-level (not nested under Notebook) to mirror the
+	// design doc's own §15 YAML layout, where `mcp:` is a sibling of
+	// `notebook_execution:` rather than nested under it — MCP is a
+	// transport surface that happens to expose the notebook execution
+	// domain today, not a notebook-runtime setting.
+	MCP MCPConfig `yaml:"mcp" mapstructure:"mcp"`
 }
 
 // IntegrationsConfig holds server-level operational limits and SSRF policy
@@ -126,6 +136,35 @@ type MlflowIntegrationsConfig struct {
 	// AllowedCIDRs, when non-empty, restricts a literal-IP TrackingURI host
 	// to these ranges.
 	AllowedCIDRs []string `yaml:"allowed_cidrs" mapstructure:"allowed_cidrs"`
+}
+
+// MCPConfig configures the Streamable HTTP MCP server (design doc §8, §15).
+// Default-off, same "an operator must opt in explicitly" convention
+// IntegrationsConfig.Mlflow.Enabled already uses.
+type MCPConfig struct {
+	// Enabled gates whether the /mcp endpoint is registered at all
+	// (member_project.go). Also requires a non-nil NotebookExecution
+	// repository, same precondition p.notebookExecutions itself has — MCP
+	// Phase 2 tools call straight into that Service.
+	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
+	// AllowedOrigins is the DNS-rebinding-defense Origin allowlist (design
+	// doc §8.1). A request with no Origin header (the common case for a
+	// non-browser MCP client) always passes regardless of this list; a
+	// request that does carry an Origin header must match one of these
+	// exactly. Required non-empty when Enabled is true (Validate below) —
+	// design doc §15: "빈 Origin allowlist로 public bind" is rejected,
+	// forcing an operator turning MCP on to make an explicit decision
+	// rather than silently accepting every browser Origin by omission.
+	AllowedOrigins []string `yaml:"allowed_origins" mapstructure:"allowed_origins"`
+	// AllowedHosts, when non-empty, restricts the inbound Host header to an
+	// exact allowlist match. Empty means "accept any Host" — see
+	// pkg/mcp.OriginHostPolicy.AllowedHosts's doc comment for why this
+	// isn't derived automatically from Server.Addr.
+	AllowedHosts []string `yaml:"allowed_hosts" mapstructure:"allowed_hosts"`
+	// SessionTTL bounds how long an issued Mcp-Session-Id stays valid
+	// without use (design doc §8.1/§15). Zero/unset defaults to 30m
+	// (pkg/mcp.NewSessionStore's own default).
+	SessionTTL time.Duration `yaml:"session_ttl" mapstructure:"session_ttl"`
 }
 
 type RuntimeConfig struct {
@@ -351,6 +390,13 @@ func DefaultConfig() Config {
 				PollInterval:          5 * time.Second,
 			},
 		},
+		MCP: MCPConfig{
+			// Default off (design doc §15: "두 기능은 기본 비활성화한다") —
+			// an operator must opt in explicitly, same as Mlflow.Enabled
+			// above.
+			Enabled:    false,
+			SessionTTL: 30 * time.Minute,
+		},
 	}
 }
 
@@ -466,6 +512,13 @@ func (c Config) Validate() error {
 	}
 	if c.Integrations.Mlflow.PollInterval < 0 {
 		return fmt.Errorf("integrations.mlflow.poll_interval must not be negative")
+	}
+
+	if c.MCP.Enabled && len(c.MCP.AllowedOrigins) == 0 {
+		return fmt.Errorf("mcp.allowed_origins must not be empty when mcp.enabled is true")
+	}
+	if c.MCP.SessionTTL < 0 {
+		return fmt.Errorf("mcp.session_ttl must not be negative")
 	}
 
 	return nil

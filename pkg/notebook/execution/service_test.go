@@ -282,13 +282,14 @@ func (r *fakeNotebookRepo) CountHistory(context.Context, string) (int, error) { 
 type fakeGateway struct {
 	mu             sync.Mutex
 	docs           map[string]*jupyter.Notebook
+	files          map[string]*FileContent
 	kernelCounter  int
 	interruptCalls int
 	executeFn      func(ctx context.Context, code string, sink jupyter.OutputSink) (*jupyter.ExecuteResult, error)
 }
 
 func newFakeGateway() *fakeGateway {
-	return &fakeGateway{docs: map[string]*jupyter.Notebook{}}
+	return &fakeGateway{docs: map[string]*jupyter.Notebook{}, files: map[string]*FileContent{}}
 }
 
 func (g *fakeGateway) putDoc(path string, doc *jupyter.Notebook) {
@@ -324,6 +325,17 @@ func (g *fakeGateway) ReadNotebook(_ context.Context, _ *notebook.NotebookServer
 func (g *fakeGateway) SaveNotebook(_ context.Context, _ *notebook.NotebookServer, path string, doc *jupyter.Notebook) error {
 	g.putDoc(path, doc)
 	return nil
+}
+
+func (g *fakeGateway) ReadFile(_ context.Context, _ *notebook.NotebookServer, path string) (*FileContent, error) {
+	g.mu.Lock()
+	fc, ok := g.files[path]
+	g.mu.Unlock()
+	if !ok {
+		return nil, newErr(ErrCodePathInvalid, false, "not found: %s", path)
+	}
+	cp := *fc
+	return &cp, nil
 }
 
 func (g *fakeGateway) CreateKernelSession(_ context.Context, _ *notebook.NotebookServer, _, kernelName string) (*KernelSessionInfo, error) {

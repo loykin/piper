@@ -42,6 +42,33 @@ func (s *Service) ReadDocument(ctx context.Context, projectID, notebookName, pat
 	return doc, hash, nil
 }
 
+// ReadFile reads a non-notebook file's raw content, enforcing the
+// notebook_execution.file_read_bytes size limit — the generic-file
+// counterpart to ReadDocument, added for the MCP Phase 2
+// piper://.../files/{path} resource (design doc §7.1/§8.3; see
+// gateway.go's FileContent doc comment for why this didn't already exist).
+func (s *Service) ReadFile(ctx context.Context, projectID, notebookName, path string) (*FileContent, error) {
+	clean, err := notebook.CleanWorkspacePath(path)
+	if err != nil {
+		return nil, newErr(ErrCodePathInvalid, false, "invalid path: %v", err)
+	}
+	if clean == "" {
+		return nil, newErr(ErrCodePathInvalid, false, "path is required")
+	}
+	server, err := s.getRunningServer(ctx, projectID, notebookName)
+	if err != nil {
+		return nil, err
+	}
+	fc, err := s.deps.Gateway.ReadFile(ctx, server, clean)
+	if err != nil {
+		return nil, err
+	}
+	if fc.Size > int64(s.scheduler.Limits().FileReadBytes) {
+		return nil, newErr(ErrCodeOutputTooLarge, false, "file exceeds the file_read_bytes limit")
+	}
+	return fc, nil
+}
+
 // WriteDocument creates or replaces a .ipynb document (design doc §7.1,
 // member role). When baseHash is non-empty and the document already
 // exists, the write is rejected with ErrCodeContentConflict unless

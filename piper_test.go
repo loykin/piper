@@ -102,6 +102,12 @@ func newTestPiper(t *testing.T, cfg Config) *Piper {
 func TestExternalStatsBackendReceivesRuntimeWritesThroughDurableIngress(t *testing.T) {
 	bulk := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Field mappings are applied via an index template unconditionally
+		// on Open, independent of ManageRetention — see openElasticsearch.
+		if strings.HasPrefix(r.URL.Path, "/_index_template/") {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
 		if r.URL.Path != "/_bulk" {
 			http.NotFound(w, r)
 			return

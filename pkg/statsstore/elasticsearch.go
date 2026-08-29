@@ -28,34 +28,40 @@ func openElasticsearch(rawURL string, credential map[string]string, logRetention
 	}
 	h.base.Path = ""
 	b := &elasticsearchBackend{http: h, logsIndex: base + "-logs", metricsIndex: base + "-metrics"}
-	if manage {
-		for i, index := range []string{b.logsIndex, b.metricsIndex} {
-			retention := []time.Duration{logRetention, metricRetention}[i]
-			properties := map[string]any{
-				"id": map[string]string{"type": "long"}, "event_id": map[string]string{"type": "keyword"},
-				"project_id": map[string]string{"type": "keyword"}, "run_id": map[string]string{"type": "keyword"},
-				"step_name": map[string]string{"type": "keyword"}, "ts": map[string]string{"type": "date"},
-			}
-			if i == 0 {
-				properties["stream"] = map[string]string{"type": "keyword"}
-				properties["line"] = map[string]string{"type": "text"}
-			} else {
-				properties["key"] = map[string]string{"type": "keyword"}
-				properties["value"] = map[string]string{"type": "double"}
-			}
-			mapping := map[string]any{"mappings": map[string]any{"properties": properties}}
-			if retention > 0 {
-				policy := index + "-retention"
-				policyBody, _ := jsonBody(map[string]any{"policy": map[string]any{"phases": map[string]any{"delete": map[string]any{"min_age": fmt.Sprintf("%ds", int64(retention.Seconds())), "actions": map[string]any{"delete": map[string]any{}}}}}})
-				if _, err := h.request(context.Background(), http.MethodPut, "_ilm/policy/"+policy, nil, policyBody, "application/json"); err != nil {
-					return nil, err
-				}
-				mapping["settings"] = map[string]any{"index.lifecycle.name": policy}
-			}
-			templateBody, _ := jsonBody(map[string]any{"index_patterns": []string{index + "*"}, "template": mapping})
-			if _, err := h.request(context.Background(), http.MethodPut, "_index_template/"+index+"-template", nil, templateBody, "application/json"); err != nil {
+	// The index template (field mappings) is applied unconditionally, not
+	// just when manage (ManageRetention) is set. Without it, Elasticsearch's
+	// dynamic mapping turns project_id/run_id/step_name/stream into analyzed
+	// "text" fields instead of "keyword" — the standard analyzer then splits
+	// a hyphenated run_id (a UUID) into multiple tokens, so every `term`/
+	// `range` filter QueryLogs/QueryMetrics relies on silently stops
+	// matching, even though AppendLogs/AppendMetrics keep succeeding. Only
+	// the ILM (retention) policy itself stays conditional on manage.
+	for i, index := range []string{b.logsIndex, b.metricsIndex} {
+		retention := []time.Duration{logRetention, metricRetention}[i]
+		properties := map[string]any{
+			"id": map[string]string{"type": "long"}, "event_id": map[string]string{"type": "keyword"},
+			"project_id": map[string]string{"type": "keyword"}, "run_id": map[string]string{"type": "keyword"},
+			"step_name": map[string]string{"type": "keyword"}, "ts": map[string]string{"type": "date"},
+		}
+		if i == 0 {
+			properties["stream"] = map[string]string{"type": "keyword"}
+			properties["line"] = map[string]string{"type": "text"}
+		} else {
+			properties["key"] = map[string]string{"type": "keyword"}
+			properties["value"] = map[string]string{"type": "double"}
+		}
+		mapping := map[string]any{"mappings": map[string]any{"properties": properties}}
+		if manage && retention > 0 {
+			policy := index + "-retention"
+			policyBody, _ := jsonBody(map[string]any{"policy": map[string]any{"phases": map[string]any{"delete": map[string]any{"min_age": fmt.Sprintf("%ds", int64(retention.Seconds())), "actions": map[string]any{"delete": map[string]any{}}}}}})
+			if _, err := h.request(context.Background(), http.MethodPut, "_ilm/policy/"+policy, nil, policyBody, "application/json"); err != nil {
 				return nil, err
 			}
+			mapping["settings"] = map[string]any{"index.lifecycle.name": policy}
+		}
+		templateBody, _ := jsonBody(map[string]any{"index_patterns": []string{index + "*"}, "template": mapping})
+		if _, err := h.request(context.Background(), http.MethodPut, "_index_template/"+index+"-template", nil, templateBody, "application/json"); err != nil {
+			return nil, err
 		}
 	}
 	return b, nil

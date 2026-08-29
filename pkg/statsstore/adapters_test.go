@@ -39,6 +39,10 @@ func TestElasticsearchAdapterBulkSearchAndCredential(t *testing.T) {
 			_, _ = w.Write([]byte(`{"errors":false}`))
 		case strings.HasSuffix(r.URL.Path, "/_search"):
 			_, _ = w.Write([]byte(`{"hits":{"hits":[{"_source":{"id":7,"event_id":"e7","project_id":"p","run_id":"r","step_name":"s","ts":"2026-08-27T00:00:00Z","stream":"stdout","line":"hello"}}]}}`))
+		case strings.HasPrefix(r.URL.Path, "/_index_template/"):
+			// Field mappings are applied unconditionally on Open, regardless
+			// of manage — see openElasticsearch.
+			_, _ = w.Write([]byte(`{}`))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -81,6 +85,9 @@ func TestClickHouseAdapterUsesJSONEachRowAndBoundedQuery(t *testing.T) {
 				t.Errorf("query=%s", q)
 			}
 			_, _ = w.Write([]byte(`{"data":[{"id":1,"event_id":"m1","project_id":"p","run_id":"r","step_name":"s","key":"loss","value":0.5,"ts":"2026-08-27T00:00:00Z"}]}`))
+		} else if strings.HasPrefix(q, "CREATE") {
+			// Database/table creation always runs on Open, regardless of
+			// manage — see openClickHouse.
 		} else {
 			t.Errorf("unexpected query=%s", q)
 		}
@@ -167,7 +174,7 @@ func TestManagedRetentionConfiguresNativePolicies(t *testing.T) {
 			t.Fatal(err)
 		}
 		joined := strings.Join(queries, " ")
-		if !strings.Contains(joined, "TTL ts + INTERVAL 3600 SECOND") || !strings.Contains(joined, "TTL ts + INTERVAL 7200 SECOND") {
+		if !strings.Contains(joined, "TTL toDateTime(ts) + INTERVAL 3600 SECOND") || !strings.Contains(joined, "TTL toDateTime(ts) + INTERVAL 7200 SECOND") {
 			t.Fatalf("queries=%v", queries)
 		}
 	})
@@ -192,6 +199,68 @@ func TestManagedRetentionConfiguresNativePolicies(t *testing.T) {
 		}
 		if !strings.Contains(patched, `"everySeconds":10800`) {
 			t.Fatalf("patch=%s", patched)
+		}
+	})
+}
+
+// TestSchemaSetupIsUnconditionalOnManage guards against a real live-testing
+// regression: with manage (ManageRetention) false, Elasticsearch never
+// applied its index template, so dynamic mapping turned project_id/run_id/
+// step_name into analyzed "text" fields — the standard analyzer then splits
+// a hyphenated UUID run_id into multiple tokens, silently breaking every
+// term/range filter QueryLogs/QueryMetrics relies on, even though writes
+// kept succeeding. Symmetrically, ClickHouse never ran CREATE
+// DATABASE/TABLE, so AppendLogs/AppendMetrics failed outright with "Database
+// ... does not exist". Both must set up schema/mappings unconditionally and
+// gate only the retention policy (ILM policy / TTL clause) on manage.
+func TestSchemaSetupIsUnconditionalOnManage(t *testing.T) {
+	t.Run("elasticsearch-mapping-without-manage", func(t *testing.T) {
+		var sawTemplate bool
+		var templateBody string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/_ilm/policy/") {
+				t.Errorf("ILM policy must not be created when manage=false, got %s", r.URL.Path)
+			}
+			if strings.HasPrefix(r.URL.Path, "/_index_template/") {
+				sawTemplate = true
+				data, _ := io.ReadAll(r.Body)
+				templateBody = string(data)
+			}
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer server.Close()
+		_, err := openElasticsearch(backendURL(server.URL, "elasticsearch", "piper"), nil, 0, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sawTemplate {
+			t.Fatal("index template was not applied even though manage=false")
+		}
+		if !strings.Contains(templateBody, `"project_id":{"type":"keyword"}`) || !strings.Contains(templateBody, `"run_id":{"type":"keyword"}`) {
+			t.Fatalf("template body missing keyword mappings: %s", templateBody)
+		}
+	})
+	t.Run("clickhouse-tables-without-manage", func(t *testing.T) {
+		var sawCreateTable, sawTTL bool
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query().Get("query")
+			if strings.HasPrefix(q, "CREATE TABLE") {
+				sawCreateTable = true
+			}
+			if strings.Contains(q, "TTL") {
+				sawTTL = true
+			}
+		}))
+		defer server.Close()
+		_, err := openClickHouse(backendURL(server.URL, "clickhouse", "db"), nil, time.Hour, time.Hour, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sawCreateTable {
+			t.Fatal("tables were not created even though manage=false")
+		}
+		if sawTTL {
+			t.Fatal("TTL clause must not be applied when manage=false")
 		}
 	})
 }

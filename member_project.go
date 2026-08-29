@@ -127,6 +127,15 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 	if p.notebookExecutions != nil {
 		execution.NewHandler(p.notebookExecutions).RegisterRoutes(projectAPI)
 	}
+	// docs/jupyter-mcp-execution.md Phase 2 — read-only MCP endpoint
+	// (§8). Registered the same way as the execution REST handler right
+	// above, so it gets the same Home relay / Local-Member-in-process
+	// treatment and the same project.Require(...ProjectRoleViewer) floor
+	// already applied by the caller in serve.go. nil unless cfg.MCP.Enabled
+	// (piper.go's New only constructs it in that case).
+	if p.notebookMCP != nil {
+		p.notebookMCP.RegisterRoutes(projectAPI)
+	}
 
 	viewerHandler := viewer.NewHandler(viewerMgr, p.repos.Viewer)
 	viewerHandler.RegisterRoutes(projectAPI)

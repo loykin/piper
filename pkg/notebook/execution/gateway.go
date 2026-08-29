@@ -21,6 +21,25 @@ type ContentEntry struct {
 	LastModified time.Time
 }
 
+// FileContent is a non-notebook file's content as returned by
+// NotebookGateway.ReadFile — added for the MCP Phase 2
+// piper://.../notebooks/{name}/files/{path} resource (design doc §8.3),
+// which needs raw file bytes rather than a parsed ipynb document.
+// ReadNotebook/ListContents cover the notebook-document and
+// directory-metadata cases respectively; this fills the remaining "generic
+// file" gap design doc §7.1 calls out ("일반 파일 읽기는 별도 allowlist와 크기
+// 제한을 둔다") but Phase 1 didn't yet implement.
+type FileContent struct {
+	Path     string
+	MimeType string
+	// Format is Jupyter's own encoding tag for Content: "text" or "base64".
+	// Service.ReadFile passes this straight through so callers can tell
+	// which one they got without re-guessing from content bytes.
+	Format  string
+	Content string
+	Size    int64
+}
+
 // KernelSessionInfo is what NotebookGateway returns after creating or
 // looking up a Jupyter-native session — the Jupyter-side identifiers Piper
 // stores internally on KernelSession but never returns to a caller.
@@ -48,6 +67,9 @@ type NotebookGateway interface {
 	// hash of its canonical encoding (design doc §5.3/§6.1).
 	ReadNotebook(ctx context.Context, server *notebook.NotebookServer, path string) (*jupyter.Notebook, string, error)
 	SaveNotebook(ctx context.Context, server *notebook.NotebookServer, path string, doc *jupyter.Notebook) error
+	// ReadFile returns a non-notebook file's raw content — see FileContent's
+	// doc comment.
+	ReadFile(ctx context.Context, server *notebook.NotebookServer, path string) (*FileContent, error)
 
 	// CreateKernelSession starts a new Jupyter session+kernel bound to
 	// notebookPath. piperSessionID becomes the Jupyter messaging-protocol
@@ -138,6 +160,29 @@ func (g gatewayImpl) ReadNotebook(ctx context.Context, server *notebook.Notebook
 		return nil, "", fmt.Errorf("execution: %w", err)
 	}
 	return doc, doc.ContentHash(), nil
+}
+
+func (g gatewayImpl) ReadFile(ctx context.Context, server *notebook.NotebookServer, path string) (*FileContent, error) {
+	model, err := g.client(server).GetContents(ctx, path)
+	if err != nil {
+		return nil, mapGatewayErr("read file", err)
+	}
+	if model.Type != "file" {
+		return nil, newErr(ErrCodePathInvalid, false, "path is not a file")
+	}
+	var content string
+	if len(model.Content) > 0 {
+		if err := json.Unmarshal(model.Content, &content); err != nil {
+			return nil, fmt.Errorf("execution: decode file content: %w", err)
+		}
+	}
+	return &FileContent{
+		Path:     model.Path,
+		MimeType: model.MimeType,
+		Format:   model.Format,
+		Content:  content,
+		Size:     sizeOf(model),
+	}, nil
 }
 
 func (g gatewayImpl) SaveNotebook(ctx context.Context, server *notebook.NotebookServer, path string, doc *jupyter.Notebook) error {

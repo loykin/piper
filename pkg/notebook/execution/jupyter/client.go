@@ -278,6 +278,7 @@ type ContentModel struct {
 	LastModified string          `json:"last_modified,omitempty"`
 	Created      string          `json:"created,omitempty"`
 	Format       string          `json:"format,omitempty"`
+	MimeType     string          `json:"mimetype,omitempty"`
 	Content      json.RawMessage `json:"content,omitempty"`
 	Writable     bool            `json:"writable,omitempty"`
 }

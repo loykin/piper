@@ -401,7 +401,14 @@ func relayRemoteProject(client projectclient.Client, resolveRef func(string) pro
 			return
 		}
 		headers := make(http.Header)
-		for _, name := range []string{"Accept", "Content-Type", "If-Match", "If-None-Match", "Idempotency-Key", "Range"} {
+		// MCP-Protocol-Version, Mcp-Session-Id, and Origin are forwarded so
+		// docs/jupyter-mcp-execution.md §12's MCP endpoint works the same
+		// way across a remote Member as it does for a Local Member's
+		// in-process path (which never goes through this relay at all,
+		// since the request/response cycle is shared in-process — see this
+		// function's early c.Next() branch above): "MCP session ID는
+		// Member가 발급하고 Home은 opaque header로 전달한다".
+		for _, name := range []string{"Accept", "Content-Type", "If-Match", "If-None-Match", "Idempotency-Key", "Range", "MCP-Protocol-Version", "Mcp-Session-Id", "Origin"} {
 			if values := c.Request.Header.Values(name); len(values) > 0 {
 				headers[name] = append([]string(nil), values...)
 			}
@@ -432,7 +439,7 @@ func relayRemoteProject(client projectclient.Client, resolveRef func(string) pro
 			return
 		}
 		responseHeader := http.Header(resp.Header)
-		for _, name := range []string{"Cache-Control", "Content-Disposition", "Content-Type", "ETag", "Last-Modified", "Location", "X-Total-Count"} {
+		for _, name := range []string{"Cache-Control", "Content-Disposition", "Content-Type", "ETag", "Last-Modified", "Location", "X-Total-Count", "Mcp-Session-Id"} {
 			for _, value := range responseHeader.Values(name) {
 				c.Writer.Header().Add(name, value)
 			}

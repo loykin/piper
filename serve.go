@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -305,7 +306,7 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
-	r.GET("/metrics", p.metricsAuth(), p.metricsHandler)
+	r.GET("/metrics", p.metricsAuth(), p.newMetricsHandler())
 	r.GET("/events", p.authenticateUser(), p.eventsHandler) // filtered by project_id param; see eventsHandler
 
 	// SPA — served under /ui/; root redirects for convenience
@@ -730,39 +731,99 @@ func (p *Piper) BackfillSchedule(ctx context.Context, id string, from, to time.T
 	return p.runs.BackfillSchedule(ctx, id, from, to)
 }
 
+// metricsCacheTTL bounds how long piperCollector.Collect reuses a
+// previously computed run-status/duration snapshot before it issues a fresh
+// ListRunsAcrossProjects query. ListRunsAcrossProjects does an unfiltered
+// fetch of every run across every project, so without this cache Prometheus
+// would trigger that full scan on every single scrape (typically every
+// 15-30s) for the life of the server, and any burst of near-simultaneous
+// requests (multiple scrapers/retries, or even promhttp's own Register-time
+// Describe-by-Collect call racing the Gather-time Collect call within one
+// request) would each trigger their own copy of it.
+//
+// 12s sits below a typical scrape interval's low end (15s), so a single
+// slow scrape is never served a snapshot that's stale for a full interval,
+// while still being long enough to absorb bursts of near-simultaneous
+// requests landing close together.
+const metricsCacheTTL = 12 * time.Second
+
+// runMetricsSnapshot holds the pre-computed values piperCollector.Collect
+// emits as piper_runs_total / piper_run_duration_seconds. Kept separate
+// from the prometheus.Metric plumbing so it can be cached and replayed
+// as-is by runSnapshot.
+type runMetricsSnapshot struct {
+	counts               map[string]int
+	totalDurationSeconds float64
+	completed            int
+}
+
 type piperCollector struct {
 	p *Piper
+
+	// mu guards cached/cachedAt below. prometheus.Collector.Collect must be
+	// safe for concurrent calls (Prometheus can scrape concurrently, and a
+	// single request already calls Collect twice — once via Register's
+	// Describe-by-Collect, once via the real Gather), so the cache
+	// read/refresh below is a critical section rather than a bare shared
+	// variable.
+	mu       sync.Mutex
+	cached   runMetricsSnapshot
+	cachedAt time.Time
 }
 
 func (c *piperCollector) Describe(ch chan<- *prometheus.Desc) {
 	prometheus.DescribeByCollect(c, ch)
 }
 
+// runSnapshot returns the cached run-status/duration snapshot, refreshing it
+// via ListRunsAcrossProjects only when the cache is empty or older than
+// metricsCacheTTL. A caller that arrives while a refresh is already in
+// flight blocks on mu and then reuses whatever that refresh produced, so a
+// burst of concurrent Collect calls still only issues one query.
+func (c *piperCollector) runSnapshot(ctx context.Context) (runMetricsSnapshot, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if time.Since(c.cachedAt) < metricsCacheTTL {
+		return c.cached, nil
+	}
+
+	runs, err := c.p.runs.ListRunsAcrossProjects(ctx, run.RunFilter{})
+	if err != nil {
+		// Leave cached/cachedAt untouched: cachedAt is already stale (that's
+		// why we're here), so the next Collect call retries immediately
+		// instead of being stuck on a failed refresh.
+		return runMetricsSnapshot{}, err
+	}
+
+	snap := runMetricsSnapshot{counts: map[string]int{}}
+	for _, item := range runs {
+		snap.counts[item.Status]++
+		if item.EndedAt != nil {
+			snap.totalDurationSeconds += item.EndedAt.Sub(item.StartedAt).Seconds()
+			snap.completed++
+		}
+	}
+	c.cached = snap
+	c.cachedAt = time.Now()
+	return snap, nil
+}
+
 func (c *piperCollector) Collect(ch chan<- prometheus.Metric) {
-	runs, err := c.p.runs.ListRunsAcrossProjects(context.Background(), run.RunFilter{})
+	snap, err := c.runSnapshot(context.Background())
 	if err != nil {
 		slog.Error("collect piper metrics", "err", err)
 		return
 	}
-	counts := map[string]int{}
-	var totalDurationSeconds float64
-	var completed int
-	for _, item := range runs {
-		counts[item.Status]++
-		if item.EndedAt != nil {
-			totalDurationSeconds += item.EndedAt.Sub(item.StartedAt).Seconds()
-			completed++
-		}
-	}
 	runDesc := prometheus.NewDesc("piper_runs_total", "Stored Piper runs by status.", []string{"status"}, nil)
-	for runStatus, count := range counts {
+	for runStatus, count := range snap.counts {
 		ch <- prometheus.MustNewConstMetric(runDesc, prometheus.GaugeValue, float64(count), runStatus)
 	}
 	durationDesc := prometheus.NewDesc("piper_run_duration_seconds", "Completed Piper run duration.", nil, nil)
 	ch <- prometheus.MustNewConstSummary(
 		durationDesc,
-		uint64(completed),
-		totalDurationSeconds,
+		uint64(snap.completed),
+		snap.totalDurationSeconds,
 		map[float64]float64{},
 	)
 	stats := c.p.queue.Stats()
@@ -773,14 +834,24 @@ func (c *piperCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(taskDesc, prometheus.GaugeValue, float64(stats.Running), "running")
 }
 
-func (p *Piper) metricsHandler(c *gin.Context) {
-	registry := prometheus.NewPedanticRegistry()
-	if err := registry.Register(&piperCollector{p: p}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+// newMetricsHandler returns a gin.HandlerFunc bound to one long-lived
+// piperCollector, rather than constructing a fresh collector per request as
+// before — that would reset runSnapshot's cache on every scrape and defeat
+// its purpose. The collector's lifetime is tied to the router build (see
+// newRouterWithFederation), matching how the router itself is normally
+// built once and reused for the life of the server (p.Serve), or once per
+// embedder call to p.Handler/p.HandlerContext.
+func (p *Piper) newMetricsHandler() gin.HandlerFunc {
+	collector := &piperCollector{p: p}
+	return func(c *gin.Context) {
+		registry := prometheus.NewPedanticRegistry()
+		if err := registry.Register(collector); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		gatherers := prometheus.Gatherers{prometheus.DefaultGatherer, registry}
+		promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}).ServeHTTP(c.Writer, c.Request)
 	}
-	gatherers := prometheus.Gatherers{prometheus.DefaultGatherer, registry}
-	promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}).ServeHTTP(c.Writer, c.Request)
 }
 
 // ── piperRunHooks — bridges Hooks into run.RunHooks ──────────────────────────

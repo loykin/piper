@@ -3,8 +3,10 @@ package piper
 import (
 	"context"
 	"errors"
-	"strings"
+	"os"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/project"
@@ -36,52 +38,19 @@ func TestProjectStorageKeyRequiresProject(t *testing.T) {
 	}
 }
 
-// TestUpdateStorageSettings_RejectsConfigThatWouldFailValidationOnRestart is
-// the regression for the adversarial-review finding that UpdateStorageSettings
-// wrote a candidate config straight to storage.yaml without checking it
-// against Config.Validate — so a Docker/K8s installation using the built-in
-// file store (which requires runtime.docker.workload_url /
-// runtime.k8s.workload_url) could save a File-backend config through the UI,
-// pass Test Connection (it only checks the store is reachable, not the whole
-// Config), and only discover the mistake on the *next restart*, when the
-// server refuses to start at all. Constructed as a bare struct literal
-// (bypassing New()) since this only needs p.cfg — not a live runtime.
-func TestUpdateStorageSettings_RejectsConfigThatWouldFailValidationOnRestart(t *testing.T) {
-	p := &Piper{
-		cfg: Config{
-			OutputDir: t.TempDir(),
-			Auth:      AuthConfig{Trusted: true},
-			Runtime: RuntimeConfig{
-				Type:   RuntimeDocker,
-				Docker: DockerRuntimeConfig{Concurrency: 4}, // WorkloadURL deliberately unset
-			},
-		},
-	}
-
-	// The built-in file store (empty URL) on Docker with no workload_url
-	// must be rejected before it's ever written.
-	_, err := p.UpdateStorageSettings(StorageConfig{})
-	if err == nil {
-		t.Fatal("UpdateStorageSettings should have rejected a file-backend config on Docker with no workload_url")
-	}
-	if !strings.Contains(err.Error(), "workload_url") {
-		t.Fatalf("UpdateStorageSettings error = %v, want it to mention workload_url", err)
-	}
-	if _, exists, readErr := p.readStorageSettings(); readErr != nil || exists {
-		t.Fatalf("rejected config must not be persisted: exists=%v, err=%v", exists, readErr)
-	}
-
-	// The same Docker installation switching to S3 instead needs no
-	// workload_url and must be accepted and persisted.
-	view, err := p.UpdateStorageSettings(StorageConfig{URL: "s3://my-bucket"})
+// writeStorageSettingsForTest writes storage.yaml directly to p's settings
+// path, standing in for a human editing the file by hand — the only way a
+// pending (not-yet-applied) storage config can exist now that the live
+// PUT /storage/settings write path has been removed (see storage_admin.go's
+// StorageSettingsView doc comment). Fails the test on any I/O error.
+func writeStorageSettingsForTest(t *testing.T, p *Piper, cfg StorageConfig) {
+	t.Helper()
+	raw, err := yaml.Marshal(storageSettingsFile{Storage: cfg})
 	if err != nil {
-		t.Fatalf("UpdateStorageSettings with s3 backend should succeed: %v", err)
+		t.Fatalf("marshal storage settings: %v", err)
 	}
-	if view.Config.URL != "s3://my-bucket" {
-		t.Fatalf("StorageSettingsView.Config.URL = %q, want s3://my-bucket", view.Config.URL)
-	}
-	if _, exists, readErr := p.readStorageSettings(); readErr != nil || !exists {
-		t.Fatalf("accepted config should be persisted: exists=%v, err=%v", exists, readErr)
+	if err := os.WriteFile(p.storageSettingsPath(), raw, 0o600); err != nil {
+		t.Fatalf("write storage settings: %v", err)
 	}
 }
 
@@ -131,10 +100,13 @@ func TestCredentialDelete_RefusedWhileReferencedByStorage(t *testing.T) {
 }
 
 // TestCredentialDelete_RefusedWhileReferencedByPendingStorageChange covers
-// the other half: UpdateStorageSettings saved a *pending* (not yet applied,
-// server not restarted) config referencing a credential the running
-// process itself didn't boot with — deleting it would still break the next
-// restart.
+// the other half: a *pending* (not yet applied, server not restarted)
+// storage.yaml on disk references a credential the running process itself
+// didn't boot with — deleting it would still break the next restart. Since
+// the live PUT /storage/settings write path is gone (see storage_admin.go's
+// StorageSettingsView doc comment), the only way such a pending file exists
+// now is a human editing storage.yaml directly — writeStorageSettingsForTest
+// stands in for that edit.
 func TestCredentialDelete_RefusedWhileReferencedByPendingStorageChange(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}})
 	ctx := context.Background()
@@ -145,9 +117,7 @@ func TestCredentialDelete_RefusedWhileReferencedByPendingStorageChange(t *testin
 	}); err != nil {
 		t.Fatalf("create credential: %v", err)
 	}
-	if _, err := p.UpdateStorageSettings(StorageConfig{URL: "s3://other-bucket", CredentialRef: "pending-cred"}); err != nil {
-		t.Fatalf("UpdateStorageSettings: %v", err)
-	}
+	writeStorageSettingsForTest(t, p, StorageConfig{URL: "s3://other-bucket", CredentialRef: "pending-cred"})
 
 	if err := p.credentials.Delete(ctx, project.SystemID, "pending-cred"); !errors.Is(err, credential.ErrInUse) {
 		t.Fatalf("Delete() error = %v, want ErrInUse — a pending storage config change references it", err)

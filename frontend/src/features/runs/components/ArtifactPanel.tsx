@@ -45,11 +45,12 @@ function OpenButton({ runId, step, art }: OpenButtonProps) {
 }
 
 interface ArtifactPanelProps {
+  projectId: string
   runId: string
   artifacts: StepArtifacts[]
 }
 
-export function ArtifactPanel({ runId, artifacts }: ArtifactPanelProps) {
+export function ArtifactPanel({ projectId, runId, artifacts }: ArtifactPanelProps) {
   const [preview, setPreview] = useState<{ title: string; text: string } | null>(null)
 
   if (artifacts.length === 0) return null
@@ -59,7 +60,7 @@ export function ArtifactPanel({ runId, artifacts }: ArtifactPanelProps) {
       alert('Preview is limited to files up to 128 KB.')
       return
     }
-    const res = await fetch(artifactDownloadURL(runId, step, art, file.path))
+    const res = await fetch(artifactDownloadURL({ projectId, runId, step, artifact: art, filePath: file.path }))
     if (!res.ok) {
       alert(`Preview failed: ${res.status}`)
       return
@@ -88,7 +89,7 @@ export function ArtifactPanel({ runId, artifacts }: ArtifactPanelProps) {
                         <span className="text-xs text-muted-foreground">{formatFileSize(f.size)}</span>
                         <span className="text-xs text-muted-foreground">{new Date(f.modified_at).toLocaleString()}</span>
                         <a
-                          href={artifactDownloadURL(runId, sa.step, art.name, f.path)}
+                          href={artifactDownloadURL({ projectId, runId, step: sa.step, artifact: art.name, filePath: f.path })}
                           download
                           className="text-xs text-primary hover:text-primary/80"
                         >

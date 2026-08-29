@@ -29,7 +29,7 @@ function ServingHistoryPageInner() {
 
   return (
     <DataBodyTemplate
-      title="History"
+      title="Serving History"
       description="Past ModelService deployments."
     >
       <DataBodyTemplate.Body>

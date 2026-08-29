@@ -20,6 +20,7 @@ import RunDAG from '@/shared/components/RunDAG'
 import { StepList } from '@/features/runs/components/StepList'
 import { LogViewer } from '@/features/runs/components/LogViewer'
 import { ArtifactPanel } from '@/features/runs/components/ArtifactPanel'
+import { MLflowRunLinks } from '@/features/mlflow/components/MLflowRunLinks'
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -120,7 +121,11 @@ export default function RunDetailPage() {
       </DetailBodyTemplate.Section>
 
       <DetailBodyTemplate.Section>
-        <ArtifactPanel runId={id!} artifacts={allArtifacts} />
+        <ArtifactPanel projectId={projectId} runId={id!} artifacts={allArtifacts} />
+      </DetailBodyTemplate.Section>
+
+      <DetailBodyTemplate.Section>
+        <MLflowRunLinks runId={id!} />
       </DetailBodyTemplate.Section>
 
       <DetailBodyTemplate.Section>

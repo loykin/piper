@@ -115,7 +115,16 @@ func NewService(bgCtx context.Context, deps Deps) *Service {
 	if deps.PolicyDefault == "" {
 		deps.PolicyDefault = PolicyApprovalRequired
 	}
-	return &Service{deps: deps, scheduler: NewScheduler(deps.Limits), bgCtx: bgCtx}
+	s := &Service{deps: deps, scheduler: NewScheduler(deps.Limits), bgCtx: bgCtx}
+	// context.Background has a nil Done channel and is commonly used by
+	// embedders/tests that do not own a lifecycle. Piper passes its
+	// cancellable process context, so only the real long-lived service starts
+	// the idle-kernel reaper.
+	if bgCtx != nil && bgCtx.Done() != nil {
+		s.wg.Add(1)
+		go s.reapIdleKernels()
+	}
+	return s
 }
 
 // Shutdown waits (up to ctx's deadline) for in-flight execution goroutines
@@ -127,6 +136,66 @@ func (s *Service) Shutdown(ctx context.Context) {
 	select {
 	case <-done:
 	case <-ctx.Done():
+	}
+}
+
+func (s *Service) reapIdleKernels() {
+	defer s.wg.Done()
+	ttl := s.scheduler.Limits().KernelIdleTTL
+	interval := ttl / 2
+	if interval > time.Minute {
+		interval = time.Minute
+	}
+	if interval < time.Second {
+		interval = time.Second
+	}
+	s.sweepIdleKernels(s.bgCtx)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.bgCtx.Done():
+			return
+		case <-ticker.C:
+			s.sweepIdleKernels(s.bgCtx)
+		}
+	}
+}
+
+func (s *Service) sweepIdleKernels(ctx context.Context) {
+	cutoff := s.deps.Now().Add(-s.scheduler.Limits().KernelIdleTTL)
+	sessions, err := s.deps.Repo.ListStaleKernelSessions(ctx, cutoff)
+	if err != nil {
+		slog.Warn("execution: list stale kernel sessions failed", "err", err)
+		return
+	}
+	for _, ks := range sessions {
+		// A busy kernel can have an old activity timestamp while a long cell is
+		// still executing. It must never be reaped until the run returns it to
+		// idle and refreshes LastActivityAt.
+		if ks.Status != KernelStatusIdle {
+			continue
+		}
+		if server, serr := s.getRunningServer(ctx, ks.ProjectID, ks.NotebookName); serr == nil {
+			if err := s.deps.Gateway.DeleteKernelSession(ctx, server, ks.JupyterSessionID); err != nil {
+				slog.Warn("execution: delete idle jupyter session failed", "kernel_session_id", ks.ID, "err", err)
+				continue
+			}
+		}
+		now := s.deps.Now()
+		ks.Status = KernelStatusClosed
+		ks.ClosedAt = &now
+		ks.LastActivityAt = now
+		if err := s.deps.Repo.UpdateKernelSession(ctx, ks); err != nil {
+			slog.Warn("execution: persist idle kernel close failed", "kernel_session_id", ks.ID, "err", err)
+			continue
+		}
+		s.scheduler.ReleaseKernel(ks.ID)
+		s.publish(ks.ProjectID, "notebook.kernel.closed", map[string]any{
+			"kernel_session_id": ks.ID,
+			"notebook":          ks.NotebookName,
+			"reason":            "idle_timeout",
+		})
 	}
 }
 
@@ -286,6 +355,24 @@ func (s *Service) GetKernelSession(ctx context.Context, projectID, id string) (*
 	}
 	if ks == nil {
 		return nil, ErrNotFound
+	}
+	return ks, nil
+}
+
+// GetKernelSessionForActor resolves a session through its full nested-resource
+// identity and applies the same ownership rule used by the list endpoint.
+// Returning not-found for a mismatched notebook avoids leaking that an ID
+// belongs to a different parent resource.
+func (s *Service) GetKernelSessionForActor(ctx context.Context, actor Actor, projectID, notebookName, id string) (*KernelSession, error) {
+	ks, err := s.GetKernelSession(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	if ks.NotebookName != notebookName {
+		return nil, ErrNotFound
+	}
+	if err := s.checkOwnership(actor, ks.CreatedBy); err != nil {
+		return nil, err
 	}
 	return ks, nil
 }
@@ -569,6 +656,20 @@ func (s *Service) GetExecution(ctx context.Context, projectID, id string) (*Note
 		return nil, ErrNotFound
 	}
 	return e, nil
+}
+
+// GetExecutionForNotebook resolves an execution through the notebook named in
+// the route. Execution history is viewer-readable by design, so this enforces
+// parent-resource identity without adding an ownership restriction.
+func (s *Service) GetExecutionForNotebook(ctx context.Context, projectID, notebookName, id string) (*NotebookExecution, error) {
+	exec, err := s.GetExecution(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	if exec.NotebookName != notebookName {
+		return nil, ErrNotFound
+	}
+	return exec, nil
 }
 
 // ListExecutions returns a page of execution history plus the total count

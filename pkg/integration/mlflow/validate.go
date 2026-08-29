@@ -7,10 +7,10 @@ import (
 
 // validateIntegration is the write-time validation floor for this
 // foundation phase: required fields, a valid ArtifactMode, and the
-// TrackingURI SSRF checks (design doc section 5.3). It intentionally does
-// not check CredentialRef against the credential store (kind, existence,
-// project scope) — that requires a credential.Store dependency the future
-// service layer injects; repositories only persist the reference string.
+// TrackingURI SSRF checks (design doc section 5.3). Credential existence,
+// kind, enabled state, and project scope are checked by the HTTP handler,
+// where the credential store is available; repositories still enforce that
+// the reference itself is non-empty for non-HTTP callers.
 func validateIntegration(m *MLflowIntegration, policy SSRFPolicy) error {
 	if m == nil {
 		return fmt.Errorf("%w: integration is required", ErrInvalid)

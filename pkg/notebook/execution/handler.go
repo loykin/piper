@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -62,6 +63,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/notebooks/:name/documents", h.getDocument)
 	rg.GET("/notebooks/:name/executions", h.listExecutions)
 	rg.GET("/notebooks/:name/executions/:id", h.getExecution)
+	rg.GET("/notebook-executions", h.listProjectExecutions)
 	rg.GET("/notebook-execution-policy", h.getPolicy)
 
 	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
@@ -206,7 +208,7 @@ func (h *Handler) listKernelSessions(c *gin.Context) {
 }
 
 func (h *Handler) getKernelSession(c *gin.Context) {
-	ks, err := h.svc.GetKernelSession(c.Request.Context(), currentProjectID(c), c.Param("id"))
+	ks, err := h.svc.GetKernelSessionForActor(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), c.Param("id"))
 	if err != nil {
 		writeExecutionError(c, err)
 		return
@@ -215,6 +217,10 @@ func (h *Handler) getKernelSession(c *gin.Context) {
 }
 
 func (h *Handler) interruptKernelSession(c *gin.Context) {
+	if _, err := h.svc.GetKernelSessionForActor(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+		writeExecutionError(c, err)
+		return
+	}
 	if err := h.svc.InterruptKernelSession(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
@@ -223,6 +229,10 @@ func (h *Handler) interruptKernelSession(c *gin.Context) {
 }
 
 func (h *Handler) restartKernelSession(c *gin.Context) {
+	if _, err := h.svc.GetKernelSessionForActor(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+		writeExecutionError(c, err)
+		return
+	}
 	if err := h.svc.RestartKernelSession(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
@@ -231,6 +241,10 @@ func (h *Handler) restartKernelSession(c *gin.Context) {
 }
 
 func (h *Handler) closeKernelSession(c *gin.Context) {
+	if _, err := h.svc.GetKernelSessionForActor(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+		writeExecutionError(c, err)
+		return
+	}
 	if err := h.svc.CloseKernelSession(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
@@ -294,8 +308,21 @@ func (h *Handler) listExecutions(c *gin.Context) {
 	c.JSON(http.StatusOK, NewNotebookExecutionResponses(list))
 }
 
+func (h *Handler) listProjectExecutions(c *gin.Context) {
+	limit, offset := httpx.ParseLimitOffset(c)
+	list, total, err := h.svc.ListExecutions(c.Request.Context(), currentProjectID(c), strings.TrimSpace(c.Query("notebook")), limit, offset)
+	if err != nil {
+		writeExecutionError(c, err)
+		return
+	}
+	if limit > 0 {
+		httpx.SetTotalCountHeader(c, limit, total)
+	}
+	c.JSON(http.StatusOK, NewNotebookExecutionResponses(list))
+}
+
 func (h *Handler) getExecution(c *gin.Context) {
-	exec, err := h.svc.GetExecution(c.Request.Context(), currentProjectID(c), c.Param("id"))
+	exec, err := h.svc.GetExecutionForNotebook(c.Request.Context(), currentProjectID(c), c.Param("name"), c.Param("id"))
 	if err != nil {
 		writeExecutionError(c, err)
 		return
@@ -304,6 +331,10 @@ func (h *Handler) getExecution(c *gin.Context) {
 }
 
 func (h *Handler) cancelExecution(c *gin.Context) {
+	if _, err := h.svc.GetExecutionForNotebook(c.Request.Context(), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+		writeExecutionError(c, err)
+		return
+	}
 	if err := h.svc.CancelExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
@@ -312,6 +343,10 @@ func (h *Handler) cancelExecution(c *gin.Context) {
 }
 
 func (h *Handler) approveExecution(c *gin.Context) {
+	if _, err := h.svc.GetExecutionForNotebook(c.Request.Context(), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+		writeExecutionError(c, err)
+		return
+	}
 	if err := h.svc.ApproveExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
@@ -320,6 +355,10 @@ func (h *Handler) approveExecution(c *gin.Context) {
 }
 
 func (h *Handler) denyExecution(c *gin.Context) {
+	if _, err := h.svc.GetExecutionForNotebook(c.Request.Context(), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+		writeExecutionError(c, err)
+		return
+	}
 	if err := h.svc.DenyExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return

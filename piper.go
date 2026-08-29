@@ -171,6 +171,11 @@ func New(cfg Config) (*Piper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
+	mlflow.ConfigureRepositorySSRFPolicy(repos.Mlflow, mlflow.SSRFPolicy{
+		AllowInsecureHTTP: cfg.Integrations.Mlflow.AllowInsecureHTTP,
+		AllowedHosts:      cfg.Integrations.Mlflow.AllowedHosts,
+		AllowedCIDRs:      cfg.Integrations.Mlflow.AllowedCIDRs,
+	})
 	localStats := cfg.Stats
 	if localStats.Logs.URL != "" {
 		localStats.Logs.ManageRetention = false
@@ -322,6 +327,23 @@ func New(cfg Config) (*Piper, error) {
 		}
 		return "", false
 	})
+	credentialStore.AddInUseChecker(func(ctx context.Context, projectID, name string) (string, bool) {
+		if repos.Mlflow == nil || projectID == project.SystemID {
+			return "", false
+		}
+		integrations, err := repos.Mlflow.ListIntegrations(ctx, projectID, 0, 0)
+		if err != nil {
+			// Fail closed: deleting a possibly-used secret is less recoverable
+			// than asking the operator to retry after a repository failure.
+			return "MLflow integration references could not be checked", true
+		}
+		for _, integration := range integrations {
+			if strings.TrimSpace(integration.CredentialRef) == name {
+				return fmt.Sprintf("referenced by MLflow integration %q", integration.Name), true
+			}
+		}
+		return "", false
+	})
 	// docs/jupyter-mcp-execution.md Phase 1. bgCtx (== p.ctx) is passed
 	// explicitly rather than reading p.ctx back off the struct: execution
 	// runs asynchronously in goroutines that must outlive any single HTTP
@@ -333,12 +355,23 @@ func New(cfg Config) (*Piper, error) {
 	// field, and the feature must degrade to "not available" rather than
 	// panic on first use.
 	if repos.NotebookExecution != nil {
+		executionLimits := execution.Limits{
+			MaxRunningPerNotebook: cfg.NotebookExecution.MaxRunningPerNotebook,
+			MaxKernelsPerNotebook: cfg.NotebookExecution.MaxKernelsPerNotebook,
+			MaxQueuedPerProject:   cfg.NotebookExecution.MaxQueuedPerProject,
+			KernelIdleTTL:         cfg.NotebookExecution.KernelIdleTTL,
+			CellTimeout:           cfg.NotebookExecution.CellTimeout,
+			ExecutionTimeout:      cfg.NotebookExecution.ExecutionTimeout,
+			InlineOutputBytes:     cfg.NotebookExecution.InlineOutputBytes,
+			FileReadBytes:         cfg.NotebookExecution.FileReadBytes,
+		}
 		p.notebookExecutions = execution.NewService(bgCtx, execution.Deps{
-			Repo:      repos.NotebookExecution,
-			Notebooks: repos.Notebook,
-			Gateway:   execution.NewGateway(),
-			Events:    p.events,
-			Limits:    execution.DefaultLimits(),
+			Repo:          repos.NotebookExecution,
+			Notebooks:     repos.Notebook,
+			Gateway:       execution.NewGateway(),
+			Events:        p.events,
+			Limits:        executionLimits,
+			PolicyDefault: cfg.NotebookExecution.MCPPolicy,
 		})
 		// docs/jupyter-mcp-execution.md Phase 2. Guarded by both
 		// cfg.MCP.Enabled (an operator must opt in explicitly, default

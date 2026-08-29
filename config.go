@@ -3,6 +3,7 @@ package piper
 import (
 	"database/sql"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -72,6 +73,9 @@ type Config struct {
 
 	// Notebook configures direct-runtime workspace and port allocation.
 	Notebook NotebookRuntimeConfig `yaml:"notebook" mapstructure:"notebook"`
+
+	// NotebookExecution configures Jupyter kernel execution policy and limits.
+	NotebookExecution NotebookExecutionConfig `yaml:"notebook_execution" mapstructure:"notebook_execution"`
 
 	// Runtime selects the required in-process execution backend.
 	Runtime RuntimeConfig `yaml:"runtime" mapstructure:"runtime"`
@@ -165,6 +169,21 @@ type MCPConfig struct {
 	// without use (design doc §8.1/§15). Zero/unset defaults to 30m
 	// (pkg/mcp.NewSessionStore's own default).
 	SessionTTL time.Duration `yaml:"session_ttl" mapstructure:"session_ttl"`
+}
+
+// NotebookExecutionConfig wires the documented notebook_execution YAML block
+// into the execution service instead of leaving production behavior fixed to
+// package constants.
+type NotebookExecutionConfig struct {
+	MCPPolicy             string        `yaml:"mcp_policy" mapstructure:"mcp_policy"`
+	MaxRunningPerNotebook int           `yaml:"max_running_per_notebook" mapstructure:"max_running_per_notebook"`
+	MaxKernelsPerNotebook int           `yaml:"max_kernels_per_notebook" mapstructure:"max_kernels_per_notebook"`
+	MaxQueuedPerProject   int           `yaml:"max_queued_per_project" mapstructure:"max_queued_per_project"`
+	KernelIdleTTL         time.Duration `yaml:"kernel_idle_ttl" mapstructure:"kernel_idle_ttl"`
+	CellTimeout           time.Duration `yaml:"cell_timeout" mapstructure:"cell_timeout"`
+	ExecutionTimeout      time.Duration `yaml:"execution_timeout" mapstructure:"execution_timeout"`
+	InlineOutputBytes     int           `yaml:"inline_output_bytes" mapstructure:"inline_output_bytes"`
+	FileReadBytes         int           `yaml:"file_read_bytes" mapstructure:"file_read_bytes"`
 }
 
 type RuntimeConfig struct {
@@ -397,6 +416,17 @@ func DefaultConfig() Config {
 			Enabled:    false,
 			SessionTTL: 30 * time.Minute,
 		},
+		NotebookExecution: NotebookExecutionConfig{
+			MCPPolicy:             "approval_required",
+			MaxRunningPerNotebook: 1,
+			MaxKernelsPerNotebook: 2,
+			MaxQueuedPerProject:   20,
+			KernelIdleTTL:         30 * time.Minute,
+			CellTimeout:           5 * time.Minute,
+			ExecutionTimeout:      time.Hour,
+			InlineOutputBytes:     65536,
+			FileReadBytes:         1048576,
+		},
 	}
 }
 
@@ -513,12 +543,36 @@ func (c Config) Validate() error {
 	if c.Integrations.Mlflow.PollInterval < 0 {
 		return fmt.Errorf("integrations.mlflow.poll_interval must not be negative")
 	}
+	for _, host := range c.Integrations.Mlflow.AllowedHosts {
+		if strings.TrimSpace(host) == "" {
+			return fmt.Errorf("integrations.mlflow.allowed_hosts must not contain empty values")
+		}
+	}
+	for _, cidr := range c.Integrations.Mlflow.AllowedCIDRs {
+		if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
+			return fmt.Errorf("integrations.mlflow.allowed_cidrs contains invalid CIDR %q", cidr)
+		}
+	}
 
 	if c.MCP.Enabled && len(c.MCP.AllowedOrigins) == 0 {
 		return fmt.Errorf("mcp.allowed_origins must not be empty when mcp.enabled is true")
 	}
 	if c.MCP.SessionTTL < 0 {
 		return fmt.Errorf("mcp.session_ttl must not be negative")
+	}
+	switch c.NotebookExecution.MCPPolicy {
+	case "", "disabled", "approval_required", "allowed":
+	default:
+		return fmt.Errorf("notebook_execution.mcp_policy must be disabled, approval_required, or allowed")
+	}
+	if c.NotebookExecution.MaxRunningPerNotebook < 0 || c.NotebookExecution.MaxKernelsPerNotebook < 0 || c.NotebookExecution.MaxQueuedPerProject < 0 {
+		return fmt.Errorf("notebook_execution concurrency limits must not be negative")
+	}
+	if c.NotebookExecution.KernelIdleTTL < 0 || c.NotebookExecution.CellTimeout < 0 || c.NotebookExecution.ExecutionTimeout < 0 {
+		return fmt.Errorf("notebook_execution durations must not be negative")
+	}
+	if c.NotebookExecution.InlineOutputBytes < 0 || c.NotebookExecution.FileReadBytes < 0 {
+		return fmt.Errorf("notebook_execution byte limits must not be negative")
 	}
 
 	return nil

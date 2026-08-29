@@ -29,7 +29,7 @@ function NotebookHistoryPageInner() {
 
   return (
     <DataBodyTemplate
-      title="History"
+      title="Notebook History"
       description="Past notebook server runs."
     >
       <DataBodyTemplate.Body>

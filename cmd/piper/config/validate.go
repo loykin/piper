@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
@@ -49,6 +50,57 @@ func ValidateServer(c RootConfig) error {
 	}
 	if err := validateDeployment(c); err != nil {
 		return err
+	}
+	if err := validateNotebookExecution(c.NotebookExecution); err != nil {
+		return err
+	}
+	if err := validateIntegrations(c.Integrations); err != nil {
+		return err
+	}
+	if c.MCP.Enabled && len(c.MCP.AllowedOrigins) == 0 {
+		return fmt.Errorf("config: mcp.allowed_origins must not be empty when mcp.enabled is true")
+	}
+	if c.MCP.SessionTTL < 0 {
+		return fmt.Errorf("config: mcp.session_ttl must not be negative")
+	}
+	return nil
+}
+
+func validateNotebookExecution(c NotebookExecutionConfig) error {
+	switch c.MCPPolicy {
+	case "", "disabled", "approval_required", "allowed":
+	default:
+		return fmt.Errorf("config: notebook_execution.mcp_policy must be disabled, approval_required, or allowed")
+	}
+	if c.MaxRunningPerNotebook < 0 || c.MaxKernelsPerNotebook < 0 || c.MaxQueuedPerProject < 0 {
+		return fmt.Errorf("config: notebook_execution concurrency limits must not be negative")
+	}
+	if c.KernelIdleTTL < 0 || c.CellTimeout < 0 || c.ExecutionTimeout < 0 {
+		return fmt.Errorf("config: notebook_execution durations must not be negative")
+	}
+	if c.InlineOutputBytes < 0 || c.FileReadBytes < 0 {
+		return fmt.Errorf("config: notebook_execution byte limits must not be negative")
+	}
+	return nil
+}
+
+func validateIntegrations(c IntegrationsConfig) error {
+	m := c.MLflow
+	if m.DispatcherConcurrency < 0 || m.BatchSize < 0 || m.MaxAttemptsBeforeDead < 0 {
+		return fmt.Errorf("config: integrations.mlflow numeric limits must not be negative")
+	}
+	if m.RequestTimeout < 0 || m.LeaseDuration < 0 || m.PollInterval < 0 {
+		return fmt.Errorf("config: integrations.mlflow durations must not be negative")
+	}
+	for _, host := range m.AllowedHosts {
+		if strings.TrimSpace(host) == "" {
+			return fmt.Errorf("config: integrations.mlflow.allowed_hosts must not contain empty values")
+		}
+	}
+	for _, cidr := range m.AllowedCIDRs {
+		if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
+			return fmt.Errorf("config: integrations.mlflow.allowed_cidrs contains invalid CIDR %q", cidr)
+		}
 	}
 	return nil
 }

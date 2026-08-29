@@ -2,6 +2,7 @@ package piper
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/integration/mlflow"
 	"github.com/loykin/piper/pkg/project"
 )
 
@@ -21,6 +24,48 @@ func TestConfigValidateK8sRuntime(t *testing.T) {
 	}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestConfigValidateRejectsInvalidMLflowCIDR(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Storage.Disabled = true
+	cfg.Runtime = RuntimeConfig{Type: RuntimeBaremetal}
+	cfg.Integrations.Mlflow.AllowedCIDRs = []string{"invalid"}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "allowed_cidrs") {
+		t.Fatalf("Validate() error = %v, want allowed_cidrs error", err)
+	}
+}
+
+func TestPiperPreventsDeletingMLflowCredentialInUse(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.OutputDir = t.TempDir()
+	cfg.Server.AllowInsecureDevKey = true
+	cfg.Storage.Disabled = true
+	cfg.Auth.Trusted = true
+	cfg.Runtime = RuntimeConfig{Type: RuntimeBaremetal}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+	ctx := context.Background()
+	if _, err := p.credentials.Create(ctx, project.DefaultID, credential.CreateRequest{
+		Name: "mlflow-cred", Kind: credential.KindMlflow,
+		Data: map[string]string{"token": "secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.repos.Mlflow.CreateIntegration(ctx, &mlflow.MLflowIntegration{
+		ID: "ml-1", ProjectID: project.DefaultID, Name: "tracking",
+		TrackingURI: "https://mlflow.example.com", CredentialRef: "mlflow-cred",
+		Enabled: true, Default: true, ExportPipelines: true,
+		ArtifactMode: string(mlflow.ArtifactModeReference),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.credentials.Delete(ctx, project.DefaultID, "mlflow-cred"); !errors.Is(err, credential.ErrInUse) {
+		t.Fatalf("Delete() error = %v, want ErrInUse", err)
 	}
 }
 

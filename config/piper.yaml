@@ -126,6 +126,43 @@ notebook:
   notebooks_root: ./notebooks
   port_range: 8888-9900
 
+# Jupyter execution policy and resource bounds. Project admins may override
+# mcp_policy from the Notebook Executions UI; these values are the instance
+# defaults and hard limits.
+notebook_execution:
+  mcp_policy: approval_required # disabled | approval_required | allowed
+  max_running_per_notebook: 1
+  max_kernels_per_notebook: 2
+  max_queued_per_project: 20
+  kernel_idle_ttl: 30m
+  cell_timeout: 5m
+  execution_timeout: 1h
+  inline_output_bytes: 65536
+  file_read_bytes: 1048576
+
+# MLflow connections themselves are created per project in Integrations.
+# This block controls the durable export dispatcher and outbound policy.
+integrations:
+  mlflow:
+    enabled: false
+    dispatcher_concurrency: 2
+    batch_size: 100
+    request_timeout: 10s
+    max_attempts_before_dead: 20
+    lease_duration: 30s
+    poll_interval: 5s
+    allow_insecure_http: false
+    allowed_hosts: []
+    allowed_cidrs: []
+
+# Read-only notebook MCP transport. Enabling it requires an explicit browser
+# Origin allowlist; non-browser clients without Origin remain supported.
+mcp:
+  enabled: false
+  allowed_origins: []
+  allowed_hosts: []
+  session_ttl: 30m
+
 # Federation is optional. With no deployment block, this remains a standalone
 # Home whose projects execute on its in-process Local Member.
 #

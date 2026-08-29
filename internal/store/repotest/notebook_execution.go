@@ -213,6 +213,21 @@ func NotebookExecutionRepoSuite(t *testing.T, repo execution.Repository, project
 		if count != 2 {
 			t.Fatalf("CountExecutions = %d, want 2", count)
 		}
+		projectList, err := repo.ListExecutions(ctx, projectID, "", 0, 0)
+		if err != nil {
+			t.Fatalf("ListExecutions(project): %v", err)
+		}
+		found := map[string]bool{}
+		for _, item := range projectList {
+			found[item.ID] = true
+		}
+		if !found[e1.ID] || !found[e2.ID] {
+			t.Fatalf("ListExecutions(project) omitted scoped rows: e1=%v e2=%v", found[e1.ID], found[e2.ID])
+		}
+		projectCount, err := repo.CountExecutions(ctx, projectID, "")
+		if err != nil || projectCount < 2 {
+			t.Fatalf("CountExecutions(project) = %d, err=%v, want at least 2", projectCount, err)
+		}
 	})
 
 	t.Run("Execution_update_status_transition_and_not_found", func(t *testing.T) {

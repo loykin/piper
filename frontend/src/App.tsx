@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
-import { BellRing, CalendarClock, History, Server, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, ChevronRight, KeyRound, UserRoundCog, UsersRound } from 'lucide-react'
+import { BellRing, CalendarClock, History, Server, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, ChevronRight, KeyRound, UserRoundCog, UsersRound, ListChecks, Plug } from 'lucide-react'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
@@ -44,6 +44,7 @@ const NotebooksPage          = lazyRouteComponent(() => import('@/pages/notebook
 const NotebookCreatePage     = lazyRouteComponent(() => import('@/pages/notebooks/NotebookCreatePage'))
 const NotebookVolumesPage    = lazyRouteComponent(() => import('@/pages/notebooks/NotebookVolumesPage'))
 const NotebookHistoryPage    = lazyRouteComponent(() => import('@/pages/notebooks/NotebookHistoryPage'))
+const NotebookExecutionsPage = lazyRouteComponent(() => import('@/pages/notebooks/NotebookExecutionsPage'))
 const PipelinesListPage      = lazyRouteComponent(() => import('@/pages/pipelines/PipelinesListPage'))
 const PipelineEditorPage     = lazyRouteComponent(() => import('@/pages/pipelines/PipelineEditorPage'))
 const HistoryPage            = lazyRouteComponent(() => import('@/pages/pipelines/HistoryPage'))
@@ -65,6 +66,9 @@ const UserCreatePage         = lazyRouteComponent(() => import('@/pages/system/U
 const MembersPage            = lazyRouteComponent(() => import('@/pages/projects/MembersPage'))
 const MemberCreatePage       = lazyRouteComponent(() => import('@/pages/projects/MemberCreatePage'))
 const ProjectCreatePage      = lazyRouteComponent(() => import('@/pages/projects/ProjectCreatePage'))
+const MLflowIntegrationsPage = lazyRouteComponent(() => import('@/pages/integrations/MLflowIntegrationsPage'))
+const MLflowIntegrationCreatePage = lazyRouteComponent(() => import('@/pages/integrations/MLflowIntegrationCreatePage'))
+const MLflowIntegrationEditPage = lazyRouteComponent(() => import('@/pages/integrations/MLflowIntegrationEditPage'))
 
 type NavSubItem = {
   id: string
@@ -94,7 +98,8 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
       items: [
         { id: 'notebooks',        label: 'Notebooks', icon: BookOpen,  to: `${base}/notebooks` },
         { id: 'notebook-volumes', label: 'Volumes',   icon: HardDrive, to: `${base}/notebook-volumes` },
-        { id: 'notebook-history', label: 'History',   icon: History,   to: `${base}/notebooks/history`, exact: true },
+        { id: 'notebook-executions', label: 'Executions', icon: ListChecks, to: `${base}/notebook-executions` },
+        { id: 'notebook-history', label: 'Notebook History', icon: History, to: `${base}/notebooks/history`, exact: true },
       ],
     },
     {
@@ -102,7 +107,7 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
       items: [
         { id: 'pipelines',   label: 'Templates',   icon: GitBranch,     to: `${base}/pipelines` },
         { id: 'schedules',   label: 'Schedules',   icon: CalendarClock, to: `${base}/schedules` },
-        { id: 'history',     label: 'History',     icon: History,       to: `${base}/history` },
+        { id: 'history',     label: 'Run History', icon: History,       to: `${base}/history` },
         { id: 'experiments', label: 'Experiments', icon: FlaskConical,  to: `${base}/experiments` },
       ],
     },
@@ -110,7 +115,7 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
       label: 'Service',
       items: [
         { id: 'serving',         label: 'Serving',  icon: Server,  to: `${base}/serving`,         exact: true },
-        { id: 'serving-history', label: 'History',  icon: History, to: `${base}/serving/history`, exact: true },
+        { id: 'serving-history', label: 'Serving History', icon: History, to: `${base}/serving/history`, exact: true },
       ],
     },
     {
@@ -118,6 +123,7 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
       items: [
         { id: 'storage',  label: 'Storage',  icon: Database, to: `${base}/storage` },
         { id: 'credentials', label: 'Credentials', icon: KeyRound, to: `${base}/credentials` },
+        { id: 'integrations', label: 'Integrations', icon: Plug, to: `${base}/integrations/mlflow` },
         { id: 'alert-rules', label: 'Alert Rules', icon: BellRing, to: `${base}/alert-rules` },
         { id: 'members', label: 'Members', icon: UsersRound, to: `${base}/members` },
         { id: 'users', label: 'Users', icon: UserRoundCog, to: `/users`, system: true },
@@ -500,10 +506,14 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks', component: NotebooksPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/create', component: NotebookCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/history', component: NotebookHistoryPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'notebook-executions', component: NotebookExecutionsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-volumes', component: NotebookVolumesPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'storage', component: StoragePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'members', component: MembersPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'members/new', component: MemberCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'integrations/mlflow', component: MLflowIntegrationsPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'integrations/mlflow/new', component: MLflowIntegrationCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'integrations/mlflow/$id/edit', component: MLflowIntegrationEditPage }),
   createRoute({ getParentRoute: () => projectRoute, path: '$', component: ProjectScopedFallback }),
 ]
 

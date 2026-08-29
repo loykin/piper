@@ -3,6 +3,7 @@ package mlflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/loykin/piper/internal/httpx"
+	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/integration/outbox"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
@@ -21,9 +24,13 @@ import (
 // read endpoint are implemented in this phase — MLflowSyncJob (section
 // 11.3) is out of scope, same as the reconciler it exists to drive.
 type HandlerDeps struct {
-	Repo    Repository
-	Outbox  outbox.Repository
-	Clients ClientFactory
+	Repo        Repository
+	Outbox      outbox.Repository
+	Clients     ClientFactory
+	Credentials interface {
+		Get(context.Context, string, string) (*credential.Metadata, error)
+	}
+	DispatcherEnabled bool
 	// GenID generates a new integration ID. Defaults to uuid.NewString.
 	GenID func() string
 }
@@ -32,11 +39,42 @@ type Handler struct {
 	deps HandlerDeps
 }
 
+var errInvalidCredentialRef = errors.New("invalid credential reference")
+
 func NewHandler(deps HandlerDeps) *Handler {
 	if deps.GenID == nil {
 		deps.GenID = uuid.NewString
 	}
 	return &Handler{deps: deps}
+}
+
+func (h *Handler) validateCredentialRef(ctx context.Context, projectID, ref string) error {
+	if h.deps.Credentials == nil {
+		return errors.New("credential store is unavailable")
+	}
+	meta, err := h.deps.Credentials.Get(ctx, projectID, strings.TrimSpace(ref))
+	if err != nil {
+		return err
+	}
+	if meta == nil {
+		return fmt.Errorf("%w: MLflow credential not found", errInvalidCredentialRef)
+	}
+	if meta.Kind != credential.KindMlflow {
+		return fmt.Errorf("%w: credential_ref must reference an MLflow credential", errInvalidCredentialRef)
+	}
+	if meta.Disabled {
+		return fmt.Errorf("%w: MLflow credential is disabled", errInvalidCredentialRef)
+	}
+	return nil
+}
+
+func writeCredentialRefError(c *gin.Context, err error) {
+	if errors.Is(err, errInvalidCredentialRef) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	slog.Error("mlflow: credential validation failed", "err", err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate MLflow credential"})
 }
 
 // RegisterRoutes mounts the Integrations CRUD/test endpoints and the
@@ -78,22 +116,62 @@ type integrationRequest struct {
 
 func (h *Handler) list(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
-	items, err := h.deps.Repo.ListIntegrations(c.Request.Context(), projectContext.ID, 0, 0)
+	limit, offset := httpx.ParseLimitOffset(c)
+	items, err := h.deps.Repo.ListIntegrations(c.Request.Context(), projectContext.ID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, items)
+	if limit > 0 {
+		total, err := h.deps.Repo.CountIntegrations(c.Request.Context(), projectContext.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
+	}
+	details := make([]integrationDetail, 0, len(items))
+	for _, item := range items {
+		details = append(details, h.integrationDetail(c.Request.Context(), item))
+	}
+	c.JSON(http.StatusOK, details)
 }
 
 // integrationDetail is the GET-by-id response: the integration plus a small
 // health/backlog snapshot (design doc section 11.1: "연결/health/backlog").
 type integrationDetail struct {
 	*MLflowIntegration
+	SystemEnabled       bool    `json:"system_enabled"`
 	Health              string  `json:"health"` // healthy | degraded | disabled
 	PendingEvents       int     `json:"pending_events"`
 	DeadEvents          int     `json:"dead_events"`
 	OldestPendingAgeSec float64 `json:"oldest_pending_age_seconds,omitempty"`
+}
+
+func (h *Handler) integrationDetail(ctx context.Context, item *MLflowIntegration) integrationDetail {
+	detail := integrationDetail{
+		MLflowIntegration: item,
+		SystemEnabled:     h.deps.DispatcherEnabled,
+		Health:            "disabled",
+	}
+	if h.deps.Outbox != nil {
+		if pending, err := h.deps.Outbox.CountByStatus(ctx, item.ID, string(outbox.StatusPending)); err == nil {
+			detail.PendingEvents = pending
+		}
+		if dead, err := h.deps.Outbox.CountByStatus(ctx, item.ID, string(outbox.StatusDead)); err == nil {
+			detail.DeadEvents = dead
+		}
+		if oldest, err := h.deps.Outbox.OldestPending(ctx, item.ID); err == nil && oldest != nil {
+			detail.OldestPendingAgeSec = time.Since(*oldest).Seconds()
+		}
+	}
+	if h.deps.DispatcherEnabled && item.Enabled {
+		detail.Health = "healthy"
+		if detail.DeadEvents > 0 {
+			detail.Health = "degraded"
+		}
+	}
+	return detail
 }
 
 func (h *Handler) get(c *gin.Context) {
@@ -107,26 +185,7 @@ func (h *Handler) get(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "mlflow integration not found"})
 		return
 	}
-	detail := integrationDetail{MLflowIntegration: item, Health: "disabled"}
-	if h.deps.Outbox != nil {
-		pending, err := h.deps.Outbox.CountByStatus(c.Request.Context(), item.ID, string(outbox.StatusPending))
-		if err == nil {
-			detail.PendingEvents = pending
-		}
-		dead, err := h.deps.Outbox.CountByStatus(c.Request.Context(), item.ID, string(outbox.StatusDead))
-		if err == nil {
-			detail.DeadEvents = dead
-		}
-		if oldest, err := h.deps.Outbox.OldestPending(c.Request.Context(), item.ID); err == nil && oldest != nil {
-			detail.OldestPendingAgeSec = time.Since(*oldest).Seconds()
-		}
-	}
-	if item.Enabled {
-		detail.Health = "healthy"
-		if detail.DeadEvents > 0 {
-			detail.Health = "degraded"
-		}
-	}
+	detail := h.integrationDetail(c.Request.Context(), item)
 	c.JSON(http.StatusOK, detail)
 }
 
@@ -137,12 +196,16 @@ func (h *Handler) create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := h.validateCredentialRef(c.Request.Context(), projectContext.ID, req.CredentialRef); err != nil {
+		writeCredentialRefError(c, err)
+		return
+	}
 	m := &MLflowIntegration{
 		ID:                       h.deps.GenID(),
 		ProjectID:                projectContext.ID,
 		Name:                     strings.TrimSpace(req.Name),
 		TrackingURI:              req.TrackingURI,
-		CredentialRef:            req.CredentialRef,
+		CredentialRef:            strings.TrimSpace(req.CredentialRef),
 		Enabled:                  req.Enabled,
 		Default:                  req.Default,
 		ExportPipelines:          req.ExportPipelines,
@@ -180,12 +243,16 @@ func (h *Handler) update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := h.validateCredentialRef(c.Request.Context(), projectContext.ID, req.CredentialRef); err != nil {
+		writeCredentialRefError(c, err)
+		return
+	}
 	updated := &MLflowIntegration{
 		ID:                       id,
 		ProjectID:                projectContext.ID,
 		Name:                     strings.TrimSpace(req.Name),
 		TrackingURI:              req.TrackingURI,
-		CredentialRef:            req.CredentialRef,
+		CredentialRef:            strings.TrimSpace(req.CredentialRef),
 		Enabled:                  req.Enabled,
 		Default:                  req.Default,
 		ExportPipelines:          req.ExportPipelines,

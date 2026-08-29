@@ -135,6 +135,33 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 			NotebooksRoot: root.Notebook.NotebooksRoot,
 			PortRange:     root.Notebook.PortRange,
 		},
+		NotebookExecution: piper.NotebookExecutionConfig{
+			MCPPolicy:             root.NotebookExecution.MCPPolicy,
+			MaxRunningPerNotebook: root.NotebookExecution.MaxRunningPerNotebook,
+			MaxKernelsPerNotebook: root.NotebookExecution.MaxKernelsPerNotebook,
+			MaxQueuedPerProject:   root.NotebookExecution.MaxQueuedPerProject,
+			KernelIdleTTL:         root.NotebookExecution.KernelIdleTTL,
+			CellTimeout:           root.NotebookExecution.CellTimeout,
+			ExecutionTimeout:      root.NotebookExecution.ExecutionTimeout,
+			InlineOutputBytes:     root.NotebookExecution.InlineOutputBytes,
+			FileReadBytes:         root.NotebookExecution.FileReadBytes,
+		},
+		Integrations: piper.IntegrationsConfig{Mlflow: piper.MlflowIntegrationsConfig{
+			Enabled:               root.Integrations.MLflow.Enabled,
+			DispatcherConcurrency: root.Integrations.MLflow.DispatcherConcurrency,
+			BatchSize:             root.Integrations.MLflow.BatchSize,
+			RequestTimeout:        root.Integrations.MLflow.RequestTimeout,
+			MaxAttemptsBeforeDead: root.Integrations.MLflow.MaxAttemptsBeforeDead,
+			LeaseDuration:         root.Integrations.MLflow.LeaseDuration,
+			PollInterval:          root.Integrations.MLflow.PollInterval,
+			AllowInsecureHTTP:     root.Integrations.MLflow.AllowInsecureHTTP,
+			AllowedHosts:          root.Integrations.MLflow.AllowedHosts,
+			AllowedCIDRs:          root.Integrations.MLflow.AllowedCIDRs,
+		}},
+		MCP: piper.MCPConfig{
+			Enabled: root.MCP.Enabled, AllowedOrigins: root.MCP.AllowedOrigins,
+			AllowedHosts: root.MCP.AllowedHosts, SessionTTL: root.MCP.SessionTTL,
+		},
 		Runtime: runtimeCfg,
 	}
 

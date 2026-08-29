@@ -3,16 +3,19 @@ package config
 import "time"
 
 type RootConfig struct {
-	Version    int              `mapstructure:"version" yaml:"version"`
-	Log        LogConfig        `mapstructure:"log" yaml:"log"`
-	Storage    StorageConfig    `mapstructure:"storage" yaml:"storage"`
-	Stats      StatsConfig      `mapstructure:"stats" yaml:"stats"`
-	Source     SourceConfig     `mapstructure:"source" yaml:"source"`
-	Server     ServerConfig     `mapstructure:"server" yaml:"server"`
-	Runtime    RuntimeConfig    `mapstructure:"runtime" yaml:"runtime"`
-	Notebook   NotebookConfig   `mapstructure:"notebook" yaml:"notebook"`
-	Deployment DeploymentConfig `mapstructure:"deployment" yaml:"deployment"`
-	Home       HomeConfig       `mapstructure:"home" yaml:"home"`
+	Version           int                     `mapstructure:"version" yaml:"version"`
+	Log               LogConfig               `mapstructure:"log" yaml:"log"`
+	Storage           StorageConfig           `mapstructure:"storage" yaml:"storage"`
+	Stats             StatsConfig             `mapstructure:"stats" yaml:"stats"`
+	Source            SourceConfig            `mapstructure:"source" yaml:"source"`
+	Server            ServerConfig            `mapstructure:"server" yaml:"server"`
+	Runtime           RuntimeConfig           `mapstructure:"runtime" yaml:"runtime"`
+	Notebook          NotebookConfig          `mapstructure:"notebook" yaml:"notebook"`
+	NotebookExecution NotebookExecutionConfig `mapstructure:"notebook_execution" yaml:"notebook_execution"`
+	Integrations      IntegrationsConfig      `mapstructure:"integrations" yaml:"integrations"`
+	MCP               MCPConfig               `mapstructure:"mcp" yaml:"mcp"`
+	Deployment        DeploymentConfig        `mapstructure:"deployment" yaml:"deployment"`
+	Home              HomeConfig              `mapstructure:"home" yaml:"home"`
 }
 
 // NotebookConfig configures the notebook direct-runtime workspace layout.
@@ -21,6 +24,42 @@ type RootConfig struct {
 type NotebookConfig struct {
 	NotebooksRoot string `mapstructure:"notebooks_root" yaml:"notebooks_root"`
 	PortRange     string `mapstructure:"port_range" yaml:"port_range"`
+}
+
+type NotebookExecutionConfig struct {
+	MCPPolicy             string        `mapstructure:"mcp_policy" yaml:"mcp_policy"`
+	MaxRunningPerNotebook int           `mapstructure:"max_running_per_notebook" yaml:"max_running_per_notebook"`
+	MaxKernelsPerNotebook int           `mapstructure:"max_kernels_per_notebook" yaml:"max_kernels_per_notebook"`
+	MaxQueuedPerProject   int           `mapstructure:"max_queued_per_project" yaml:"max_queued_per_project"`
+	KernelIdleTTL         time.Duration `mapstructure:"kernel_idle_ttl" yaml:"kernel_idle_ttl"`
+	CellTimeout           time.Duration `mapstructure:"cell_timeout" yaml:"cell_timeout"`
+	ExecutionTimeout      time.Duration `mapstructure:"execution_timeout" yaml:"execution_timeout"`
+	InlineOutputBytes     int           `mapstructure:"inline_output_bytes" yaml:"inline_output_bytes"`
+	FileReadBytes         int           `mapstructure:"file_read_bytes" yaml:"file_read_bytes"`
+}
+
+type IntegrationsConfig struct {
+	MLflow MLflowConfig `mapstructure:"mlflow" yaml:"mlflow"`
+}
+
+type MLflowConfig struct {
+	Enabled               bool          `mapstructure:"enabled" yaml:"enabled"`
+	DispatcherConcurrency int           `mapstructure:"dispatcher_concurrency" yaml:"dispatcher_concurrency"`
+	BatchSize             int           `mapstructure:"batch_size" yaml:"batch_size"`
+	RequestTimeout        time.Duration `mapstructure:"request_timeout" yaml:"request_timeout"`
+	MaxAttemptsBeforeDead int           `mapstructure:"max_attempts_before_dead" yaml:"max_attempts_before_dead"`
+	LeaseDuration         time.Duration `mapstructure:"lease_duration" yaml:"lease_duration"`
+	PollInterval          time.Duration `mapstructure:"poll_interval" yaml:"poll_interval"`
+	AllowInsecureHTTP     bool          `mapstructure:"allow_insecure_http" yaml:"allow_insecure_http"`
+	AllowedHosts          []string      `mapstructure:"allowed_hosts" yaml:"allowed_hosts"`
+	AllowedCIDRs          []string      `mapstructure:"allowed_cidrs" yaml:"allowed_cidrs"`
+}
+
+type MCPConfig struct {
+	Enabled        bool          `mapstructure:"enabled" yaml:"enabled"`
+	AllowedOrigins []string      `mapstructure:"allowed_origins" yaml:"allowed_origins"`
+	AllowedHosts   []string      `mapstructure:"allowed_hosts" yaml:"allowed_hosts"`
+	SessionTTL     time.Duration `mapstructure:"session_ttl" yaml:"session_ttl"`
 }
 
 // DeploymentConfig selects how this installation participates in the

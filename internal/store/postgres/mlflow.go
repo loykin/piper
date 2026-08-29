@@ -33,6 +33,8 @@ func NewMlflowRepo(exec *dbstore.Executor[*sqlx.DB], source string, policy mlflo
 	return &mlflowRepo{Source: sqlxadapter.NewSource(source, exec), policy: policy}
 }
 
+func (r *mlflowRepo) SetSSRFPolicy(policy mlflow.SSRFPolicy) { r.policy = policy }
+
 const mlflowIntegrationCols = `id, project_id, name, tracking_uri, credential_ref, enabled, is_default, export_pipelines, export_notebook_executions, experiment_template, artifact_mode, created_by, created_at, updated_at, deleted_at`
 
 func (r *mlflowRepo) CreateIntegration(ctx context.Context, m *mlflow.MLflowIntegration) error {
@@ -220,7 +222,7 @@ func (r *mlflowRepo) UpsertExperimentLink(ctx context.Context, link *mlflow.MLfl
 		_, err := db.ExecContext(ctx, db.Rebind(
 			`INSERT INTO mlflow_experiment_links (`+mlflowExperimentLinkCols+`) VALUES (?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(integration_id, project_id, piper_group_key) DO UPDATE SET
-			 	mlflow_experiment_id=EXCLUDED.mlflow_experiment_id, mlflow_name=EXCLUDED.mlflow_name, updated_at=EXCLUDED.updated_at`),
+			   mlflow_experiment_id=EXCLUDED.mlflow_experiment_id, mlflow_name=EXCLUDED.mlflow_name, updated_at=EXCLUDED.updated_at`),
 			link.IntegrationID, link.ProjectID, link.PiperGroupKey, link.MLflowExperimentID, link.MLflowName, now, now,
 		)
 		return err
@@ -252,9 +254,9 @@ func (r *mlflowRepo) UpsertRunLink(ctx context.Context, link *mlflow.MLflowRunLi
 		_, err := db.ExecContext(ctx, db.Rebind(
 			`INSERT INTO mlflow_run_links (`+mlflowRunLinkCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(integration_id, project_id, source_type, source_id) DO UPDATE SET
-			 	mlflow_experiment_id=EXCLUDED.mlflow_experiment_id, mlflow_run_id=EXCLUDED.mlflow_run_id, mlflow_run_url=EXCLUDED.mlflow_run_url,
-			 	sync_status=EXCLUDED.sync_status, last_sequence=EXCLUDED.last_sequence, last_error_code=EXCLUDED.last_error_code,
-			 	last_error_message=EXCLUDED.last_error_message, last_synced_at=EXCLUDED.last_synced_at, updated_at=EXCLUDED.updated_at`),
+			   mlflow_experiment_id=EXCLUDED.mlflow_experiment_id, mlflow_run_id=EXCLUDED.mlflow_run_id, mlflow_run_url=EXCLUDED.mlflow_run_url,
+			   sync_status=EXCLUDED.sync_status, last_sequence=EXCLUDED.last_sequence, last_error_code=EXCLUDED.last_error_code,
+			   last_error_message=EXCLUDED.last_error_message, last_synced_at=EXCLUDED.last_synced_at, updated_at=EXCLUDED.updated_at`),
 			link.IntegrationID, link.ProjectID, link.SourceType, link.SourceID, link.MLflowExperimentID, link.MLflowRunID,
 			link.MLflowRunURL, link.SyncStatus, link.LastSequence, link.LastErrorCode, link.LastErrorMessage, link.LastSyncedAt,
 			now, now,

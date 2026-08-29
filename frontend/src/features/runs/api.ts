@@ -122,13 +122,26 @@ export async function listArtifacts(projectId: string, runID: string): Promise<S
   return Array.isArray(data) ? data : []
 }
 
-export function artifactDownloadURL(
-  projectId: string,
-  runID: string,
-  step: string,
-  path: string,
-): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/runs/${runID}/artifacts/${step}/${path}`
+export interface ArtifactDownloadURLParams {
+  projectId: string
+  runId: string
+  step: string
+  artifact: string
+  filePath: string
+}
+
+export function artifactDownloadURL({
+  projectId,
+  runId,
+  step,
+  artifact,
+  filePath,
+}: ArtifactDownloadURLParams): string {
+  const path = [artifact, filePath]
+    .flatMap(part => part.split('/'))
+    .map(encodeURIComponent)
+    .join('/')
+  return `/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(step)}/${path}`
 }
 
 export async function retryStep(

@@ -17,6 +17,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useNotebook, useStopNotebook, useStartNotebook, useDeleteNotebook } from '@/features/notebooks/hooks'
+import { Link } from '@/lib/router'
 
 export function NotebookDetailPanel({ name, projectId }: { name: string; projectId: string }) {
   const { close } = useSidePanel()
@@ -95,6 +96,15 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
           <PanelTemplate.Row label="Endpoint">{notebook.endpoint || '—'}</PanelTemplate.Row>
           <PanelTemplate.Row label="Created">{new Date(notebook.created_at).toLocaleString()}</PanelTemplate.Row>
         </dl>
+      </PanelTemplate.Section>
+
+      <PanelTemplate.Section title="Execution">
+        <Link
+          to={`/projects/${projectId}/notebook-executions?notebook=${encodeURIComponent(notebook.name)}`}
+          className="text-sm text-primary hover:underline"
+        >
+          View execution history and approvals
+        </Link>
       </PanelTemplate.Section>
 
       <PanelTemplate.Section title="Notebook YAML">

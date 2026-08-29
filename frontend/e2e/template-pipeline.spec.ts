@@ -117,6 +117,19 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
     sum: 30,
     source: 'frontend-template',
   })
+
+  // Exercise the rendered artifact controls too. A direct API request can
+  // pass even when the UI builds a malformed project-scoped URL.
+  await page.reload()
+  const summaryRow = page.getByText('summary.json', { exact: true }).locator('..')
+  const download = summaryRow.getByRole('link', { name: 'Download' })
+  await expect(download).toHaveAttribute(
+    'href',
+    `${projectBase}/runs/${runID}/artifacts/summarize/summary/summary.json`,
+  )
+  await summaryRow.getByRole('button', { name: 'Preview' }).click()
+  await expect(page.getByRole('dialog')).toContainText('summarize/summary/summary.json')
+  await expect(page.getByRole('dialog')).toContainText('"count": 4')
 })
 
 test('never discards YAML-only fields during tab changes or submit', async ({ page }) => {
@@ -166,7 +179,8 @@ spec:
   await page.getByRole('button', { name: 'Submit' }).click()
   await page.getByRole('button', { name: 'Confirm Submit' }).click()
   await expect(page.getByText(/field worker not found/).last()).toBeVisible()
-  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Edit YAML' }).click()
+  await expect(page.getByText(/field worker not found/)).not.toBeVisible()
 
   await replaceYaml(page, 'apiVersion: piper/v1\nkind: Pipeline\nspec: [')
   await page.getByRole('tab', { name: 'Design' }).click()

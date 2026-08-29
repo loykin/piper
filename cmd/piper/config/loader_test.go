@@ -20,6 +20,38 @@ func TestLoaderDecodesStatsRetention(t *testing.T) {
 	}
 }
 
+func TestLoaderDecodesNotebookExecutionMLflowAndMCP(t *testing.T) {
+	l := NewLoader()
+	l.SetConfigFile(writeConfig(t, `version: 4
+notebook_execution:
+  mcp_policy: allowed
+  max_running_per_notebook: 3
+  execution_timeout: 2h
+integrations:
+  mlflow:
+    enabled: true
+    batch_size: 25
+    allowed_hosts: [mlflow.example.com]
+mcp:
+  enabled: true
+  allowed_origins: [https://app.example.com]
+  session_ttl: 45m
+`))
+	cfg, err := l.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NotebookExecution.MCPPolicy != "allowed" || cfg.NotebookExecution.MaxRunningPerNotebook != 3 || cfg.NotebookExecution.ExecutionTimeout != 2*time.Hour {
+		t.Fatalf("unexpected notebook execution config: %#v", cfg.NotebookExecution)
+	}
+	if !cfg.Integrations.MLflow.Enabled || cfg.Integrations.MLflow.BatchSize != 25 || len(cfg.Integrations.MLflow.AllowedHosts) != 1 {
+		t.Fatalf("unexpected MLflow config: %#v", cfg.Integrations.MLflow)
+	}
+	if !cfg.MCP.Enabled || cfg.MCP.SessionTTL != 45*time.Minute || len(cfg.MCP.AllowedOrigins) != 1 {
+		t.Fatalf("unexpected MCP config: %#v", cfg.MCP)
+	}
+}
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "piper.yaml")

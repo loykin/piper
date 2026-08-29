@@ -43,10 +43,11 @@ type Repository interface {
 	// actor, target, key"). Returns (nil, nil) if none exists yet.
 	FindExecutionByIdempotencyKey(ctx context.Context, projectID, notebookName, requestedBy, idempotencyKey string) (*NotebookExecution, error)
 	// ListExecutions returns executions for (projectID, notebookName),
-	// most recently queued first.
+	// most recently queued first. An empty notebookName lists the project.
 	ListExecutions(ctx context.Context, projectID, notebookName string, limit, offset int) ([]*NotebookExecution, error)
 	// CountExecutions returns the total number of executions for
-	// (projectID, notebookName), ignoring limit/offset.
+	// (projectID, notebookName), ignoring limit/offset. An empty notebookName
+	// counts the project.
 	CountExecutions(ctx context.Context, projectID, notebookName string) (int, error)
 	// UpdateExecution persists changes to an existing execution. Returns
 	// ErrNotFound if no row matches (ProjectID, ID).

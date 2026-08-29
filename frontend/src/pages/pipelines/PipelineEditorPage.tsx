@@ -782,6 +782,13 @@ export default function PipelineEditorPage() {
     }
   }
 
+  function closeSubmitModal() {
+    if (submitting) return
+    setSubmitModalOpen(false)
+    pendingSubmitRef.current = null
+    setError('')
+  }
+
   function validateNow() {
     if (activeTab === 'yaml') {
       if (yamlStatus.parseError) {
@@ -1167,6 +1174,7 @@ export default function PipelineEditorPage() {
                       value={yamlText}
                       onChange={e => {
                         setYamlText(e.target.value)
+                        pendingSubmitRef.current = null
                         setError('')
                       }}
                       className="min-h-136"
@@ -1436,7 +1444,7 @@ export default function PipelineEditorPage() {
           <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Submit Pipeline Template</h2>
-              <Button type="button" variant="ghost" size="icon" onClick={() => setSubmitModalOpen(false)} className="h-7 w-7">
+              <Button type="button" variant="ghost" size="icon" onClick={closeSubmitModal} className="h-7 w-7">
                 <X size={14} />
               </Button>
             </div>
@@ -1460,7 +1468,7 @@ export default function PipelineEditorPage() {
             </div>
             {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setSubmitModalOpen(false)} disabled={submitting}>Cancel</Button>
+              <Button variant="outline" size="sm" onClick={closeSubmitModal} disabled={submitting}>Edit YAML</Button>
               <Button size="sm" onClick={confirmSubmit} disabled={submitting}>
                 <Upload size={14} className="mr-1.5" />
                 {submitting ? 'Submitting…' : 'Confirm Submit'}

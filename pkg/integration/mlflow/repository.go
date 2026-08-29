@@ -2,6 +2,19 @@ package mlflow
 
 import "context"
 
+// ConfigureRepositorySSRFPolicy updates built-in repositories with the
+// server's validated MLflow endpoint policy. External repositories may opt
+// in by implementing the same setter; returning false tells embedders that
+// their repository owns validation itself.
+func ConfigureRepositorySSRFPolicy(repo Repository, policy SSRFPolicy) bool {
+	configurable, ok := repo.(interface{ SetSSRFPolicy(SSRFPolicy) })
+	if !ok {
+		return false
+	}
+	configurable.SetSSRFPolicy(policy)
+	return true
+}
+
 // Repository is the persistence interface for MLflowIntegration and its
 // mapping tables (MLflowExperimentLink, MLflowRunLink). It does not include
 // the durable outbox (IntegrationOutboxEvent) — that is a separate

@@ -88,8 +88,17 @@ func (r *fakeRepo) CountOpenKernelSessions(_ context.Context, projectID, noteboo
 	return n, nil
 }
 
-func (r *fakeRepo) ListStaleKernelSessions(context.Context, time.Time) ([]*KernelSession, error) {
-	return nil, nil
+func (r *fakeRepo) ListStaleKernelSessions(_ context.Context, cutoff time.Time) ([]*KernelSession, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*KernelSession
+	for _, k := range r.kernels {
+		if k.Status != KernelStatusClosed && k.Status != KernelStatusFailed && k.LastActivityAt.Before(cutoff) {
+			cp := *k
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
 }
 
 func (r *fakeRepo) CreateExecution(_ context.Context, e *NotebookExecution) error {
@@ -139,7 +148,7 @@ func (r *fakeRepo) ListExecutions(_ context.Context, projectID, notebookName str
 	defer r.mu.Unlock()
 	var out []*NotebookExecution
 	for _, e := range r.execs {
-		if e.ProjectID == projectID && e.NotebookName == notebookName {
+		if e.ProjectID == projectID && (notebookName == "" || e.NotebookName == notebookName) {
 			cp := *e
 			out = append(out, &cp)
 		}
@@ -455,10 +464,76 @@ func waitStatus(t *testing.T, svc *Service, projectID, id, status string, timeou
 	return nil
 }
 
+func TestSweepIdleKernelsClosesOnlyIdleSessions(t *testing.T) {
+	h := newHarness(t, PolicyAllowed)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	h.svc.deps.Now = func() time.Time { return now }
+	old := now.Add(-DefaultKernelIdleTTL - time.Minute)
+	h.repo.kernels["idle"] = &KernelSession{
+		ID: "idle", ProjectID: testProject, NotebookName: testNotebook,
+		JupyterSessionID: "j-idle", Status: KernelStatusIdle, LastActivityAt: old,
+	}
+	h.repo.kernels["busy"] = &KernelSession{
+		ID: "busy", ProjectID: testProject, NotebookName: testNotebook,
+		JupyterSessionID: "j-busy", Status: KernelStatusBusy, LastActivityAt: old,
+	}
+
+	h.svc.sweepIdleKernels(context.Background())
+
+	if got := h.repo.kernels["idle"].Status; got != KernelStatusClosed {
+		t.Fatalf("stale idle status = %q; want closed", got)
+	}
+	if h.repo.kernels["idle"].ClosedAt == nil {
+		t.Fatal("stale idle session has no closed_at")
+	}
+	if got := h.repo.kernels["busy"].Status; got != KernelStatusBusy {
+		t.Fatalf("stale busy status = %q; want busy", got)
+	}
+}
+
 var memberActor = Actor{ID: "alice", Role: security.ProjectRoleMember, ClientID: "rest"}
 var adminActor = Actor{ID: "admin-1", Role: security.ProjectRoleAdmin, ClientID: "rest"}
 
 // --- tests ------------------------------------------------------------------
+
+func TestGetKernelSessionForActor_EnforcesParentAndOwnership(t *testing.T) {
+	h := newHarness(t, PolicyAllowed)
+	ctx := context.Background()
+	ks := &KernelSession{
+		ID: "ks-1", ProjectID: testProject, NotebookName: testNotebook,
+		NotebookPath: "nb.ipynb", CreatedBy: memberActor.ID,
+	}
+	if err := h.repo.CreateKernelSession(ctx, ks); err != nil {
+		t.Fatalf("CreateKernelSession: %v", err)
+	}
+
+	if _, err := h.svc.GetKernelSessionForActor(ctx, memberActor, testProject, testNotebook, ks.ID); err != nil {
+		t.Fatalf("owner lookup: %v", err)
+	}
+	other := Actor{ID: "bob", Role: security.ProjectRoleMember, ClientID: "rest"}
+	if _, err := h.svc.GetKernelSessionForActor(ctx, other, testProject, testNotebook, ks.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("other member lookup error = %v, want ErrForbidden", err)
+	}
+	if _, err := h.svc.GetKernelSessionForActor(ctx, adminActor, testProject, "different-notebook", ks.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong parent lookup error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestGetExecutionForNotebook_EnforcesParent(t *testing.T) {
+	h := newHarness(t, PolicyAllowed)
+	ctx := context.Background()
+	exec := &NotebookExecution{ID: "exec-1", ProjectID: testProject, NotebookName: testNotebook}
+	if err := h.repo.CreateExecution(ctx, exec); err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+
+	if _, err := h.svc.GetExecutionForNotebook(ctx, testProject, testNotebook, exec.ID); err != nil {
+		t.Fatalf("matching parent lookup: %v", err)
+	}
+	if _, err := h.svc.GetExecutionForNotebook(ctx, testProject, "different-notebook", exec.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong parent lookup error = %v, want ErrNotFound", err)
+	}
+}
 
 func TestCreateExecution_PolicyAllowed_RunsToSuccess(t *testing.T) {
 	h := newHarness(t, PolicyAllowed)

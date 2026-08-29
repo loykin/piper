@@ -63,7 +63,7 @@ function AlertDialogAction({
   variant = "default",
   ...props
 }: React.ComponentProps<typeof Button>) {
-  return <Button variant={variant} {...props} />
+  return <AlertDialogPrimitive.Close render={<Button variant={variant} />} {...props} />
 }
 
 function AlertDialogCancel(props: AlertDialogPrimitive.Close.Props) {

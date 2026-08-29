@@ -179,8 +179,13 @@ func (r *executionRepo) FindExecutionByIdempotencyKey(ctx context.Context, proje
 }
 
 func (r *executionRepo) ListExecutions(ctx context.Context, projectID, notebookName string, limit, offset int) ([]*execution.NotebookExecution, error) {
-	query := `SELECT ` + executionCols + ` FROM notebook_executions WHERE project_id=? AND notebook_name=? ORDER BY queued_at DESC`
-	args := []any{projectID, notebookName}
+	query := `SELECT ` + executionCols + ` FROM notebook_executions WHERE project_id=?`
+	args := []any{projectID}
+	if notebookName != "" {
+		query += ` AND notebook_name=?`
+		args = append(args, notebookName)
+	}
+	query += ` ORDER BY queued_at DESC`
 	if limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, limit, offset)
@@ -198,6 +203,9 @@ func (r *executionRepo) ListExecutions(ctx context.Context, projectID, notebookN
 func (r *executionRepo) CountExecutions(ctx context.Context, projectID, notebookName string) (int, error) {
 	var count int
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		if notebookName == "" {
+			return db.GetContext(ctx, &count, `SELECT COUNT(*) FROM notebook_executions WHERE project_id=?`, projectID)
+		}
 		return db.GetContext(ctx, &count, `SELECT COUNT(*) FROM notebook_executions WHERE project_id=? AND notebook_name=?`, projectID, notebookName)
 	})
 	return count, err

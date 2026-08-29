@@ -126,7 +126,7 @@ function HistoryPageInner() {
   return (
     <>
     <DataBodyTemplate
-      title="History"
+      title="Run History"
       description="All pipeline run records. Each square in Steps represents one step's status."
     >
       <DataBodyTemplate.Body>

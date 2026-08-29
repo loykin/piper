@@ -134,6 +134,12 @@ paths:
       summary: List MLflow tracking integrations (docs/mlflow-tracking-adapter.md section 11.1).
       parameters:
         - $ref: "#/components/parameters/ProjectID"
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: offset
+          in: query
+          schema: { type: integer }
       responses:
         "200":
           description: Project MLflow integrations. Credential values are never returned — only credential_ref, a name reference into /credentials.
@@ -141,7 +147,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/MlflowIntegration" }
+                items: { $ref: "#/components/schemas/MlflowIntegrationDetail" }
     post:
       summary: Create an MLflow tracking integration. Requires project admin.
       parameters:
@@ -913,6 +919,32 @@ paths:
     post:
       responses:
         "204": { description: Kernel restarted in place. }
+  /api/projects/{project_id}/notebook-executions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer }
+        - name: notebook
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional exact notebook server name filter.
+      responses:
+        "200":
+          description: Project execution history across notebooks, most recently queued first. X-Total-Count is set when limit is provided.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotebookExecution" }
   /api/projects/{project_id}/notebooks/{name}/executions:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -1272,6 +1304,7 @@ components:
         - { $ref: "#/components/schemas/MlflowIntegration" }
         - type: object
           properties:
+            system_enabled: { type: boolean, description: Whether the server-level MLflow dispatcher is enabled. }
             health: { type: string, enum: [healthy, degraded, disabled] }
             pending_events: { type: integer }
             dead_events: { type: integer }

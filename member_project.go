@@ -141,9 +141,11 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 	viewerHandler.RegisterRoutes(projectAPI)
 
 	mlflow.NewHandler(mlflow.HandlerDeps{
-		Repo:    p.repos.Mlflow,
-		Outbox:  p.repos.Outbox,
-		Clients: p.mlflowClients,
+		Repo:              p.repos.Mlflow,
+		Outbox:            p.repos.Outbox,
+		Clients:           p.mlflowClients,
+		Credentials:       p.credentials,
+		DispatcherEnabled: p.cfg.Integrations.Mlflow.Enabled,
 	}).RegisterRoutes(projectAPI)
 
 	template.NewHandler(template.HandlerDeps{

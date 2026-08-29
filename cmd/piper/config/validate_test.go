@@ -40,6 +40,33 @@ func TestValidateServerRejectsInvalidStatsConfig(t *testing.T) {
 	}
 }
 
+func TestValidateServerRejectsInvalidNotebookExecutionAndMCP(t *testing.T) {
+	base := RootConfig{Runtime: RuntimeConfig{Type: InfrastructureBaremetal}}
+	invalidPolicy := base
+	invalidPolicy.NotebookExecution.MCPPolicy = "always"
+	if err := ValidateServer(invalidPolicy); err == nil || !strings.Contains(err.Error(), "notebook_execution.mcp_policy") {
+		t.Fatalf("unexpected policy error: %v", err)
+	}
+	invalidLimit := base
+	invalidLimit.NotebookExecution.MaxQueuedPerProject = -1
+	if err := ValidateServer(invalidLimit); err == nil || !strings.Contains(err.Error(), "concurrency limits") {
+		t.Fatalf("unexpected limit error: %v", err)
+	}
+	missingOrigin := base
+	missingOrigin.MCP.Enabled = true
+	if err := ValidateServer(missingOrigin); err == nil || !strings.Contains(err.Error(), "allowed_origins") {
+		t.Fatalf("unexpected MCP origin error: %v", err)
+	}
+}
+
+func TestValidateServerRejectsInvalidMLflowAllowlist(t *testing.T) {
+	cfg := RootConfig{Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: InfrastructureBaremetal}}
+	cfg.Integrations.MLflow.AllowedCIDRs = []string{"not-a-cidr"}
+	if err := ValidateServer(cfg); err == nil || !strings.Contains(err.Error(), "allowed_cidrs") {
+		t.Fatalf("expected allowed_cidrs error, got: %v", err)
+	}
+}
+
 func TestValidateServerAcceptsK8sRuntime(t *testing.T) {
 	cfg := RootConfig{
 		Storage: StorageConfig{Disabled: true},

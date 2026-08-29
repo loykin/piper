@@ -48,30 +48,38 @@ func openClickHouse(rawURL string, credential map[string]string, logRetention, m
 	}
 	h.base.Path = ""
 	b := &clickhouseBackend{http: h, database: database, logsTable: logs, metricsTable: metrics}
-	if manage {
-		logTTL := ""
-		if logRetention > 0 {
-			logTTL = fmt.Sprintf(" TTL ts + INTERVAL %d SECOND", int64(logRetention.Seconds()))
-		}
-		metricTTL := ""
-		if metricRetention > 0 {
-			metricTTL = fmt.Sprintf(" TTL ts + INTERVAL %d SECOND", int64(metricRetention.Seconds()))
-		}
-		statements := []string{
-			fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database),
-			fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id Int64,event_id String,project_id String,run_id String,step_name String,ts DateTime64(9,'UTC'),stream LowCardinality(String),line String) ENGINE=ReplacingMergeTree ORDER BY (project_id,run_id,step_name,id,event_id)%s", database, logs, logTTL),
-			fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id Int64,event_id String,project_id String,run_id String,step_name String,key String,value Float64,ts DateTime64(9,'UTC')) ENGINE=ReplacingMergeTree ORDER BY (project_id,run_id,step_name,id,event_id)%s", database, metrics, metricTTL),
-		}
-		if logRetention > 0 {
-			statements = append(statements, fmt.Sprintf("ALTER TABLE %s.%s MODIFY TTL ts + INTERVAL %d SECOND", database, logs, int64(logRetention.Seconds())))
-		}
-		if metricRetention > 0 {
-			statements = append(statements, fmt.Sprintf("ALTER TABLE %s.%s MODIFY TTL ts + INTERVAL %d SECOND", database, metrics, int64(metricRetention.Seconds())))
-		}
-		for _, stmt := range statements {
-			if _, err := h.request(context.Background(), http.MethodPost, "", url.Values{"query": {stmt}}, nil, "text/plain"); err != nil {
-				return nil, err
-			}
+	// Database/table creation always runs, independent of manage
+	// (ManageRetention) — without it, AppendLogs/AppendMetrics fail outright
+	// ("Database ... does not exist") whenever an operator points
+	// stats.*.url at ClickHouse without also opting into Piper-managed
+	// retention. Only the TTL clause itself — which governs automatic row
+	// expiry, not table existence — is conditional on manage. ts is
+	// DateTime64(9,'UTC'); ClickHouse's TTL clause rejects an expression
+	// that evaluates to DateTime64 ("TTL expression result column should
+	// have DateTime or Date type"), so the column must be downcast to
+	// DateTime with toDateTime() before adding the interval.
+	logTTL := ""
+	if manage && logRetention > 0 {
+		logTTL = fmt.Sprintf(" TTL toDateTime(ts) + INTERVAL %d SECOND", int64(logRetention.Seconds()))
+	}
+	metricTTL := ""
+	if manage && metricRetention > 0 {
+		metricTTL = fmt.Sprintf(" TTL toDateTime(ts) + INTERVAL %d SECOND", int64(metricRetention.Seconds()))
+	}
+	statements := []string{
+		fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", database),
+		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id Int64,event_id String,project_id String,run_id String,step_name String,ts DateTime64(9,'UTC'),stream LowCardinality(String),line String) ENGINE=ReplacingMergeTree ORDER BY (project_id,run_id,step_name,id,event_id)%s", database, logs, logTTL),
+		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (id Int64,event_id String,project_id String,run_id String,step_name String,key String,value Float64,ts DateTime64(9,'UTC')) ENGINE=ReplacingMergeTree ORDER BY (project_id,run_id,step_name,id,event_id)%s", database, metrics, metricTTL),
+	}
+	if manage && logRetention > 0 {
+		statements = append(statements, fmt.Sprintf("ALTER TABLE %s.%s MODIFY TTL toDateTime(ts) + INTERVAL %d SECOND", database, logs, int64(logRetention.Seconds())))
+	}
+	if manage && metricRetention > 0 {
+		statements = append(statements, fmt.Sprintf("ALTER TABLE %s.%s MODIFY TTL toDateTime(ts) + INTERVAL %d SECOND", database, metrics, int64(metricRetention.Seconds())))
+	}
+	for _, stmt := range statements {
+		if _, err := h.request(context.Background(), http.MethodPost, "", url.Values{"query": {stmt}}, nil, "text/plain"); err != nil {
+			return nil, err
 		}
 	}
 	return b, nil
@@ -120,7 +128,10 @@ func chWhere(projectID, runID, step string, after int64, since, until time.Time)
 }
 func (b *clickhouseBackend) query(ctx context.Context, table, where string, limit int, out any) error {
 	sql := fmt.Sprintf("SELECT * FROM %s.%s FINAL WHERE %s ORDER BY id ASC LIMIT %d FORMAT JSON", b.database, table, where, NormalizeLimit(limit)+1)
-	data, err := b.http.request(ctx, http.MethodPost, "", url.Values{"query": {sql}, "date_time_output_format": {"iso"}}, nil, "text/plain")
+	// ClickHouse's JSON output format quotes Int64/UInt64 values as strings by
+	// default (to protect JS float precision), which breaks unmarshaling
+	// straight into LogLine/MetricPoint's int64 id field — disable that.
+	data, err := b.http.request(ctx, http.MethodPost, "", url.Values{"query": {sql}, "date_time_output_format": {"iso"}, "output_format_json_quote_64bit_integers": {"0"}}, nil, "text/plain")
 	if err != nil {
 		return err
 	}

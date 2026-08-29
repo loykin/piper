@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -125,12 +126,31 @@ func main() {
 	<-ctx.Done()
 }
 
+// storageBroken is toggled by the /e2e/storage/break and /e2e/storage/fix
+// test-only routes below, so a Playwright spec can exercise the frontend's
+// "storage backend unreachable" error-state handling (see
+// frontend/e2e/storage-error.spec.ts) against a real backend/browser
+// instead of mocking the HTTP layer. While set, the fake S3 server answers
+// every request with 500 — this reproduces a real backend outage (a broken
+// connection surfaces to Piper's own storage/objects route as a request
+// failure, same as it would against a genuinely unreachable S3/MinIO
+// endpoint) without tearing down and having to recreate the listener.
+var storageBroken atomic.Bool
+
 func startFakeS3(ctx context.Context) (string, *s3.Client, func(), error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, nil, err
 	}
-	server := &http.Server{Handler: gofakes3.New(s3mem.New()).Server()}
+	fakeS3 := gofakes3.New(s3mem.New()).Server()
+	breakable := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if storageBroken.Load() {
+			http.Error(w, "e2e: storage backend intentionally broken", http.StatusInternalServerError)
+			return
+		}
+		fakeS3.ServeHTTP(w, r)
+	})
+	server := &http.Server{Handler: breakable}
 	go func() { _ = server.Serve(listener) }()
 
 	endpoint := "http://" + listener.Addr().String()
@@ -184,6 +204,12 @@ func e2eHandler(client *s3.Client) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/e2e/ready":
+			w.WriteHeader(http.StatusNoContent)
+		case "/e2e/storage/break":
+			storageBroken.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		case "/e2e/storage/fix":
+			storageBroken.Store(false)
 			w.WriteHeader(http.StatusNoContent)
 		case "/e2e/objects":
 			out, err := client.ListObjectsV2(r.Context(), &s3.ListObjectsV2Input{

@@ -51,6 +51,13 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 	admin.GET("/settings", func(c *gin.Context) {
 		c.JSON(http.StatusOK, p.Settings())
 	})
+	// GET /storage/settings is a read-only diagnostic: the artifact storage
+	// backend (bucket/endpoint/region/which-backend) is deploy-time-only
+	// configuration, the same class of setting as runtime.type or
+	// server.db.driver — see storage_admin.go's StorageSettingsView doc
+	// comment for the full rationale. There is deliberately no PUT here
+	// anymore; changing the backend requires editing storage.yaml directly
+	// on disk and restarting the server.
 	admin.GET("/storage/settings", func(c *gin.Context) {
 		view, err := p.StorageSettings()
 		if err != nil {
@@ -59,19 +66,13 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 		}
 		c.JSON(http.StatusOK, view)
 	})
-	admin.PUT("/storage/settings", func(c *gin.Context) {
-		var cfg StorageConfig
-		if err := c.ShouldBindJSON(&cfg); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		view, err := p.UpdateStorageSettings(cfg)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusOK, view)
-	})
+	// POST /storage/settings/test never persists anything or touches the
+	// running store — it only opens a throwaway client against the given
+	// candidate config to confirm it's reachable. Unlike the removed PUT,
+	// this carries none of the live-backend-swap risk, so it stays as an
+	// ops/API tool for validating a storage.yaml edit before applying it
+	// (not wired to any frontend control since there's no longer an
+	// editable form to source a candidate config from).
 	admin.POST("/storage/settings/test", func(c *gin.Context) {
 		var cfg StorageConfig
 		if err := c.ShouldBindJSON(&cfg); err != nil {

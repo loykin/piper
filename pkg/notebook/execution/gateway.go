@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/loykin/piper/pkg/notebook"
@@ -144,7 +145,11 @@ func (g gatewayImpl) SaveNotebook(ctx context.Context, server *notebook.Notebook
 	if err != nil {
 		return fmt.Errorf("execution: marshal notebook: %w", err)
 	}
-	err = g.client(server).PutContents(ctx, path, jupyter.ContentModel{
+	client := g.client(server)
+	if err := ensureParentDirs(ctx, client, path); err != nil {
+		return mapGatewayErr("save notebook", err)
+	}
+	err = client.PutContents(ctx, path, jupyter.ContentModel{
 		Path:    path,
 		Type:    "notebook",
 		Format:  "json",
@@ -152,6 +157,39 @@ func (g gatewayImpl) SaveNotebook(ctx context.Context, server *notebook.Notebook
 	})
 	if err != nil {
 		return mapGatewayErr("save notebook", err)
+	}
+	return nil
+}
+
+// ensureParentDirs creates every ancestor directory of path that doesn't
+// already exist, one PUT per level, root-to-leaf. Confirmed live against a
+// real jupyter_server: unlike a plain filesystem write, Jupyter's Contents
+// API PUT does not create intermediate directories on its own — writing
+// directly to a not-yet-existing nested path 500s with a raw OS "No such
+// file or directory" error. Needed for every NotebookExecution result path
+// this package writes (design doc §5.3's .piper/executions/{execution_id}/
+// result.ipynb, and stageCellExecution's staged edit at the same root),
+// since none of them are guaranteed to already exist. A directory PUT for
+// an already-existing directory is idempotent (jupyter_server returns 201
+// with the existing directory's metadata rather than erroring — confirmed
+// live), so this doesn't need an existence check first.
+func ensureParentDirs(ctx context.Context, client *jupyter.Client, path string) error {
+	dir := path[:strings.LastIndex(path, "/")+1] // "" (no ancestor) if path has no "/"
+	dir = strings.Trim(dir, "/")
+	if dir == "" {
+		return nil
+	}
+	segments := strings.Split(dir, "/")
+	built := ""
+	for _, seg := range segments {
+		if built == "" {
+			built = seg
+		} else {
+			built = built + "/" + seg
+		}
+		if err := client.PutContents(ctx, built, jupyter.ContentModel{Path: built, Type: "directory"}); err != nil {
+			return fmt.Errorf("create directory %q: %w", built, err)
+		}
 	}
 	return nil
 }

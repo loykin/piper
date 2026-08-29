@@ -149,12 +149,40 @@ func (n *Notebook) Marshal() ([]byte, error) {
 }
 
 // ContentHash returns the sha256 hex digest of the notebook's canonical
-// JSON encoding. Used both for NotebookExecution.SourceSHA256/BaseContentHash
-// bookkeeping and for the conflict check in docs/jupyter-mcp-execution.md
-// §6.1 step 11: comparing a freshly-read original's hash against the hash
-// recorded when the execution started.
+// JSON encoding, with every cell's ID field zeroed out first — see below
+// for why this must not hash the ID field as read. Used both for
+// NotebookExecution.SourceSHA256/BaseContentHash bookkeeping and for the
+// conflict check in docs/jupyter-mcp-execution.md §6.1 step 11: comparing a
+// freshly-read original's hash against the hash recorded when the
+// execution started.
+//
+// Confirmed live against a real jupyter_server: nbformat_minor>=5 requires
+// every cell to have an `id`, and when the on-disk file doesn't have one
+// (nbformat 4.5+ became the default only fairly recently — plenty of real
+// notebooks predate it, and it's an easy field for an MCP client
+// synthesizing a notebook to omit), jupyter_server's FileContentsManager
+// mints a fresh random one on every independent read *without persisting
+// it back to disk* — two reads of the byte-identical on-disk file a few
+// hundred milliseconds apart returned different ids in testing. Hashing
+// the ID as received would make the conflict check permanently, spuriously
+// fire "content changed" for any such notebook even when nothing on disk
+// ever changed — not a rare edge case for the AI-generated-notebook use
+// case this whole feature exists for. A real, persisted ID (one already
+// written to disk by a prior save, human or Piper) does round-trip
+// identically across reads and would be safe to hash, but there is no way
+// to tell that apart from a same-request freshly-minted one by the time
+// Piper receives the JSON — so this excludes IDs from the hash
+// unconditionally, accepting the (comparatively harmless) tradeoff that a
+// cell-reorder-with-no-content-change edit made purely through ID
+// reassignment won't be detected as a conflict.
 func (n *Notebook) ContentHash() string {
-	raw, err := n.Marshal()
+	normalized := *n
+	normalized.Cells = make([]Cell, len(n.Cells))
+	for i, cell := range n.Cells {
+		cell.ID = ""
+		normalized.Cells[i] = cell
+	}
+	raw, err := normalized.Marshal()
 	if err != nil {
 		return ""
 	}

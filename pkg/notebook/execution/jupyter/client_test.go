@@ -47,13 +47,26 @@ func TestBuildWebSocketURLSwapsSchemeAndKeepsPrefix(t *testing.T) {
 // without a real Jupyter process (unavailable in this environment — see
 // the test report).
 func fakeJupyterServer(t *testing.T) (*httptest.Server, *[]string, *[]string) {
+	return fakeJupyterServerWithXSRF(t, nil)
+}
+
+// fakeJupyterServerWithXSRF is fakeJupyterServer, plus xsrfHeaders (if
+// non-nil) records the X-XSRFToken header seen on every state-changing
+// (non-GET) request — see TestClientSendsXSRFTokenOnStateChangingRequests.
+func fakeJupyterServerWithXSRF(t *testing.T, xsrfHeaders *[]string) (*httptest.Server, *[]string, *[]string) {
 	t.Helper()
 	var paths []string
 	var authHeaders []string
+	recordXSRF := func(r *http.Request) {
+		if xsrfHeaders != nil && r.Method != http.MethodGet {
+			*xsrfHeaders = append(*xsrfHeaders, r.Header.Get("X-XSRFToken"))
+		}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/projects/p1/notebooks/nb1/proxy/api/contents/dir", func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		recordXSRF(r)
 		_ = json.NewEncoder(w).Encode(ContentModel{
 			Name: "dir", Path: "dir", Type: "directory",
 			Content: json.RawMessage(`[{"name":"a.ipynb","path":"dir/a.ipynb","type":"notebook"}]`),
@@ -62,6 +75,7 @@ func fakeJupyterServer(t *testing.T) (*httptest.Server, *[]string, *[]string) {
 	mux.HandleFunc("/projects/p1/notebooks/nb1/proxy/api/contents/dir/a.ipynb", func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		recordXSRF(r)
 		if r.Method == http.MethodPut {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -74,6 +88,7 @@ func fakeJupyterServer(t *testing.T) (*httptest.Server, *[]string, *[]string) {
 	mux.HandleFunc("/projects/p1/notebooks/nb1/proxy/api/sessions", func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		recordXSRF(r)
 		_ = json.NewEncoder(w).Encode(SessionModel{
 			ID: "sess-1", Path: "dir/a.ipynb", Kernel: SessionKernel{ID: "kernel-1", Name: "python3", State: "idle"},
 		})
@@ -81,10 +96,37 @@ func fakeJupyterServer(t *testing.T) (*httptest.Server, *[]string, *[]string) {
 	mux.HandleFunc("/projects/p1/notebooks/nb1/proxy/api/kernels/kernel-1/interrupt", func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		recordXSRF(r)
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/projects/p1/notebooks/nb1/proxy/api/kernels/missing/interrupt", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
+	})
+	// Real Jupyter Server only sets its _xsrf cookie on an HTML page
+	// response (a pure JSON API handler like /api/status does not render
+	// the template that triggers it) — verified live against a real
+	// jupyter_server; GET /lab is the page Piper's own driver always has
+	// available, since it launches Jupyter via `jupyter lab`. ensureXSRFToken
+	// (client.go) fetches this once per Client and echoes the cookie back
+	// as X-XSRFToken on every non-GET request — without this route, every
+	// PUT/POST/DELETE below fails exactly the way it did against a real
+	// server before that fix existed.
+	mux.HandleFunc("/projects/p1/notebooks/nb1/proxy/lab", func(w http.ResponseWriter, r *http.Request) {
+		// Path explicitly set to the proxy prefix *with* a trailing slash —
+		// matching real Jupyter Server exactly (it scopes the cookie to its
+		// configured --ServerApp.base_url, which always has a trailing
+		// slash: see pkg/notebook/dispatch/localdriver.Driver's baseURL).
+		// A cookie with no explicit Path (Go's http.SetCookie default) would
+		// fall back to RFC 6265's request-path-minus-last-segment algorithm
+		// instead, which for this request happens to produce the same
+		// no-trailing-slash string ensureXSRFToken's old, buggy
+		// Jar.Cookies(c.baseURL) call also used — the two bugs would have
+		// silently canceled each other out and this test would have passed
+		// even with the path-scoping bug still present. Setting Path
+		// explicitly, the way the real server does, is what actually
+		// exercises it.
+		http.SetCookie(w, &http.Cookie{Name: "_xsrf", Value: "fake-xsrf-token", Path: "/projects/p1/notebooks/nb1/proxy/"})
+		w.WriteHeader(http.StatusOK)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -143,6 +185,46 @@ func TestClientRoundTripsThroughProxyPrefix(t *testing.T) {
 	for _, h := range *authHeaders {
 		if h != "token secret-token" {
 			t.Errorf("Authorization header = %q, want %q", h, "token secret-token")
+		}
+	}
+}
+
+// TestClientSendsXSRFTokenOnStateChangingRequests is the regression for a
+// bug found via live testing against a real jupyter_server (not just the
+// httptest fake this package's other tests use): every non-GET Jupyter
+// Server API call was rejected with 403 "'_xsrf' argument missing from
+// POST" because the client never obtained or sent the required XSRF token
+// — Jupyter's own auth token being disabled (Piper's normal deployment) has
+// no bearing on this; Tornado's CSRF protection is unconditional. Confirmed
+// live: a bare GET to a JSON API endpoint does not set the _xsrf cookie,
+// but GET /lab (the page Piper's driver always has, since it launches
+// Jupyter via `jupyter lab`) does — see ensureXSRFToken's doc comment in
+// client.go for the fix and fakeJupyterServerWithXSRF's /lab route above
+// for how this test reproduces that exact behavior instead of just
+// asserting against a fake that never needed the fix in the first place.
+func TestClientSendsXSRFTokenOnStateChangingRequests(t *testing.T) {
+	var xsrfHeaders []string
+	srv, _, _ := fakeJupyterServerWithXSRF(t, &xsrfHeaders)
+	base := BuildBaseURL(srv.URL, "p1", "nb1")
+	c := NewClient(base, "secret-token")
+	ctx := context.Background()
+
+	if err := c.PutContents(ctx, "dir/a.ipynb", ContentModel{Type: "notebook", Format: "json", Content: json.RawMessage(`{"nbformat":4}`)}); err != nil {
+		t.Fatalf("PutContents: %v", err)
+	}
+	if _, err := c.CreateSession(ctx, "dir/a.ipynb", "python3"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := c.InterruptKernel(ctx, "kernel-1"); err != nil {
+		t.Fatalf("InterruptKernel: %v", err)
+	}
+
+	if len(xsrfHeaders) != 3 {
+		t.Fatalf("got %d state-changing requests recorded, want 3: %v", len(xsrfHeaders), xsrfHeaders)
+	}
+	for i, h := range xsrfHeaders {
+		if h != "fake-xsrf-token" {
+			t.Errorf("request %d: X-XSRFToken header = %q, want %q", i, h, "fake-xsrf-token")
 		}
 	}
 }

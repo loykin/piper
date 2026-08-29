@@ -40,7 +40,7 @@ func TestProcessNotebookCommandUsesCanonicalArgs(t *testing.T) {
 		t.Fatalf("BuildLaunchScript error: %v", err)
 	}
 	// Token is empty → --ServerApp.token= disables auth; master proxy is the security boundary.
-	if want := "exec /venv/bin/jupyter-lab --ServerApp.base_url=/notebooks/demo/proxy/ --ServerApp.token= --IdentityProvider.token= --ServerApp.root_dir=/work/demo --ServerApp.trust_xheaders=True '--ServerApp.allow_origin=*' --no-browser --ServerApp.port_retries=0 --ServerApp.port=18888"; script == "" || !containsLine(script, want) {
+	if want := "exec /venv/bin/jupyter-lab --ServerApp.base_url=/notebooks/demo/proxy/ --ServerApp.token= --IdentityProvider.token= --ServerApp.root_dir=/work/demo --ServerApp.trust_xheaders=True '--ServerApp.allow_origin=*' --no-browser --ServerApp.port_retries=0 --ContentsManager.allow_hidden=True --ServerApp.port=18888"; script == "" || !containsLine(script, want) {
 		t.Fatalf("script = %q, want line %q", script, want)
 	}
 }

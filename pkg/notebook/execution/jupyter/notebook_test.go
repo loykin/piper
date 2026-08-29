@@ -98,6 +98,37 @@ func TestContentHashStableAndSensitiveToChange(t *testing.T) {
 	}
 }
 
+// TestContentHashIgnoresCellID is the regression for a bug found via live
+// testing against a real jupyter_server: nbformat_minor>=5 requires every
+// cell to have an `id`, and when the on-disk file doesn't have one,
+// jupyter_server mints a fresh *random* id on every independent read
+// without persisting it back to disk — confirmed live, two reads of the
+// byte-identical file a few hundred milliseconds apart returned different
+// ids. Before this fix, ContentHash hashed the ID as received, so the
+// conflict check (design doc §6.1 step 11) permanently, spuriously fired
+// "content changed" for any such notebook — every "notebook" kind
+// execution against an id-less notebook ended StatusConflicted instead of
+// StatusSucceeded, even though nothing on disk ever changed. Two
+// same-content notebooks differing only in cell ID must hash identically.
+func TestContentHashIgnoresCellID(t *testing.T) {
+	a := EmptyNotebook()
+	a.AppendCodeCell("random-id-from-read-one", "print(1)")
+	b := EmptyNotebook()
+	b.AppendCodeCell("completely-different-id-from-read-two", "print(1)")
+
+	if a.ContentHash() != b.ContentHash() {
+		t.Fatalf("ContentHash differed for cells with identical content but different IDs: %q != %q", a.ContentHash(), b.ContentHash())
+	}
+
+	// Still sensitive to an actual content change, with IDs held constant —
+	// the fix must not make the hash blind to everything.
+	c := EmptyNotebook()
+	c.AppendCodeCell("random-id-from-read-one", "print(2)")
+	if a.ContentHash() == c.ContentHash() {
+		t.Fatal("ContentHash did not change after a real source edit")
+	}
+}
+
 func TestAppendAndReplaceCodeCell(t *testing.T) {
 	nb := EmptyNotebook()
 	idx := nb.AppendCodeCell("cell-1", "x = 1")

@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import type { StorageConfig } from './types'
 import { useProjectId } from '@/lib/projectContext'
 import { ApiError } from '@/lib/api'
 
@@ -34,20 +33,26 @@ export function useStorageObjectsPaged(limit: number, offset: number, prefix = '
     queryFn: () => api.listStorageObjectsPaged(projectId, limit, offset, prefix),
     enabled: !!projectId,
     placeholderData: (prev) => prev,
-  })
-}
-
-export function useSaveStorageSettings() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (config: StorageConfig) => api.saveStorageSettings(config),
-    onSuccess: () => qc.invalidateQueries({ queryKey: storageKeys.settings() }),
-  })
-}
-
-export function useTestStorageSettings() {
-  return useMutation({
-    mutationFn: (config: StorageConfig) => api.testStorageSettings(config),
+    // retry: false is load-bearing, not just "don't bother retrying a 5xx".
+    // TanStack Query's retryer only skips its focus check on a query's very
+    // first attempt (canStart, network-only); every *retry* additionally
+    // requires focusManager.isFocused() (canContinue) before it's allowed to
+    // fire — see @tanstack/query-core's retryer.ts. If the backing storage
+    // backend is down and the tab isn't focused/visible at the moment a
+    // retry would run (backgrounded tab, alt-tabbed away, an embedded
+    // preview pane, a screenshot/automation tool), the retryer parks itself
+    // in fetchStatus 'paused' waiting for a focus/online event that may
+    // never come — the query never reaches status 'error', isError stays
+    // false forever, and this list's QueryErrorNotice (wired to isError)
+    // never renders, reproducing exactly the "loading skeleton forever, no
+    // error banner" bug this hook exists to fix. The default retry:1 (see
+    // main.tsx) does not protect against this — it just delays the same
+    // hang by one retry cycle. Disabling retries here means every fetch
+    // (initial load or the notice's manual onRetry) goes through canStart
+    // only, so a failure always reaches status 'error' immediately,
+    // regardless of tab focus. QueryErrorNotice's Retry button remains the
+    // way to try again.
+    retry: false,
   })
 }
 

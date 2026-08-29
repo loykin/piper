@@ -416,7 +416,17 @@ func TestHandlerExposesArtifactStoreSettings(t *testing.T) {
 	}
 }
 
-func TestStorageSettingsRoundTrip(t *testing.T) {
+// TestStorageSettingsWriteRouteRemoved confirms the storage-connection write
+// path (formerly PUT /api/storage/settings) is gone, not merely
+// frontend-hidden — a system admin hitting the API directly (curl, an old
+// client, a script) can no longer live-edit the artifact storage backend
+// through this server. See storage_admin.go's StorageSettingsView doc
+// comment for why: p.store is only ever built once at process start, so a
+// live edit here never took effect until a manual restart, while every
+// artifact reference pinned to the old backend would go permanently
+// unreachable the moment a restart picked up the new one, with no warning.
+// Changing the backend now requires editing storage.yaml on disk directly.
+func TestStorageSettingsWriteRouteRemoved(t *testing.T) {
 	outputDir := t.TempDir()
 	p := newTestPiper(t, Config{OutputDir: outputDir})
 	router := p.Handler(nil)
@@ -425,32 +435,49 @@ func TestStorageSettingsRoundTrip(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("PUT /api/storage/settings status = %d, want 404 (route must not exist): %s", rec.Code, rec.Body.String())
+	}
+
+	// The rejected request must not have written storage.yaml as a
+	// side effect through some other path.
+	if _, err := os.Stat(filepath.Join(outputDir, "storage.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("storage.yaml should not exist after a rejected PUT, stat err = %v", err)
+	}
+}
+
+// TestStorageSettingsGetIsReadOnlyDiagnostic confirms GET /api/storage/settings
+// still works as a read-only view — it must keep reporting the on-disk
+// config (or the compiled-in default) plus the runtime's effective state,
+// exactly as before the PUT route was removed.
+func TestStorageSettingsGetIsReadOnlyDiagnostic(t *testing.T) {
+	outputDir := t.TempDir()
+	p := newTestPiper(t, Config{OutputDir: outputDir})
+	router := p.Handler(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/storage/settings", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("PUT status = %d, want 200: %s", rec.Code, rec.Body.String())
+		t.Fatalf("GET status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		RestartRequired bool `json:"restart_required"`
-		Config          struct {
-			Disabled bool   `json:"disabled"`
-			URL      string `json:"url"`
-			Token    string `json:"token"`
+		ConfigPath string `json:"config_path"`
+		Config     struct {
+			Disabled bool `json:"disabled"`
 		} `json:"config"`
+		Effective struct {
+			Status string `json:"status"`
+		} `json:"effective"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if !out.RestartRequired {
-		t.Fatal("restart_required = false, want true")
+	if out.ConfigPath == "" {
+		t.Fatal("config_path is empty, want the storage.yaml path")
 	}
-	if !out.Config.Disabled || out.Config.URL == "" || out.Config.Token != "secret" {
-		t.Fatalf("config = %#v, want disabled/url/token saved", out.Config)
-	}
-	raw, err := os.ReadFile(filepath.Join(outputDir, "storage.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "disabled: true") || !strings.Contains(string(raw), "bucket") {
-		t.Fatalf("storage.yaml = %s", string(raw))
+	if out.Effective.Status == "" {
+		t.Fatal("effective.status is empty, want the runtime's current artifact-store status")
 	}
 }
 

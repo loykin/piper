@@ -1,22 +1,25 @@
 export type {
-  StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult, StorageTestResult,
+  StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult,
 } from './types'
 
-import type { StorageConfig, StorageSettingsView, StorageObjectInfo, StorageUploadResult, StorageTestResult } from './types'
+import type { StorageSettingsView, StorageObjectInfo, StorageUploadResult } from './types'
 import { api, projectApi } from '@/lib/api'
 
 // ── System-scoped (admin) ─────────────────────────────────────────────────────
 
+// Read-only diagnostic: the effective config plus what's pending on disk.
+// There is deliberately no save/update call here — the artifact storage
+// backend (bucket/endpoint/region/which-backend) is deploy-time-only
+// configuration, edited directly in storage.yaml and applied by restarting
+// the server, the same as runtime.type or the database driver. See
+// storage_admin.go's StorageSettingsView doc comment on the Go side for the
+// full rationale (every artifact reference pinned to the old backend would
+// go permanently unreachable the moment a live-edited backend took effect,
+// with no warning). Only named system credentials stay live-editable — see
+// useCreateSystemCredential/useDeleteSystemCredential in
+// features/credentials/hooks.
 export async function getStorageSettings(): Promise<StorageSettingsView> {
   return api.get<StorageSettingsView>('/api/storage/settings')
-}
-
-export async function saveStorageSettings(config: StorageConfig): Promise<StorageSettingsView> {
-  return api.put<StorageSettingsView>('/api/storage/settings', config)
-}
-
-export async function testStorageSettings(config: StorageConfig): Promise<StorageTestResult> {
-  return api.post<StorageTestResult>('/api/storage/settings/test', config)
 }
 
 // ── Project-scoped ────────────────────────────────────────────────────────────

@@ -18,8 +18,24 @@ import (
 	"github.com/loykin/piper/pkg/storage"
 )
 
-// StorageSettingsView exposes the editable storage configuration together with
-// the current runtime capability state.
+// StorageSettingsView is a read-only diagnostic: the storage configuration
+// currently on disk (or the compiled-in default when no override file
+// exists) together with the runtime's own effective capability state.
+//
+// The artifact storage backend (bucket/endpoint/region/which-backend) used
+// to be live-editable through PUT /storage/settings, but that write path has
+// been removed — see routes_access.go. p.store (the actual running
+// connection) is only ever built once at process start, so a live edit here
+// never took effect until a manual restart, while every notebook-volume
+// template snapshot, viewer, from_artifact/run:latest resolution, and past
+// run's artifact download that references the *old* backend would become
+// permanently unreachable the moment a restart picked up the new one — with
+// no warning or migration path. That makes it the same class of setting as
+// runtime.type or server.db.driver: deploy-time-only, edited directly in
+// storage.yaml and applied by restarting the server, never live through this
+// API. Only the named system credentials a backend's CredentialRef points at
+// stay safely live-editable — same reasoning Airflow's own Connections
+// feature uses.
 type StorageSettingsView struct {
 	ConfigPath      string                `json:"config_path"`
 	Config          StorageConfig         `json:"config"`
@@ -74,23 +90,11 @@ func (p *Piper) readStorageSettings() (StorageConfig, bool, error) {
 	return loadStorageSettings(p.storageSettingsPath(), p.cfg.Storage)
 }
 
-func (p *Piper) writeStorageSettings(cfg StorageConfig) error {
-	settingPath := p.storageSettingsPath()
-	if err := os.MkdirAll(filepath.Dir(settingPath), 0755); err != nil {
-		return err
-	}
-	raw, err := yaml.Marshal(storageSettingsFile{Storage: cfg})
-	if err != nil {
-		return err
-	}
-	tmp := settingPath + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, settingPath)
-}
-
-// StorageSettings returns the editable storage configuration and runtime status.
+// StorageSettings returns the read-only storage configuration diagnostic —
+// what's on disk (or the compiled-in default) plus the runtime's own
+// effective capability state. There is deliberately no corresponding
+// "write"/"update" method: see StorageSettingsView's doc comment for why the
+// backend-connection fields are no longer editable through this API.
 func (p *Piper) StorageSettings() (StorageSettingsView, error) {
 	cfg, exists, err := p.readStorageSettings()
 	if err != nil {
@@ -108,14 +112,6 @@ func (p *Piper) StorageSettings() (StorageSettingsView, error) {
 		view.RestartRequired = true
 	}
 	return view, nil
-}
-
-// UpdateStorageSettings persists the edited storage config for the next restart.
-func (p *Piper) UpdateStorageSettings(cfg StorageConfig) (StorageSettingsView, error) {
-	if err := p.writeStorageSettings(cfg); err != nil {
-		return StorageSettingsView{}, err
-	}
-	return p.StorageSettings()
 }
 
 // TestStorageSettings opens the given candidate configuration (without

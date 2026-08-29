@@ -88,11 +88,18 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 func actorFrom(c *gin.Context, clientID string) execution.Actor {
 	pctx, _ := project.FromContext(c.Request.Context())
-	actor := execution.Actor{Role: pctx.Role, ClientID: clientID}
-	if identity, ok := security.IdentityFromContext(c.Request.Context()); ok && identity != nil {
-		actor.ID = identity.ID
-	}
+	actor := execution.Actor{Role: pctx.Role, ClientID: clientID, ID: identityIDFrom(c)}
 	return actor
+}
+
+// identityIDFrom returns the current request's resolved identity id, or ""
+// when unauthenticated/trusted-mode has no identity — matching how
+// actorFrom already treated a missing identity before this was split out.
+func identityIDFrom(c *gin.Context) string {
+	if identity, ok := security.IdentityFromContext(c.Request.Context()); ok && identity != nil {
+		return identity.ID
+	}
+	return ""
 }
 
 // peekedInitialize is a tolerant, partial decode of a single JSON-RPC
@@ -174,10 +181,17 @@ func (h *Handler) serveMCP(c *gin.Context) {
 			return
 		}
 		sess, ok := h.sessions.Get(sessionID)
-		if !ok || sess.ProjectID != pctx.ID {
+		if !ok || sess.ProjectID != pctx.ID || sess.IdentityID != identityIDFrom(c) {
 			// design doc §8.1: an invalid/expired session must not silently
 			// fall back to an unauthenticated call — the client must
-			// re-initialize.
+			// re-initialize. The identity check additionally enforces the
+			// doc's "사용자 ... 에 바인딩" requirement: a session ID minted
+			// for one identity must not be usable by a different
+			// authenticated caller even when both hold viewer+ on the same
+			// project (e.g. a leaked session id, or two browser tabs
+			// signed in as different users against the same reverse
+			// proxy) — otherwise IdentityID would be recorded on Create
+			// but never actually mean anything.
 			c.JSON(http.StatusNotFound, gin.H{"error": "unknown or expired MCP session"})
 			return
 		}

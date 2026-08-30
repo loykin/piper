@@ -39,7 +39,20 @@ func NewLocal(root string) (*LocalStore, error) {
 // os.Root capability for the remaining creation. This preserves support for a
 // new nested store directory without performing filesystem mutations through
 // an unchecked request-derived path.
+//
+// target is expected to already be absolute and filepath.Clean-ed by the
+// caller (NewLocal calls filepath.Abs before invoking this). It legitimately
+// comes from operator/admin-supplied storage configuration (storage.url, or
+// the system-admin-only, non-persisting POST /storage/settings/test — see
+// storage_admin.go's TestStorageSettings) and is intentionally allowed to
+// name any local path the server process can reach; there is no fixed "safe
+// root" to prefix-check it against. validateAbsoluteCleanPath re-asserts
+// that invariant explicitly (rather than only relying on the caller) so the
+// walk below never begins from a path this package didn't itself normalize.
 func mkdirAllBeneathExistingRoot(target string, perm os.FileMode) error {
+	if err := validateAbsoluteCleanPath(target); err != nil {
+		return err
+	}
 	ancestor := filepath.Clean(target)
 	for {
 		info, err := os.Stat(ancestor)
@@ -75,6 +88,26 @@ func mkdirAllBeneathExistingRoot(target string, perm os.FileMode) error {
 		return nil
 	}
 	return root.MkdirAll(rel, perm)
+}
+
+// validateAbsoluteCleanPath rejects anything that isn't an absolute,
+// filepath.Clean-normalized path with no residual ".." element. A properly
+// Clean-ed absolute path can never contain one (Clean collapses ".." at the
+// root boundary), so this never actually fires in practice — it exists as
+// an explicit, auditable guard ahead of the filesystem walk in
+// mkdirAllBeneathExistingRoot, rather than leaving that invariant implicit
+// in filepath.Clean's contract.
+func validateAbsoluteCleanPath(p string) error {
+	clean := filepath.Clean(p)
+	if !filepath.IsAbs(clean) {
+		return fmt.Errorf("storage: path %q must be absolute", p)
+	}
+	for _, seg := range strings.Split(clean, string(filepath.Separator)) {
+		if seg == ".." {
+			return fmt.Errorf("storage: path %q must not contain '..'", p)
+		}
+	}
+	return nil
 }
 
 func cleanLocalKey(key string, allowRoot bool) (string, error) {

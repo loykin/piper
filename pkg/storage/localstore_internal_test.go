@@ -1,6 +1,10 @@
 package storage
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestValidateAbsoluteCleanPath(t *testing.T) {
 	cases := []struct {
@@ -26,5 +30,63 @@ func TestValidateAbsoluteCleanPath(t *testing.T) {
 				t.Fatalf("validateAbsoluteCleanPath(%q) = %v, want nil", tc.path, err)
 			}
 		})
+	}
+}
+
+// TestMkdirAllBeneathExistingRoot_MultiLevelCreate exercises the case
+// mkdirAllBeneathExistingRoot exists for: none of target's path components
+// exist yet, several levels deep.
+func TestMkdirAllBeneathExistingRoot_MultiLevelCreate(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "a", "b", "c", "d")
+	if err := mkdirAllBeneathExistingRoot(target, 0o755); err != nil {
+		t.Fatalf("mkdirAllBeneathExistingRoot: %v", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("target not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("target is not a directory")
+	}
+}
+
+// TestMkdirAllBeneathExistingRoot_AlreadyExists confirms the function is a
+// no-op (not an error) when target already exists, matching os.MkdirAll.
+func TestMkdirAllBeneathExistingRoot_AlreadyExists(t *testing.T) {
+	base := t.TempDir()
+	if err := mkdirAllBeneathExistingRoot(base, 0o755); err != nil {
+		t.Fatalf("mkdirAllBeneathExistingRoot on existing dir: %v", err)
+	}
+}
+
+// TestMkdirAllBeneathExistingRoot_RejectsRelativePath confirms the entry
+// guard rejects a relative target outright rather than silently resolving
+// it against the process's working directory.
+func TestMkdirAllBeneathExistingRoot_RejectsRelativePath(t *testing.T) {
+	if err := mkdirAllBeneathExistingRoot("relative/path", 0o755); err == nil {
+		t.Fatal("mkdirAllBeneathExistingRoot accepted a relative path")
+	}
+}
+
+// TestMkdirAllBeneathExistingRoot_DoesNotFollowIntermediateSymlink is the
+// case that motivates walking the whole path through a single os.Root
+// capability instead of stat-ing raw absolute paths one ancestor at a time:
+// a symlink sitting *in the middle* of target, not just at its parent, must
+// not let creation escape to wherever that symlink points.
+func TestMkdirAllBeneathExistingRoot_DoesNotFollowIntermediateSymlink(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	// base/link -> outside
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(base, "link", "escaped", "deep")
+	err := mkdirAllBeneathExistingRoot(target, 0o755)
+	if err == nil {
+		t.Fatal("mkdirAllBeneathExistingRoot followed a symlink out of the walk")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "escaped")); !os.IsNotExist(statErr) {
+		t.Fatalf("directory was created outside the intended tree: %v", statErr)
 	}
 }

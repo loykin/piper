@@ -35,10 +35,15 @@ func NewLocal(root string) (*LocalStore, error) {
 	return &LocalStore{root: abs, secureRoot: realRoot}, nil
 }
 
-// mkdirAllBeneathExistingRoot finds the nearest existing ancestor and uses an
-// os.Root capability for the remaining creation. This preserves support for a
-// new nested store directory without performing filesystem mutations through
-// an unchecked request-derived path.
+// mkdirAllBeneathExistingRoot creates every directory from the filesystem
+// volume root down to target, entirely through an os.Root capability opened
+// on that volume root. os.Root's methods can only reach files and
+// directories beneath the root they were opened on and refuse to follow a
+// symlink that would escape it (see the os.Root doc comment) — the walk is
+// bounded this way from the very first path component, not just at a final
+// step, which also closes a symlink-swap TOCTOU window a stat-then-mkdir
+// design walking raw absolute paths would otherwise leave between
+// discovering an ancestor and creating beneath it.
 //
 // target is expected to already be absolute and filepath.Clean-ed by the
 // caller (NewLocal calls filepath.Abs before invoking this). It legitimately
@@ -46,40 +51,24 @@ func NewLocal(root string) (*LocalStore, error) {
 // the system-admin-only, non-persisting POST /storage/settings/test — see
 // storage_admin.go's TestStorageSettings) and is intentionally allowed to
 // name any local path the server process can reach; there is no fixed "safe
-// root" to prefix-check it against. validateAbsoluteCleanPath re-asserts
-// that invariant explicitly (rather than only relying on the caller) so the
-// walk below never begins from a path this package didn't itself normalize.
+// root" to prefix-check it against, which is exactly why the containment
+// guarantee has to come from os.Root itself rather than from validating
+// target against some other trusted path.
 func mkdirAllBeneathExistingRoot(target string, perm os.FileMode) error {
 	if err := validateAbsoluteCleanPath(target); err != nil {
 		return err
 	}
-	ancestor := filepath.Clean(target)
-	for {
-		info, err := os.Stat(ancestor)
-		if err == nil {
-			if !info.IsDir() {
-				return fmt.Errorf("storage: root ancestor %q is not a directory", ancestor)
-			}
-			break
-		}
-		if !os.IsNotExist(err) {
-			return err
-		}
-		parent := filepath.Dir(ancestor)
-		if parent == ancestor {
-			return err
-		}
-		ancestor = parent
-	}
-	realAncestor, err := filepath.EvalSymlinks(ancestor)
-	if err != nil {
-		return err
-	}
-	rel, err := filepath.Rel(ancestor, filepath.Clean(target))
+	clean := filepath.Clean(target)
+	// The volume root ("/" on Unix, "C:\" on Windows) is the one directory
+	// guaranteed to already exist for any absolute path, so it's always a
+	// safe os.Root anchor regardless of how much of target's remainder does
+	// or doesn't exist yet.
+	volumeRoot := filepath.VolumeName(clean) + string(filepath.Separator)
+	rel, err := filepath.Rel(volumeRoot, clean)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("storage: invalid root path %q", target)
 	}
-	root, err := os.OpenRoot(realAncestor)
+	root, err := os.OpenRoot(volumeRoot)
 	if err != nil {
 		return err
 	}

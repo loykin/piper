@@ -171,7 +171,7 @@ func New(cfg Config) (*Piper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	mlflow.ConfigureRepositorySSRFPolicy(repos.Mlflow, mlflow.SSRFPolicy{
+	repos.Mlflow.SetSSRFPolicy(mlflow.SSRFPolicy{
 		AllowInsecureHTTP: cfg.Integrations.Mlflow.AllowInsecureHTTP,
 		AllowedHosts:      cfg.Integrations.Mlflow.AllowedHosts,
 		AllowedCIDRs:      cfg.Integrations.Mlflow.AllowedCIDRs,

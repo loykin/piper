@@ -436,7 +436,9 @@ export default function PipelineEditorPage() {
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
   const dragDropHandledRef = useRef(false)
   const { data: credentials = [] } = useCredentials()
-  const gitCredentials = credentials.filter(credential => credential.kind === 'git' && !credential.disabled)
+  // Keep the pipeline's current credential in the list even if it has since
+  // been disabled, so it doesn't render as if the reference were lost.
+  const gitCredentials = credentials.filter(credential => credential.kind === 'git' && (!credential.disabled || credential.name === formCredential))
   // When no credential is explicitly chosen, preview which one the backend will
   // auto-match by endpoint scope so the user knows the source is authenticated.
   const autoMatchedCredential = useMemo(
@@ -979,7 +981,7 @@ export default function PipelineEditorPage() {
                       {gitCredentials.length === 0 ? (
                         <SelectItem value="__none__" disabled>No active git credentials</SelectItem>
                       ) : gitCredentials.map(credential => (
-                        <SelectItem key={credential.name} value={credential.name}>{credential.name} · {credential.endpoint || 'any repo'}</SelectItem>
+                        <SelectItem key={credential.name} value={credential.name}>{credential.name}{credential.disabled ? ' (disabled)' : ''} · {credential.endpoint || 'any repo'}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

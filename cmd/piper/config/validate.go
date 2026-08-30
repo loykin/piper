@@ -2,10 +2,11 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 
+	"github.com/loykin/piper/pkg/integration/mlflow"
+	"github.com/loykin/piper/pkg/notebook/execution"
 	"github.com/loykin/piper/pkg/statsstore"
 )
 
@@ -66,41 +67,31 @@ func ValidateServer(c RootConfig) error {
 	return nil
 }
 
+// validateNotebookExecution and validateIntegrations delegate to the
+// execution/mlflow packages' own ValidateConfig/ValidateDispatcherConfig so
+// this CLI/viper config layer and piper.Config's runtime Validate() (which
+// a library caller can reach directly, bypassing this loader entirely)
+// reject the exact same configs — see those functions' doc comments.
 func validateNotebookExecution(c NotebookExecutionConfig) error {
-	switch c.MCPPolicy {
-	case "", "disabled", "approval_required", "allowed":
-	default:
-		return fmt.Errorf("config: notebook_execution.mcp_policy must be disabled, approval_required, or allowed")
-	}
-	if c.MaxRunningPerNotebook < 0 || c.MaxKernelsPerNotebook < 0 || c.MaxQueuedPerProject < 0 {
-		return fmt.Errorf("config: notebook_execution concurrency limits must not be negative")
-	}
-	if c.KernelIdleTTL < 0 || c.CellTimeout < 0 || c.ExecutionTimeout < 0 {
-		return fmt.Errorf("config: notebook_execution durations must not be negative")
-	}
-	if c.InlineOutputBytes < 0 || c.FileReadBytes < 0 {
-		return fmt.Errorf("config: notebook_execution byte limits must not be negative")
+	if err := execution.ValidateConfig(
+		c.MCPPolicy,
+		c.MaxRunningPerNotebook, c.MaxKernelsPerNotebook, c.MaxQueuedPerProject,
+		c.KernelIdleTTL, c.CellTimeout, c.ExecutionTimeout,
+		c.InlineOutputBytes, c.FileReadBytes,
+	); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
 }
 
 func validateIntegrations(c IntegrationsConfig) error {
 	m := c.MLflow
-	if m.DispatcherConcurrency < 0 || m.BatchSize < 0 || m.MaxAttemptsBeforeDead < 0 {
-		return fmt.Errorf("config: integrations.mlflow numeric limits must not be negative")
-	}
-	if m.RequestTimeout < 0 || m.LeaseDuration < 0 || m.PollInterval < 0 {
-		return fmt.Errorf("config: integrations.mlflow durations must not be negative")
-	}
-	for _, host := range m.AllowedHosts {
-		if strings.TrimSpace(host) == "" {
-			return fmt.Errorf("config: integrations.mlflow.allowed_hosts must not contain empty values")
-		}
-	}
-	for _, cidr := range m.AllowedCIDRs {
-		if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
-			return fmt.Errorf("config: integrations.mlflow.allowed_cidrs contains invalid CIDR %q", cidr)
-		}
+	if err := mlflow.ValidateDispatcherConfig(
+		m.DispatcherConcurrency, m.BatchSize, m.MaxAttemptsBeforeDead,
+		m.RequestTimeout, m.LeaseDuration, m.PollInterval,
+		m.AllowedHosts, m.AllowedCIDRs,
+	); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
 }

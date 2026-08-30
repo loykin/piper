@@ -389,10 +389,17 @@ func (s *Service) ListKernelSessions(ctx context.Context, actor Actor, projectID
 }
 
 // InterruptKernelSession sends SIGINT to the session's kernel (design doc §6.3).
-func (s *Service) InterruptKernelSession(ctx context.Context, actor Actor, projectID, id string) error {
+// notebookName enforces parent-resource identity the same way
+// GetKernelSessionForActor does — this is the only ownership/parent gate
+// InterruptKernelSession has, so every caller (REST today, a future MCP
+// mutation phase tomorrow) goes through it just by calling this method.
+func (s *Service) InterruptKernelSession(ctx context.Context, actor Actor, projectID, notebookName, id string) error {
 	ks, err := s.GetKernelSession(ctx, projectID, id)
 	if err != nil {
 		return err
+	}
+	if ks.NotebookName != notebookName {
+		return ErrNotFound
 	}
 	if err := s.checkOwnership(actor, ks.CreatedBy); err != nil {
 		return err
@@ -408,11 +415,15 @@ func (s *Service) InterruptKernelSession(ctx context.Context, actor Actor, proje
 	return s.deps.Repo.UpdateKernelSession(ctx, ks)
 }
 
-// RestartKernelSession restarts the session's kernel in place.
-func (s *Service) RestartKernelSession(ctx context.Context, actor Actor, projectID, id string) error {
+// RestartKernelSession restarts the session's kernel in place. notebookName
+// enforces parent-resource identity the same way InterruptKernelSession does.
+func (s *Service) RestartKernelSession(ctx context.Context, actor Actor, projectID, notebookName, id string) error {
 	ks, err := s.GetKernelSession(ctx, projectID, id)
 	if err != nil {
 		return err
+	}
+	if ks.NotebookName != notebookName {
+		return ErrNotFound
 	}
 	if err := s.checkOwnership(actor, ks.CreatedBy); err != nil {
 		return err
@@ -432,10 +443,15 @@ func (s *Service) RestartKernelSession(ctx context.Context, actor Actor, project
 // CloseKernelSession terminates a Piper-owned kernel session. Only sessions
 // Piper itself created are managed this way (design doc §5.1: "사용자가
 // Jupyter UI에서 만든 세션은 v1 관리 대상이 아니다").
-func (s *Service) CloseKernelSession(ctx context.Context, actor Actor, projectID, id string) error {
+// notebookName enforces parent-resource identity the same way
+// InterruptKernelSession does.
+func (s *Service) CloseKernelSession(ctx context.Context, actor Actor, projectID, notebookName, id string) error {
 	ks, err := s.GetKernelSession(ctx, projectID, id)
 	if err != nil {
 		return err
+	}
+	if ks.NotebookName != notebookName {
+		return ErrNotFound
 	}
 	if err := s.checkOwnership(actor, ks.CreatedBy); err != nil {
 		return err
@@ -688,10 +704,15 @@ func (s *Service) ListExecutions(ctx context.Context, projectID, notebookName st
 }
 
 // CancelExecution cancels a not-yet-terminal execution (design doc §6.3, §7.3).
-func (s *Service) CancelExecution(ctx context.Context, actor Actor, projectID, id string) error {
+// notebookName enforces parent-resource identity the same way
+// GetExecutionForNotebook does.
+func (s *Service) CancelExecution(ctx context.Context, actor Actor, projectID, notebookName, id string) error {
 	exec, err := s.GetExecution(ctx, projectID, id)
 	if err != nil {
 		return err
+	}
+	if exec.NotebookName != notebookName {
+		return ErrNotFound
 	}
 	if err := s.checkOwnership(actor, exec.RequestedBy); err != nil {
 		return err
@@ -726,11 +747,15 @@ func (s *Service) CancelExecution(ctx context.Context, actor Actor, projectID, i
 }
 
 // ApproveExecution moves an awaiting_approval execution to queued and
-// schedules it (design doc §7.3, admin role).
-func (s *Service) ApproveExecution(ctx context.Context, actor Actor, projectID, id string) error {
+// schedules it (design doc §7.3, admin role). notebookName enforces
+// parent-resource identity the same way GetExecutionForNotebook does.
+func (s *Service) ApproveExecution(ctx context.Context, actor Actor, projectID, notebookName, id string) error {
 	exec, err := s.GetExecution(ctx, projectID, id)
 	if err != nil {
 		return err
+	}
+	if exec.NotebookName != notebookName {
+		return ErrNotFound
 	}
 	if exec.Status != StatusAwaitingApproval {
 		return ErrConflict
@@ -752,11 +777,15 @@ func (s *Service) ApproveExecution(ctx context.Context, actor Actor, projectID, 
 }
 
 // DenyExecution moves an awaiting_approval execution to cancelled (design
-// doc §7.3, admin role).
-func (s *Service) DenyExecution(ctx context.Context, actor Actor, projectID, id string) error {
+// doc §7.3, admin role). notebookName enforces parent-resource identity the
+// same way GetExecutionForNotebook does.
+func (s *Service) DenyExecution(ctx context.Context, actor Actor, projectID, notebookName, id string) error {
 	exec, err := s.GetExecution(ctx, projectID, id)
 	if err != nil {
 		return err
+	}
+	if exec.NotebookName != notebookName {
+		return ErrNotFound
 	}
 	if exec.Status != StatusAwaitingApproval {
 		return ErrConflict

@@ -3,6 +3,7 @@ package mlflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/loykin/piper/pkg/credential"
@@ -13,8 +14,20 @@ type fakeCredentials struct {
 	err  error
 }
 
-func (f fakeCredentials) Get(context.Context, string, string) (*credential.Metadata, error) {
-	return f.meta, f.err
+func (f fakeCredentials) ValidateMlflowCredential(context.Context, string, string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.meta == nil {
+		return credential.ErrNotFound
+	}
+	if f.meta.Disabled {
+		return credential.ErrDisabled
+	}
+	if f.meta.Kind != credential.KindMlflow {
+		return fmt.Errorf("%w: credential is kind %q, expected mlflow", credential.ErrInvalid, f.meta.Kind)
+	}
+	return nil
 }
 
 func TestIntegrationDetailReflectsDispatcherState(t *testing.T) {

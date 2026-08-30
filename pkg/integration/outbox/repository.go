@@ -13,6 +13,14 @@ var (
 	ErrNotFound = errors.New("outbox: event not found")
 )
 
+// Backlog is one integration's pending/dead event counts and oldest
+// pending event age, as returned by Repository.Backlog.
+type Backlog struct {
+	Pending       int
+	Dead          int
+	OldestPending *time.Time
+}
+
 // Repository is the persistence interface for the durable integration
 // outbox (design doc section 6.3). Implementations must support both
 // SQLite and Postgres with the same semantics; SQLite claims are expected
@@ -84,6 +92,18 @@ type Repository interface {
 	// OldestPending returns the CreatedAt of the oldest StatusPending event
 	// for integrationID, or nil if there is none.
 	OldestPending(ctx context.Context, integrationID string) (*time.Time, error)
+
+	// Backlog returns pending/dead counts and the oldest pending event's
+	// CreatedAt for each of integrationIDs, batched into a bounded number
+	// of queries regardless of len(integrationIDs) — the multi-integration
+	// counterpart to CountByStatus/OldestPending, for callers (e.g. the
+	// MLflow integrations list endpoint) that need the same per-item
+	// health/backlog snapshot for a whole page at once instead of doing
+	// CountByStatus x2 + OldestPending per row. An ID with no matching rows
+	// is simply absent from the result map — treat a missing entry the same
+	// as the CountByStatus/OldestPending zero-value convention (0 counts,
+	// nil oldest pending).
+	Backlog(ctx context.Context, integrationIDs []string) (map[string]Backlog, error)
 
 	// ListByAggregate returns every event for
 	// (integrationID, aggregateType, aggregateID) ordered by Sequence

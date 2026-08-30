@@ -113,6 +113,29 @@ func (r *fakeRepo) CountByStatus(ctx context.Context, integrationID, status stri
 func (r *fakeRepo) OldestPending(ctx context.Context, integrationID string) (*time.Time, error) {
 	return nil, nil
 }
+func (r *fakeRepo) Backlog(ctx context.Context, integrationIDs []string) (map[string]outbox.Backlog, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]outbox.Backlog, len(integrationIDs))
+	want := make(map[string]bool, len(integrationIDs))
+	for _, id := range integrationIDs {
+		want[id] = true
+	}
+	for _, e := range r.events {
+		if !want[e.IntegrationID] {
+			continue
+		}
+		b := out[e.IntegrationID]
+		switch e.Status {
+		case string(outbox.StatusPending):
+			b.Pending++
+		case string(outbox.StatusDead):
+			b.Dead++
+		}
+		out[e.IntegrationID] = b
+	}
+	return out, nil
+}
 func (r *fakeRepo) ListByAggregate(ctx context.Context, integrationID, aggregateType, aggregateID string) ([]*outbox.Event, error) {
 	return nil, nil
 }

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { backgroundPollingNotifications } from '@/lib/query'
 import { useProjectId } from '@/lib/projectContext'
 import {
   approveNotebookExecution, cancelNotebookExecution, denyNotebookExecution,
@@ -20,6 +21,7 @@ export function useNotebookExecutions(limit: number, offset: number, notebook?: 
     enabled: !!projectId,
     placeholderData: previous => previous,
     refetchInterval: query => query.state.data?.executions.some(item => ['queued', 'running', 'cancelling'].includes(item.status)) ? 2000 : false,
+    ...backgroundPollingNotifications,
   })
 }
 

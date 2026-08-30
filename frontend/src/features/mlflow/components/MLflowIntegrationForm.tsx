@@ -21,7 +21,11 @@ type Values = z.infer<typeof schema>
 
 export function MLflowIntegrationForm({ initial, busy, error, onSubmit, onCancel }: { initial?: MLflowIntegration; busy: boolean; error?: string; onSubmit: (value: MLflowIntegrationRequest) => Promise<void>; onCancel: () => void }) {
   const credentials = useCredentials()
-  const mlflowCredentials = (credentials.data ?? []).filter(item => item.kind === 'mlflow' && !item.disabled)
+  // Keep the integration's current credential in the list even if it has
+  // since been disabled, so editing an integration whose credential was
+  // disabled elsewhere doesn't render the field as if the reference were
+  // lost — the disabled suffix still communicates the real state.
+  const mlflowCredentials = (credentials.data ?? []).filter(item => item.kind === 'mlflow' && (!item.disabled || item.name === initial?.credential_ref))
   const { control, register, handleSubmit, formState: { errors } } = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -36,7 +40,7 @@ export function MLflowIntegrationForm({ initial, busy, error, onSubmit, onCancel
     <FormField label="Name" htmlFor="mlflow-name" error={errors.name?.message}><Input id="mlflow-name" {...register('name')} placeholder="production-mlflow" /></FormField>
     <FormField label="Tracking URI" htmlFor="mlflow-uri" error={errors.tracking_uri?.message} helperText="HTTPS is required unless the server explicitly allows insecure local HTTP."><Input id="mlflow-uri" className="font-mono" {...register('tracking_uri')} placeholder="https://mlflow.example.com" /></FormField>
     <FormField label="Credential" htmlFor="mlflow-credential" error={errors.credential_ref?.message} helperText={mlflowCredentials.length === 0 ? 'Create an MLflow credential before configuring the integration.' : 'Credential values stay write-only; only this reference is stored here.'}>
-      <Controller name="credential_ref" control={control} render={({ field }) => <Select value={field.value || undefined} onValueChange={field.onChange} disabled={mlflowCredentials.length === 0}><SelectTrigger id="mlflow-credential" className="w-72"><SelectValue placeholder="Select a credential" /></SelectTrigger><SelectContent>{mlflowCredentials.map(item => <SelectItem key={item.name} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select>} />
+      <Controller name="credential_ref" control={control} render={({ field }) => <Select value={field.value || undefined} onValueChange={field.onChange} disabled={mlflowCredentials.length === 0}><SelectTrigger id="mlflow-credential" className="w-72"><SelectValue placeholder="Select a credential" /></SelectTrigger><SelectContent>{mlflowCredentials.map(item => <SelectItem key={item.name} value={item.name}>{item.name}{item.disabled ? ' (disabled)' : ''}</SelectItem>)}</SelectContent></Select>} />
     </FormField>
     <FormField label="Experiment template" htmlFor="mlflow-template" error={errors.experiment_template?.message}><Input id="mlflow-template" className="font-mono" {...register('experiment_template')} /></FormField>
     <DataBodyTemplate.Group layout="stacked" title="Export scope" description="Artifacts remain authoritative in Piper; MLflow receives references.">

@@ -535,6 +535,48 @@ func TestGetExecutionForNotebook_EnforcesParent(t *testing.T) {
 	}
 }
 
+// TestMutatingMethods_EnforceParentNotebook verifies InterruptKernelSession,
+// CloseKernelSession, CancelExecution, ApproveExecution, and DenyExecution
+// each reject a notebookName that doesn't match the session/execution's
+// actual parent — the same guarantee GetKernelSessionForActor/
+// GetExecutionForNotebook enforce for reads, now built into the mutating
+// methods themselves rather than left to a caller-side precheck.
+func TestMutatingMethods_EnforceParentNotebook(t *testing.T) {
+	h := newHarness(t, PolicyAllowed)
+	ctx := context.Background()
+
+	ks := &KernelSession{
+		ID: "ks-parent", ProjectID: testProject, NotebookName: testNotebook,
+		NotebookPath: "nb.ipynb", CreatedBy: memberActor.ID, Status: KernelStatusIdle,
+	}
+	if err := h.repo.CreateKernelSession(ctx, ks); err != nil {
+		t.Fatalf("CreateKernelSession: %v", err)
+	}
+	if err := h.svc.InterruptKernelSession(ctx, memberActor, testProject, "different-notebook", ks.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InterruptKernelSession wrong parent error = %v, want ErrNotFound", err)
+	}
+	if err := h.svc.CloseKernelSession(ctx, memberActor, testProject, "different-notebook", ks.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CloseKernelSession wrong parent error = %v, want ErrNotFound", err)
+	}
+
+	exec := &NotebookExecution{
+		ID: "exec-parent", ProjectID: testProject, NotebookName: testNotebook,
+		Status: StatusAwaitingApproval, RequestedBy: memberActor.ID,
+	}
+	if err := h.repo.CreateExecution(ctx, exec); err != nil {
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	if err := h.svc.CancelExecution(ctx, memberActor, testProject, "different-notebook", exec.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CancelExecution wrong parent error = %v, want ErrNotFound", err)
+	}
+	if err := h.svc.ApproveExecution(ctx, adminActor, testProject, "different-notebook", exec.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ApproveExecution wrong parent error = %v, want ErrNotFound", err)
+	}
+	if err := h.svc.DenyExecution(ctx, adminActor, testProject, "different-notebook", exec.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DenyExecution wrong parent error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCreateExecution_PolicyAllowed_RunsToSuccess(t *testing.T) {
 	h := newHarness(t, PolicyAllowed)
 	h.seedNotebook("nb.ipynb", 2)
@@ -600,7 +642,7 @@ func TestCreateExecution_ApprovalRequired_ThenApprove(t *testing.T) {
 		t.Fatalf("execution moved out of awaiting_approval without an explicit Approve call")
 	}
 
-	if err := h.svc.ApproveExecution(context.Background(), adminActor, testProject, exec.ID); err != nil {
+	if err := h.svc.ApproveExecution(context.Background(), adminActor, testProject, testNotebook, exec.ID); err != nil {
 		t.Fatalf("ApproveExecution: %v", err)
 	}
 	approved, err := h.svc.GetExecution(context.Background(), testProject, exec.ID)
@@ -730,7 +772,7 @@ func TestCancelExecution_AwaitingApproval(t *testing.T) {
 		t.Fatalf("CreateExecution: %v", err)
 	}
 
-	if err := h.svc.CancelExecution(context.Background(), memberActor, testProject, exec.ID); err != nil {
+	if err := h.svc.CancelExecution(context.Background(), memberActor, testProject, testNotebook, exec.ID); err != nil {
 		t.Fatalf("CancelExecution: %v", err)
 	}
 	got, err := h.svc.GetExecution(context.Background(), testProject, exec.ID)
@@ -750,11 +792,11 @@ func TestCancelExecution_AwaitingApproval(t *testing.T) {
 		t.Fatalf("CreateExecution 2: %v", err)
 	}
 	other := Actor{ID: "eve", Role: security.ProjectRoleMember, ClientID: "rest"}
-	if err := h.svc.CancelExecution(context.Background(), other, testProject, exec2.ID); !errors.Is(err, ErrForbidden) {
+	if err := h.svc.CancelExecution(context.Background(), other, testProject, testNotebook, exec2.ID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("CancelExecution by non-owner: err = %v, want ErrForbidden", err)
 	}
 	// Admin can cancel anyone's execution.
-	if err := h.svc.CancelExecution(context.Background(), adminActor, testProject, exec2.ID); err != nil {
+	if err := h.svc.CancelExecution(context.Background(), adminActor, testProject, testNotebook, exec2.ID); err != nil {
 		t.Fatalf("CancelExecution by admin: %v", err)
 	}
 }
@@ -785,7 +827,7 @@ func TestCancelExecution_Running(t *testing.T) {
 	}
 	waitStatus(t, h.svc, testProject, exec.ID, StatusRunning, time.Second)
 
-	if err := h.svc.CancelExecution(context.Background(), memberActor, testProject, exec.ID); err != nil {
+	if err := h.svc.CancelExecution(context.Background(), memberActor, testProject, testNotebook, exec.ID); err != nil {
 		t.Fatalf("CancelExecution: %v", err)
 	}
 

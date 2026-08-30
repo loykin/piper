@@ -26,7 +26,11 @@ export function EnvVarEditor({
   onUpdate,
 }: EnvVarEditorProps) {
   const { data: credentials = [] } = useCredentials()
-  const activeCredentials = credentials.filter(credential => credential.kind === 'generic' && !credential.disabled)
+  // Keep a credential in the list even if it's since been disabled, as long
+  // as some row still references it — otherwise editing an env var whose
+  // credential was disabled elsewhere renders as if the reference were lost.
+  const referencedNames = new Set(items.map(item => item.credentialName).filter(Boolean))
+  const activeCredentials = credentials.filter(credential => credential.kind === 'generic' && (!credential.disabled || referencedNames.has(credential.name)))
 
   return (
     <div>
@@ -85,7 +89,7 @@ export function EnvVarEditor({
                         <SelectItem key={credential.name} value={credential.name}>
                           <span className="inline-flex items-center gap-1.5">
                             <KeyRound size={12} />
-                            {credential.name}
+                            {credential.name}{credential.disabled ? ' (disabled)' : ''}
                           </span>
                         </SelectItem>
                       ))}

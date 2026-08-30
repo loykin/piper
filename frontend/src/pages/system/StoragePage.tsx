@@ -285,6 +285,7 @@ function StorageCredentialsSection({
                 <span className="font-mono text-sm">{c.name}</span>
                 <div className="flex items-center gap-2">
                   {credentialRef === c.name && <Badge variant="secondary">in use</Badge>}
+                  {c.disabled && <Badge variant="secondary">disabled</Badge>}
                   <IconButton
                     icon={<Trash2 />}
                     label="Delete"
@@ -803,7 +804,10 @@ function StoragePageInner() {
 
   const { data: systemCredentials = [] } = useSystemCredentials()
   const activeCredentialKind = BACKEND_CREDENTIAL_KIND[backend]
-  const backendCredentials = systemCredentials.filter(c => c.kind === activeCredentialKind && !c.disabled)
+  // Keep storage.credentialRef's current credential listed even if it has
+  // since been disabled, so a disabled-but-in-use credential doesn't just
+  // vanish from this list — the "in use" badge below still needs to find it.
+  const backendCredentials = systemCredentials.filter(c => c.kind === activeCredentialKind && (!c.disabled || c.name === credentialRef))
 
   const status = storage?.effective.status ?? 'disabled'
   const restartRequired = storage?.restart_required ?? false

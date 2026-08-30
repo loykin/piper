@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { Plus, Search } from 'lucide-react'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { FilterInput } from '@loykin/filter-input'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { Button } from '@/components/ui/button'
-import { useAuth } from '@/features/auth/context'
-import { useMembers } from '@/features/access/hooks'
+import { useCanAdminProject } from '@/features/access/hooks'
 import { MLflowIntegrationDetailPanel } from '@/features/mlflow/components/MLflowIntegrationDetailPanel'
-import { useMLflowIntegrations } from '@/features/mlflow/hooks'
+import { mlflowKeys, useMLflowIntegrations } from '@/features/mlflow/hooks'
 import type { MLflowIntegrationDetail } from '@/features/mlflow/types'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
@@ -21,13 +21,11 @@ function MLflowIntegrationsPageInner() {
   const projectId = useProjectId()
   const navigate = useNavigate()
   const { open } = useSidePanel()
-  const { user, capabilities } = useAuth()
-  const members = useMembers()
+  const queryClient = useQueryClient()
+  const canAdmin = useCanAdminProject()
   const [pageIndex, setPageIndex] = useState(0)
   const [search, setSearch] = useState('')
   const query = useMLflowIntegrations(PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const membership = members.data?.find(item => item.user_id === user?.id)
-  const canAdmin = capabilities?.authentication === false || user?.system_admin === true || membership?.role === 'admin'
   const rows = useMemo(() => {
     const items = query.data?.integrations ?? []
     const needle = search.trim().toLowerCase()
@@ -63,7 +61,7 @@ function MLflowIntegrationsPageInner() {
             emptyMessage={query.isError ? undefined : 'No MLflow integrations configured.'}
             tableWidthMode="fill-last"
             rowCursor
-            onRowClick={item => open(<MLflowIntegrationDetailPanel id={item.id} canAdmin={canAdmin} />, { size: 560 })}
+            onRowClick={item => { queryClient.setQueryData(mlflowKeys.detail(projectId, item.id), item); open(<MLflowIntegrationDetailPanel id={item.id} canAdmin={canAdmin} />, { size: 560 }) }}
             pagination={{ pageSize: PAGE_SIZE, pageIndex, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), onPageChange: setPageIndex }}
             footer={table => <DataGridPaginationBar table={table} totalCount={total} />}
           />

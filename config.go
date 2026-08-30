@@ -3,7 +3,6 @@ package piper
 import (
 	"database/sql"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
@@ -11,6 +10,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/loykin/dbstore"
 	storemod "github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/pkg/integration/mlflow"
+	"github.com/loykin/piper/pkg/notebook/execution"
 	"github.com/loykin/piper/pkg/security"
 	"github.com/loykin/piper/pkg/statsstore"
 	"k8s.io/client-go/kubernetes"
@@ -525,33 +526,12 @@ func (c Config) Validate() error {
 		return fmt.Errorf("runtime.type must be k8s, docker, baremetal, or empty")
 	}
 
-	if c.Integrations.Mlflow.DispatcherConcurrency < 0 {
-		return fmt.Errorf("integrations.mlflow.dispatcher_concurrency must not be negative")
-	}
-	if c.Integrations.Mlflow.BatchSize < 0 {
-		return fmt.Errorf("integrations.mlflow.batch_size must not be negative")
-	}
-	if c.Integrations.Mlflow.RequestTimeout < 0 {
-		return fmt.Errorf("integrations.mlflow.request_timeout must not be negative")
-	}
-	if c.Integrations.Mlflow.MaxAttemptsBeforeDead < 0 {
-		return fmt.Errorf("integrations.mlflow.max_attempts_before_dead must not be negative")
-	}
-	if c.Integrations.Mlflow.LeaseDuration < 0 {
-		return fmt.Errorf("integrations.mlflow.lease_duration must not be negative")
-	}
-	if c.Integrations.Mlflow.PollInterval < 0 {
-		return fmt.Errorf("integrations.mlflow.poll_interval must not be negative")
-	}
-	for _, host := range c.Integrations.Mlflow.AllowedHosts {
-		if strings.TrimSpace(host) == "" {
-			return fmt.Errorf("integrations.mlflow.allowed_hosts must not contain empty values")
-		}
-	}
-	for _, cidr := range c.Integrations.Mlflow.AllowedCIDRs {
-		if _, _, err := net.ParseCIDR(strings.TrimSpace(cidr)); err != nil {
-			return fmt.Errorf("integrations.mlflow.allowed_cidrs contains invalid CIDR %q", cidr)
-		}
+	if err := mlflow.ValidateDispatcherConfig(
+		c.Integrations.Mlflow.DispatcherConcurrency, c.Integrations.Mlflow.BatchSize, c.Integrations.Mlflow.MaxAttemptsBeforeDead,
+		c.Integrations.Mlflow.RequestTimeout, c.Integrations.Mlflow.LeaseDuration, c.Integrations.Mlflow.PollInterval,
+		c.Integrations.Mlflow.AllowedHosts, c.Integrations.Mlflow.AllowedCIDRs,
+	); err != nil {
+		return err
 	}
 
 	if c.MCP.Enabled && len(c.MCP.AllowedOrigins) == 0 {
@@ -560,19 +540,13 @@ func (c Config) Validate() error {
 	if c.MCP.SessionTTL < 0 {
 		return fmt.Errorf("mcp.session_ttl must not be negative")
 	}
-	switch c.NotebookExecution.MCPPolicy {
-	case "", "disabled", "approval_required", "allowed":
-	default:
-		return fmt.Errorf("notebook_execution.mcp_policy must be disabled, approval_required, or allowed")
-	}
-	if c.NotebookExecution.MaxRunningPerNotebook < 0 || c.NotebookExecution.MaxKernelsPerNotebook < 0 || c.NotebookExecution.MaxQueuedPerProject < 0 {
-		return fmt.Errorf("notebook_execution concurrency limits must not be negative")
-	}
-	if c.NotebookExecution.KernelIdleTTL < 0 || c.NotebookExecution.CellTimeout < 0 || c.NotebookExecution.ExecutionTimeout < 0 {
-		return fmt.Errorf("notebook_execution durations must not be negative")
-	}
-	if c.NotebookExecution.InlineOutputBytes < 0 || c.NotebookExecution.FileReadBytes < 0 {
-		return fmt.Errorf("notebook_execution byte limits must not be negative")
+	if err := execution.ValidateConfig(
+		c.NotebookExecution.MCPPolicy,
+		c.NotebookExecution.MaxRunningPerNotebook, c.NotebookExecution.MaxKernelsPerNotebook, c.NotebookExecution.MaxQueuedPerProject,
+		c.NotebookExecution.KernelIdleTTL, c.NotebookExecution.CellTimeout, c.NotebookExecution.ExecutionTimeout,
+		c.NotebookExecution.InlineOutputBytes, c.NotebookExecution.FileReadBytes,
+	); err != nil {
+		return err
 	}
 
 	return nil

@@ -28,7 +28,7 @@ type HandlerDeps struct {
 	Outbox      outbox.Repository
 	Clients     ClientFactory
 	Credentials interface {
-		Get(context.Context, string, string) (*credential.Metadata, error)
+		ValidateMlflowCredential(ctx context.Context, projectID, name string) error
 	}
 	DispatcherEnabled bool
 	// GenID generates a new integration ID. Defaults to uuid.NewString.
@@ -52,20 +52,15 @@ func (h *Handler) validateCredentialRef(ctx context.Context, projectID, ref stri
 	if h.deps.Credentials == nil {
 		return errors.New("credential store is unavailable")
 	}
-	meta, err := h.deps.Credentials.Get(ctx, projectID, strings.TrimSpace(ref))
-	if err != nil {
+	err := h.deps.Credentials.ValidateMlflowCredential(ctx, projectID, strings.TrimSpace(ref))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrDisabled), errors.Is(err, credential.ErrInvalid):
+		return fmt.Errorf("%w: %s", errInvalidCredentialRef, err.Error())
+	default:
 		return err
 	}
-	if meta == nil {
-		return fmt.Errorf("%w: MLflow credential not found", errInvalidCredentialRef)
-	}
-	if meta.Kind != credential.KindMlflow {
-		return fmt.Errorf("%w: credential_ref must reference an MLflow credential", errInvalidCredentialRef)
-	}
-	if meta.Disabled {
-		return fmt.Errorf("%w: MLflow credential is disabled", errInvalidCredentialRef)
-	}
-	return nil
 }
 
 func writeCredentialRefError(c *gin.Context, err error) {
@@ -130,9 +125,19 @@ func (h *Handler) list(c *gin.Context) {
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
 	}
+	backlogs := map[string]outbox.Backlog{}
+	if h.deps.Outbox != nil && len(items) > 0 {
+		ids := make([]string, len(items))
+		for i, item := range items {
+			ids[i] = item.ID
+		}
+		if b, err := h.deps.Outbox.Backlog(c.Request.Context(), ids); err == nil {
+			backlogs = b
+		}
+	}
 	details := make([]integrationDetail, 0, len(items))
 	for _, item := range items {
-		details = append(details, h.integrationDetail(c.Request.Context(), item))
+		details = append(details, h.integrationDetailFromBacklog(item, backlogs[item.ID]))
 	}
 	c.JSON(http.StatusOK, details)
 }
@@ -148,22 +153,31 @@ type integrationDetail struct {
 	OldestPendingAgeSec float64 `json:"oldest_pending_age_seconds,omitempty"`
 }
 
+// integrationDetail builds the single-item detail view, fetching item's own
+// backlog in one round trip. list() instead fetches every row's backlog in
+// one batched call (Outbox.Backlog) and calls integrationDetailFromBacklog
+// directly, since looping this method per row would reintroduce the same
+// per-row query fan-out Backlog exists to avoid.
 func (h *Handler) integrationDetail(ctx context.Context, item *MLflowIntegration) integrationDetail {
+	backlog := outbox.Backlog{}
+	if h.deps.Outbox != nil {
+		if b, err := h.deps.Outbox.Backlog(ctx, []string{item.ID}); err == nil {
+			backlog = b[item.ID]
+		}
+	}
+	return h.integrationDetailFromBacklog(item, backlog)
+}
+
+func (h *Handler) integrationDetailFromBacklog(item *MLflowIntegration, backlog outbox.Backlog) integrationDetail {
 	detail := integrationDetail{
 		MLflowIntegration: item,
 		SystemEnabled:     h.deps.DispatcherEnabled,
 		Health:            "disabled",
+		PendingEvents:     backlog.Pending,
+		DeadEvents:        backlog.Dead,
 	}
-	if h.deps.Outbox != nil {
-		if pending, err := h.deps.Outbox.CountByStatus(ctx, item.ID, string(outbox.StatusPending)); err == nil {
-			detail.PendingEvents = pending
-		}
-		if dead, err := h.deps.Outbox.CountByStatus(ctx, item.ID, string(outbox.StatusDead)); err == nil {
-			detail.DeadEvents = dead
-		}
-		if oldest, err := h.deps.Outbox.OldestPending(ctx, item.ID); err == nil && oldest != nil {
-			detail.OldestPendingAgeSec = time.Since(*oldest).Seconds()
-		}
+	if backlog.OldestPending != nil {
+		detail.OldestPendingAgeSec = time.Since(*backlog.OldestPending).Seconds()
 	}
 	if h.deps.DispatcherEnabled && item.Enabled {
 		detail.Health = "healthy"

@@ -33,6 +33,8 @@ func newFakeRepo() *fakeRepo {
 	}
 }
 
+func (r *fakeRepo) SetSSRFPolicy(mlflow.SSRFPolicy) {}
+
 func (r *fakeRepo) CreateIntegration(ctx context.Context, m *mlflow.MLflowIntegration) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

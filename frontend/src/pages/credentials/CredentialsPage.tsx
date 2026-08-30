@@ -130,6 +130,7 @@ function CredentialsPageInner() {
     : ''
 
   return (
+    <>
     <DataBodyTemplate
       title="Credentials"
       description="Project-scoped credentials for workload env and Git source access."
@@ -211,39 +212,47 @@ function CredentialsPageInner() {
           />
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
-
-      <RotateCredentialDialog
-        key={rotateTarget?.name ?? 'rotate-credential'}
-        target={rotateTarget}
-        rotateCredential={rotateCredential}
-        onClose={() => setRotateTarget(null)}
-      />
-      <TestCredentialDialog
-        target={testTarget}
-        testCredential={testCredential}
-        onClose={() => setTestTarget(null)}
-      />
-      <Dialog open={!!pendingAction} onOpenChange={open => { if (!open) setPendingAction(null) }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{pendingTitle}</DialogTitle>
-            <DialogDescription>{pendingDescription}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingAction(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant={pendingAction?.type === 'delete' ? 'destructive' : 'default'}
-              onClick={() => void runPendingAction()}
-              disabled={deleteCredential.isPending || patchCredential.isPending}
-            >
-              {pendingAction?.type === 'delete' ? 'Delete' : pendingAction?.credential.disabled ? 'Enable' : 'Disable'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </DataBodyTemplate>
+    {/*
+      RotateCredentialDialog/TestCredentialDialog/the confirm Dialog below must
+      render as siblings OUTSIDE <DataBodyTemplate>, not as children alongside
+      <DataBodyTemplate.Body> — DataBodyTemplate only mounts children that are
+      its own recognized sub-components (.Body/.Tab/.Group/...); a plain
+      element placed directly beside .Body is silently dropped from the
+      rendered tree even though the React state driving it updates normally.
+    */}
+    <RotateCredentialDialog
+      key={rotateTarget?.name ?? 'rotate-credential'}
+      target={rotateTarget}
+      rotateCredential={rotateCredential}
+      onClose={() => setRotateTarget(null)}
+    />
+    <TestCredentialDialog
+      target={testTarget}
+      testCredential={testCredential}
+      onClose={() => setTestTarget(null)}
+    />
+    <Dialog open={!!pendingAction} onOpenChange={open => { if (!open) setPendingAction(null) }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{pendingTitle}</DialogTitle>
+          <DialogDescription>{pendingDescription}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setPendingAction(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant={pendingAction?.type === 'delete' ? 'destructive' : 'default'}
+            onClick={() => void runPendingAction()}
+            disabled={deleteCredential.isPending || patchCredential.isPending}
+          >
+            {pendingAction?.type === 'delete' ? 'Delete' : pendingAction?.credential.disabled ? 'Enable' : 'Disable'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }
 

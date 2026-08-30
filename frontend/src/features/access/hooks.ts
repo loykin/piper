@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '@/features/auth/context'
 import { useProjectId } from '@/lib/projectContext'
 import {
   addMember, createUser, deleteUser, listMemberCandidates, listMembers, listMembersPaged,
@@ -71,6 +72,19 @@ export function useMembersPaged(limit: number, offset: number) {
     enabled: !!projectId,
     placeholderData: (prev) => prev,
   })
+}
+
+/**
+ * Whether the current user can perform admin-only actions on the current
+ * project: a system admin, a project member with the `admin` role, or a
+ * deployment running with authentication disabled (`capabilities.authentication
+ * === false`, which trusts every caller).
+ */
+export function useCanAdminProject(): boolean {
+  const { user, capabilities } = useAuth()
+  const members = useMembers()
+  const membership = members.data?.find(member => member.user_id === user?.id)
+  return capabilities?.authentication === false || user?.system_admin === true || membership?.role === 'admin'
 }
 
 export function useMemberCandidates() {

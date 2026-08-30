@@ -208,6 +208,72 @@ func (r *outboxRepo) CountByStatus(ctx context.Context, integrationID, status st
 	return count, err
 }
 
+func (r *outboxRepo) Backlog(ctx context.Context, integrationIDs []string) (map[string]outbox.Backlog, error) {
+	out := make(map[string]outbox.Backlog, len(integrationIDs))
+	if len(integrationIDs) == 0 {
+		return out, nil
+	}
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		countQuery, countArgs, err := sqlx.In(
+			`SELECT integration_id, status, COUNT(*) AS n FROM integration_outbox_events
+			 WHERE integration_id IN (?) AND status IN ('pending', 'dead')
+			 GROUP BY integration_id, status`, integrationIDs)
+		if err != nil {
+			return err
+		}
+		var counts []struct {
+			IntegrationID string `db:"integration_id"`
+			Status        string `db:"status"`
+			N             int    `db:"n"`
+		}
+		if err := db.SelectContext(ctx, &counts, db.Rebind(countQuery), countArgs...); err != nil {
+			return err
+		}
+		for _, c := range counts {
+			b := out[c.IntegrationID]
+			switch c.Status {
+			case string(outbox.StatusPending):
+				b.Pending = c.N
+			case string(outbox.StatusDead):
+				b.Dead = c.N
+			}
+			out[c.IntegrationID] = b
+		}
+
+		// A plain ordered SELECT rather than MIN(created_at) per group —
+		// same reasoning as OldestPending's doc comment; ordering by
+		// (integration_id, created_at) lets one pass keep only the first
+		// (oldest) row seen per integration_id.
+		oldestQuery, oldestArgs, err := sqlx.In(
+			`SELECT integration_id, created_at FROM integration_outbox_events
+			 WHERE integration_id IN (?) AND status = 'pending'
+			 ORDER BY integration_id, created_at ASC`, integrationIDs)
+		if err != nil {
+			return err
+		}
+		var oldest []struct {
+			IntegrationID string    `db:"integration_id"`
+			CreatedAt     time.Time `db:"created_at"`
+		}
+		if err := db.SelectContext(ctx, &oldest, db.Rebind(oldestQuery), oldestArgs...); err != nil {
+			return err
+		}
+		seen := make(map[string]bool, len(integrationIDs))
+		for _, o := range oldest {
+			if seen[o.IntegrationID] {
+				continue
+			}
+			seen[o.IntegrationID] = true
+			b := out[o.IntegrationID]
+			t := o.CreatedAt
+			b.OldestPending = &t
+			out[o.IntegrationID] = b
+		}
+		return nil
+	})
+	return out, err
+}
+
 func (r *outboxRepo) OldestPending(ctx context.Context, integrationID string) (*time.Time, error) {
 	// A plain column SELECT (ORDER BY ... LIMIT 1) rather than
 	// MIN(created_at) — see the SQLite implementation's identical doc

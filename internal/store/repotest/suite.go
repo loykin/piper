@@ -1633,6 +1633,54 @@ func OutboxRepoSuite(t *testing.T, outboxRepo outbox.Repository, mlflowRepo mlfl
 			t.Fatalf("OldestPending after the only event went dead = %v, want nil", oldestAfter)
 		}
 	})
+
+	t.Run("Backlog", func(t *testing.T) {
+		integrationA := newIntegration(t)
+		integrationB := newIntegration(t)
+		integrationEmpty := newIntegration(t)
+		before := time.Now().UTC()
+
+		// deadB is enqueued and driven to StatusDead before pendingA is even
+		// enqueued, so ClaimBatch (which claims across all integrations, not
+		// just integrationB) cannot also sweep up pendingA.
+		deadB := newEvent(integrationB.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, deadB); err != nil {
+			t.Fatalf("Enqueue deadB: %v", err)
+		}
+		if _, err := outboxRepo.ClaimBatch(ctx, "worker-backlog", time.Minute, 10); err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		if err := outboxRepo.MarkDead(ctx, deadB.ID, "worker-backlog", "invalid_payload", "bad"); err != nil {
+			t.Fatalf("MarkDead: %v", err)
+		}
+
+		pendingA := newEvent(integrationA.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, pendingA); err != nil {
+			t.Fatalf("Enqueue pendingA: %v", err)
+		}
+
+		backlog, err := outboxRepo.Backlog(ctx, []string{integrationA.ID, integrationB.ID, integrationEmpty.ID})
+		if err != nil {
+			t.Fatalf("Backlog: %v", err)
+		}
+		bA := backlog[integrationA.ID]
+		if bA.Pending != 1 || bA.Dead != 0 {
+			t.Fatalf("Backlog[A] = %+v, want Pending=1 Dead=0", bA)
+		}
+		if bA.OldestPending == nil || bA.OldestPending.Before(before.Add(-time.Second)) {
+			t.Fatalf("Backlog[A].OldestPending = %v, want a timestamp near %v", bA.OldestPending, before)
+		}
+		bB := backlog[integrationB.ID]
+		if bB.Pending != 0 || bB.Dead != 1 {
+			t.Fatalf("Backlog[B] = %+v, want Pending=0 Dead=1", bB)
+		}
+		if bB.OldestPending != nil {
+			t.Fatalf("Backlog[B].OldestPending = %v, want nil (only event is dead)", bB.OldestPending)
+		}
+		if bEmpty, ok := backlog[integrationEmpty.ID]; ok && (bEmpty.Pending != 0 || bEmpty.Dead != 0 || bEmpty.OldestPending != nil) {
+			t.Fatalf("Backlog[empty] = %+v, want zero value or absent", bEmpty)
+		}
+	})
 }
 
 func ids(events []*outbox.Event) []string {

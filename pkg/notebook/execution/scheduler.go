@@ -49,6 +49,29 @@ func DefaultLimits() Limits {
 	}
 }
 
+// ValidateConfig validates the notebook_execution.* fields both config
+// layers (cmd/piper/config's CLI/viper config and piper.Config's runtime
+// config) accept — a config field mistake must be rejected identically
+// however the server is started, whether piper.New(cfg) is called directly
+// or through the piper CLI's loader/validator.
+func ValidateConfig(mcpPolicy string, maxRunningPerNotebook, maxKernelsPerNotebook, maxQueuedPerProject int, kernelIdleTTL, cellTimeout, executionTimeout time.Duration, inlineOutputBytes, fileReadBytes int) error {
+	switch mcpPolicy {
+	case "", PolicyDisabled, PolicyApprovalRequired, PolicyAllowed:
+	default:
+		return fmt.Errorf("notebook_execution.mcp_policy must be disabled, approval_required, or allowed")
+	}
+	if maxRunningPerNotebook < 0 || maxKernelsPerNotebook < 0 || maxQueuedPerProject < 0 {
+		return fmt.Errorf("notebook_execution concurrency limits must not be negative")
+	}
+	if kernelIdleTTL < 0 || cellTimeout < 0 || executionTimeout < 0 {
+		return fmt.Errorf("notebook_execution durations must not be negative")
+	}
+	if inlineOutputBytes < 0 || fileReadBytes < 0 {
+		return fmt.Errorf("notebook_execution byte limits must not be negative")
+	}
+	return nil
+}
+
 // normalize replaces any zero/negative field with the design-doc default,
 // so a caller supplying a partially-populated Limits (e.g. from config
 // defaults merged with a zero-value struct) doesn't accidentally get

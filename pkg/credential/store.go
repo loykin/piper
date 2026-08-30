@@ -225,6 +225,28 @@ func (s *Store) ValidateNotificationCredential(ctx context.Context, projectID, n
 	return nil
 }
 
+// ValidateMlflowCredential checks that name refers to an existing, enabled,
+// mlflow-kind credential before an MLflow integration is created/updated to
+// reference it — same fetch/nil/disabled/kind-check shape as
+// ValidateNotificationCredential, for the same reason (a credential_ref
+// mistake should be caught at write time, not at export time).
+func (s *Store) ValidateMlflowCredential(ctx context.Context, projectID, name string) error {
+	meta, err := s.repo.Get(ctx, projectID, strings.TrimSpace(name))
+	if err != nil {
+		return err
+	}
+	if meta == nil {
+		return ErrNotFound
+	}
+	if meta.Disabled {
+		return ErrDisabled
+	}
+	if meta.Kind != KindMlflow {
+		return fmt.Errorf("%w: credential %q is kind %q, expected mlflow", ErrInvalid, name, meta.Kind)
+	}
+	return nil
+}
+
 func (s *Store) ResolveNotification(ctx context.Context, projectID, name string) (NotificationCredential, error) {
 	if err := s.ValidateNotificationCredential(ctx, projectID, name); err != nil {
 		return NotificationCredential{}, err

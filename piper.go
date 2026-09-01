@@ -67,6 +67,11 @@ const notebookK8sLocalRuntimeID = "piper-notebook-k8s-runtime"
 // in-process K8s serving direct-runtime driver.
 const servingK8sLocalRuntimeID = "piper-serving-k8s-runtime"
 
+// defaultK8sJobTTLAfterFinishedSeconds is the fallback applied when
+// runtime.k8s.ttl_after_finished is left unset, so completed pipeline Jobs
+// don't accumulate in the cluster forever by default (24h).
+const defaultK8sJobTTLAfterFinishedSeconds int32 = 24 * 60 * 60
+
 // servingBundle groups the serving manager and proxy together.
 type servingBundle struct {
 	manager *serving.Manager
@@ -153,6 +158,16 @@ func New(cfg Config) (*Piper, error) {
 	}
 	if cfg.Stats.Metrics == (StatsBackendConfig{}) {
 		cfg.Stats.Metrics = def.Stats.Metrics
+	}
+	if cfg.Runtime.Type == RuntimeK8s && cfg.Runtime.K8s.TTLAfterFinished == nil {
+		// Unset (nil) means "not configured", not "operator wants Jobs kept
+		// forever" — default to auto-cleanup so completed Jobs/Pods don't
+		// accumulate in the cluster indefinitely. An operator who explicitly
+		// wants no TTL can still set ttl_after_finished: 0, which is
+		// distinct from nil and is respected as-is by the k8s launcher
+		// (see k8slauncher.Launcher.buildJob).
+		ttl := defaultK8sJobTTLAfterFinishedSeconds
+		cfg.Runtime.K8s.TTLAfterFinished = &ttl
 	}
 	if persistedStorage, ok, err := loadStorageSettings(filepath.Join(cfg.OutputDir, "storage.yaml"), cfg.Storage); err != nil {
 		return nil, fmt.Errorf("load storage settings: %w", err)

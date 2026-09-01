@@ -203,7 +203,12 @@ type K8sRuntimeConfig struct {
 	Namespaces          []string     `yaml:"namespaces" mapstructure:"namespaces"`
 	PipelineRunnerImage string       `yaml:"pipeline_runner_image" mapstructure:"pipeline_runner_image"`
 	ImagePullPolicy     string       `yaml:"image_pull_policy" mapstructure:"image_pull_policy"`
-	TTLAfterFinished    *int32       `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
+	// TTLAfterFinished, in seconds, controls Kubernetes' automatic cleanup
+	// of finished Jobs/Pods (Job.Spec.TTLSecondsAfterFinished). Left unset
+	// (nil), Piper defaults it to 24h (piper.defaultK8sJobTTLAfterFinishedSeconds)
+	// rather than leaving completed Jobs in the cluster forever — set it to
+	// 0 explicitly to opt out of auto-cleanup.
+	TTLAfterFinished *int32 `yaml:"ttl_after_finished" mapstructure:"ttl_after_finished"`
 	// WorkloadURL is the URL Kubernetes workloads use to reach Piper's built-in
 	// artifact endpoint when storage resolves to file://.
 	WorkloadURL string `yaml:"workload_url" mapstructure:"workload_url"`

@@ -106,6 +106,14 @@ type Capabilities struct {
 	Degraded        bool   `json:"degraded"`
 	PendingBytes    int64  `json:"pending_bytes"`
 	LastError       string `json:"last_error,omitempty"`
+	// LogsBackend and MetricsBackend name which backend is actually serving
+	// each half of stats right now — "database" for the built-in SQL
+	// fallback, or the external backend's scheme ("elasticsearch",
+	// "clickhouse", "influxdb") when stats.logs.url/stats.metrics.url is
+	// configured. Surfaced so an admin can see which backend is live
+	// without reading piper.yaml on the server.
+	LogsBackend    string `json:"logs_backend"`
+	MetricsBackend string `json:"metrics_backend"`
 }
 
 type Health struct {

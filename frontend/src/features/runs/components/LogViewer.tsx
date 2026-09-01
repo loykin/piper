@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { useSystemSettings } from '@/features/system/hooks'
 import { useRunLogs, useStatsCapabilities } from '../hooks'
 
 interface LogViewerProps {
@@ -13,6 +14,13 @@ interface LogViewerProps {
 export function LogViewer({ runId, stepId }: LogViewerProps) {
   const { lines, done, error } = useRunLogs(runId, stepId)
   const { data: stats } = useStatsCapabilities()
+  const { data: systemSettings } = useSystemSettings()
+  // Kubernetes exposes container logs as a single combined stream — the
+  // k8s runtime tags every line "combined" (internal/k8sruntime/pipeline/runtime.go),
+  // unlike docker/baremetal, which tag "stdout"/"stderr" separately. The
+  // stdout/stderr filter can't do anything useful there, so hide it rather
+  // than let it silently show "No output." for a stream that was never split.
+  const streamsSeparated = systemSettings?.runtime.type !== 'k8s'
   const [autoScroll, setAutoScroll] = useState(true)
   const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all')
   const [logSearch, setLogSearch] = useState('')
@@ -41,20 +49,27 @@ export function LogViewer({ runId, stepId }: LogViewerProps) {
         </h3>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex overflow-hidden rounded border border-border text-xs">
-          {(['all', 'stdout', 'stderr'] as const).map(s => (
-            <Button
-              key={s}
-              type="button"
-              size="sm"
-              variant={streamFilter === s ? 'default' : 'ghost'}
-              onClick={() => setStreamFilter(s)}
-              className="h-7 rounded-none border-0 px-2.5 text-xs"
-            >
-              {s === 'all' ? 'All streams' : s}
-            </Button>
-          ))}
-        </div>
+        {streamsSeparated && (
+          <div className="flex overflow-hidden rounded border border-border text-xs">
+            {(['all', 'stdout', 'stderr'] as const).map(s => (
+              <Button
+                key={s}
+                type="button"
+                size="sm"
+                variant={streamFilter === s ? 'default' : 'ghost'}
+                onClick={() => setStreamFilter(s)}
+                className="h-7 rounded-none border-0 px-2.5 text-xs"
+              >
+                {s === 'all' ? 'All streams' : s}
+              </Button>
+            ))}
+          </div>
+        )}
+        {!streamsSeparated && (
+          <span className="text-xs text-muted-foreground">
+            This runtime does not separate stdout/stderr.
+          </span>
+        )}
         <Input
           value={logSearch}
           onChange={(e) => setLogSearch(e.target.value)}

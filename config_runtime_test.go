@@ -88,6 +88,79 @@ func TestConfigValidateK8sRuntimeRequiresWorkloadURLForFileStore(t *testing.T) {
 	}
 }
 
+// TestNewDefaultsK8sJobTTLAfterFinished covers AB in
+// docs/adversarial-qa-2026-08-31.md: runtime.k8s.ttl_after_finished left
+// unset used to mean "never auto-delete finished Jobs" (nil is also
+// k8slauncher.Launcher.buildJob's own no-TTL sentinel), so completed Jobs
+// piled up in the cluster forever by default. New() now defaults it to 24h
+// when nil, while an operator's explicit 0 (opt out of auto-cleanup) is
+// still honored as-is.
+func TestNewDefaultsK8sJobTTLAfterFinished(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	cfg := DefaultConfig()
+	cfg.OutputDir = t.TempDir()
+	cfg.Server.AllowInsecureDevKey = true
+	cfg.Storage.Disabled = true
+	cfg.Runtime = RuntimeConfig{Type: RuntimeK8s, K8s: K8sRuntimeConfig{
+		Client: client, Namespaces: []string{"runs"}, PipelineRunnerImage: "piper:test",
+	}}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+
+	if p.cfg.Runtime.K8s.TTLAfterFinished == nil {
+		t.Fatal("TTLAfterFinished is nil after New(), want defaulted")
+	}
+	if got, want := *p.cfg.Runtime.K8s.TTLAfterFinished, defaultK8sJobTTLAfterFinishedSeconds; got != want {
+		t.Fatalf("TTLAfterFinished = %d, want default %d", got, want)
+	}
+
+	ctx := project.WithContext(context.Background(), project.Context{ID: project.DefaultID})
+	yaml := `apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: ttl-default-check
+spec:
+  steps:
+    - name: run
+      driver:
+        placement:
+          runtime: k8s
+        k8s:
+          image: alpine:3.20
+          namespace: runs
+      run:
+        type: command
+        command: [sh, -c, echo ok]
+`
+	if _, err := p.runs.StartRunFromAPI(ctx, yaml, nil, BuiltinVars{}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		jobs, listErr := client.BatchV1().Jobs("runs").List(ctx, metav1.ListOptions{})
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(jobs.Items) == 1 {
+			if jobs.Items[0].Spec.TTLSecondsAfterFinished == nil {
+				t.Fatal("created Job has no TTLSecondsAfterFinished set")
+			}
+			if got, want := *jobs.Items[0].Spec.TTLSecondsAfterFinished, defaultK8sJobTTLAfterFinishedSeconds; got != want {
+				t.Fatalf("Job TTLSecondsAfterFinished = %d, want %d", got, want)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("direct runtime did not create a Job")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestPiperK8sRuntimeDispatchesWithoutRegisteredPipelineWorker(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	cfg := DefaultConfig()

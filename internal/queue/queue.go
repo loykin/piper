@@ -473,29 +473,45 @@ func (q *Queue) recoverWithEnvLocked(ctx context.Context, projectID string, pl *
 
 // Complete records the task result and processes downstream steps.
 func (q *Queue) Complete(ctx context.Context, result proto.TaskResult) error {
-	err, outcome := q.completeLocked(ctx, result)
+	err, _, outcome := q.completeLocked(ctx, result)
 	flushPending(ctx, outcome)
 	return err
 }
 
-func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (error, pendingOutcome) {
+// CompleteApplied is like Complete but additionally reports whether the
+// result produced a real state transition, as opposed to being ignored
+// because the step was already terminal (a duplicate/stale report — e.g.
+// from k8s Job recovery re-observing an already-finished Job after a server
+// restart, see RecoverJobs). Callers that perform side effects alongside
+// completion (persisting metrics, publishing events) must gate those side
+// effects on `applied` so they stay idempotent the same way step/run state
+// already is — persisting unconditionally before calling Complete lets a
+// duplicate report re-trigger those side effects even though Complete
+// itself correctly no-ops.
+func (q *Queue) CompleteApplied(ctx context.Context, result proto.TaskResult) (applied bool, err error) {
+	err, applied, outcome := q.completeLocked(ctx, result)
+	flushPending(ctx, outcome)
+	return applied, err
+}
+
+func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (error, bool, pendingOutcome) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	runID, stepName, err := SplitTaskID(result.TaskID)
 	if err != nil {
-		return err, q.takePendingLocked()
+		return err, false, q.takePendingLocked()
 	}
 
 	r, ok := q.runs[runID]
 	if !ok {
 		// Run was removed from the in-memory queue (completed, failed, or canceled).
 		// Treat any late result as idempotent rather than an error.
-		return nil, q.takePendingLocked()
+		return nil, false, q.takePendingLocked()
 	}
 	entry, ok := r.tasks[stepName]
 	if !ok {
-		return fmt.Errorf("step %s not found in run %s", stepName, runID), q.takePendingLocked()
+		return fmt.Errorf("step %s not found in run %s", stepName, runID), false, q.takePendingLocked()
 	}
 	ownerID := entry.assignedRuntimeID
 	if ownerID == "" {
@@ -507,10 +523,10 @@ func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (er
 		}
 	}
 	if ownerID != "" && result.RuntimeID == "" {
-		return fmt.Errorf("task %s completion missing runtime identity", result.TaskID), q.takePendingLocked()
+		return fmt.Errorf("task %s completion missing runtime identity", result.TaskID), false, q.takePendingLocked()
 	}
 	if result.RuntimeID != "" && ownerID != "" && result.RuntimeID != ownerID {
-		return fmt.Errorf("task %s owned by runtime %q, result from %q rejected", result.TaskID, ownerID, result.RuntimeID), q.takePendingLocked()
+		return fmt.Errorf("task %s owned by runtime %q, result from %q rejected", result.TaskID, ownerID, result.RuntimeID), false, q.takePendingLocked()
 	}
 	resultAttempt := result.Attempt
 	if resultAttempt == 0 {
@@ -520,18 +536,18 @@ func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (er
 	// Idempotency: ignore duplicate result for an already-terminal step.
 	switch entry.status {
 	case taskDone, taskFailed, taskSkipped, taskCanceled:
-		return nil, q.takePendingLocked()
+		return nil, false, q.takePendingLocked()
 	}
 
 	// Stale result: arrived late from a previous attempt.
 	if entry.attempts > 0 && resultAttempt < entry.attempts {
 		slog.Warn("stale task result ignored", "task_id", result.TaskID, "result_attempt", resultAttempt, "current_attempt", entry.attempts)
-		return nil, q.takePendingLocked()
+		return nil, false, q.takePendingLocked()
 	}
 
 	// Future attempt: should never happen in normal flow.
 	if resultAttempt > entry.attempts {
-		return fmt.Errorf("task %s: result attempt %d exceeds current attempt %d", result.TaskID, resultAttempt, entry.attempts), q.takePendingLocked()
+		return fmt.Errorf("task %s: result attempt %d exceeds current attempt %d", result.TaskID, resultAttempt, entry.attempts), false, q.takePendingLocked()
 	}
 
 	if owner, ok := q.backend.(pipelinedispatch.TaskOwner); ok {
@@ -573,7 +589,7 @@ func (q *Queue) completeLocked(ctx context.Context, result proto.TaskResult) (er
 		q.failOrRetryLocked(ctx, r, entry, result.Error, &result.StartedAt, endedAt)
 	}
 
-	return nil, q.takePendingLocked()
+	return nil, true, q.takePendingLocked()
 }
 
 // failOrRetryLocked marks entry retrying (if attempts remain) or terminally

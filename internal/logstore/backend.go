@@ -19,7 +19,7 @@ func NewBackend(logs LogStore, metrics MetricStore) *Backend {
 }
 
 func (b *Backend) Capabilities() statsstore.Capabilities {
-	return statsstore.Capabilities{TimeRange: true, MetricKeyFilter: true}
+	return statsstore.Capabilities{TimeRange: true, MetricKeyFilter: true, LogsBackend: "database", MetricsBackend: "database"}
 }
 
 func (b *Backend) AppendLogs(ctx context.Context, lines []statsstore.LogLine) error {

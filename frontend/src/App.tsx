@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
-import { BellRing, CalendarClock, History, Server, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, ChevronRight, KeyRound, UserRoundCog, UsersRound, ListChecks, Plug } from 'lucide-react'
+import { BellRing, CalendarClock, History, Server, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, ChevronRight, KeyRound, UserRoundCog, UsersRound, ListChecks, Plug, Activity } from 'lucide-react'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { ProjectSelector } from '@/components/ProjectSelector'
 import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
@@ -61,6 +61,7 @@ const CredentialCreatePage   = lazyRouteComponent(() => import('@/pages/credenti
 const AlertRulesPage         = lazyRouteComponent(() => import('@/pages/alerting/AlertRulesPage'))
 const AlertRuleCreatePage    = lazyRouteComponent(() => import('@/pages/alerting/AlertRuleCreatePage'))
 const StoragePage            = lazyRouteComponent(() => import('@/pages/system/StoragePage'))
+const StatsBackendPage       = lazyRouteComponent(() => import('@/pages/system/StatsBackendPage'))
 const UsersPage              = lazyRouteComponent(() => import('@/pages/system/UsersPage'))
 const UserCreatePage         = lazyRouteComponent(() => import('@/pages/system/UserCreatePage'))
 const MembersPage            = lazyRouteComponent(() => import('@/pages/projects/MembersPage'))
@@ -122,6 +123,7 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
       label: 'Infrastructure',
       items: [
         { id: 'storage',  label: 'Storage',  icon: Database, to: `${base}/storage` },
+        { id: 'stats-backend', label: 'Stats Backend', icon: Activity, to: `${base}/stats-backend` },
         { id: 'credentials', label: 'Credentials', icon: KeyRound, to: `${base}/credentials` },
         { id: 'integrations', label: 'Integrations', icon: Plug, to: `${base}/integrations/mlflow` },
         { id: 'alert-rules', label: 'Alert Rules', icon: BellRing, to: `${base}/alert-rules` },
@@ -509,6 +511,7 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-executions', component: NotebookExecutionsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-volumes', component: NotebookVolumesPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'storage', component: StoragePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'stats-backend', component: StatsBackendPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'members', component: MembersPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'members/new', component: MemberCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'integrations/mlflow', component: MLflowIntegrationsPage }),

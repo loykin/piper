@@ -114,6 +114,178 @@ spec:
 	}
 }
 
+// TestK8sE2E_ServerRestartDoesNotDuplicateMetrics is a real-cluster
+// reproduction of the AA finding in docs/adversarial-qa-2026-08-31.md: a
+// piper-server restart used to make k8slauncher.Launcher.RecoverJobs()
+// re-observe every already-Succeeded Job in the namespace with no terminal-
+// status check, and ReconcileJobs() would then re-report that stale success
+// through the same `complete` closure (runtime_composition.go) that a live
+// completion uses — which called persistTaskMetrics unconditionally, before
+// Queue.Complete's own idempotency check, so a duplicate metric row (and a
+// duplicate metric.recorded event, which a metric-based Alert Rule's webhook
+// subscribes to) was inserted on every single restart, for every already-
+// finished Job still present in the cluster.
+//
+// The fix (Queue.CompleteApplied, wired into the `complete` closure) gates
+// persistTaskMetrics on whether Complete actually transitioned the step —
+// this test runs a pipeline step to success, records the metric row count,
+// restarts piper-server (forcing a real RecoverJobs + ReconcileJobs pass
+// against the still-Succeeded Job, the same as AA's manual repro), and
+// asserts the count is unchanged.
+func TestK8sE2E_ServerRestartDoesNotDuplicateMetrics(t *testing.T) {
+	requireKubectlCluster(t)
+
+	image := os.Getenv("PIPER_K8S_E2E_IMAGE")
+	if image == "" {
+		image = "piper/piper:e2e"
+	}
+	ns := fmt.Sprintf("piper-e2e-%d", time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	kubectl(t, "create", "namespace", ns)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cleanupCancel()
+		_, _ = kubectlContext(cleanupCtx, nil, "delete", "namespace", ns, "--ignore-not-found=true")
+	})
+
+	applyK8sE2EServerManifests(t, ns, image)
+	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
+	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
+	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+
+	localPort := freeK8sE2EPort(t)
+	pfCtx, pfCancel := context.WithCancel(ctx)
+	defer pfCancel()
+	pf := exec.CommandContext(pfCtx, "kubectl", "-n", ns, "port-forward", "svc/piper-server", fmt.Sprintf("%d:8080", localPort))
+	pf.Stdout = os.Stderr
+	pf.Stderr = os.Stderr
+	if err := pf.Start(); err != nil {
+		t.Fatalf("start port-forward: %v", err)
+	}
+	t.Cleanup(func() { pfCancel(); _ = pf.Wait() })
+
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
+	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+	k8sE2ECreateProject(t, serverURL)
+
+	const stepName = "train"
+	runID := k8sE2EPostRun(t, serverURL, fmt.Sprintf(`
+apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: k8s-e2e-restart-metrics
+spec:
+  defaults:
+    driver:
+      placement:
+        runtime: k8s
+      k8s:
+        image: alpine:3.20
+        namespace: %s
+  steps:
+    - name: %s
+      run:
+        command: ["sh", "-c", "echo '{\"acc\":0.9}' > $PIPER_OUTPUT_DIR/.metrics.json"]
+`, ns, stepName))
+
+	if !waitK8sE2ERunStatus(t, serverURL, runID, "success", 2*time.Minute) {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("run %s did not reach success", runID)
+	}
+
+	countAccMetrics := func() int {
+		resp, err := http.Get(serverURL + k8sE2EProjectBase() + "/runs/" + runID + "/metrics?step=" + stepName + "&key=acc") //nolint:noctx
+		if err != nil {
+			t.Fatalf("query metrics: %v", err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read metrics response: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("query metrics status=%d body=%s", resp.StatusCode, body)
+		}
+		var points []struct {
+			Key   string  `json:"key"`
+			Value float64 `json:"value"`
+		}
+		if err := json.Unmarshal(body, &points); err != nil {
+			t.Fatalf("decode metrics response %s: %v", body, err)
+		}
+		return len(points)
+	}
+
+	before := countAccMetrics()
+	if before != 1 {
+		t.Fatalf("acc metric rows before restart = %d, want exactly 1: run did the step actually write .metrics.json?", before)
+	}
+
+	// Force a real RecoverJobs (at driver startup) + ReconcileJobs (every 15s
+	// via runCleanup's reconcileBackend) pass against the Job that is
+	// already Succeeded and still present in the cluster — this is the
+	// exact sequence AA's manual repro used ("piper-server 재시작마다 100%
+	// 재현").
+	podUID := strings.TrimSpace(kubectl(t, "-n", ns, "get", "pods", "-l", "app=piper-server", "-o", "jsonpath={.items[0].metadata.uid}"))
+	kubectl(t, "-n", ns, "rollout", "restart", "deployment/piper-server")
+
+	// kubectl rollout status right after rollout restart can race the
+	// Deployment controller observing the new generation and report the old
+	// rollout as already "successfully rolled out" — poll for an actual new,
+	// Ready pod UID instead of trusting a single rollout status call (same
+	// UID-comparison approach TestK8sE2E_NotebookLifecycle uses for its
+	// StatefulSet pod replacement check).
+	newPodUID := ""
+	newPodName := ""
+	restartDeadline := time.Now().Add(2 * time.Minute)
+	for time.Now().Before(restartDeadline) {
+		out, err := kubectlContext(ctx, nil, "-n", ns, "get", "pods", "-l", "app=piper-server",
+			"-o", "jsonpath={.items[0].metadata.uid}{\"\\t\"}{.items[0].metadata.name}{\"\\t\"}{.items[0].status.containerStatuses[0].ready}")
+		if err == nil {
+			parts := strings.Split(strings.TrimSpace(out), "\t")
+			if len(parts) == 3 && parts[0] != podUID && parts[2] == "true" {
+				newPodUID, newPodName = parts[0], parts[1]
+				break
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	if newPodUID == "" {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("piper-server pod did not restart to a new Ready pod within %s (still %s)", 2*time.Minute, podUID)
+	}
+	kubectl(t, "-n", ns, "wait", "pod/"+newPodName, "--for=condition=Ready", "--timeout=60s")
+
+	// kubectl port-forward svc/X binds to whichever pod backed the service
+	// at the moment it started; a rollout restart replaces that pod out from
+	// under the tunnel, so it must be torn down and re-established against
+	// the new pod before polling health again (same as
+	// TestK8sE2E_NotebookLifecycle's server-restart step).
+	pfCancel()
+	_ = pf.Wait()
+	pfCtx, pfCancel = context.WithCancel(ctx)
+	pf = exec.CommandContext(pfCtx, "kubectl", "-n", ns, "port-forward", "svc/piper-server", fmt.Sprintf("%d:8080", localPort))
+	pf.Stdout = os.Stderr
+	pf.Stderr = os.Stderr
+	if err := pf.Start(); err != nil {
+		t.Fatalf("restart port-forward: %v", err)
+	}
+	t.Cleanup(func() { pfCancel(); _ = pf.Wait() })
+	waitK8sE2EHTTP(t, serverURL+"/health", 30*time.Second)
+
+	// Give reconcileBackend at least two 15s ticks to run ReconcileJobs
+	// against the still-Succeeded Job.
+	time.Sleep(35 * time.Second)
+
+	after := countAccMetrics()
+	if after != before {
+		dumpK8sE2EDebug(t, ns)
+		t.Fatalf("acc metric rows: before restart=%d, after restart=%d — RecoverJobs/ReconcileJobs re-reported an already-terminal step and persistTaskMetrics ran again (AA regression)", before, after)
+	}
+}
+
 // TestK8sE2E_ExamplePipelines runs the example YAML files through the
 // direct-runtime K8s dispatch path against a real K8s cluster.
 func TestK8sE2E_ExamplePipelines(t *testing.T) {

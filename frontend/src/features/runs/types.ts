@@ -49,6 +49,8 @@ export interface StatsCapabilities {
   degraded: boolean
   pending_bytes: number
   last_error?: string
+  logs_backend: string
+  metrics_backend: string
 }
 
 export interface CreateRunOptions {

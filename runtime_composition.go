@@ -150,8 +150,17 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 
 func composePipelineRuntime(cfg Config, ctx context.Context, repos *storemod.Repos, q *queue.Queue, publisher event.Publisher) (pipelinedispatch.ExecutionBackend, runtimeObserver, error) {
 	complete := func(result proto.TaskResult) error {
-		persistTaskMetrics(context.Background(), repos.Metric, publisher, result)
-		return q.Complete(context.Background(), result)
+		applied, err := q.CompleteApplied(context.Background(), result)
+		if applied {
+			// Only persist metrics/publish metric.recorded for a report that
+			// actually transitioned the step — a duplicate report for an
+			// already-terminal step (e.g. k8s Job recovery re-observing a
+			// Job that finished before the last server restart, see
+			// k8slauncher.RecoverJobs) must not re-insert metrics or
+			// re-trigger metric-based Alert Rule notifications.
+			persistTaskMetrics(context.Background(), repos.Metric, publisher, result)
+		}
+		return err
 	}
 	logClient := localLogPushClient{store: repos.Log, metrics: repos.Metric, events: publisher}
 

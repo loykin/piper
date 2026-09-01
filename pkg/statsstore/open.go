@@ -94,31 +94,34 @@ func Open(config Config, fallback Fallback) (*Store, error) {
 		case "elasticsearch":
 			backend, openErr := openElasticsearch(config.Logs.URL, logCredential, config.Logs.Retention, config.Metrics.Retention, config.Logs.ManageRetention || config.Metrics.ManageRetention)
 			if openErr != nil {
-				return nil, openErr
+				return nil, wrapBootstrapHint("logs", openErr)
 			}
 			logs, metrics = backend, backend
 		case "clickhouse":
 			backend, openErr := openClickHouse(config.Logs.URL, logCredential, config.Logs.Retention, config.Metrics.Retention, config.Logs.ManageRetention || config.Metrics.ManageRetention)
 			if openErr != nil {
-				return nil, openErr
+				return nil, wrapBootstrapHint("logs", openErr)
 			}
 			logs, metrics = backend, backend
 		}
-		capabilities = Capabilities{FullTextSearch: true, TimeRange: true, MetricKeyFilter: true}
+		scheme := schemeOf(config.Logs.URL)
+		capabilities = Capabilities{FullTextSearch: true, TimeRange: true, MetricKeyFilter: true, LogsBackend: scheme, MetricsBackend: scheme}
 	} else {
 		if config.Logs.URL != "" {
 			logs, err = openLogBackend(config.Logs, logCredential)
 			if err != nil {
-				return nil, err
+				return nil, wrapBootstrapHint("logs", err)
 			}
 			capabilities.FullTextSearch, capabilities.TimeRange = true, true
+			capabilities.LogsBackend = schemeOf(config.Logs.URL)
 		}
 		if config.Metrics.URL != "" {
 			metrics, err = openMetricBackend(config.Metrics, metricCredential)
 			if err != nil {
-				return nil, err
+				return nil, wrapBootstrapHint("metrics", err)
 			}
 			capabilities.TimeRange, capabilities.MetricKeyFilter = true, true
+			capabilities.MetricsBackend = schemeOf(config.Metrics.URL)
 		}
 	}
 	if config.SpoolDir == "" {
@@ -138,6 +141,19 @@ func Open(config Config, fallback Fallback) (*Store, error) {
 	})
 	store.healthFn = wrapped.health
 	return store, nil
+}
+
+// wrapBootstrapHint appends the two-step bootstrap order (docs/log-metric-storage-backend.md
+// §4) to a failure connecting to a newly-configured external stats backend.
+// A wrong/not-yet-provisioned credential surfaces here as a raw connection
+// or HTTP auth error with no indication that piper.yaml's stats.*.url and
+// stats.*.credential_ref must be introduced in two separate steps (create
+// the credential first with the url still unset, restart, confirm it
+// resolves, then set the url and restart again) — this failure mode is
+// exactly what that sequencing exists to avoid, so surface it here where an
+// operator will actually see it instead of only in the design doc.
+func wrapBootstrapHint(kind string, err error) error {
+	return fmt.Errorf("open stats.%[1]s backend: %[2]w — if stats.%[1]s.url and stats.%[1]s.credential_ref were just introduced together, create/verify the credential first with stats.%[1]s.url left unset, restart, then set stats.%[1]s.url and restart again (docs/log-metric-storage-backend.md §4)", kind, err)
 }
 
 func schemeOf(raw string) string {

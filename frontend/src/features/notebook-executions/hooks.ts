@@ -3,14 +3,37 @@ import { backgroundPollingNotifications } from '@/lib/query'
 import { useProjectId } from '@/lib/projectContext'
 import {
   approveNotebookExecution, cancelNotebookExecution, denyNotebookExecution,
-  getExecutionPolicy, listNotebookExecutions, updateExecutionPolicy,
+  getExecutionPolicy, getNotebookExecution, listNotebookExecutions, updateExecutionPolicy,
 } from './api'
-import type { ExecutionPolicy, NotebookExecution } from './types'
+import type { ExecutionPolicy, NotebookExecution, NotebookExecutionStatus } from './types'
 
 export const notebookExecutionKeys = {
   all: (projectId: string) => ['notebook-executions', projectId] as const,
   list: (projectId: string, limit: number, offset: number, notebook?: string) => ['notebook-executions', projectId, limit, offset, notebook ?? 'all'] as const,
+  one: (projectId: string, id: string) => ['notebook-executions', projectId, 'one', id] as const,
   policy: (projectId: string) => ['notebook-executions', projectId, 'policy'] as const,
+}
+
+const TERMINAL_STATUSES: NotebookExecutionStatus[] = ['succeeded', 'failed', 'timed_out', 'cancelled', 'conflicted']
+
+/**
+ * Live single-execution query, seeded with the row snapshot the detail panel
+ * was opened with (`initial`) so the panel renders immediately, then kept
+ * current by polling while the execution hasn't reached a terminal status.
+ * Approve/deny/cancel mutations below invalidate `notebookExecutionKeys.all`,
+ * which is a prefix of this query's key too, so an admin's own approval
+ * refetches this panel immediately instead of waiting for the next poll tick.
+ */
+export function useExecution(notebookName: string, id: string, initial?: NotebookExecution) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: notebookExecutionKeys.one(projectId, id),
+    queryFn: () => getNotebookExecution(projectId, notebookName, id),
+    enabled: !!projectId && !!notebookName && !!id,
+    initialData: initial,
+    refetchInterval: query => (query.state.data && TERMINAL_STATUSES.includes(query.state.data.status) ? false : 2000),
+    ...backgroundPollingNotifications,
+  })
 }
 
 export function useNotebookExecutions(limit: number, offset: number, notebook?: string) {

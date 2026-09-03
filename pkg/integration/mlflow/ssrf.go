@@ -22,25 +22,32 @@ type SSRFPolicy struct {
 	// set it from `integrations.mlflow.allow_insecure_http`.
 	AllowInsecureHTTP bool
 	// AllowedHosts, when non-empty, restricts TrackingURI to these exact
-	// hostnames (case-insensitive, no wildcards). Intended to be populated
-	// from server config's `integrations.mlflow.allowed_hosts` (design doc
-	// section 13) by a later phase; left empty here means "no admin
-	// allowlist configured" — the private/loopback/link-local rejection
-	// below still applies unconditionally.
+	// hostnames (case-insensitive, no wildcards) — populated from server
+	// config's `integrations.mlflow.allowed_hosts` (design doc section 13).
+	// An admin explicitly listing a host here is exactly the mechanism for
+	// trusting a self-hosted MLflow server that lives at a private/
+	// loopback/link-local address (the common deployment shape for
+	// self-hosted MLflow — inside a VPC or Kubernetes cluster): a host
+	// present in this list is exempt from the private/loopback/link-local
+	// rejection below, both here and at dial time (newSafeTransport).
+	// Left empty, this means "no admin allowlist configured" — the
+	// private/loopback/link-local rejection then applies unconditionally.
 	AllowedHosts []string
 	// AllowedCIDRs, when non-empty, restricts a literal-IP TrackingURI host
-	// to these ranges. Intended to be populated from
-	// `integrations.mlflow.allowed_cidrs`. This only checks the URL's
-	// literal host; DNS-rebinding-safe enforcement at dial time (see
-	// pkg/notify/http.go's safeHTTPClient for the precedent this package
-	// should reuse when the exporter's HTTP client is built) is left to the
-	// follow-up task that implements the client.
+	// to these ranges, populated from `integrations.mlflow.allowed_cidrs`.
+	// Like AllowedHosts, an IP that falls inside an allowed CIDR is exempt
+	// from the private/loopback/link-local rejection — this is how an admin
+	// trusts a whole private subnet (e.g. a cluster's pod/service CIDR)
+	// rather than a single hostname. DNS-rebinding-safe enforcement at dial
+	// time (newSafeTransport, mirroring pkg/notify/http.go's
+	// safeHTTPClient) applies the same CIDR check to the resolved address,
+	// not just the URL's literal host.
 	AllowedCIDRs []string
 }
 
 // DefaultSSRFPolicy is the strict, production-safe default: https only, no
-// host/CIDR allowlist beyond the unconditional private/loopback/link-local
-// rejection.
+// host/CIDR allowlist, so the private/loopback/link-local rejection applies
+// unconditionally.
 func DefaultSSRFPolicy() SSRFPolicy {
 	return SSRFPolicy{}
 }
@@ -79,18 +86,22 @@ func ValidateTrackingURI(raw string, policy SSRFPolicy) error {
 	}
 
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	allowlistedHost := len(policy.AllowedHosts) > 0 && hostAllowed(host, policy.AllowedHosts)
+
+	isLocalHostname := host == "localhost" || strings.HasSuffix(host, ".localhost")
+	if isLocalHostname && !allowlistedHost {
 		return fmt.Errorf("tracking_uri must not target a private or local address")
 	}
 	if ip := net.ParseIP(u.Hostname()); ip != nil {
-		if !publicIP(ip) {
+		allowlistedCIDR := len(policy.AllowedCIDRs) > 0 && ipInAnyCIDR(ip, policy.AllowedCIDRs)
+		if !publicIP(ip) && !allowlistedHost && !allowlistedCIDR {
 			return fmt.Errorf("tracking_uri must not target a private or local address")
 		}
-		if len(policy.AllowedCIDRs) > 0 && !ipInAnyCIDR(ip, policy.AllowedCIDRs) {
+		if len(policy.AllowedCIDRs) > 0 && !allowlistedCIDR {
 			return fmt.Errorf("tracking_uri address is not in the allowed CIDR ranges")
 		}
 	}
-	if len(policy.AllowedHosts) > 0 && !hostAllowed(host, policy.AllowedHosts) {
+	if len(policy.AllowedHosts) > 0 && !allowlistedHost {
 		return fmt.Errorf("tracking_uri host %q is not in the allowed host list", host)
 	}
 	return nil

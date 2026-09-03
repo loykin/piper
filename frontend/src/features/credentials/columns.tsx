@@ -34,9 +34,13 @@ export const credentialColumns: DataGridColumnDef<Credential>[] = [
       if (credential.kind === 'slack' || credential.kind === 'webhook') {
         return <span className="text-xs text-muted-foreground">Encrypted endpoint</span>
       }
+      // 'git' defaults to any repo when no endpoint is pinned; the other
+      // endpoint-bearing kinds (s3/gcs/azure/mlflow) have no such default,
+      // so an empty endpoint there means "not set" instead.
+      const emptyLabel = credential.kind === 'git' ? 'any repo' : 'not set'
       return (
         <span className="font-mono text-xs text-muted-foreground">
-          {credential.endpoint || <em className="not-italic text-muted-foreground/60">any repo</em>}
+          {credential.endpoint || <em className="not-italic text-muted-foreground/60">{emptyLabel}</em>}
         </span>
       )
     },

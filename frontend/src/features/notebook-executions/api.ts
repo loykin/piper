@@ -8,6 +8,10 @@ export async function listNotebookExecutions(projectId: string, limit: number, o
   return { executions: Array.isArray(data) ? data : [], total: total ?? 0 }
 }
 
+export function getNotebookExecution(projectId: string, notebookName: string, id: string) {
+  return projectApi(projectId).get<NotebookExecution>(`/notebooks/${encodeURIComponent(notebookName)}/executions/${encodeURIComponent(id)}`)
+}
+
 export function getExecutionPolicy(projectId: string) {
   return projectApi(projectId).get<ExecutionPolicyResponse>('/notebook-execution-policy')
 }

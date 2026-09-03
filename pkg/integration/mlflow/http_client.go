@@ -128,6 +128,7 @@ func newSafeTransport(policy SSRFPolicy, caCertPEM string) (*http.Transport, err
 		if err != nil {
 			return nil, err
 		}
+		allowlistedHost := len(policy.AllowedHosts) > 0 && hostAllowed(strings.ToLower(strings.TrimSuffix(host, ".")), policy.AllowedHosts)
 		// A literal IP in the URL is still checked here (LookupIPAddr
 		// accepts and returns it unchanged), so this single path covers
 		// both the hostname and literal-IP cases.
@@ -139,14 +140,22 @@ func newSafeTransport(policy SSRFPolicy, caCertPEM string) (*http.Transport, err
 			return nil, fmt.Errorf("mlflow tracking host did not resolve")
 		}
 		for _, resolved := range ips {
-			if !publicIP(resolved.IP) {
+			allowlistedCIDR := len(policy.AllowedCIDRs) > 0 && ipInAnyCIDR(resolved.IP, policy.AllowedCIDRs)
+			// A host explicitly present in AllowedHosts, or an address
+			// inside an AllowedCIDRs range, is the admin trusting exactly
+			// this private/loopback/link-local endpoint (ssrf.go's
+			// SSRFPolicy doc comment) — self-hosted MLflow is
+			// overwhelmingly deployed at such addresses (a VPC or
+			// Kubernetes cluster), so this is the only way that common
+			// deployment shape can ever be reached.
+			if !publicIP(resolved.IP) && !allowlistedHost && !allowlistedCIDR {
 				return nil, fmt.Errorf("mlflow tracking host resolved to a private or local address")
 			}
-			if len(policy.AllowedCIDRs) > 0 && !ipInAnyCIDR(resolved.IP, policy.AllowedCIDRs) {
+			if len(policy.AllowedCIDRs) > 0 && !allowlistedCIDR {
 				return nil, fmt.Errorf("mlflow tracking host resolved to an address outside the allowed CIDR ranges")
 			}
 		}
-		if len(policy.AllowedHosts) > 0 && !hostAllowed(strings.ToLower(strings.TrimSuffix(host, ".")), policy.AllowedHosts) {
+		if len(policy.AllowedHosts) > 0 && !allowlistedHost {
 			return nil, fmt.Errorf("mlflow tracking host %q is not in the allowed host list", host)
 		}
 		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))

@@ -252,7 +252,13 @@ Project admin이 설정한 `TrackingURI`는 Piper 서버가 요청하는 대상�
 - system config의 host/CIDR allowlist를 통과해야 한다.
 - redirect는 기본 거부하거나 같은 origin의 제한된 redirect만 허용한다.
 - DNS resolve 후 private/link-local/metadata address 정책을 적용하고, redirect마다
-  다시 검사한다.
+  다시 검사한다. **단, host가 `allowed_hosts`에 정확히 있거나 resolve된 주소가
+  `allowed_cidrs`의 범위 안에 있으면 이 private/link-local 거부를 건너뛴다** —
+  self-hosted MLflow(공식 문서가 권장하는 배포 형태)는 대부분 사내망/VPC/
+  Kubernetes 클러스터 내부 주소로 뜨므로, allowlist는 "이미 public인 주소를 그중
+  일부로 더 좁히는" 용도가 아니라 "관리자가 명시적으로 신뢰하는 사설 엔드포인트를
+  예외적으로 허용하는" 용도다. allowlist가 비어 있으면 private/loopback/
+  link-local 거부는 무조건 적용된다.
 - response body와 duration에 제한을 둔다.
 - log에는 canonical host만 남기고 전체 credential-bearing URL을 남기지 않는다.
 

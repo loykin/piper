@@ -3,18 +3,33 @@ import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Check, Square, X } from 'lucide-react'
 import StatusBadge from '@/shared/components/StatusBadge'
-import { useApproveExecution, useCancelExecution, useDenyExecution } from '../hooks'
+import { useMembers } from '@/features/access/hooks'
+import { useApproveExecution, useCancelExecution, useDenyExecution, useExecution } from '../hooks'
 import type { NotebookExecution } from '../types'
 
 function date(value?: string) {
   return value ? new Date(value).toLocaleString() : '—'
 }
 
-export function ExecutionDetailPanel({ execution, canAdmin, canCancel }: { execution: NotebookExecution; canAdmin: boolean; canCancel: boolean }) {
+/** Resolves a user ID to its project member username, falling back to the raw ID when the user isn't a current project member (e.g. removed since). */
+function useUsername(userID?: string) {
+  const members = useMembers()
+  if (!userID) return '—'
+  return members.data?.find(member => member.user_id === userID)?.username || userID
+}
+
+export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel }: { execution: NotebookExecution; canAdmin: boolean; canCancel: boolean }) {
   const { close } = useSidePanel()
   const approve = useApproveExecution()
   const deny = useDenyExecution()
   const cancel = useCancelExecution()
+  // Live-refreshed from initial's snapshot — see useExecution's doc comment
+  // (AG: this panel used to be frozen at the moment it was opened, so an
+  // approval or progress update never showed until it was closed and reopened).
+  const { data: execution = initial } = useExecution(initial.notebook_name, initial.id, initial)
+  const requestedBy = useUsername(execution.requested_by)
+  const approvedBy = useUsername(execution.approved_by)
+  const deniedBy = useUsername(execution.denied_by)
   const awaiting = execution.status === 'awaiting_approval'
   const active = ['queued', 'running'].includes(execution.status)
 
@@ -41,13 +56,13 @@ export function ExecutionDetailPanel({ execution, canAdmin, canCancel }: { execu
       </PanelTemplate.Section>
       <PanelTemplate.Section title="Audit">
         <dl className="space-y-2">
-          <PanelTemplate.Row label="Requested by">{execution.requested_by || '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Requested by">{requestedBy}</PanelTemplate.Row>
           <PanelTemplate.Row label="Source">{execution.client_id || '—'}</PanelTemplate.Row>
           <PanelTemplate.Row label="Queued">{date(execution.queued_at)}</PanelTemplate.Row>
           <PanelTemplate.Row label="Started">{date(execution.started_at)}</PanelTemplate.Row>
           <PanelTemplate.Row label="Finished">{date(execution.finished_at)}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Approved by">{execution.approved_by || '—'} {execution.approved_at ? `· ${date(execution.approved_at)}` : ''}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Denied by">{execution.denied_by || '—'} {execution.denied_at ? `· ${date(execution.denied_at)}` : ''}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Approved by">{execution.approved_by ? approvedBy : '—'} {execution.approved_at ? `· ${date(execution.approved_at)}` : ''}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Denied by">{execution.denied_by ? deniedBy : '—'} {execution.denied_at ? `· ${date(execution.denied_at)}` : ''}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
       {(execution.error_code || execution.error_message) && <PanelTemplate.Section title="Error">

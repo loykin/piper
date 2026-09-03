@@ -11,15 +11,13 @@ import (
 	"time"
 )
 
-// newTestClient builds an httpClient against srv, bypassing
-// NewHTTPClient's SSRF validation (both the upfront ValidateTrackingURI
-// call and newSafeTransport's dial-time publicIP check unconditionally
-// reject a loopback address like httptest's 127.0.0.1, regardless of
-// SSRFPolicy.AllowedHosts — private/loopback rejection is intentionally
-// not overridable by the allowlist, design doc section 5.3). These wire-
-// format/behavior tests aren't exercising the SSRF boundary itself (see
-// TestNewHTTPClient_RejectsPrivateTrackingURI and ssrf_test.go for that),
-// so this constructs the same *httpClient with a plain transport instead.
+// newTestClient builds an httpClient against srv, bypassing NewHTTPClient's
+// SSRF validation. httptest's 127.0.0.1 could be admitted through
+// SSRFPolicy.AllowedHosts/AllowedCIDRs (see
+// TestNewHTTPClient_AllowsPrivateTrackingURIWhenAllowlisted), but these
+// wire-format/behavior tests aren't exercising the SSRF boundary itself, so
+// this constructs the same *httpClient with a plain transport instead of
+// threading a policy through every table-driven server case here.
 func newTestClient(t *testing.T, srv *httptest.Server) Client {
 	t.Helper()
 	base, err := url.Parse(srv.URL)
@@ -284,6 +282,68 @@ func TestNewHTTPClient_RejectsPrivateTrackingURI(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected NewHTTPClient to reject a private-IP tracking URI")
 	}
+}
+
+// TestNewHTTPClient_AllowsPrivateTrackingURIWhenAllowlisted covers the AF
+// finding (adversarial-qa-2026-08-31.md / -09-02.md): a self-hosted MLflow
+// server living at a private/loopback address (the common self-hosted
+// deployment shape) must be reachable once an admin explicitly trusts it
+// via AllowedHosts or AllowedCIDRs — both the write-time ValidateTrackingURI
+// check and newSafeTransport's dial-time re-check must honor that trust,
+// not just the URL parse.
+func TestNewHTTPClient_AllowsPrivateTrackingURIWhenAllowlisted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"experiment": map[string]any{"experiment_id": "1", "name": "x", "lifecycle_stage": "active"},
+		})
+	}))
+	defer srv.Close()
+	srvURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse httptest URL: %v", err)
+	}
+
+	t.Run("AllowedHosts", func(t *testing.T) {
+		c, err := NewHTTPClient(HTTPClientConfig{
+			TrackingURI: srv.URL,
+			Policy: SSRFPolicy{
+				AllowInsecureHTTP: true,
+				AllowedHosts:      []string{srvURL.Hostname()},
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewHTTPClient: %v", err)
+		}
+		if _, err := c.GetExperimentByName(context.Background(), "x"); err != nil {
+			t.Fatalf("GetExperimentByName: %v", err)
+		}
+	})
+
+	t.Run("AllowedCIDRs", func(t *testing.T) {
+		c, err := NewHTTPClient(HTTPClientConfig{
+			TrackingURI: srv.URL,
+			Policy: SSRFPolicy{
+				AllowInsecureHTTP: true,
+				AllowedCIDRs:      []string{srvURL.Hostname() + "/32"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewHTTPClient: %v", err)
+		}
+		if _, err := c.GetExperimentByName(context.Background(), "x"); err != nil {
+			t.Fatalf("GetExperimentByName: %v", err)
+		}
+	})
+
+	t.Run("StillRejectedWithoutAllowlist", func(t *testing.T) {
+		_, err := NewHTTPClient(HTTPClientConfig{
+			TrackingURI: srv.URL,
+			Policy:      SSRFPolicy{AllowInsecureHTTP: true},
+		})
+		if err == nil {
+			t.Fatal("expected NewHTTPClient to reject a private-IP tracking URI with no allowlist")
+		}
+	})
 }
 
 func TestNewHTTPClient_RejectsTokenAndBasicAuthTogether(t *testing.T) {

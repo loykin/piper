@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -130,28 +131,46 @@ func (r *servingRepo) Count(ctx context.Context, projectID string) (int, error) 
 	return count, err
 }
 
+// Delete archives the current row into service_history and removes it from
+// services in a single transaction — see notebookRepo.Delete's doc comment
+// for why a history-insert failure must not let the live row disappear
+// silently.
 func (r *servingRepo) Delete(ctx context.Context, projectID, name string) error {
-	var svc serving.Service
-	if err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`SELECT ` + serviceSelectCols + ` FROM services WHERE project_id=? AND name=?`)
-		return db.GetContext(ctx, &svc, q, projectID, name)
-	}); err == nil {
-		_ = r.AppendHistory(ctx, &svc)
-	}
-	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`DELETE FROM services WHERE project_id=? AND name=?`)
-		_, err := db.ExecContext(ctx, q, projectID, name)
+	return r.RunTx(ctx, func(ctx context.Context, tx *sqlx.Tx) error {
+		var svc serving.Service
+		q := tx.Rebind(`SELECT ` + serviceSelectCols + ` FROM services WHERE project_id=? AND name=?`)
+		err := tx.GetContext(ctx, &svc, q, projectID, name)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Nothing to archive; still remove the (already-absent) row below
+			// so Delete stays idempotent, matching the prior behavior.
+		case err != nil:
+			return err
+		default:
+			if err := appendServiceHistory(ctx, tx, &svc); err != nil {
+				return fmt.Errorf("append history: %w", err)
+			}
+		}
+		q = tx.Rebind(`DELETE FROM services WHERE project_id=? AND name=?`)
+		_, err = tx.ExecContext(ctx, q, projectID, name)
 		return err
 	})
 }
 
+// appendServiceHistory is shared by AppendHistory (its own transaction) and
+// Delete (inside Delete's transaction) so both go through identical SQL.
+// sqlx.ExtContext is satisfied by both *sqlx.DB and *sqlx.Tx.
+func appendServiceHistory(ctx context.Context, execer sqlx.ExtContext, svc *serving.Service) error {
+	q := execer.Rebind(`INSERT INTO service_history (project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	_, err := execer.ExecContext(ctx, q,
+		svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.CreatedBy, svc.CreatedAt, time.Now())
+	return err
+}
+
 func (r *servingRepo) AppendHistory(ctx context.Context, svc *serving.Service) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`INSERT INTO service_history (project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-		_, err := db.ExecContext(ctx, q,
-			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.CreatedBy, svc.CreatedAt, time.Now())
-		return err
+		return appendServiceHistory(ctx, db, svc)
 	})
 }
 

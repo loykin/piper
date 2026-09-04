@@ -364,6 +364,71 @@ func TestPiperCleanupOrphanArtifacts_ExcludesNotebookRoot(t *testing.T) {
 	}
 }
 
+// TestPiperCleanupOrphanArtifacts_ExcludesDefaultStatsSpool is a regression
+// test for AT: the orphan run sweep used to have no exclusion for
+// stats.spool.dir, so ten minutes after startup it deleted the external
+// stats backend's disk spool (queued log/metric writes plus the global
+// sequence file) out from under a live server, whether or not a spool
+// outage was ever in progress. stats.spool.dir defaults to
+// outputDir/stats-spool when unset, exactly like the "models" default this
+// sweep already protects.
+func TestPiperCleanupOrphanArtifacts_ExcludesDefaultStatsSpool(t *testing.T) {
+	outputDir := t.TempDir()
+	p := newTestPiper(t, Config{OutputDir: outputDir})
+
+	old := time.Now().Add(-time.Hour)
+	for _, dir := range []string{filepath.Join(outputDir, "stats-spool"), filepath.Join(outputDir, "run-orphan")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "stats-spool", "sequence"), []byte("42"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p.cleanupOrphanArtifacts(context.Background())
+
+	if _, err := os.Stat(filepath.Join(outputDir, "stats-spool", "sequence")); err != nil {
+		t.Fatalf("default stats spool should survive the sweep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "run-orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphaned workspace directory should still be removed, err=%v", err)
+	}
+}
+
+// TestPiperCleanupOrphanArtifacts_ExcludesCustomStatsSpool is the
+// stats.spool.dir-explicitly-set variant of the AT regression above.
+func TestPiperCleanupOrphanArtifacts_ExcludesCustomStatsSpool(t *testing.T) {
+	outputDir := t.TempDir()
+	spoolDir := filepath.Join(outputDir, "custom-spool")
+	p := newTestPiper(t, Config{
+		OutputDir: outputDir,
+		Stats:     StatsConfig{Spool: StatsSpoolConfig{Dir: spoolDir}},
+	})
+
+	old := time.Now().Add(-time.Hour)
+	for _, dir := range []string{spoolDir, filepath.Join(outputDir, "run-orphan")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p.cleanupOrphanArtifacts(context.Background())
+
+	if _, err := os.Stat(spoolDir); err != nil {
+		t.Fatalf("custom stats spool should survive the sweep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "run-orphan")); !os.IsNotExist(err) {
+		t.Fatalf("orphaned workspace directory should still be removed, err=%v", err)
+	}
+}
+
 // ─── deleteArtifactsFromStore / deleteRunWorkspace (fed.md §13.6) ──────────
 
 // TestDeleteRunWorkspace_IndependentOfStore is a regression test: before the

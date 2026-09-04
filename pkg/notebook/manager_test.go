@@ -90,9 +90,16 @@ func (r *fakeRepo) List(_ context.Context, _ string) ([]*NotebookServer, error) 
 	return out, nil
 }
 
+// Delete mirrors the real store's read-current-row-then-archive-then-delete
+// behavior (internal/store/{sqlite,postgres}/notebook.go) so tests can
+// assert what Final Status ends up archived, same as production.
 func (r *fakeRepo) Delete(_ context.Context, _, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if nb, ok := r.servers[name]; ok {
+		cp := *nb
+		r.history = append(r.history, &cp)
+	}
 	delete(r.servers, name)
 	return nil
 }
@@ -801,6 +808,34 @@ func TestManager_Delete_RunningServerCallsStop(t *testing.T) {
 	case <-drv.stopCalled:
 	case <-time.After(time.Second):
 		t.Error("driver.Stop should be called when deleting a running server")
+	}
+}
+
+// TestManager_Delete_ArchivesStoppedNotRunning is a regression test for AM:
+// deleting a running notebook used to archive the pre-stop "running" status
+// as the history row's Final Status forever, since repo.Delete re-reads
+// whatever status is currently persisted and Manager.Delete never updated
+// it after a successful driver.Stop. A "Final Status" that's never actually
+// terminal makes the history view unusable for audit/ops.
+func TestManager_Delete_ArchivesStoppedNotRunning(t *testing.T) {
+	repo := newFakeRepo()
+	vols := newFakeVols()
+	drv := newFakeDriver()
+	m := New(repo, vols, drv)
+	ctx := context.Background()
+
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-del-status", Status: StatusRunning})
+
+	if err := m.Delete(ctx, "project-a", "nb-del-status"); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+
+	history := repo.historySnapshot()
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(history))
+	}
+	if history[0].Status != StatusStopped {
+		t.Fatalf("archived Final Status = %q, want %q", history[0].Status, StatusStopped)
 	}
 }
 

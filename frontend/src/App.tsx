@@ -29,6 +29,7 @@ import {
   SidebarMenuSubButton,
   SidebarInset,
   SidebarRail,
+  SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
@@ -403,6 +404,9 @@ function AppLayout() {
           </Sidebar>
           <SidebarInset>
             <div className="flex flex-col flex-1 min-h-0">
+              <div className="flex items-center border-b px-3 py-2 md:hidden">
+                <SidebarTrigger />
+              </div>
               <RoutedContent />
             </div>
           </SidebarInset>

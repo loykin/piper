@@ -153,6 +153,13 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 		}
 		return fmt.Errorf("stop service: %w", err)
 	}
+	// Record the real terminal outcome. Left at StatusStopping, a caller
+	// that immediately deletes the service right after Stop (the UI's
+	// delete flow) would archive "stopping" as the history's Final
+	// Status forever — never actually terminal.
+	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped); err != nil {
+		return fmt.Errorf("stop service: mark stopped: %w", err)
+	}
 	return nil
 }
 

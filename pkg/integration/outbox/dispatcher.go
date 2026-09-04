@@ -45,6 +45,19 @@ type HandlerFunc func(ctx context.Context, event *Event) Outcome
 
 func (f HandlerFunc) Handle(ctx context.Context, event *Event) Outcome { return f(ctx, event) }
 
+// DeadNotifier is an optional interface a Handler can implement to react
+// when the Dispatcher marks an event StatusDead for a reason the Handler's
+// own Outcome did not decide: attempts exhausted (ev.Attempts reaching
+// Config.MaxAttemptsBeforeDead) while Outcome.Retryable was still true. A
+// Handler that already returns Retryable:false for a terminal failure has
+// already had its chance to react synchronously before Handle returned —
+// NotifyDead only fires for the attempts-exhausted case, which the Handler
+// otherwise has no way to observe, since MarkDead happens entirely inside
+// the Dispatcher after Handle has already returned.
+type DeadNotifier interface {
+	NotifyDead(ctx context.Context, event *Event, outcome Outcome)
+}
+
 // Config controls one Dispatcher's polling/claim/retry behavior (design doc
 // section 13's `integrations.mlflow.*` server config maps onto this,
 // though this type is integration-agnostic).
@@ -189,8 +202,18 @@ func (d *Dispatcher) process(ctx context.Context, ev *Event) {
 	}
 
 	if !outcome.Retryable || ev.Attempts >= cfg.MaxAttemptsBeforeDead {
+		attemptsExhausted := outcome.Retryable && ev.Attempts >= cfg.MaxAttemptsBeforeDead
 		if err := d.Repo.MarkDead(ctx, ev.ID, cfg.Owner, outcome.ErrorCode, outcome.ErrorMessage); err != nil {
 			slog.Warn("outbox dispatcher: mark dead failed", "event_id", ev.ID, "err", err)
+		}
+		// The Handler already had a chance to react to a non-retryable
+		// outcome before returning (that's the ev.Attempts < cap branch of
+		// this same condition) — only the attempts-exhausted case is news to
+		// it, since Handle has no visibility into Config.MaxAttemptsBeforeDead.
+		if attemptsExhausted {
+			if notifier, ok := d.Handler.(DeadNotifier); ok {
+				notifier.NotifyDead(ctx, ev, outcome)
+			}
 		}
 		return
 	}

@@ -400,6 +400,47 @@ func TestExporter_ClientErrorIsRetryableWhenClassifiedSo(t *testing.T) {
 	}
 }
 
+// TestExporter_NotifyDeadDegradesSyncedRunLink is a regression test for AS:
+// once a "created" event synced a run link, a later "finished" event that
+// the outbox dispatcher gives up on after exhausting retries (still
+// nominally Retryable) used to leave that link at SyncStatus "synced"
+// forever — synced and permanently failed at the same time, with nothing
+// in the link surfacing the dead event's error. The Dispatcher calls
+// NotifyDead exactly for this case (see outbox.DeadNotifier's doc comment).
+func TestExporter_NotifyDeadDegradesSyncedRunLink(t *testing.T) {
+	repo := newFakeRepo()
+	integration := newTestIntegration("p1")
+	_ = repo.CreateIntegration(context.Background(), integration)
+	now := time.Now()
+	_ = repo.UpsertRunLink(context.Background(), &mlflow.MLflowRunLink{
+		IntegrationID: integration.ID, ProjectID: "p1", SourceType: string(mlflow.SourceTypePipeline), SourceID: "run-1",
+		MLflowRunID: "mlflow-run-1", SyncStatus: string(mlflow.SyncStatusSynced), LastSequence: 1, LastSyncedAt: &now,
+	})
+	exporter := mlflow.NewExporter(repo, func(ctx context.Context, m *mlflow.MLflowIntegration) (mlflow.Client, error) {
+		t.Fatal("NotifyDead must not need a live MLflow client")
+		return nil, nil
+	})
+
+	ev := newFinishedEvent(t, integration.ID, "p1", "run-1", "success", 2)
+	exporter.NotifyDead(context.Background(), ev, outbox.Outcome{Retryable: true, ErrorCode: "NETWORK_ERROR", ErrorMessage: "dial tcp: connection refused"})
+
+	link := repo.runLink(integration.ID, "p1", "run-1")
+	if link == nil {
+		t.Fatal("run link disappeared")
+	}
+	if link.SyncStatus != string(mlflow.SyncStatusDegraded) {
+		t.Errorf("SyncStatus = %q, want %q — synced-forever alongside a dead event misrepresents state", link.SyncStatus, mlflow.SyncStatusDegraded)
+	}
+	if link.LastErrorCode != "NETWORK_ERROR" {
+		t.Errorf("LastErrorCode = %q, want NETWORK_ERROR", link.LastErrorCode)
+	}
+	// The prior successful sync's bookkeeping must survive — NotifyDead
+	// degrades the link, it doesn't erase what already succeeded.
+	if link.MLflowRunID != "mlflow-run-1" || link.LastSequence != 1 {
+		t.Errorf("NotifyDead must not clobber existing MLflowRunID/LastSequence, got %+v", link)
+	}
+}
+
 // retryableTestErr mimics a *mlflow.ClientError-shaped retryable failure
 // without depending on http_client.go's unexported construction — it's a
 // plain error; Exporter's fallback classification (retryOutcome) treats any

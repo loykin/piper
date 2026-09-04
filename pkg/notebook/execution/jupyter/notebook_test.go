@@ -79,6 +79,52 @@ func TestParseNotebookRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMarshalPreservesEmptyOutputsOnCodeCells is a regression test for AN:
+// a code cell's "outputs": [] used to vanish on save (encoding/json's
+// omitempty treats a zero-length slice the same as nil), so a notebook that
+// was valid nbformat when it arrived became invalid nbformat once Piper
+// re-serialized it to send to Jupyter — jupyter_server's own parser then
+// raised KeyError('outputs') and the save failed with a 500.
+func TestMarshalPreservesEmptyOutputsOnCodeCells(t *testing.T) {
+	raw := []byte(`{
+		"nbformat": 4,
+		"nbformat_minor": 5,
+		"metadata": {},
+		"cells": [
+			{"id": "c1", "cell_type": "code", "source": ["1+1"], "metadata": {}, "outputs": []},
+			{"id": "c2", "cell_type": "markdown", "source": ["# title"], "metadata": {}}
+		]
+	}`)
+	nb, err := ParseNotebook(raw)
+	if err != nil {
+		t.Fatalf("ParseNotebook: %v", err)
+	}
+
+	out, err := nb.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var asMap struct {
+		Cells []map[string]json.RawMessage `json:"cells"`
+	}
+	if err := json.Unmarshal(out, &asMap); err != nil {
+		t.Fatalf("re-parse marshaled notebook as generic JSON: %v", err)
+	}
+	if len(asMap.Cells) != 2 {
+		t.Fatalf("Cells = %d, want 2", len(asMap.Cells))
+	}
+	if _, ok := asMap.Cells[0]["outputs"]; !ok {
+		t.Fatal("code cell's outputs field was dropped by Marshal — nbformat requires it even when empty")
+	}
+	if string(asMap.Cells[0]["outputs"]) != "[]" {
+		t.Fatalf("code cell outputs = %s, want []", asMap.Cells[0]["outputs"])
+	}
+	if _, ok := asMap.Cells[1]["outputs"]; ok {
+		t.Fatal("markdown cell must not carry an outputs field at all")
+	}
+}
+
 func TestContentHashStableAndSensitiveToChange(t *testing.T) {
 	nb := EmptyNotebook()
 	nb.AppendCodeCell("c1", "print(1)")

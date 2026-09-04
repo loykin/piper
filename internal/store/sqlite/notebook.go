@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -95,27 +96,45 @@ func (r *notebookRepo) GetByVolumeID(ctx context.Context, projectID, volumeID st
 	return &nb, nil
 }
 
+// Delete archives the current row into notebook_history and removes it from
+// notebook_servers in a single transaction. Both writes must succeed
+// together — a history-insert failure used to be silently swallowed while
+// the live row was deleted anyway, permanently losing the notebook's
+// lifecycle record with no trace and no error surfaced to the caller.
 func (r *notebookRepo) Delete(ctx context.Context, projectID, name string) error {
-	var nb notebook.NotebookServer
-	if err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		return db.GetContext(ctx, &nb,
+	return r.RunTx(ctx, func(ctx context.Context, tx *sqlx.Tx) error {
+		var nb notebook.NotebookServer
+		err := tx.GetContext(ctx, &nb,
 			`SELECT `+notebookCols+` FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
-	}); err == nil {
-		_ = r.AppendHistory(ctx, &nb)
-	}
-	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		_, err := db.ExecContext(ctx, `DELETE FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Nothing to archive; still remove the (already-absent) row below
+			// so Delete stays idempotent, matching the prior behavior.
+		case err != nil:
+			return err
+		default:
+			if err := appendNotebookHistory(ctx, tx, &nb); err != nil {
+				return fmt.Errorf("append history: %w", err)
+			}
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
 		return err
 	})
 }
 
+// appendNotebookHistory is shared by AppendHistory (its own transaction) and
+// Delete (inside Delete's transaction) so both go through identical SQL.
+func appendNotebookHistory(ctx context.Context, execer sqlx.ExecerContext, nb *notebook.NotebookServer) error {
+	_, err := execer.ExecContext(ctx,
+		`INSERT INTO notebook_history (project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, image, yaml, created_by, deployed_at, stopped_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML, nb.CreatedBy, nb.CreatedAt, time.Now())
+	return err
+}
+
 func (r *notebookRepo) AppendHistory(ctx context.Context, nb *notebook.NotebookServer) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		_, err := db.ExecContext(ctx,
-			`INSERT INTO notebook_history (project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, image, yaml, created_by, deployed_at, stopped_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML, nb.CreatedBy, nb.CreatedAt, time.Now())
-		return err
+		return appendNotebookHistory(ctx, db, nb)
 	})
 }
 

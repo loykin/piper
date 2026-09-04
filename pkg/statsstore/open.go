@@ -2,12 +2,26 @@ package statsstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+// ErrCredentialUnresolved marks an Open failure that came specifically from
+// resolving stats.logs/stats.metrics's credential_ref, as opposed to a
+// config-shape validation error or a reachable-but-erroring backend. It
+// exists so a caller (piper.New) can tell "the credential row referenced by
+// config is gone" apart from other Open failures via errors.Is — that
+// specific case is very often a DB/PVC recovery that lost the credential
+// row while config still references it (docs/log-metric-storage-backend.md
+// §4's two-step bootstrap sequencing exists for the opposite direction: a
+// credential introduced before its consumer, not a consumer that outlived
+// its credential), and a caller may reasonably decide to degrade instead of
+// refusing to start — otherwise there is no way back in to fix it.
+var ErrCredentialUnresolved = errors.New("statsstore: credential_ref could not be resolved")
 
 type Config struct {
 	SpoolDir      string
@@ -81,11 +95,11 @@ func Open(config Config, fallback Fallback) (*Store, error) {
 	}
 	logCredential, err := resolve(config.Logs)
 	if err != nil {
-		return nil, fmt.Errorf("resolve stats.logs credential_ref: %w", err)
+		return nil, fmt.Errorf("resolve stats.logs credential_ref: %w: %w", ErrCredentialUnresolved, err)
 	}
 	metricCredential, err := resolve(config.Metrics)
 	if err != nil {
-		return nil, fmt.Errorf("resolve stats.metrics credential_ref: %w", err)
+		return nil, fmt.Errorf("resolve stats.metrics credential_ref: %w: %w", ErrCredentialUnresolved, err)
 	}
 	logs, metrics := fallback.Logs, fallback.Metrics
 	capabilities := fallback.Capabilities
@@ -141,6 +155,23 @@ func Open(config Config, fallback Fallback) (*Store, error) {
 	})
 	store.healthFn = wrapped.health
 	return store, nil
+}
+
+// NewDegradedStore builds a Store that serves stats.logs/stats.metrics
+// entirely from fallback (normally the local DB-backed logstore Open itself
+// falls back to whenever no external URL is configured) while its Health()
+// permanently reports the given failure through the same
+// Capabilities/Health API a live external-backend outage already uses. For
+// a caller that decided a configured external backend must not block
+// server startup (see ErrCredentialUnresolved) but still wants that
+// decision visible to an admin rather than silently indistinguishable from
+// "everything is fine."
+func NewDegradedStore(fallback Fallback, lastError string) *Store {
+	store := NewStore(fallback.Logs, fallback.Metrics, fallback.Capabilities, fallback.Close)
+	store.healthFn = func() Health {
+		return Health{Healthy: false, Degraded: true, LastError: lastError}
+	}
+	return store
 }
 
 // wrapBootstrapHint appends the two-step bootstrap order (docs/log-metric-storage-backend.md

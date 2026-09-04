@@ -229,6 +229,7 @@ func New(cfg Config) (*Piper, error) {
 	if spoolDir == "" {
 		spoolDir = filepath.Join(cfg.OutputDir, "stats-spool")
 	}
+	statsFallback := statsstore.Fallback{Logs: statsBackend, Metrics: statsBackend, Capabilities: statsBackend.Capabilities()}
 	stats, err := statsstore.Open(statsstore.Config{
 		SpoolDir: spoolDir, SpoolMaxBytes: cfg.Stats.Spool.MaxBytes,
 		Logs:    statsstore.BackendConfig{URL: cfg.Stats.Logs.URL, CredentialRef: cfg.Stats.Logs.CredentialRef, Retention: cfg.Stats.Logs.Retention, ManageRetention: cfg.Stats.Logs.ManageRetention},
@@ -237,10 +238,28 @@ func New(cfg Config) (*Piper, error) {
 			value, resolveErr := credentialStore.Resolve(ctx, project.SystemID, ref)
 			return value.Data, resolveErr
 		},
-	}, statsstore.Fallback{Logs: statsBackend, Metrics: statsBackend, Capabilities: statsBackend.Capabilities()})
+	}, statsFallback)
 	if err != nil {
-		_ = repos.Close()
-		return nil, fmt.Errorf("open statistics store: %w", err)
+		if !errors.Is(err, statsstore.ErrCredentialUnresolved) {
+			_ = repos.Close()
+			return nil, fmt.Errorf("open statistics store: %w", err)
+		}
+		// The stats backend's credential_ref is configured but the
+		// credential row itself is gone — typically a DB/PVC recovery that
+		// restored an older snapshot than the config on disk. Refusing to
+		// start here would be a dead end: there is no running server left
+		// to log into and recreate the missing credential through. Start
+		// with statistics degraded (writes still land in the local
+		// database) instead, and surface the failure through the same
+		// Capabilities/Health API a live backend outage already uses. An
+		// admin can now log in and recreate the missing credential via
+		// POST /api/system/credentials (see AK write-up,
+		// docs/log-metric-storage-backend.md §4) — a plain restart after
+		// that picks it back up on the next Open, rather than the previous
+		// ConfigMap-edit-and-rollout dance needed just to get a server
+		// running at all.
+		slog.Warn("stats backend credential could not be resolved — starting with statistics degraded instead of refusing to start", "err", err)
+		stats = statsstore.NewDegradedStore(statsFallback, err.Error())
 	}
 	statsAdapter := logstore.NewStatsAdapter(stats)
 	if cfg.Stats.Logs.URL != "" {
@@ -776,6 +795,11 @@ func validateStatsRetentionSupport(cfg StatsConfig, logs logstore.LogStore, metr
 //     registry, not a run's workspace.
 //   - notebook.notebooks_root, when configured under outputDir — it contains
 //     persistent notebook volumes and live process state, not run workspaces.
+//   - stats.spool.dir (default outputDir/stats-spool), the external stats
+//     backend's disk spool — it holds queued log/metric writes and the
+//     global sequence file across backend outages, not a run's workspace,
+//     and a sweep that deletes it silently drops queued statistics and
+//     resets the sequence counter.
 //
 // Excluding a directory requires comparing it against outputDir; both sides
 // are resolved to absolute paths first, since outputDir is commonly a
@@ -812,6 +836,11 @@ func (p *Piper) cleanupOrphanArtifacts(ctx context.Context) {
 		excludeUnderOutputDir(p.cfg.Runtime.Baremetal.MetaDir)
 	}
 	excludeUnderOutputDir(p.cfg.Notebook.NotebooksRoot)
+	spoolDir := p.cfg.Stats.Spool.Dir
+	if spoolDir == "" {
+		spoolDir = filepath.Join(p.cfg.OutputDir, "stats-spool")
+	}
+	excludeUnderOutputDir(spoolDir)
 	cleanupOrphanArtifacts(ctx, p.repos.Run, p.cfg.OutputDir, exclude...)
 }
 

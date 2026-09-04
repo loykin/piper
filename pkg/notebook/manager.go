@@ -404,6 +404,13 @@ func (m *Manager) Delete(ctx context.Context, projectID, name string) error {
 		if err := m.driver.Stop(ctx, nb); err != nil {
 			return fmt.Errorf("notebook: stop before delete: %w", err)
 		}
+		// Record the real outcome before it's archived below — repo.Delete
+		// re-reads the row itself, so without this the history entry it
+		// writes would carry the pre-stop "running" status forever, making
+		// "Final Status" in the history UI actively misleading.
+		if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped); err != nil {
+			return fmt.Errorf("notebook: mark stopped before delete: %w", err)
+		}
 	}
 
 	// Remove the server record.

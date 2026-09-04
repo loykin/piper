@@ -106,6 +106,31 @@ type Cell struct {
 	ExecutionCount *int                       `json:"execution_count,omitempty"`
 }
 
+// MarshalJSON forces "outputs" to serialize as [] rather than being omitted
+// for code cells with no outputs yet. nbformat requires a code cell to
+// always carry the outputs array, even empty — jupyter_server's own parser
+// raises KeyError('outputs') otherwise — but encoding/json's `omitempty`
+// treats a nil and a zero-length slice identically, so a plain struct tag
+// can't express "omit only for non-code cells." Non-code cells (markdown,
+// raw) must NOT carry an outputs field at all, so they keep the embedded
+// alias's normal omitempty behavior; the outer Outputs field below only
+// takes over — shadowing the alias's own field at JSON-encode time — for
+// code cells.
+func (c Cell) MarshalJSON() ([]byte, error) {
+	type alias Cell
+	if c.CellType != CellTypeCode {
+		return json.Marshal(alias(c))
+	}
+	outputs := c.Outputs
+	if outputs == nil {
+		outputs = []Output{}
+	}
+	return json.Marshal(struct {
+		alias
+		Outputs []Output `json:"outputs"`
+	}{alias: alias(c), Outputs: outputs})
+}
+
 const CellTypeCode = "code"
 
 // Notebook is a parsed .ipynb document. Only the fields Piper needs to read

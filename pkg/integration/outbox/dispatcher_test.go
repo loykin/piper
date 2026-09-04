@@ -243,6 +243,74 @@ func TestDispatcher_RetryableFailureGoesDeadOnceAttemptsExhausted(t *testing.T) 
 	}
 }
 
+// deadNotifyingHandler is an outbox.Handler that also implements
+// outbox.DeadNotifier, recording every NotifyDead call for assertions.
+type deadNotifyingHandler struct {
+	mu       sync.Mutex
+	outcome  outbox.Outcome
+	notified []string // event IDs NotifyDead was called for
+}
+
+func (h *deadNotifyingHandler) Handle(ctx context.Context, e *outbox.Event) outbox.Outcome {
+	return h.outcome
+}
+
+func (h *deadNotifyingHandler) NotifyDead(ctx context.Context, e *outbox.Event, outcome outbox.Outcome) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.notified = append(h.notified, e.ID)
+}
+
+// TestDispatcher_NotifiesDeadNotifierOnceAttemptsExhausted is a regression
+// test for AS: a Handler like mlflow's Exporter has no visibility into
+// Config.MaxAttemptsBeforeDead, so when the Dispatcher itself gives up on a
+// still-nominally-retryable event, the Handler previously had no way to
+// react — leaving whatever domain state it tracks (e.g. an MLflow run
+// link's SyncStatus) stuck at its last successful value forever, even
+// though the outbox now considers the event permanently failed.
+func TestDispatcher_NotifiesDeadNotifierOnceAttemptsExhausted(t *testing.T) {
+	repo := newFakeRepo()
+	ev := &outbox.Event{IntegrationID: "int-1", EventType: "pipeline_run.finished"}
+	if err := repo.Enqueue(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	h := &deadNotifyingHandler{outcome: outbox.Outcome{Retryable: true, ErrorCode: "NETWORK_ERROR"}}
+	d := outbox.NewDispatcher(repo, h, outbox.Config{Owner: "test", MaxAttemptsBeforeDead: 3, BaseBackoff: time.Microsecond, MaxBackoff: time.Microsecond})
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		d.PollOnce(ctx)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := repo.get(ev.ID); got.Status != string(outbox.StatusDead) {
+		t.Fatalf("status = %q, want dead", got.Status)
+	}
+	if len(h.notified) != 1 || h.notified[0] != ev.ID {
+		t.Fatalf("NotifyDead calls = %v, want exactly one call for event %s", h.notified, ev.ID)
+	}
+}
+
+// TestDispatcher_DoesNotNotifyDeadNotifierOnImmediateNonRetryable checks the
+// other half of the same condition: a Handler that itself decided
+// Retryable:false already had its synchronous chance to react before
+// returning (mlflow's retryOrDeadWithLink does exactly that), so
+// NotifyDead must not fire again for that path.
+func TestDispatcher_DoesNotNotifyDeadNotifierOnImmediateNonRetryable(t *testing.T) {
+	repo := newFakeRepo()
+	ev := &outbox.Event{IntegrationID: "int-1", EventType: "pipeline_run.created"}
+	if err := repo.Enqueue(context.Background(), ev); err != nil {
+		t.Fatal(err)
+	}
+	h := &deadNotifyingHandler{outcome: outbox.Outcome{Retryable: false, ErrorCode: "HTTP_401"}}
+	d := outbox.NewDispatcher(repo, h, outbox.Config{Owner: "test", MaxAttemptsBeforeDead: 20})
+	d.PollOnce(context.Background())
+	if got := repo.get(ev.ID); got.Status != string(outbox.StatusDead) {
+		t.Fatalf("status = %q, want dead", got.Status)
+	}
+	if len(h.notified) != 0 {
+		t.Fatalf("NotifyDead calls = %v, want none (Handler already had its synchronous chance)", h.notified)
+	}
+}
+
 func TestDispatcher_ConcurrencyOneProcessesSequentially(t *testing.T) {
 	repo := newFakeRepo()
 	for i := 0; i < 5; i++ {

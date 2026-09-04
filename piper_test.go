@@ -133,6 +133,42 @@ func TestExternalStatsBackendReceivesRuntimeWritesThroughDurableIngress(t *testi
 	}
 }
 
+// TestStatsBackendMissingCredentialDegradesInsteadOfBlockingStartup is a
+// regression test for AK: config referencing a stats.logs/stats.metrics
+// credential_ref whose row is gone (the DB/PVC-recovery scenario the AK
+// write-up documents) used to make New() return an error, so the process
+// never got as far as opening HTTP/bootstrap routes — there was no running
+// server left for an admin to log into and recreate the credential
+// through. New() must now succeed and report the failure via
+// stats.Health() instead.
+func TestStatsBackendMissingCredentialDegradesInsteadOfBlockingStartup(t *testing.T) {
+	p := newTestPiper(t, Config{
+		OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal},
+		Stats: StatsConfig{
+			Spool: StatsSpoolConfig{MaxBytes: 1 << 20},
+			Logs:  StatsBackendConfig{URL: "elasticsearch://unreachable.invalid/piper", CredentialRef: "missing-cred"},
+		},
+	})
+	health := p.stats.Health()
+	if health.Healthy {
+		t.Fatal("Health().Healthy = true, want false — the configured credential_ref does not resolve")
+	}
+	if !health.Degraded {
+		t.Fatal("Health().Degraded = false, want true")
+	}
+	if health.LastError == "" {
+		t.Fatal("Health().LastError is empty, want the credential resolve failure")
+	}
+
+	// Statistics writes must still land locally instead of erroring —
+	// degraded means "not exported externally," not "broken."
+	if err := p.logs.Append(context.Background(), []*logstore.Line{
+		{ProjectID: "default", RunID: "run", StepName: "step", Ts: time.Now().UTC(), Stream: "stdout", Line: "still works"},
+	}); err != nil {
+		t.Fatalf("log append should still succeed against the local fallback: %v", err)
+	}
+}
+
 func TestTemplateRunUsesConfiguredMemberRouting(t *testing.T) {
 	const projectID = "remote-project"
 	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal}})

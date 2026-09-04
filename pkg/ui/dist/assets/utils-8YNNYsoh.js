@@ -1,1 +1,0 @@
-import{ir as e,nr as t}from"./vendor-loykin-jIBM2XZ3.js";function n(...n){return t(e(n))}export{n as t};

@@ -337,6 +337,37 @@ func (e *Exporter) retryOrDead(err error, fallbackCode string) outbox.Outcome {
 	return retryOutcomeWithCode(err, fallbackCode)
 }
 
+var _ outbox.DeadNotifier = (*Exporter)(nil)
+
+// NotifyDead implements outbox.DeadNotifier: it fires when the Dispatcher
+// gives up on an event after Config.MaxAttemptsBeforeDead retries while
+// Handle kept returning Retryable:true (e.g. a sustained NETWORK_ERROR) —
+// the one dead-lettering path retryOrDeadWithLink can't already cover,
+// since Handle has no visibility into the attempt cap and so never had a
+// chance to mark the link degraded itself. Without this, a run link could
+// sit at SyncStatus "synced" (last written by an earlier successful event
+// for the same run) forever alongside a LastErrorCode from an event that
+// outbox itself considers permanently failed — synced and dead at once.
+// mlflow's enqueue.go sets AggregateID to the pipeline run ID for every
+// event type, so it doubles as the run link's SourceID with no payload
+// decode needed here.
+func (e *Exporter) NotifyDead(ctx context.Context, ev *outbox.Event, outcome outbox.Outcome) {
+	link, err := e.Repo.GetRunLink(ctx, ev.IntegrationID, ev.ProjectID, string(SourceTypePipeline), ev.AggregateID)
+	if err != nil {
+		slog.Warn("mlflow exporter: look up run link after event marked dead failed", "run_id", ev.AggregateID, "err", err)
+		return
+	}
+	if link == nil || link.SyncStatus == string(SyncStatusDegraded) {
+		return
+	}
+	link.SyncStatus = string(SyncStatusDegraded)
+	link.LastErrorCode = outcome.ErrorCode
+	link.LastErrorMessage = outcome.ErrorMessage
+	if err := e.Repo.UpsertRunLink(ctx, link); err != nil {
+		slog.Warn("mlflow exporter: sync run link after event marked dead failed", "run_id", ev.AggregateID, "err", err)
+	}
+}
+
 func retryOutcome(err error, fallbackCode string) outbox.Outcome {
 	return outbox.Outcome{Retryable: true, ErrorCode: fallbackCode, ErrorMessage: redactErr(err)}
 }

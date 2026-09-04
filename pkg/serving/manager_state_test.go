@@ -105,6 +105,24 @@ func TestManagerStopRestoresObservedStateOnDriverFailure(t *testing.T) {
 	}
 }
 
+// TestManagerStopRecordsStoppedOnSuccess is a regression test for AM: a
+// successful Stop used to leave the service parked at StatusStopping
+// forever — nothing ever advanced it to a real terminal status — so a
+// caller that deletes the service right after Stop (the UI's delete flow)
+// archived "stopping" as history's Final Status, never an actually-terminal
+// state.
+func TestManagerStopRecordsStoppedOnSuccess(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, RuntimeID: "worker-a"}}
+	m := New(repo, &stateTestDriver{})
+
+	if err := m.Stop(context.Background(), "project-a", "demo"); err != nil {
+		t.Fatalf("Stop() error: %v", err)
+	}
+	if repo.service.Status != StatusStopped {
+		t.Fatalf("status = %q, want %q", repo.service.Status, StatusStopped)
+	}
+}
+
 func TestManagerUpdateStatusRejectsDifferentRuntime(t *testing.T) {
 	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, RuntimeID: "worker-a"}}
 	m := New(repo, &stateTestDriver{})

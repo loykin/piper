@@ -76,6 +76,11 @@ Stop the server with `Ctrl+C`. Back up `piper.db` and
 go install github.com/loykin/piper/cmd/piper@latest
 ```
 
+This builds the API/CLI only — `/ui/` responds 503 ("UI not built into this
+binary"). The admin UI is embedded only in official release binaries and
+containers (built with `make build`, which runs the frontend build first);
+see [Development](#development) to build it yourself.
+
 `runtime.type` is required — there is no config file needed for a quick trial,
 but the runtime must be named through the environment when no file is
 present:
@@ -655,7 +660,10 @@ service, err := p.DeployService(ctx, "default", modelServiceYAML)
 err = p.StopService(ctx, "default", service.Name)
 ```
 
-The UI can be mounted separately with `github.com/loykin/piper/pkg/ui`.
+The admin UI is a `cmd/piper` server concern, not part of this library API —
+embedding piper into your own app gets the API only (as above); run the
+official server binary/container alongside it, or build your own UI against
+the API, if you also want the admin screens.
 
 ## Development
 
@@ -693,12 +701,12 @@ internal/membertunnel/     Home/Member federation tunnel (fed.md §13.4)
 internal/pipelinedispatch/ Queue execution backends (k8s, docker, baremetal)
 internal/queue/            Dispatch, retry, lease, and idempotency
 internal/store/            SQLite and PostgreSQL repositories
+internal/ui/               Embedded admin UI (cmd/piper only — not a library API)
 pkg/pipeline/              Pipeline parsing and execution
 pkg/notebook/              Notebook lifecycle and direct-runtime drivers
 pkg/serving/               Model service lifecycle and direct-runtime drivers
 pkg/storage/               Local, HTTP, and S3-compatible artifact storage
 pkg/template/              Versioned pipeline templates
-pkg/ui/                    Embedded production UI
 config/                    Commented server configuration examples
 deploy/                    Docker Compose and Kubernetes manifests
 examples/                  Runnable workload examples

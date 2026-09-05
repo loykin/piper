@@ -42,7 +42,17 @@ function VolumeField({ volumeId, releasedVolumes, onChange }: VolumeFieldProps) 
       htmlFor="notebook-volume"
       helperText={selectedVol ? selectedVol.work_dir : 'Attach to a released volume to recover existing data, or leave blank to provision a new one.'}
     >
-      <Select value={volumeId} onValueChange={v => onChange(v ?? '')}>
+      <Select
+        items={[
+          { value: '', label: 'new volume' },
+          ...releasedVolumes.map(v => ({
+            value: v.id,
+            label: <>{v.label}&nbsp;·&nbsp;<span className="font-mono text-xs">{v.id.slice(0, 8)}</span>{v.work_dir ? `  ${v.work_dir}` : ''}</>,
+          })),
+        ]}
+        value={volumeId}
+        onValueChange={v => onChange(v ?? '')}
+      >
         <SelectTrigger id="notebook-volume" size="sm" className="h-8 text-sm"><SelectValue placeholder="— new volume —" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">new volume</SelectItem>

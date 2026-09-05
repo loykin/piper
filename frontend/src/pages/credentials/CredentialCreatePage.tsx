@@ -6,9 +6,17 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { useCreateCredential } from '@/features/credentials/hooks'
 import type { CredentialKind } from '@/features/credentials/types'
+
+const CREDENTIAL_KINDS: CredentialKind[] = ['generic', 'git', 's3', 'gcs', 'azure', 'slack', 'webhook', 'mlflow']
+
+function initialKindFromSearch(searchParams: URLSearchParams): CredentialKind {
+  const requested = searchParams.get('kind')
+  return (CREDENTIAL_KINDS as string[]).includes(requested ?? '') ? (requested as CredentialKind) : 'generic'
+}
 
 type DataEntry = { key: string; value: string }
 const emptyEntry = (): DataEntry => ({ key: '', value: '' })
@@ -38,11 +46,12 @@ export default function CredentialCreatePage() {
   const projectId = useProjectId()
   const navigate = useNavigate()
   const createCredential = useCreateCredential()
+  const [searchParams] = useSearchParams()
 
   const [name, setName] = useState('')
-  const [kind, setKind] = useState<CredentialKind>('generic')
+  const [kind, setKind] = useState<CredentialKind>(() => initialKindFromSearch(searchParams))
   const [endpoint, setEndpoint] = useState('')
-  const [entries, setEntries] = useState<DataEntry[]>(fieldsForKind('generic'))
+  const [entries, setEntries] = useState<DataEntry[]>(() => fieldsForKind(initialKindFromSearch(searchParams)))
   const [error, setError] = useState('')
 
   function handleKindChange(next: CredentialKind) {
@@ -115,7 +124,17 @@ export default function CredentialCreatePage() {
           </FormField>
 
           <FormField label="Kind" htmlFor="credential-kind">
-            <Select value={kind} onValueChange={value => handleKindChange((value ?? 'generic') as CredentialKind)}>
+            <Select
+              items={[
+                { value: 'generic', label: 'Generic' },
+                { value: 'git', label: 'Git' },
+                { value: 'slack', label: 'Slack' },
+                { value: 'webhook', label: 'Webhook' },
+                { value: 'mlflow', label: 'MLflow' },
+              ]}
+              value={kind}
+              onValueChange={value => handleKindChange((value ?? 'generic') as CredentialKind)}
+            >
               <SelectTrigger id="credential-kind" className="h-8 w-44 text-sm">
                 <SelectValue />
               </SelectTrigger>

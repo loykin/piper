@@ -319,18 +319,26 @@ func TestHandlerRejectsOversizedRequestBody(t *testing.T) {
 	}
 }
 
-func TestHandlerServesUIDeepLinks(t *testing.T) {
+// TestHandlerRoutesUIRequestsToUIHandler pins serve.go's /ui/*filepath ->
+// internal/ui.Handler() wiring (route registration, StripPrefix), which is
+// build-independent. It intentionally does not assert on the actual SPA
+// content: this package builds without the builtinassets tag (see
+// internal/ui/ui_stub.go — that's also what `go test ./...` uses, since
+// only the Makefile's `ui`/`build` targets pass the tag), so there is no
+// real UI to serve here. internal/ui's own ui_embed_test.go pins the real
+// SPA-serving behavior against an actual `make ui` build.
+func TestHandlerRoutesUIRequestsToUIHandler(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/notebooks", nil)
 	rec := httptest.NewRecorder()
 	p.Handler(nil).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d (this build has no embedded UI): %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "not found") {
-		t.Fatalf("unexpected not found body: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "UI not built") {
+		t.Fatalf("expected the UI-not-built message routed through /ui/*, got: %s", rec.Body.String())
 	}
 }
 

@@ -1,3 +1,5 @@
+//go:build builtinassets
+
 package ui
 
 import (
@@ -6,6 +8,14 @@ import (
 	"strings"
 	"testing"
 )
+
+// These tests require a real `make ui` build to have populated dist/
+// before `go test -tags builtinassets ./internal/ui/...` runs — see the
+// Makefile's `ui-test`/CI's "UI Embed Build" job, which is the only place
+// that combination is exercised. Without a real dist/, Handler() falls
+// back to the same "not built" 503 ui_stub_test.go checks, and every test
+// below would fail on that fallback rather than the SPA behavior they're
+// meant to pin.
 
 func TestHandlerFallsBackForSPARoutes(t *testing.T) {
 	for _, path := range []string{"/notebooks", "/notebooks/demo", "/pipelines/editor", "/storage"} {

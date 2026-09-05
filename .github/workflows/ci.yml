@@ -215,11 +215,15 @@ jobs:
           PIPER_PIPELINE_TEMPLATE_E2E_ENV: /tmp/piper-pipeline-template-e2e
         run: pnpm test:e2e
 
-  ui-dist:
-    name: UI Dist Is Current
+  ui-embed:
+    name: UI Embed Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - uses: pnpm/action-setup@v4
         with:
@@ -235,11 +239,15 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
-      - name: Rebuild embedded UI
-        run: make ui
+      # internal/ui/dist is git-ignored, not committed (see
+      # internal/ui/ui_embed.go) — this job's job is to prove the frontend
+      # build and the Go embed wiring still work together, not to diff
+      # against a committed copy.
+      - name: Build UI and verify the builtinassets embed against it
+        run: make test-ui
 
-      - name: Verify committed UI is current
-        run: git diff --exit-code -- pkg/ui/dist
+      - name: Build the server binary with the UI embedded
+        run: go build -tags builtinassets -o bin/piper ./cmd/piper
 
   k8s-e2e:
     name: K8s E2E
@@ -331,7 +339,7 @@ jobs:
       - process-serving-e2e
       - examples-e2e
       - frontend-e2e
-      - ui-dist
+      - ui-embed
       - k8s-e2e
       - build
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
@@ -363,10 +371,12 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
           make ui
 
+      # -tags builtinassets is required — without it this embeds nothing
+      # and ships a UI-less server as :latest. See internal/ui/ui_embed.go.
       - name: Build linux binary
         run: |
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-            go build -ldflags="-s -w" -o bin/piper-amd64 ./cmd/piper
+            go build -tags builtinassets -ldflags="-s -w" -o bin/piper-amd64 ./cmd/piper
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

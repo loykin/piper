@@ -1,4 +1,4 @@
-.PHONY: build ui docker build-linux-native test test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-pipeline-e2e test-docker-notebook-e2e test-docker-serving-e2e test-k8s-e2e test-integration demo clean proto check-deps
+.PHONY: build ui docker build-linux build-linux-arm64 build-linux-native test test-ui test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-pipeline-e2e test-docker-notebook-e2e test-docker-serving-e2e test-k8s-e2e test-integration demo clean proto check-deps
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
@@ -21,31 +21,41 @@ check-deps:
 proto:
 	PATH="$(shell go env GOPATH)/bin:$$PATH" buf generate
 
-# Full build (UI → Go)
+# Full build (UI → Go). -tags builtinassets embeds internal/ui/dist, which
+# `ui` (below) must populate first — a plain `go build ./cmd/piper` without
+# this tag (e.g. `go install`) intentionally produces a binary with no UI;
+# see internal/ui/ui_stub.go.
 build: check-deps ui
-	go build -o bin/piper ./cmd/piper
+	go build -tags builtinassets -o bin/piper ./cmd/piper
 
 # Static build for linux/amd64 (Dockerfile uses bin/piper-amd64)
-build-linux:
+build-linux: ui
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-	go build -ldflags="-s -w" -o bin/piper-amd64 ./cmd/piper
+	go build -tags builtinassets -ldflags="-s -w" -o bin/piper-amd64 ./cmd/piper
 
 # Static build for linux/arm64
-build-linux-arm64:
+build-linux-arm64: ui
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-	go build -ldflags="-s -w" -o bin/piper-arm64 ./cmd/piper
+	go build -tags builtinassets -ldflags="-s -w" -o bin/piper-arm64 ./cmd/piper
 
 # Static Linux build matching the current Docker host architecture.
-build-linux-native:
+build-linux-native: ui
 	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 \
-	go build -ldflags="-s -w" -o bin/piper-$(ARCH) ./cmd/piper
+	go build -tags builtinassets -ldflags="-s -w" -o bin/piper-$(ARCH) ./cmd/piper
 
-# Build the React UI and update pkg/ui/dist (commit after building)
+# Build the React UI into internal/ui/dist. Not committed (see
+# internal/ui/dist/.gitignore) — every build target above that ships the
+# UI depends on this target instead, so the frontend is always rebuilt
+# fresh rather than trusting a stale checked-in copy.
 ui:
 	cd frontend && pnpm run build
-	rm -rf pkg/ui/dist
-	cp -r frontend/dist pkg/ui/dist
-	@echo "UI built. Commit pkg/ui/dist/ to include in go install."
+	rm -rf internal/ui/dist
+	cp -r frontend/dist internal/ui/dist
+
+# Runs the internal/ui tests that need a real UI build to mean anything
+# (ui_embed_test.go, gated behind the builtinassets tag) — run after `ui`.
+test-ui: ui
+	go test -tags builtinassets ./internal/ui/...
 
 # Build Docker image used by the server and direct-runtime workload Jobs.
 docker: build-linux-native
@@ -103,4 +113,4 @@ demo-down:
 	docker compose -f examples/mlops/docker-compose.yml down -v
 
 clean:
-	rm -rf bin/ pkg/ui/dist frontend/dist
+	rm -rf bin/ internal/ui/dist frontend/dist

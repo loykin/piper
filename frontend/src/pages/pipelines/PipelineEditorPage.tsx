@@ -56,6 +56,13 @@ const SOURCE_LABELS: Record<PipelineTaskType, string> = {
   command: 'Working path',
 }
 
+// Shared by the pipeline-level and per-step runtime placement Selects below.
+const RUNTIME_ITEMS = [
+  { value: 'baremetal', label: 'Bare metal' },
+  { value: 'docker', label: 'Docker' },
+  { value: 'k8s', label: 'Kubernetes' },
+]
+
 function buildPositions(tasks: PipelineStepDraft[]): Record<string, { x: number; y: number }> {
   const depth = new Map<string, number>()
   const byName = new Map(tasks.map(t => [t.name, t]))
@@ -939,7 +946,16 @@ export default function PipelineEditorPage() {
               <Input id="pipeline-name" value={formName} onChange={e => setFormName(e.target.value)} />
             </FormField>
             <FormField label="Source Type" htmlFor="pipeline-source-type">
-              <Select value={formSourceKind} onValueChange={v => setFormSourceKind(v as SourceKind)}>
+              <Select
+                items={[
+                  { value: 'notebook-volume', label: 'Notebook Volume' },
+                  { value: 'git', label: 'Git Repository' },
+                  { value: 'local', label: 'Local Directory' },
+                  { value: 'object-store', label: 'Object Store Prefix' },
+                ]}
+                value={formSourceKind}
+                onValueChange={v => setFormSourceKind(v as SourceKind)}
+              >
                 <SelectTrigger id="pipeline-source-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="notebook-volume">Notebook Volume</SelectItem>
@@ -951,7 +967,13 @@ export default function PipelineEditorPage() {
             </FormField>
             {formSourceKind === 'notebook-volume' ? (
               <FormField label="Notebook Volume" htmlFor="pipeline-volume">
-                <Select value={formVolumeId} onValueChange={v => setFormVolumeId(v ?? '')}>
+                <Select
+                  items={volumes.length === 0
+                    ? [{ value: '__none__', label: 'No released volumes' }]
+                    : volumes.map(v => ({ value: v.id, label: `${v.label} · ${v.work_dir}` }))}
+                  value={formVolumeId}
+                  onValueChange={v => setFormVolumeId(v ?? '')}
+                >
                   <SelectTrigger id="pipeline-volume"><SelectValue placeholder="— select a volume —" /></SelectTrigger>
                   <SelectContent>
                     {volumes.length === 0 ? (
@@ -983,7 +1005,16 @@ export default function PipelineEditorPage() {
                       instant a credential was picked, which Select treats
                       as an illegal uncontrolled-to-controlled transition
                       and silently desyncs its displayed value from. */}
-                  <Select value={formCredential || null} onValueChange={v => handleGitCredentialChange(v ?? '')}>
+                  <Select
+                    items={gitCredentials.length === 0
+                      ? [{ value: '__none__', label: 'No active git credentials' }]
+                      : gitCredentials.map(credential => ({
+                        value: credential.name,
+                        label: `${credential.name}${credential.disabled ? ' (disabled)' : ''} · ${credential.endpoint || 'any repo'}`,
+                      }))}
+                    value={formCredential || null}
+                    onValueChange={v => handleGitCredentialChange(v ?? '')}
+                  >
                     <SelectTrigger id="pipeline-git-credential"><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
                     <SelectContent>
                       {gitCredentials.length === 0 ? (
@@ -1052,6 +1083,7 @@ export default function PipelineEditorPage() {
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Runtime</label>
                   <Select
+                    items={RUNTIME_ITEMS}
                     value={defaults.placementRuntime}
                     onValueChange={value => updateDefaults({ placementRuntime: value ?? '' })}
                     disabled={!!serverRuntime && (!defaults.placementRuntime || defaults.placementRuntime === serverRuntime)}
@@ -1218,7 +1250,15 @@ export default function PipelineEditorPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Type</label>
-                  <Select value={editingTask.type} onValueChange={value => updateTask(editingIndex, { type: value as PipelineTaskType })}>
+                  <Select
+                    items={[
+                      { value: 'command', label: 'Command' },
+                      { value: 'python', label: 'Python' },
+                      { value: 'notebook', label: 'Notebook' },
+                    ]}
+                    value={editingTask.type}
+                    onValueChange={value => updateTask(editingIndex, { type: value as PipelineTaskType })}
+                  >
                     <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="command">Command</SelectItem>
@@ -1385,6 +1425,7 @@ export default function PipelineEditorPage() {
                 <div>
                   <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Runtime</label>
                   <Select
+                    items={[{ value: '__inherit__', label: 'Inherit' }, ...RUNTIME_ITEMS]}
                     value={editingTask.driver.placementRuntime || '__inherit__'}
                     onValueChange={value => updateTaskDriver(editingIndex, {
                       placementRuntime: value === '__inherit__' ? '' : (value ?? ''),
@@ -1466,7 +1507,11 @@ export default function PipelineEditorPage() {
               <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">
                 Notebook Volume <span className="normal-case text-muted-foreground/60">(optional — required for local source steps)</span>
               </label>
-              <Select value={submitVolumeId} onValueChange={v => setSubmitVolumeId((v ?? '__none__') === '__none__' ? '' : (v ?? ''))}>
+              <Select
+                items={[{ value: '__none__', label: '— none —' }, ...volumes.map(v => ({ value: v.id, label: `${v.label} · ${v.work_dir}` }))]}
+                value={submitVolumeId}
+                onValueChange={v => setSubmitVolumeId((v ?? '__none__') === '__none__' ? '' : (v ?? ''))}
+              >
                 <SelectTrigger><SelectValue placeholder="— none —" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">— none —</SelectItem>

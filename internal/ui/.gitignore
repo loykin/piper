@@ -1,0 +1,5 @@
+# `make ui` populates this from the frontend build; never committed — see
+# ui_embed.go's doc comment. This lives here (not inside dist/ itself) so
+# `make ui`'s `rm -rf dist && cp -r ... dist` can freely recreate the
+# directory without this rule disappearing along with it.
+/dist/

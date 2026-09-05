@@ -4,9 +4,6 @@ bin/
 frontend/dist/
 frontend/node_modules/
 
-# pkg/ui/dist is committed to support go install.
-# After UI changes, run make ui and commit the dist output.
-
 # Runtime-generated files
 piper-outputs/
 /piper-data/

@@ -1,1 +1,0 @@
-import{L as e}from"./vendor-ui-BG-xApBA.js";import{n as t}from"./api-BpJDPg-q.js";async function n(){return t.get(`/api/settings`)}var r={settings:()=>[`system`,`settings`]};function i(){return e({queryKey:r.settings(),queryFn:n})}export{i as t};

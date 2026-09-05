@@ -97,7 +97,15 @@ export default function MemberCreatePage() {
               name="role"
               control={control}
               render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select
+                  items={[
+                    { value: 'viewer', label: 'Viewer' },
+                    { value: 'member', label: 'Member' },
+                    { value: 'admin', label: 'Admin' },
+                  ]}
+                  value={field.value}
+                  onValueChange={field.onChange}
+                >
                   <SelectTrigger id="member-role" className="h-8 w-44 text-sm">
                     <SelectValue />
                   </SelectTrigger>

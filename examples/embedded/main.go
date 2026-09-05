@@ -1,7 +1,11 @@
 // Embedded mode example — mount piper onto an existing HTTP server
 //
 // Pattern for attaching the piper API as a sub-path of your own web app.
-// Reuses the existing app's authentication and middleware as-is.
+// Reuses the existing app's authentication and middleware as-is. This is
+// API-only, deliberately: the admin UI is a cmd/piper concern (see
+// internal/ui's doc comment) and isn't part of the library's public
+// surface, so a library consumer builds their own UI against the API, or
+// runs the official server binary/container alongside their app instead.
 //
 //	go run ./examples/embedded
 //
@@ -22,7 +26,6 @@ import (
 	"syscall"
 
 	piper "github.com/loykin/piper"
-	"github.com/loykin/piper/pkg/ui"
 )
 
 func main() {
@@ -48,13 +51,11 @@ func main() {
 		_, _ = fmt.Fprintln(w, `{"message": "hello from my app"}`)
 	})
 
-	// Mount piper API + UI under /piper/
-	// Only import pkg/ui when the UI is needed
+	// Mount piper's API under /piper/ — API only, no UI (see package doc above).
 	piperHandler := p.HandlerContext(ctx, nil)
 	mux.Handle("/piper/runs", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/runs/", http.StripPrefix("/piper", piperHandler))
 	mux.Handle("/piper/api/", http.StripPrefix("/piper", piperHandler))
-	mux.Handle("/piper/", http.StripPrefix("/piper", ui.Handler()))
 
 	srv := &http.Server{Addr: ":8080", Handler: mux}
 	srv.Protocols = new(http.Protocols)

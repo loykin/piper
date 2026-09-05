@@ -1,1 +1,0 @@
-function e(e){let t=e.trim()===``?0:Number(e);return!Number.isInteger(t)||t<0?null:t}export{e as t};

@@ -99,7 +99,15 @@ export default function ProjectCreatePage() {
               name="ownerMemberID"
               control={control}
               render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange} disabled={membersQuery.isLoading}>
+                <Select
+                  items={(members.length > 0 ? members : [{ id: 'member-local', status: 'offline' as const }]).map(member => ({
+                    value: member.id,
+                    label: `${member.id} (${member.status})`,
+                  }))}
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  disabled={membersQuery.isLoading}
+                >
                   <SelectTrigger id="project-owner-member" size="sm" aria-invalid={!!errors.ownerMemberID}>
                     <SelectValue placeholder={membersQuery.isLoading ? 'Loading Members…' : 'Select a Member'} />
                   </SelectTrigger>

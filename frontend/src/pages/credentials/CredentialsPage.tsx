@@ -151,7 +151,17 @@ function CredentialsPageInner() {
                   onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
                 />
               </div>
-              <Select value={kindFilter} onValueChange={value => setKindFilter((value ?? 'all') as KindFilter)}>
+              <Select
+                items={[
+                  { value: 'all', label: 'All kinds' },
+                  { value: 'generic', label: 'Generic' },
+                  { value: 'git', label: 'Git' },
+                  { value: 'slack', label: 'Slack' },
+                  { value: 'webhook', label: 'Webhook' },
+                ]}
+                value={kindFilter}
+                onValueChange={value => setKindFilter((value ?? 'all') as KindFilter)}
+              >
                 <SelectTrigger size="sm" className="w-36">
                   <SelectValue />
                 </SelectTrigger>

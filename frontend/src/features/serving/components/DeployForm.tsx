@@ -117,7 +117,18 @@ function ModelSourceSection({ form, pipelines, pipelineRuns, steps, artifactName
           </Select>
         </FormField>
         <FormField label="Run" htmlFor="deploy-run">
-          <Select value={form.run} onValueChange={v => setField('run', v ?? '')} disabled={!form.pipeline}>
+          <Select
+            items={[
+              { value: 'latest', label: 'latest' },
+              ...pipelineRuns.map(r => ({
+                value: r.id,
+                label: `${r.id.slice(0, 20)}… ${r.started_at ? new Date(r.started_at).toLocaleDateString() : ''}`,
+              })),
+            ]}
+            value={form.run}
+            onValueChange={v => setField('run', v ?? '')}
+            disabled={!form.pipeline}
+          >
             <SelectTrigger id="deploy-run" size="sm" className="h-8 text-sm"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="latest">latest</SelectItem>

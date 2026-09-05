@@ -975,7 +975,15 @@ export default function PipelineEditorPage() {
                         : 'Leave empty to auto-match a registered credential, or clone unauthenticated.'
                   }
                 >
-                  <Select value={formCredential || undefined} onValueChange={v => handleGitCredentialChange(v ?? '')}>
+                  {/* value must never be `undefined` here — see
+                      MLflowIntegrationForm.tsx's Credential Select for the
+                      full explanation. `formCredential` starts as '', so
+                      `|| undefined` fed @base-ui/react's Select an
+                      undefined value on mount and a defined one the
+                      instant a credential was picked, which Select treats
+                      as an illegal uncontrolled-to-controlled transition
+                      and silently desyncs its displayed value from. */}
+                  <Select value={formCredential || null} onValueChange={v => handleGitCredentialChange(v ?? '')}>
                     <SelectTrigger id="pipeline-git-credential"><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
                     <SelectContent>
                       {gitCredentials.length === 0 ? (

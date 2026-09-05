@@ -146,7 +146,15 @@ func (r *outboxRepo) MarkDelivered(ctx context.Context, id, owner string) error 
 	})
 }
 
+// MarkRetry normalizes nextAttemptAt to UTC before storing it — see the
+// sqlite implementation's doc comment for why (the on-disk invariant
+// shouldn't depend on every caller remembering to call .UTC() itself).
+// Postgres's timestamptz binding isn't vulnerable to sqlite's specific
+// text-serialization bug, but keeping the two implementations' stored
+// invariant identical is cheap and avoids the next person assuming it only
+// matters for one backend.
 func (r *outboxRepo) MarkRetry(ctx context.Context, id, owner string, nextAttemptAt time.Time, errorCode, errorMessage string) error {
+	nextAttemptAt = nextAttemptAt.UTC()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		res, err := db.ExecContext(ctx, db.Rebind(
 			`UPDATE integration_outbox_events SET status='pending', next_attempt_at=?, lease_owner='', lease_expires_at=NULL, last_error_code=?, last_error=?

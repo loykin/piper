@@ -142,7 +142,21 @@ func (r *outboxRepo) MarkDelivered(ctx context.Context, id, owner string) error 
 	})
 }
 
+// MarkRetry normalizes nextAttemptAt to UTC before storing it. modernc.org/
+// sqlite persists a time.Time as its default String() form rather than a
+// zone-independent representation, so a caller-supplied local-zone value
+// (worse, one still carrying a monotonic reading, which time.Now() without
+// .UTC() does) would be stored as e.g. "...+0900 KST m=+352.48..." — text
+// that never again compares <= against ClaimBatch's own time.Now().UTC()
+// parameter. The practical effect was a retryable event stuck in
+// status='pending' forever after its first failure on any non-UTC host,
+// invisible to a health check that only watches status='dead'. Normalizing
+// here means MarkRetry's on-disk invariant doesn't depend on every current
+// and future caller remembering to call .UTC() itself (outbox.Dispatcher
+// does, as of the fix for this — see its Now field's doc comment — but this
+// is the layer where the bug actually manifested).
 func (r *outboxRepo) MarkRetry(ctx context.Context, id, owner string, nextAttemptAt time.Time, errorCode, errorMessage string) error {
+	nextAttemptAt = nextAttemptAt.UTC()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		res, err := db.ExecContext(ctx,
 			`UPDATE integration_outbox_events SET status='pending', next_attempt_at=?, lease_owner='', lease_expires_at=NULL, last_error_code=?, last_error=?

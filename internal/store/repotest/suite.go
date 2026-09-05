@@ -1544,6 +1544,51 @@ func OutboxRepoSuite(t *testing.T, outboxRepo outbox.Repository, mlflowRepo mlfl
 		}
 	})
 
+	// TestMarkRetryNormalizesNonUTCTime is a regression test for a real bug
+	// found while live-testing the mlflow outbox exporter on a non-UTC host
+	// (KST): outbox.Dispatcher used to schedule retries with plain
+	// time.Now() (local zone, carrying a monotonic reading) instead of
+	// time.Now().UTC(). SQLite's modernc.org/sqlite driver stores a
+	// time.Time as its default String() form rather than a zone-normalized
+	// one, so the persisted next_attempt_at came out as e.g.
+	// "...+0900 KST m=+352.48..." — text that never again compared <=
+	// against ClaimBatch's own time.Now().UTC() parameter. The practical
+	// effect: a retryable event got stuck in status='pending' forever after
+	// its first failure, never reaching MaxAttemptsBeforeDead, invisible to
+	// any health check that only watches status='dead'. Both fixes now
+	// apply — Dispatcher.Now always returns UTC, and MarkRetry itself
+	// normalizes to UTC before storing — this test pins the second one
+	// directly against the repository, independent of the dispatcher.
+	t.Run("MarkRetry_normalizes_non_UTC_time_so_it_remains_claimable", func(t *testing.T) {
+		integration := newIntegration(t)
+		ev := newEvent(integration.ID, uuid.NewString(), "pipeline_run.created")
+		if err := outboxRepo.Enqueue(ctx, ev); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if _, err := outboxRepo.ClaimBatch(ctx, "worker-a", time.Minute, 10); err != nil {
+			t.Fatalf("ClaimBatch: %v", err)
+		}
+		// A due-now instant expressed in a non-UTC zone — exactly the shape
+		// of value outbox.Dispatcher used to pass before its Now field was
+		// fixed. MarkRetry must normalize this itself so the persisted
+		// value compares correctly against ClaimBatch's UTC "now",
+		// regardless of what zone a caller hands in.
+		dueInKST := time.Now().In(time.FixedZone("KST", 9*3600))
+		if err := outboxRepo.MarkRetry(ctx, ev.ID, "worker-a", dueInKST, "HTTP_503", "temporarily unavailable"); err != nil {
+			t.Fatalf("MarkRetry: %v", err)
+		}
+		reclaimed, err := outboxRepo.ClaimBatch(ctx, "worker-b", time.Minute, 10)
+		if err != nil {
+			t.Fatalf("ClaimBatch (reclaim after non-UTC MarkRetry): %v", err)
+		}
+		if !containsID(reclaimed, ev.ID) {
+			t.Fatalf("event scheduled via a non-UTC time.Time was never reclaimable; claimed=%v", ids(reclaimed))
+		}
+		if err := outboxRepo.MarkDelivered(ctx, ev.ID, "worker-b"); err != nil {
+			t.Fatalf("MarkDelivered: %v", err)
+		}
+	})
+
 	t.Run("DisableIntegrationEvents_transitions_pending_and_delivering_only", func(t *testing.T) {
 		integration := newIntegration(t)
 		aggID := uuid.NewString()

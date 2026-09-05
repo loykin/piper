@@ -123,14 +123,32 @@ type Dispatcher struct {
 	Handler Handler
 	Config  Config
 
-	// Now is overridable for tests. Defaults to time.Now.
+	// Now is overridable for tests. Defaults to nowUTC (time.Now().UTC()),
+	// never plain time.Now — see nowUTC's doc comment for why the .UTC()
+	// matters here specifically.
 	Now func() time.Time
 }
+
+// nowUTC is Dispatcher's default clock. process() feeds its result straight
+// into Repository.MarkRetry's next_attempt_at, which ClaimBatch later
+// compares against its own time.Now().UTC() (internal/store/{sqlite,
+// postgres}'s ClaimBatch). Using plain time.Now() here instead — local zone,
+// carrying a monotonic reading — used to make that comparison never match
+// once a server ran in a non-UTC zone: modernc.org/sqlite stores time.Time
+// as its default String() form, so a MarkRetry'd next_attempt_at could come
+// out as e.g. "2026-09-05 10:50:13.466... +0900 KST m=+352.48..." while
+// ClaimBatch's "now" parameter was plain UTC — a retryable failure's event
+// then sat in status='pending' forever, never reclaimed, never reaching
+// MaxAttemptsBeforeDead, invisible to any health check that only watches
+// for status='dead'. Confirmed live: an outage-simulating mlflow event
+// stopped retrying entirely on a KST host and only resumed once the process
+// ran under TZ=UTC.
+func nowUTC() time.Time { return time.Now().UTC() }
 
 // NewDispatcher constructs a Dispatcher with defaults applied to any unset
 // Config field.
 func NewDispatcher(repo Repository, handler Handler, cfg Config) *Dispatcher {
-	return &Dispatcher{Repo: repo, Handler: handler, Config: cfg.withDefaults(), Now: time.Now}
+	return &Dispatcher{Repo: repo, Handler: handler, Config: cfg.withDefaults(), Now: nowUTC}
 }
 
 // Run polls in a loop until ctx is cancelled. Safe to run in its own
@@ -138,7 +156,7 @@ func NewDispatcher(repo Repository, handler Handler, cfg Config) *Dispatcher {
 // never sit on the synchronous run lifecycle path).
 func (d *Dispatcher) Run(ctx context.Context) {
 	if d.Now == nil {
-		d.Now = time.Now
+		d.Now = nowUTC
 	}
 	ticker := time.NewTicker(d.Config.PollInterval)
 	defer ticker.Stop()

@@ -167,6 +167,20 @@ func (l *localMemberClient) ListRuns(ctx context.Context, _ memberclient.AuthCon
 	return resp, nil
 }
 
+func (l *localMemberClient) ListExperiments(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.ListExperimentsRequest) (memberclient.ListExperimentsResponse, error) {
+	rows, total, err := l.p.repos.Run.ListExperiments(ctx, ref.ProjectID, run.ExperimentFilter{Name: req.Name, PipelineName: req.PipelineName, Limit: req.Limit, Offset: req.Offset})
+	if err != nil {
+		return memberclient.ListExperimentsResponse{}, err
+	}
+	resp := memberclient.ListExperimentsResponse{Experiments: make([]memberclient.ExperimentSummary, 0, len(rows)), Total: total}
+	for _, row := range rows {
+		resp.Experiments = append(resp.Experiments, memberclient.ExperimentSummary{
+			Name: row.Name, Runs: row.Runs, Success: row.Success, Failed: row.Failed, Running: row.Running, Latest: row.Latest,
+		})
+	}
+	return resp, nil
+}
+
 func (l *localMemberClient) GetRun(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, runID string) (memberclient.RunDetail, error) {
 	r, err := l.p.repos.Run.Get(ctx, ref.ProjectID, runID)
 	if err != nil || r == nil {
@@ -235,19 +249,7 @@ func (l *localMemberClient) StatsCapabilities(context.Context, memberclient.Auth
 }
 
 func (l *localMemberClient) PurgeProjectStats(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef) error {
-	if purger, ok := l.p.stats.Logs.(statsstore.Purger); ok {
-		if err := purger.PurgeProject(ctx, ref.ProjectID); err != nil {
-			return fmt.Errorf("%w: purge project statistics: %v", statsstore.ErrBackendUnavailable, err)
-		}
-		return nil
-	}
-	if purger, ok := l.p.stats.Metrics.(statsstore.Purger); ok {
-		if err := purger.PurgeProject(ctx, ref.ProjectID); err != nil {
-			return fmt.Errorf("%w: purge project statistics: %v", statsstore.ErrBackendUnavailable, err)
-		}
-		return nil
-	}
-	return fmt.Errorf("statistics backend does not support project purge")
+	return l.p.stats.PurgeProject(ctx, ref.ProjectID)
 }
 
 func (l *localMemberClient) QueryMetrics(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error) {

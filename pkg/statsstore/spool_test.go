@@ -96,6 +96,72 @@ func (b *memoryBackend) QueryMetrics(_ context.Context, q MetricQuery) (MetricPa
 	}
 	return metricPageFrom(points, q), nil
 }
+func (b *memoryBackend) PurgeProjectLogs(_ context.Context, projectID string) error {
+	return b.purgeLogs(projectID)
+}
+func (b *memoryBackend) PurgeProjectMetrics(_ context.Context, projectID string) error {
+	return b.purgeMetrics(projectID)
+}
+func (b *memoryBackend) purgeLogs(projectID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, line := range b.logs {
+		if line.ProjectID == projectID {
+			delete(b.logs, id)
+		}
+	}
+	return nil
+}
+func (b *memoryBackend) purgeMetrics(projectID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, point := range b.metrics {
+		if point.ProjectID == projectID {
+			delete(b.metrics, id)
+		}
+	}
+	return nil
+}
+
+func TestSpooledBackendPurgesSignalsIndependently(t *testing.T) {
+	backend := newMemoryBackend()
+	backend.fail = true
+	spool, err := openDiskSpool(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := newSpooledBackend(backend, backend, spool, true, true)
+	defer wrapped.close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err = wrapped.AppendLogs(ctx, []LogLine{{ProjectID: "project-a", RunID: "run-a", Ts: now, Line: "pending"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = wrapped.AppendMetrics(ctx, []MetricPoint{{ProjectID: "project-a", RunID: "run-a", Ts: now, Key: "loss", Value: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = wrapped.PurgeProjectLogs(ctx, "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	logRecords, err := spool.records("logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metricRecords, err := spool.records("metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logRecords) != 0 || len(metricRecords) != 1 {
+		t.Fatalf("after log purge: logs=%d metrics=%d", len(logRecords), len(metricRecords))
+	}
+	if err = wrapped.PurgeProjectMetrics(ctx, "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	metricRecords, err = spool.records("metrics")
+	if err != nil || len(metricRecords) != 0 {
+		t.Fatalf("after metric purge: metrics=%d err=%v", len(metricRecords), err)
+	}
+}
 
 func TestSpoolRecoversMergesAndDeduplicates(t *testing.T) {
 	dir := t.TempDir()
@@ -110,6 +176,10 @@ func TestSpoolRecoversMergesAndDeduplicates(t *testing.T) {
 	if err := wrapped.AppendLogs(context.Background(), []LogLine{{ProjectID: "p", RunID: "r", StepName: "s", Ts: now, Line: "queued"}}); err != nil {
 		t.Fatal(err)
 	}
+	eventually(t, func() bool {
+		health := wrapped.health()
+		return health.Degraded && health.PendingBytes > 0
+	})
 	page, err := wrapped.QueryLogs(context.Background(), LogQuery{ProjectID: "p", RunID: "r", StepName: "s"})
 	if err != nil || len(page.Lines) != 1 || page.Lines[0].EventID == "" || page.Lines[0].ID == 0 {
 		t.Fatalf("merged page=%+v err=%v", page, err)
@@ -126,6 +196,10 @@ func TestSpoolRecoversMergesAndDeduplicates(t *testing.T) {
 	defer replay.close()
 	replay.signal()
 	eventually(t, func() bool { backend.mu.Lock(); defer backend.mu.Unlock(); return len(backend.logs) == 1 })
+	eventually(t, func() bool {
+		health := replay.health()
+		return !health.Degraded && health.PendingBytes == 0
+	})
 	page, err = replay.QueryLogs(context.Background(), LogQuery{ProjectID: "p", RunID: "r", StepName: "s"})
 	if err != nil || len(page.Lines) != 1 || page.Lines[0].EventID != eventID || page.Lines[0].ID != id {
 		t.Fatalf("replayed page=%+v err=%v", page, err)

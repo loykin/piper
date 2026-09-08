@@ -569,6 +569,38 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 		}
 	})
 
+	t.Run("ListExperiments_aggregates_filters_and_paginates", func(t *testing.T) {
+		prefix := "experiment-" + uuid.NewString()
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		fixtures := []struct {
+			name, status string
+			at           time.Time
+		}{
+			{prefix + "-older", run.StatusSuccess, now},
+			{prefix + "-newer", run.StatusRunning, now.Add(2 * time.Second)},
+			{prefix + "-newer", run.StatusFailed, now.Add(time.Second)},
+		}
+		for _, fixture := range fixtures {
+			if err := repo.Create(ctx, &run.Run{ID: uuid.NewString(), ProjectID: projectID, PipelineName: "aggregate", Experiment: fixture.name, Status: fixture.status, StartedAt: fixture.at}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+		}
+		rows, total, err := repo.ListExperiments(ctx, projectID, run.ExperimentFilter{Name: prefix, Limit: 1})
+		if err != nil {
+			t.Fatalf("ListExperiments: %v", err)
+		}
+		if total != 2 || len(rows) != 1 {
+			t.Fatalf("total=%d rows=%d, want 2 and 1", total, len(rows))
+		}
+		if got := rows[0]; got.Name != prefix+"-newer" || got.Runs != 2 || got.Running != 1 || got.Failed != 1 || got.Success != 0 {
+			t.Fatalf("aggregate = %+v", got)
+		}
+		page2, total2, err := repo.ListExperiments(ctx, projectID, run.ExperimentFilter{Name: prefix, Limit: 1, Offset: 1})
+		if err != nil || total2 != 2 || len(page2) != 1 || page2[0].Name != prefix+"-older" {
+			t.Fatalf("page2=%+v total=%d err=%v", page2, total2, err)
+		}
+	})
+
 	t.Run("List_pagination_stable_with_tied_started_at", func(t *testing.T) {
 		// Every row shares the exact same started_at, the only column the
 		// default ORDER BY sorts on besides a tiebreaker. Without a unique

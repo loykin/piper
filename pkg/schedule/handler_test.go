@@ -134,6 +134,9 @@ func (r stubRunRepo) GetLatestSuccessful(context.Context, string, string) (*run.
 	return nil, nil
 }
 func (r stubRunRepo) Count(context.Context, string, run.RunFilter) (int, error) { return 0, nil }
+func (r stubRunRepo) ListExperiments(context.Context, string, run.ExperimentFilter) ([]run.ExperimentSummary, int, error) {
+	return nil, 0, nil
+}
 func (r stubRunRepo) ListTerminalBefore(context.Context, string, time.Time) ([]*run.Run, error) {
 	return nil, nil
 }

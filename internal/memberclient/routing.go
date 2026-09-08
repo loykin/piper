@@ -89,6 +89,13 @@ func (c *RoutingClient) ListRuns(ctx context.Context, auth AuthContext, ref proj
 	}
 	return m.ListRuns(ctx, auth, ref, req)
 }
+func (c *RoutingClient) ListExperiments(ctx context.Context, auth AuthContext, ref project.ProjectRef, req ListExperimentsRequest) (ListExperimentsResponse, error) {
+	m, err := c.resolve(ref)
+	if err != nil {
+		return ListExperimentsResponse{}, err
+	}
+	return m.ListExperiments(ctx, auth, ref, req)
+}
 func (c *RoutingClient) GetRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) (RunDetail, error) {
 	m, err := c.resolve(ref)
 	if err != nil {

@@ -344,8 +344,10 @@ func (l *Launcher) ActiveJobs() []JobHandle {
 	return handles
 }
 
-// RecoverJobs rebuilds the in-memory watch set after a worker restart.
-func (l *Launcher) RecoverJobs(ctx context.Context) {
+// RecoverJobs rebuilds the in-memory watch set after a worker restart. When
+// known is provided, jobs absent from the DB-restored Queue are diagnosed as
+// orphans and deliberately left in Kubernetes but not counted as recovered.
+func (l *Launcher) RecoverJobs(ctx context.Context, known func(taskID string) bool) {
 	selector := k8smanifest.ManagedSelector()
 	if l.cfg.RuntimeID != "" {
 		selector = k8smanifest.RuntimeSelector(l.cfg.RuntimeID)
@@ -365,6 +367,10 @@ func (l *Launcher) RecoverJobs(ctx context.Context) {
 			continue
 		}
 		if _, exists := l.watched[job.Name]; exists {
+			continue
+		}
+		if known != nil && !known(taskID) {
+			slog.Warn("k8s: orphan pipeline job ignored", "namespace", l.cfg.Namespace, "job", job.Name, "task_id", taskID)
 			continue
 		}
 		startedAt := job.CreationTimestamp.Time

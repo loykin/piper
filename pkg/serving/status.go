@@ -34,7 +34,7 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name, sta
 		return fmt.Errorf("serving: get status target: %w", err)
 	}
 	if svc == nil {
-		return fmt.Errorf("service %q not found", name)
+		return fmt.Errorf("%w: service %q", ErrNotFound, name)
 	}
 	if runtimeID != "" && svc.RuntimeID != "" && svc.RuntimeID != runtimeID {
 		return fmt.Errorf("service %q owned by runtime %q, update from %q rejected", name, svc.RuntimeID, runtimeID)

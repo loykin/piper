@@ -134,7 +134,7 @@ func (c *Client) serve(ctx context.Context, stream memberStream) error {
 	}); err != nil {
 		return err
 	}
-	slog.Info("member tunnel enrolled with home", "member_id", c.cfg.MemberID, "home_url", c.cfg.HomeURL)
+	slog.Info("member tunnel enrollment request sent", "member_id", c.cfg.MemberID, "home_url", c.cfg.HomeURL)
 
 	for {
 		msg, err := stream.Recv()

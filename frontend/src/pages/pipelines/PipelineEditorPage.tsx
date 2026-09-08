@@ -1285,6 +1285,7 @@ export default function PipelineEditorPage() {
                         value={editingTask.sourcePath}
                         onChange={e => updateTask(editingIndex, { sourcePath: e.target.value })}
                         placeholder={editingTask.type === 'notebook' ? 'workbook.ipynb' : editingTask.type === 'python' ? 'scripts/train.py' : 'scripts'}
+                        aria-invalid={(editingTask.type === 'notebook' || editingTask.type === 'python') && !editingTask.sourcePath.trim()}
                       />
                       {canBrowse && (
                         <IconButton
@@ -1304,6 +1305,9 @@ export default function PipelineEditorPage() {
                       />
                     )}
                   </div>
+                  {(editingTask.type === 'notebook' || editingTask.type === 'python') && !editingTask.sourcePath.trim() && (
+                    <p className="mt-1 text-xs text-destructive">{SOURCE_LABELS[editingTask.type]} is required.</p>
+                  )}
                 </div>
               )}
 

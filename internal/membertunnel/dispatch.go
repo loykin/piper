@@ -53,6 +53,8 @@ func dispatch(ctx context.Context, member memberclient.Client, method string, pa
 		return callMethod(ctx, payload, member.SubmitSweep)
 	case MethodListRuns:
 		return callMethod(ctx, payload, member.ListRuns)
+	case MethodListExperiments:
+		return callMethod(ctx, payload, member.ListExperiments)
 	case MethodGetRun:
 		return callMethod(ctx, payload, member.GetRun)
 	case MethodCancelRun:

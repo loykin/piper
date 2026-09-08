@@ -15,7 +15,12 @@ test('storage credential form shows an explicit error on empty-name submit, and 
   await page.goto(`${uiBase}/storage?tab=config`)
   await expect(page.getByRole('heading', { name: 'Storage' })).toBeVisible()
 
+  // The S3-only system credential editor is present but collapsed by
+  // default; secret inputs are not rendered until the user opts in.
+  await expect(page.getByRole('textbox', { name: 'access_key_id' })).not.toBeVisible()
+  await expect(page.getByLabel('secret_access_key')).not.toBeVisible()
   await page.getByRole('button', { name: 'New credential' }).click()
+  await expect(page.getByRole('textbox', { name: 'access_key_id' })).toBeVisible()
 
   await page.getByRole('textbox', { name: 'access_key_id' }).fill('AKIAEXAMPLE')
   await page.getByLabel('secret_access_key').fill('supersecretvalue')

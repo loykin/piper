@@ -57,6 +57,9 @@ func (r *fakeRunRepo) Get(context.Context, string, string) (*run.Run, error) {
 	return nil, nil
 }
 func (r *fakeRunRepo) Count(context.Context, string, run.RunFilter) (int, error) { return 0, nil }
+func (r *fakeRunRepo) ListExperiments(context.Context, string, run.ExperimentFilter) ([]run.ExperimentSummary, int, error) {
+	return nil, 0, nil
+}
 func (r *fakeRunRepo) UpdateStatus(context.Context, string, string, string, *time.Time) error {
 	return nil
 }

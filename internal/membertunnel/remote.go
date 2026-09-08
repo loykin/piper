@@ -146,6 +146,10 @@ func (r *remoteMemberClient) ListRuns(ctx context.Context, auth memberclient.Aut
 	return call[memberclient.ListRunsRequest, memberclient.ListRunsResponse](ctx, r, MethodListRuns, auth, ref, req)
 }
 
+func (r *remoteMemberClient) ListExperiments(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.ListExperimentsRequest) (memberclient.ListExperimentsResponse, error) {
+	return call[memberclient.ListExperimentsRequest, memberclient.ListExperimentsResponse](ctx, r, MethodListExperiments, auth, ref, req)
+}
+
 func (r *remoteMemberClient) GetRun(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) (memberclient.RunDetail, error) {
 	return call[string, memberclient.RunDetail](ctx, r, MethodGetRun, auth, ref, runID)
 }

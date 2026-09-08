@@ -189,7 +189,7 @@ func (s *diskSpool) ack(record namedSpoolRecord) error {
 	return syncDir(s.dir)
 }
 
-func (s *diskSpool) purge(projectID, runID string) error {
+func (s *diskSpool) purge(kind, projectID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, err := os.ReadDir(s.dir)
@@ -209,20 +209,24 @@ func (s *diskSpool) purge(projectID, runID string) error {
 		if err := json.Unmarshal(data, &record); err != nil {
 			return err
 		}
-		logs := record.Logs[:0]
-		for _, line := range record.Logs {
-			if line.ProjectID != projectID || (runID != "" && line.RunID != runID) {
-				logs = append(logs, line)
+		if kind == "logs" {
+			logs := record.Logs[:0]
+			for _, line := range record.Logs {
+				if line.ProjectID != projectID {
+					logs = append(logs, line)
+				}
 			}
+			record.Logs = logs
 		}
-		record.Logs = logs
-		metrics := record.Metrics[:0]
-		for _, point := range record.Metrics {
-			if point.ProjectID != projectID || (runID != "" && point.RunID != runID) {
-				metrics = append(metrics, point)
+		if kind == "metrics" {
+			metrics := record.Metrics[:0]
+			for _, point := range record.Metrics {
+				if point.ProjectID != projectID {
+					metrics = append(metrics, point)
+				}
 			}
+			record.Metrics = metrics
 		}
-		record.Metrics = metrics
 		if len(record.Logs) == 0 && len(record.Metrics) == 0 {
 			if err := os.Remove(path); err != nil {
 				return err

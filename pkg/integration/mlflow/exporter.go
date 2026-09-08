@@ -273,9 +273,6 @@ func (e *Exporter) resolveExperiment(ctx context.Context, integration *MLflowInt
 	if err != nil {
 		return nil, err
 	}
-	if link != nil {
-		return link, nil
-	}
 
 	experimentOrPipeline := payload.Experiment
 	if experimentOrPipeline == "" {
@@ -286,6 +283,9 @@ func (e *Exporter) resolveExperiment(ctx context.Context, integration *MLflowInt
 	exp, err := client.GetExperimentByName(ctx, name)
 	if err != nil {
 		return nil, err
+	}
+	if exp != nil && link != nil && exp.ExperimentID == link.MLflowExperimentID {
+		return link, nil
 	}
 	if exp == nil {
 		exp, err = client.CreateExperiment(ctx, CreateExperimentRequest{Name: name})

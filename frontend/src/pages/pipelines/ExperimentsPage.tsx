@@ -1,56 +1,30 @@
 import { useMemo, useState } from 'react'
-import { Search } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
+import { useNavigate } from '@tanstack/react-router'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
-import { useRuns } from '@/features/runs/hooks'
+import { useExperimentsPaged } from '@/features/runs/hooks'
 import { ExperimentDetailPanel } from '@/features/runs/components/ExperimentDetailPanel'
-import type { Run } from '@/features/runs/types'
+import type { ExperimentSummary } from '@/features/runs/types'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { Button } from '@/components/ui/button'
+import { useProjectId } from '@/lib/projectContext'
 
-interface ExperimentRow {
-  name: string
-  runs: number
-  success: number
-  failed: number
-  running: number
-  latest: string
-}
+const PAGE_SIZE = 25
 
 function ExperimentsPageInner() {
   const { open } = useSidePanel()
-  const runsQuery = useRuns()
-  const runs = runsQuery.data ?? []
-
-  const experiments = useMemo<ExperimentRow[]>(() => {
-    const map = new Map<string, Run[]>()
-    for (const r of runs) {
-      if (!r.experiment) continue
-      const list = map.get(r.experiment) ?? []
-      list.push(r)
-      map.set(r.experiment, list)
-    }
-    return Array.from(map.entries())
-      .map(([name, list]) => ({
-        name,
-        runs: list.length,
-        success: list.filter(r => r.status === 'success').length,
-        failed: list.filter(r => r.status === 'failed').length,
-        running: list.filter(r => r.status === 'running').length,
-        latest: list.sort((a, b) => b.started_at.localeCompare(a.started_at))[0]?.started_at ?? '',
-      }))
-      .sort((a, b) => b.latest.localeCompare(a.latest))
-  }, [runs])
-
+  const navigate = useNavigate()
+  const projectId = useProjectId()
   const [nameFilter, setNameFilter] = useState('')
-  const filteredExperiments = useMemo(() => {
-    if (!nameFilter.trim()) return experiments
-    const q = nameFilter.trim().toLowerCase()
-    return experiments.filter(e => e.name.toLowerCase().includes(q))
-  }, [experiments, nameFilter])
+  const [pageIndex, setPageIndex] = useState(0)
+  const query = useExperimentsPaged(nameFilter.trim(), PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const experiments = query.data?.experiments ?? []
+  const total = query.data?.total ?? 0
 
-  const columns = useMemo<DataGridColumnDef<ExperimentRow>[]>(() => [
+  const columns = useMemo<DataGridColumnDef<ExperimentSummary>[]>(() => [
     { id: 'name',    header: 'Experiment',  accessorKey: 'name',    meta: { minWidth: 220 } },
     { id: 'runs',    header: 'Runs',        accessorKey: 'runs',    meta: { minWidth: 80 } },
     { id: 'success', header: 'Success',     accessorKey: 'success', meta: { minWidth: 80 },
@@ -88,27 +62,34 @@ function ExperimentsPageInner() {
                   display: { size: 'sm', leadingIcon: <Search /> },
                 }}
                 value={nameFilter}
-                onChange={v => setNameFilter(typeof v === 'string' ? v : '')}
+                onChange={v => { setNameFilter(typeof v === 'string' ? v : ''); setPageIndex(0) }}
               />
             </div>
           }
-          notice={runsQuery.isError && (
+          toolbarRight={
+            <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/experiments/new` })}>
+              <Plus className="mr-2 size-4" />New Sweep
+            </Button>
+          }
+          notice={query.isError && (
             <QueryErrorNotice
-              message="Failed to load runs"
-              error={runsQuery.error}
-              onRetry={() => void runsQuery.refetch()}
+              message="Failed to load experiments"
+              error={query.error}
+              onRetry={() => void query.refetch()}
             />
           )}
         >
           <DataGrid
-            data={filteredExperiments}
+            data={experiments}
             columns={columns}
-            isLoading={runsQuery.isPending}
-            emptyMessage={runsQuery.isError ? undefined : 'No experiments yet. Submit a sweep via POST /runs/sweep.'}
+            isLoading={query.isPending}
+            emptyMessage={query.isError ? undefined : 'No experiments yet. Create a sweep to compare parameter trials.'}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor
             onRowClick={(row) => open(<ExperimentDetailPanel experiment={row.name} />, { size: 800 })}
+            pagination={{ pageSize: PAGE_SIZE, pageIndex, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), onPageChange: setPageIndex }}
+            footer={table => <DataGridPaginationBar table={table} totalCount={total} />}
           />
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>

@@ -17,6 +17,7 @@ type fakeMember struct {
 	rerunRunFn          func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string, failedOnly bool) (string, error)
 	cancelRunFn         func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) error
 	getRunFn            func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) (memberclient.RunDetail, error)
+	listExperimentsFn   func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.ListExperimentsRequest) (memberclient.ListExperimentsResponse, error)
 	queryLogsFn         func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error)
 	statsCapabilitiesFn func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) (statsstore.Capabilities, error)
 	purgeProjectStatsFn func(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef) error
@@ -35,6 +36,13 @@ func (f *fakeMember) SubmitSweep(context.Context, memberclient.AuthContext, proj
 
 func (f *fakeMember) ListRuns(context.Context, memberclient.AuthContext, project.ProjectRef, memberclient.ListRunsRequest) (memberclient.ListRunsResponse, error) {
 	return memberclient.ListRunsResponse{}, nil
+}
+
+func (f *fakeMember) ListExperiments(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, req memberclient.ListExperimentsRequest) (memberclient.ListExperimentsResponse, error) {
+	if f.listExperimentsFn != nil {
+		return f.listExperimentsFn(ctx, auth, ref, req)
+	}
+	return memberclient.ListExperimentsResponse{}, nil
 }
 
 func (f *fakeMember) GetRun(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) (memberclient.RunDetail, error) {

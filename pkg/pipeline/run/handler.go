@@ -100,6 +100,7 @@ func writeMemberError(c *gin.Context, err error, fallbackStatus int, fallbackMes
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	// Viewer routes
 	rg.GET("/runs", h.listRuns)
+	rg.GET("/experiments", h.listExperiments)
 	rg.GET("/runs/:id", h.getRun)
 	rg.GET("/runs/:id/steps", h.listSteps)
 	rg.GET("/runs/:id/steps/:step/logs", h.getLogs)
@@ -117,6 +118,41 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	member.POST("/runs/:id/rerun", h.rerunRun)
 	member.DELETE("/runs/:id", h.deleteRun)
 	member.POST("/runs/:id/steps/:step/retry", h.retryStep)
+}
+
+// GET /experiments returns repository-aggregated, bounded experiment rows.
+func (h *Handler) listExperiments(c *gin.Context) {
+	runFilter, ok := h.resolveFilter(c)
+	if !ok {
+		return
+	}
+	limit := 25
+	if raw := c.Query("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 1 and 100"})
+			return
+		}
+		limit = parsed
+	}
+	offset := 0
+	if raw := c.Query("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "offset must be a non-negative integer"})
+			return
+		}
+		offset = parsed
+	}
+	resp, err := h.deps.Member.ListExperiments(c.Request.Context(), authFrom(c), h.ref(c), memberclient.ListExperimentsRequest{
+		Name: strings.TrimSpace(c.Query("name")), PipelineName: runFilter.PipelineName, Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		writeMemberError(c, err, http.StatusInternalServerError, "")
+		return
+	}
+	c.Header("X-Total-Count", strconv.Itoa(resp.Total))
+	c.JSON(http.StatusOK, resp.Experiments)
 }
 
 // runWithSteps flattens a run alongside its steps for the include_steps=true

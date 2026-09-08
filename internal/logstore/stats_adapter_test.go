@@ -28,6 +28,8 @@ func (b *captureStatsBackend) AppendMetrics(_ context.Context, v []statsstore.Me
 func (b *captureStatsBackend) QueryMetrics(context.Context, statsstore.MetricQuery) (statsstore.MetricPage, error) {
 	return statsstore.MetricPage{}, nil
 }
+func (b *captureStatsBackend) PurgeProjectLogs(context.Context, string) error    { return nil }
+func (b *captureStatsBackend) PurgeProjectMetrics(context.Context, string) error { return nil }
 
 func TestStatsAdapterRedactsBeforeBackend(t *testing.T) {
 	backend := &captureStatsBackend{}

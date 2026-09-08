@@ -3,7 +3,6 @@ import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Check, Square, X } from 'lucide-react'
 import StatusBadge from '@/shared/components/StatusBadge'
-import { useMembers } from '@/features/access/hooks'
 import { useApproveExecution, useCancelExecution, useDenyExecution, useExecution } from '../hooks'
 import type { NotebookExecution } from '../types'
 
@@ -11,14 +10,7 @@ function date(value?: string) {
   return value ? new Date(value).toLocaleString() : '—'
 }
 
-/** Resolves a user ID to its project member username, falling back to the raw ID when the user isn't a current project member (e.g. removed since). */
-function useUsername(userID?: string) {
-  const members = useMembers()
-  if (!userID) return '—'
-  return members.data?.find(member => member.user_id === userID)?.username || userID
-}
-
-export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel }: { execution: NotebookExecution; canAdmin: boolean; canCancel: boolean }) {
+export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel, actorNames }: { execution: NotebookExecution; canAdmin: boolean; canCancel: boolean; actorNames: ReadonlyMap<string, string> }) {
   const { close } = useSidePanel()
   const approve = useApproveExecution()
   const deny = useDenyExecution()
@@ -27,9 +19,10 @@ export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel }
   // (AG: this panel used to be frozen at the moment it was opened, so an
   // approval or progress update never showed until it was closed and reopened).
   const { data: execution = initial } = useExecution(initial.notebook_name, initial.id, initial)
-  const requestedBy = useUsername(execution.requested_by)
-  const approvedBy = useUsername(execution.approved_by)
-  const deniedBy = useUsername(execution.denied_by)
+  const actorName = (id?: string) => id ? actorNames.get(id) ?? id : '—'
+  const requestedBy = actorName(execution.requested_by)
+  const approvedBy = actorName(execution.approved_by)
+  const deniedBy = actorName(execution.denied_by)
   const awaiting = execution.status === 'awaiting_approval'
   const active = ['queued', 'running'].includes(execution.status)
 

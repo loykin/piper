@@ -263,6 +263,33 @@ func TestExporter_HandlePipelineRunCreated_HappyPath(t *testing.T) {
 	}
 }
 
+func TestExporter_ReplacesStaleExperimentMappingAfterMLflowReset(t *testing.T) {
+	repo := newFakeRepo()
+	integration := newTestIntegration("p1")
+	_ = repo.CreateIntegration(context.Background(), integration)
+	_ = repo.UpsertExperimentLink(context.Background(), &mlflow.MLflowExperimentLink{
+		IntegrationID:      integration.ID,
+		ProjectID:          "p1",
+		PiperGroupKey:      "pipeline:train",
+		MLflowExperimentID: "stale-experiment-id",
+		MLflowName:         "piper/p1/train",
+	})
+	client := &fakeClient{}
+	exporter := mlflow.NewExporter(repo, func(context.Context, *mlflow.MLflowIntegration) (mlflow.Client, error) { return client, nil })
+
+	outcome := exporter.Handle(context.Background(), newCreatedEvent(t, integration.ID, "p1", "run-after-reset", 1))
+	if !outcome.Delivered {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	link := repo.expLinks[integration.ID+"/p1/pipeline:train"]
+	if link == nil || link.MLflowExperimentID != "exp-1" {
+		t.Fatalf("experiment link = %+v, want recreated exp-1 mapping", link)
+	}
+	if client.createExperimentCalls != 1 || client.createRunCalls != 1 {
+		t.Fatalf("create calls: experiment=%d run=%d", client.createExperimentCalls, client.createRunCalls)
+	}
+}
+
 func TestExporter_HandlePipelineRunCreated_IdempotentReplayDoesNotRecreate(t *testing.T) {
 	repo := newFakeRepo()
 	integration := newTestIntegration("p1")

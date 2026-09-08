@@ -17,8 +17,8 @@ export interface K8sFormState {
 export const DEFAULT_K8S: K8sFormState = {
   name: '',
   env: [],
-  image: 'jupyter/minimal-notebook:latest',
-  namespace: '',
+	image: 'jupyter/minimal-notebook:latest',
+	namespace: 'notebooks',
   cpu: '',
   memory: '',
   gpu: '',

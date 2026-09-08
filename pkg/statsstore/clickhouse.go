@@ -177,18 +177,14 @@ func (b *clickhouseBackend) QueryMetrics(ctx context.Context, q MetricQuery) (Me
 	}
 	return metricPageFrom(points, q), nil
 }
-func (b *clickhouseBackend) PurgeProject(ctx context.Context, projectID string) error {
-	return b.purge(ctx, "project_id="+chQuote(projectID))
+func (b *clickhouseBackend) PurgeProjectLogs(ctx context.Context, projectID string) error {
+	return b.purge(ctx, b.logsTable, "project_id="+chQuote(projectID))
 }
-func (b *clickhouseBackend) PurgeRun(ctx context.Context, projectID, runID string) error {
-	return b.purge(ctx, "project_id="+chQuote(projectID)+" AND run_id="+chQuote(runID))
+func (b *clickhouseBackend) PurgeProjectMetrics(ctx context.Context, projectID string) error {
+	return b.purge(ctx, b.metricsTable, "project_id="+chQuote(projectID))
 }
-func (b *clickhouseBackend) purge(ctx context.Context, where string) error {
-	for _, table := range []string{b.logsTable, b.metricsTable} {
-		sql := fmt.Sprintf("ALTER TABLE %s.%s DELETE WHERE %s", b.database, table, where)
-		if _, err := b.http.request(ctx, http.MethodPost, "", url.Values{"query": {sql}}, nil, "text/plain"); err != nil {
-			return err
-		}
-	}
-	return nil
+func (b *clickhouseBackend) purge(ctx context.Context, table, where string) error {
+	sql := fmt.Sprintf("ALTER TABLE %s.%s DELETE WHERE %s", b.database, table, where)
+	_, err := b.http.request(ctx, http.MethodPost, "", url.Values{"query": {sql}}, nil, "text/plain")
+	return err
 }

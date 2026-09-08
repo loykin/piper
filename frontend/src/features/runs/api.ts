@@ -2,10 +2,10 @@
 export type {
   Run, RunDetail, Step, LogLine, CreateRunOptions,
   ArtifactFile, ArtifactEntry, StepArtifacts, RunFilter,
-  SweepRequest, SweepResponse, RunMetric, RunMetrics, StatsCapabilities,
+  SweepRequest, SweepResponse, ExperimentSummary, RunMetric, RunMetrics, StatsCapabilities,
 } from './types'
 
-import type { Run, RunDetail, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, RunMetric, RunMetrics, StatsCapabilities } from './types'
+import type { Run, RunDetail, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, ExperimentSummary, RunMetric, RunMetrics, StatsCapabilities } from './types'
 import { projectApi } from '@/lib/api'
 
 function runListParams(filter?: RunFilter): URLSearchParams {
@@ -46,6 +46,13 @@ export async function createRun(projectId: string, yaml: string, params?: Record
 
 export async function createSweep(projectId: string, req: SweepRequest): Promise<SweepResponse> {
   return projectApi(projectId).post<SweepResponse>('/runs/sweep', req)
+}
+
+export async function listExperimentsPaged(projectId: string, name: string, limit: number, offset: number): Promise<{ experiments: ExperimentSummary[]; total: number }> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (name) params.set('name', name)
+  const { data, total } = await projectApi(projectId).getWithTotal<ExperimentSummary[]>(`/experiments?${params}`)
+  return { experiments: Array.isArray(data) ? data : [], total: total ?? 0 }
 }
 
 export async function getRun(projectId: string, id: string): Promise<Run> {

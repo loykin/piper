@@ -48,6 +48,7 @@ type Config struct {
 	ReportResult func(proto.TaskResult) error
 	// RenewLeases pushes active task IDs to the master for lease renewal.
 	RenewLeases func([]string) error
+	KnownTask   func(taskID string) bool
 	LogClient   logsink.PushClient
 }
 
@@ -79,6 +80,7 @@ func New(cfg Config) *Runtime {
 		AgentImage:           pipelineRuntimeImage(cfg),
 		TTLAfterFinished:     cfg.K8s.TTLAfterFinished,
 		K8sClient:            cfg.K8s.Client,
+		KnownTask:            cfg.KnownTask,
 	})
 	return &Runtime{
 		cfg:        cfg,

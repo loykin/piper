@@ -1297,6 +1297,25 @@ func (q *Queue) IsTracking(runID string) bool {
 	return ok
 }
 
+// IsTrackingTask reports whether taskID belongs to a non-terminal task that
+// DB recovery restored into this Queue. Runtime recovery uses it to diagnose
+// Kubernetes Jobs whose owning DB state no longer exists without deleting
+// the external resource automatically.
+func (q *Queue) IsTrackingTask(taskID string) bool {
+	runID, stepName, err := SplitTaskID(taskID)
+	if err != nil {
+		return false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	r := q.runs[runID]
+	if r == nil {
+		return false
+	}
+	entry := r.tasks[stepName]
+	return entry != nil && (entry.status == taskRunning || entry.status == taskRecovering)
+}
+
 type Stats struct {
 	Runs    int
 	Pending int

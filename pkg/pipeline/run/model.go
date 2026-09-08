@@ -90,3 +90,22 @@ type RunFilter struct {
 	Limit  int
 	Offset int
 }
+
+// ExperimentSummary is the server-side aggregate shown by the experiments
+// list. Keeping this in the run domain lets repositories perform GROUP BY
+// and pagination instead of shipping every run to Home/the browser.
+type ExperimentSummary struct {
+	Name    string `json:"name" db:"name"`
+	Runs    int    `json:"runs" db:"runs"`
+	Success int    `json:"success" db:"success"`
+	Failed  int    `json:"failed" db:"failed"`
+	Running int    `json:"running" db:"running"`
+	Latest  string `json:"latest" db:"latest"`
+}
+
+type ExperimentFilter struct {
+	Name         string
+	PipelineName string
+	Limit        int
+	Offset       int
+}

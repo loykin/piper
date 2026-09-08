@@ -5,7 +5,7 @@ import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin
 import { FilterInput } from '@loykin/filter-input'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { useAuth } from '@/features/auth/context'
-import { useCanAdminProject } from '@/features/access/hooks'
+import { useCanAdminProject, useMembers, useUsers } from '@/features/access/hooks'
 import { ExecutionDetailPanel } from '@/features/notebook-executions/components/ExecutionDetailPanel'
 import { useExecutionPolicy, useNotebookExecutions, useUpdateExecutionPolicy } from '@/features/notebook-executions/hooks'
 import type { ExecutionPolicy, NotebookExecution } from '@/features/notebook-executions/types'
@@ -26,6 +26,16 @@ function NotebookExecutionsPageInner() {
   const notebookFilter = searchParams.get('notebook')?.trim() || undefined
   const { user, capabilities } = useAuth()
   const canAdmin = useCanAdminProject()
+  const members = useMembers()
+  const users = useUsers(user?.system_admin === true)
+  const actorNames = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const member of members.data ?? []) {
+      if (member.username) names.set(member.user_id, member.username)
+    }
+    for (const account of users.data ?? []) names.set(account.id, account.username)
+    return names
+  }, [members.data, users.data])
   const [pageIndex, setPageIndex] = useState(0)
   const [search, setSearch] = useState('')
   const query = useNotebookExecutions(PAGE_SIZE, pageIndex * PAGE_SIZE, notebookFilter)
@@ -43,9 +53,9 @@ function NotebookExecutionsPageInner() {
     { accessorKey: 'notebook_path', header: 'Path' },
     { accessorKey: 'status', header: 'Status', cell: ({ row }) => <StatusBadge status={row.original.status} /> },
     { id: 'progress', header: 'Progress', cell: ({ row }) => `${row.original.current_cell} / ${row.original.total_cells}` },
-    { accessorKey: 'requested_by', header: 'Requested by' },
+    { accessorKey: 'requested_by', header: 'Requested by', cell: ({ row }) => row.original.requested_by ? actorNames.get(row.original.requested_by) ?? row.original.requested_by : '—' },
     { accessorKey: 'queued_at', header: 'Queued', cell: ({ row }) => new Date(row.original.queued_at).toLocaleString() },
-  ], [])
+  ], [actorNames])
   const total = query.data?.total ?? 0
 
   return <DataBodyTemplate title="Notebook Executions" description={notebookFilter ? `Executions for ${notebookFilter}. Review approvals, progress, results, and failures.` : 'Review Jupyter executions, approvals, progress, results, and failures.'}>
@@ -55,7 +65,7 @@ function NotebookExecutionsPageInner() {
         toolbarRight={<div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">Execution policy</span><Select value={policy.data?.mcp_policy ?? 'approval_required'} onValueChange={value => updatePolicy.mutate(value as ExecutionPolicy)} disabled={!canAdmin || policy.isLoading || updatePolicy.isPending}><SelectTrigger className="w-48"><SelectValue>{value => POLICY_LABELS[value as ExecutionPolicy] ?? String(value)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="approval_required">Approval required</SelectItem><SelectItem value="allowed">Allowed</SelectItem></SelectContent></Select></div>}
         notice={query.isError ? <QueryErrorNotice message="Failed to load notebook executions" error={query.error} onRetry={() => void query.refetch()} /> : undefined}
       >
-        <DataGrid data={rows} columns={columns} emptyMessage={query.isError ? undefined : 'No notebook executions yet.'} tableWidthMode="fill-last" rowCursor onRowClick={execution => open(<ExecutionDetailPanel execution={execution} canAdmin={canAdmin} canCancel={canAdmin || execution.requested_by === user?.id || trusted} />, { size: 580 })} pagination={{ pageSize: PAGE_SIZE, pageIndex, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), onPageChange: setPageIndex }} footer={table => <DataGridPaginationBar table={table} totalCount={total} />} />
+        <DataGrid data={rows} columns={columns} emptyMessage={query.isError ? undefined : 'No notebook executions yet.'} tableWidthMode="fill-last" rowCursor onRowClick={execution => open(<ExecutionDetailPanel execution={execution} canAdmin={canAdmin} canCancel={canAdmin || execution.requested_by === user?.id || trusted} actorNames={actorNames} />, { size: 580 })} pagination={{ pageSize: PAGE_SIZE, pageIndex, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), onPageChange: setPageIndex }} footer={table => <DataGridPaginationBar table={table} totalCount={total} />} />
       </DataBodyTemplate.Resource>
     </DataBodyTemplate.Body>
   </DataBodyTemplate>

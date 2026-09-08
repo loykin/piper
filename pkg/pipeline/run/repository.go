@@ -13,6 +13,7 @@ type Repository interface {
 	List(ctx context.Context, projectID string, filter RunFilter) ([]*Run, error)
 	// Count returns the number of runs matching filter, ignoring Limit/Offset.
 	Count(ctx context.Context, projectID string, filter RunFilter) (int, error)
+	ListExperiments(ctx context.Context, projectID string, filter ExperimentFilter) ([]ExperimentSummary, int, error)
 	UpdateStatus(ctx context.Context, projectID, id, status string, endedAt *time.Time) error
 	// FinalizeStatusCAS transitions a run to a terminal status (to must be one
 	// of StatusSuccess/StatusFailed/StatusCanceled), but only if the row isn't

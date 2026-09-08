@@ -36,6 +36,9 @@ func (a *StatsAdapter) Query(projectID, runID, stepName string, afterID int64) (
 func (a *StatsAdapter) QueryLogPage(ctx context.Context, q statsstore.LogQuery) (statsstore.LogPage, error) {
 	return a.store.Logs.QueryLogs(ctx, q)
 }
+func (a *StatsAdapter) PurgeProjectLogs(ctx context.Context, projectID string) error {
+	return a.store.Logs.PurgeProjectLogs(ctx, projectID)
+}
 func (a *StatsAdapter) AppendMetrics(ctx context.Context, points []*Metric) error {
 	values := make([]statsstore.MetricPoint, len(points))
 	for i, p := range points {
@@ -58,6 +61,9 @@ func (a *StatsAdapter) QueryMetrics(projectID, runID, stepName string) ([]*Metri
 }
 func (a *StatsAdapter) QueryMetricPage(ctx context.Context, q statsstore.MetricQuery) (statsstore.MetricPage, error) {
 	return a.store.Metrics.QueryMetrics(ctx, q)
+}
+func (a *StatsAdapter) PurgeProjectMetrics(ctx context.Context, projectID string) error {
+	return a.store.Metrics.PurgeProjectMetrics(ctx, projectID)
 }
 
 var _ LogStore = (*StatsAdapter)(nil)

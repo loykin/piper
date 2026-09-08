@@ -15,6 +15,30 @@ func (stubBackend) AppendMetrics(context.Context, []MetricPoint) error   { retur
 func (stubBackend) QueryMetrics(context.Context, MetricQuery) (MetricPage, error) {
 	return MetricPage{}, nil
 }
+func (stubBackend) PurgeProjectLogs(context.Context, string) error    { return nil }
+func (stubBackend) PurgeProjectMetrics(context.Context, string) error { return nil }
+
+type logPurgeBackend struct{ projects []string }
+
+func (*logPurgeBackend) AppendLogs(context.Context, []LogLine) error { return nil }
+func (*logPurgeBackend) QueryLogs(context.Context, LogQuery) (LogPage, error) {
+	return LogPage{}, nil
+}
+func (b *logPurgeBackend) PurgeProjectLogs(_ context.Context, projectID string) error {
+	b.projects = append(b.projects, projectID)
+	return nil
+}
+
+type metricPurgeBackend struct{ projects []string }
+
+func (*metricPurgeBackend) AppendMetrics(context.Context, []MetricPoint) error { return nil }
+func (*metricPurgeBackend) QueryMetrics(context.Context, MetricQuery) (MetricPage, error) {
+	return MetricPage{}, nil
+}
+func (b *metricPurgeBackend) PurgeProjectMetrics(_ context.Context, projectID string) error {
+	b.projects = append(b.projects, projectID)
+	return nil
+}
 
 func TestCursorRoundTripAndValidation(t *testing.T) {
 	cursor := CursorFromID(42)
@@ -57,6 +81,21 @@ func TestStoreClosesSharedResourcesOnce(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("close calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestStorePurgeProjectCoordinatesSignalOwners(t *testing.T) {
+	logs := &logPurgeBackend{}
+	metrics := &metricPurgeBackend{}
+	store := NewStore(logs, metrics, Capabilities{}, nil)
+	if err := store.PurgeProject(context.Background(), "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.projects) != 1 || logs.projects[0] != "project-a" {
+		t.Fatalf("log purges = %v", logs.projects)
+	}
+	if len(metrics.projects) != 1 || metrics.projects[0] != "project-a" {
+		t.Fatalf("metric purges = %v", metrics.projects)
 	}
 }
 

@@ -81,12 +81,12 @@ func (s *PgStore) QueryMetricPage(ctx context.Context, query statsstore.MetricQu
 	return queryRelationalMetricPage(ctx, s.exec, s.source, query)
 }
 
-func (s *PgStore) PurgeProject(ctx context.Context, projectID string) error {
-	return purgeRelationalStats(ctx, s.exec, s.source, projectID, "")
+func (s *PgStore) PurgeProjectLogs(ctx context.Context, projectID string) error {
+	return purgeRelationalTable(ctx, s.exec, s.source, "logs", projectID)
 }
 
-func (s *PgStore) PurgeRun(ctx context.Context, projectID, runID string) error {
-	return purgeRelationalStats(ctx, s.exec, s.source, projectID, runID)
+func (s *PgStore) PurgeProjectMetrics(ctx context.Context, projectID string) error {
+	return purgeRelationalTable(ctx, s.exec, s.source, "run_metrics", projectID)
 }
 
 func (s *PgStore) AppendMetrics(ctx context.Context, metrics []*Metric) error {

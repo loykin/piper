@@ -107,6 +107,15 @@ export interface SweepResponse {
   run_ids: string[]
 }
 
+export interface ExperimentSummary {
+  name: string
+  runs: number
+  success: number
+  failed: number
+  running: number
+  latest: string
+}
+
 export interface RunMetric {
   id: number
   event_id?: string

@@ -170,11 +170,8 @@ func csvHeaderRow(row []string) bool {
 	}
 	return hasTime && hasID
 }
-func (b *influxBackend) PurgeProject(ctx context.Context, projectID string) error {
+func (b *influxBackend) PurgeProjectMetrics(ctx context.Context, projectID string) error {
 	return b.purge(ctx, fmt.Sprintf(`_measurement="run_metrics" AND project_id=%s`, fluxQuote(projectID)))
-}
-func (b *influxBackend) PurgeRun(ctx context.Context, projectID, runID string) error {
-	return b.purge(ctx, fmt.Sprintf(`_measurement="run_metrics" AND project_id=%s AND run_id=%s`, fluxQuote(projectID), fluxQuote(runID)))
 }
 func (b *influxBackend) purge(ctx context.Context, predicate string) error {
 	start := "1970-01-01T00:00:00Z"

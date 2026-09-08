@@ -66,6 +66,30 @@ func TestDispatchSubmitRunRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDispatchListExperimentsRoundTrip(t *testing.T) {
+	member := &fakeMember{listExperimentsFn: func(_ context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.ListExperimentsRequest) (memberclient.ListExperimentsResponse, error) {
+		if ref.ProjectID != "project-1" || req.Name != "search" || req.Limit != 25 || req.Offset != 50 {
+			t.Fatalf("ref=%+v req=%+v", ref, req)
+		}
+		return memberclient.ListExperimentsResponse{Experiments: []memberclient.ExperimentSummary{{Name: "search-1", Runs: 2}}, Total: 3}, nil
+	}}
+	payload, err := encodeCall(memberclient.AuthContext{}, project.ProjectRef{ProjectID: "project-1"}, memberclient.ListExperimentsRequest{Name: "search", Limit: 25, Offset: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	responsePayload, err := dispatch(context.Background(), member, MethodListExperiments, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response memberclient.ListExperimentsResponse
+	if err := json.Unmarshal(responsePayload, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Total != 3 || len(response.Experiments) != 1 || response.Experiments[0].Runs != 2 {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
 func TestDispatchRerunRunAdaptsMultiArgMethod(t *testing.T) {
 	var gotRunID string
 	var gotFailedOnly bool

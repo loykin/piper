@@ -6,6 +6,7 @@ package statsstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -84,18 +85,13 @@ type MetricPage struct {
 type LogBackend interface {
 	AppendLogs(ctx context.Context, lines []LogLine) error
 	QueryLogs(ctx context.Context, query LogQuery) (LogPage, error)
+	PurgeProjectLogs(ctx context.Context, projectID string) error
 }
 
 type MetricBackend interface {
 	AppendMetrics(ctx context.Context, points []MetricPoint) error
 	QueryMetrics(ctx context.Context, query MetricQuery) (MetricPage, error)
-}
-
-// Purger is intentionally separate from normal append/query. Run retention
-// must never call it; explicit project deletion or compliance workflows may.
-type Purger interface {
-	PurgeProject(ctx context.Context, projectID string) error
-	PurgeRun(ctx context.Context, projectID, runID string) error
+	PurgeProjectMetrics(ctx context.Context, projectID string) error
 }
 
 type Capabilities struct {
@@ -138,6 +134,19 @@ type Store struct {
 
 func NewStore(logs LogBackend, metrics MetricBackend, capabilities Capabilities, closeFn func() error) *Store {
 	return &Store{Logs: logs, Metrics: metrics, Capabilities: capabilities, closeFn: closeFn}
+}
+
+// PurgeProject removes both signal types through their owning backends. The
+// signal-specific contracts prevent a backend selected only for logs from
+// reaching into metrics storage, and vice versa.
+func (s *Store) PurgeProject(ctx context.Context, projectID string) error {
+	if err := s.Logs.PurgeProjectLogs(ctx, projectID); err != nil {
+		return fmt.Errorf("%w: purge project logs: %w", ErrBackendUnavailable, err)
+	}
+	if err := s.Metrics.PurgeProjectMetrics(ctx, projectID); err != nil {
+		return fmt.Errorf("%w: purge project metrics: %w", ErrBackendUnavailable, err)
+	}
+	return nil
 }
 
 func (s *Store) Health() Health {

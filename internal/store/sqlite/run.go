@@ -194,6 +194,44 @@ func (r *runRepo) Count(ctx context.Context, projectID string, filter run.RunFil
 	return count, err
 }
 
+func (r *runRepo) ListExperiments(ctx context.Context, projectID string, filter run.ExperimentFilter) ([]run.ExperimentSummary, int, error) {
+	where := []string{"project_id=?", "experiment<>''"}
+	args := []any{projectID}
+	if filter.Name != "" {
+		where = append(where, "LOWER(experiment) LIKE LOWER(?)")
+		args = append(args, "%"+filter.Name+"%")
+	}
+	if filter.PipelineName != "" {
+		where = append(where, "pipeline_name=?")
+		args = append(args, filter.PipelineName)
+	}
+	clause := strings.Join(where, " AND ")
+	query := `SELECT experiment AS name, COUNT(*) AS runs,
+	SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS success,
+	SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+	SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running,
+	MAX(started_at) AS latest
+	FROM runs WHERE ` + clause + ` GROUP BY experiment ORDER BY latest DESC, experiment ASC`
+	queryArgs := append([]any(nil), args...)
+	if filter.Limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		queryArgs = append(queryArgs, filter.Limit, filter.Offset)
+	}
+	countQuery := `SELECT COUNT(*) FROM (SELECT experiment FROM runs WHERE ` + clause + ` GROUP BY experiment)`
+	var out []run.ExperimentSummary
+	var total int
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		if err := db.SelectContext(ctx, &out, query, queryArgs...); err != nil {
+			return err
+		}
+		return db.GetContext(ctx, &total, countQuery, args...)
+	})
+	if out == nil {
+		out = []run.ExperimentSummary{}
+	}
+	return out, total, err
+}
+
 func (r *runRepo) UpdateStatus(ctx context.Context, projectID, id, status string, endedAt *time.Time) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,

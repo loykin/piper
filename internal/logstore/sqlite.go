@@ -82,12 +82,12 @@ func (s *SQLiteLogStore) QueryMetricPage(ctx context.Context, query statsstore.M
 	return queryRelationalMetricPage(ctx, s.exec, s.source, query)
 }
 
-func (s *SQLiteLogStore) PurgeProject(ctx context.Context, projectID string) error {
-	return purgeRelationalStats(ctx, s.exec, s.source, projectID, "")
+func (s *SQLiteLogStore) PurgeProjectLogs(ctx context.Context, projectID string) error {
+	return purgeRelationalTable(ctx, s.exec, s.source, "logs", projectID)
 }
 
-func (s *SQLiteLogStore) PurgeRun(ctx context.Context, projectID, runID string) error {
-	return purgeRelationalStats(ctx, s.exec, s.source, projectID, runID)
+func (s *SQLiteLogStore) PurgeProjectMetrics(ctx context.Context, projectID string) error {
+	return purgeRelationalTable(ctx, s.exec, s.source, "run_metrics", projectID)
 }
 
 func (s *SQLiteLogStore) AppendMetrics(ctx context.Context, metrics []*Metric) error {

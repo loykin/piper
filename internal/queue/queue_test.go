@@ -97,6 +97,9 @@ func (r *memoryRunRepo) GetLatestSuccessful(context.Context, string, string) (*r
 	return nil, nil
 }
 func (r *memoryRunRepo) Count(context.Context, string, run.RunFilter) (int, error) { return 0, nil }
+func (r *memoryRunRepo) ListExperiments(context.Context, string, run.ExperimentFilter) ([]run.ExperimentSummary, int, error) {
+	return nil, 0, nil
+}
 func (r *memoryRunRepo) ListTerminalBefore(context.Context, string, time.Time) ([]*run.Run, error) {
 	return nil, nil
 }

@@ -29,6 +29,7 @@ type K8sBackendConfig struct {
 	LogClient           logsink.PushClient
 	Complete            func(proto.TaskResult) error
 	RenewLeases         func(runtimeID string, taskIDs []string)
+	KnownTask           func(taskID string) bool
 }
 
 // K8sBackend adapts the existing Kubernetes Start/Wait/Stop/Recover lifecycle
@@ -58,6 +59,7 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 			TTLAfterFinished:     cfg.TTLAfterFinished,
 		},
 		ReportResult: cfg.Complete,
+		KnownTask:    cfg.KnownTask,
 		RenewLeases: func(taskIDs []string) error {
 			if cfg.RenewLeases != nil {
 				cfg.RenewLeases(localK8sRuntimeID, taskIDs)

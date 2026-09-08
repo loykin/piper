@@ -17,6 +17,7 @@ package k8sdriver
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -93,6 +94,7 @@ type Driver struct {
 
 	statusMu   sync.Mutex
 	lastStatus map[string]string
+	orphaned   map[string]bool
 
 	logMu      sync.Mutex
 	logGens    map[string]uint64
@@ -119,6 +121,7 @@ func New(cfg Config) (*Driver, error) {
 	return &Driver{
 		cfg:        cfg,
 		lastStatus: make(map[string]string),
+		orphaned:   make(map[string]bool),
 		logGens:    make(map[string]uint64),
 		logCancels: make(map[string]context.CancelFunc),
 	}, nil
@@ -399,14 +402,23 @@ func (d *Driver) observeOnce(ctx context.Context) {
 			deployment := &items.Items[i]
 			name := deployment.Annotations[k8smanifest.AnnotationWorkloadID]
 			projectID := deployment.Annotations[k8smanifest.AnnotationProjectID]
+			key := servingKey(projectID, name)
+			if d.isOrphaned(key) {
+				continue
+			}
 			status := observedDeploymentStatus(deployment)
 			if status == serving.StatusStarting && d.podsCrashLooping(ctx, deployment) {
 				status = serving.StatusFailed
 			}
-			if projectID == "" || name == "" || status == "" || !d.statusChanged(servingKey(projectID, name), status) {
+			if projectID == "" || name == "" || status == "" || !d.statusChanged(key, status) {
 				continue
 			}
 			if err := d.cfg.ReportStatus(projectID, name, status, ""); err != nil {
+				if errors.Is(err, serving.ErrNotFound) {
+					d.markOrphaned(key)
+					slog.Warn("k8sdriver: orphan serving workload ignored", "project_id", projectID, "name", name, "namespace", ns, "deployment", deployment.Name)
+					continue
+				}
 				slog.Warn("k8sdriver: report status failed", "name", name, "status", status, "err", err)
 			}
 			if status == serving.StatusRunning {
@@ -422,6 +434,18 @@ func (d *Driver) observeOnce(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (d *Driver) isOrphaned(key string) bool {
+	d.statusMu.Lock()
+	defer d.statusMu.Unlock()
+	return d.orphaned[key]
+}
+
+func (d *Driver) markOrphaned(key string) {
+	d.statusMu.Lock()
+	d.orphaned[key] = true
+	d.statusMu.Unlock()
 }
 
 func (d *Driver) statusChanged(key, status string) bool {

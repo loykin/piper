@@ -50,6 +50,7 @@ const PipelinesListPage      = lazyRouteComponent(() => import('@/pages/pipeline
 const PipelineEditorPage     = lazyRouteComponent(() => import('@/pages/pipelines/PipelineEditorPage'))
 const HistoryPage            = lazyRouteComponent(() => import('@/pages/pipelines/HistoryPage'))
 const ExperimentsPage        = lazyRouteComponent(() => import('@/pages/pipelines/ExperimentsPage'))
+const ExperimentCreatePage   = lazyRouteComponent(() => import('@/pages/pipelines/ExperimentCreatePage'))
 const RunDetailPage          = lazyRouteComponent(() => import('@/pages/pipelines/RunDetailPage'))
 const WorkflowsPage          = lazyRouteComponent(() => import('@/pages/schedules/WorkflowsPage'))
 const WorkflowCreatePage     = lazyRouteComponent(() => import('@/pages/schedules/WorkflowCreatePage'))
@@ -502,6 +503,7 @@ const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'history', component: HistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'runs/$id', component: RunDetailPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'experiments', component: ExperimentsPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'experiments/new', component: ExperimentCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'credentials', component: CredentialsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'credentials/new', component: CredentialCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'alert-rules', component: AlertRulesPage }),

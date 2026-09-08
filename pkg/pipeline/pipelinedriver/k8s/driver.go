@@ -28,6 +28,7 @@ type Config struct {
 	AgentImagePullPolicy string
 	TTLAfterFinished     *int32
 	K8sClient            kubernetes.Interface
+	KnownTask            func(taskID string) bool
 }
 
 // Driver wraps k8s.Launcher to implement pipelinedriver.Driver.
@@ -193,7 +194,7 @@ func (d *Driver) Recover(ctx context.Context) ([]pipelinedriver.Handle, error) {
 
 	var handles []pipelinedriver.Handle
 	for namespace, launcher := range d.snapshotLaunchers() {
-		launcher.RecoverJobs(ctx)
+		launcher.RecoverJobs(ctx, d.cfg.KnownTask)
 		for _, job := range launcher.ActiveJobs() {
 			handle := pipelinedriver.Handle{
 				RuntimeKey: job.RuntimeKey,

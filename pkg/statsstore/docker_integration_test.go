@@ -27,7 +27,10 @@ func TestDockerElasticsearchIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := "docker-es"
-	defer func() { _ = backend.PurgeProject(ctx, project) }()
+	defer func() {
+		_ = backend.PurgeProjectLogs(ctx, project)
+		_ = backend.PurgeProjectMetrics(ctx, project)
+	}()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	lines := []LogLine{{ID: 1, EventID: "es-log-1", ProjectID: project, RunID: "run", StepName: "step", Ts: now, Stream: "stdout", Line: "first searchable"}, {ID: 2, EventID: "es-log-2", ProjectID: project, RunID: "run", StepName: "step", Ts: now, Stream: "stderr", Line: "second"}}
 	if err = backend.AppendLogs(ctx, lines); err != nil {
@@ -66,7 +69,10 @@ func TestDockerElasticsearchIntegration(t *testing.T) {
 	if err != nil || len(metrics.Points) != 1 {
 		t.Fatalf("metrics=%+v err=%v", metrics, err)
 	}
-	if err = backend.PurgeProject(ctx, project); err != nil {
+	if err = backend.PurgeProjectLogs(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err = backend.PurgeProjectMetrics(ctx, project); err != nil {
 		t.Fatal(err)
 	}
 	eventuallyEmptyLogs(t, backend, LogQuery{ProjectID: project, RunID: "run", StepName: "step", Limit: 10})
@@ -81,7 +87,10 @@ func TestDockerClickHouseIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := "docker-ch"
-	defer func() { _ = backend.PurgeProject(ctx, project) }()
+	defer func() {
+		_ = backend.PurgeProjectLogs(ctx, project)
+		_ = backend.PurgeProjectMetrics(ctx, project)
+	}()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	lines := []LogLine{{ID: 1, EventID: "ch-log-1", ProjectID: project, RunID: "run", StepName: "step", Ts: now, Stream: "stdout", Line: "first searchable"}, {ID: 2, EventID: "ch-log-2", ProjectID: project, RunID: "run", StepName: "step", Ts: now, Stream: "stderr", Line: "second"}}
 	if err = backend.AppendLogs(ctx, lines); err != nil {
@@ -109,7 +118,10 @@ func TestDockerClickHouseIntegration(t *testing.T) {
 	if err != nil || len(metrics.Points) != 1 {
 		t.Fatalf("metrics=%+v err=%v", metrics, err)
 	}
-	if err = backend.PurgeProject(ctx, project); err != nil {
+	if err = backend.PurgeProjectLogs(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err = backend.PurgeProjectMetrics(ctx, project); err != nil {
 		t.Fatal(err)
 	}
 	eventuallyEmptyLogs(t, backend, LogQuery{ProjectID: project, RunID: "run", StepName: "step", Limit: 10})
@@ -126,7 +138,7 @@ func TestDockerInfluxDBIntegration(t *testing.T) {
 	}
 	ctx := context.Background()
 	project := "docker-influx"
-	defer func() { _ = backend.PurgeProject(ctx, project) }()
+	defer func() { _ = backend.PurgeProjectMetrics(ctx, project) }()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	points := []MetricPoint{{ID: 1, EventID: "influx-1", ProjectID: project, RunID: "run", StepName: "step", Key: "loss", Value: .5, Ts: now}, {ID: 2, EventID: "influx-2", ProjectID: project, RunID: "run", StepName: "step", Key: "accuracy", Value: .9, Ts: now.Add(time.Millisecond)}}
 	if err = backend.AppendMetrics(ctx, points); err != nil {
@@ -147,7 +159,7 @@ func TestDockerInfluxDBIntegration(t *testing.T) {
 	if err != nil || len(second.Points) != 1 || second.Points[0].ID != 2 {
 		t.Fatalf("second cursor page=%+v err=%v", second, err)
 	}
-	if err = backend.PurgeProject(ctx, project); err != nil {
+	if err = backend.PurgeProjectMetrics(ctx, project); err != nil {
 		t.Fatal(err)
 	}
 	eventuallyEmptyMetrics(t, backend, MetricQuery{ProjectID: project, RunID: "run", StepName: "step", Limit: 10})

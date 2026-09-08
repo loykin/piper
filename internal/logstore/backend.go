@@ -104,26 +104,13 @@ func (b *Backend) QueryMetrics(ctx context.Context, query statsstore.MetricQuery
 	return page, nil
 }
 
-func (b *Backend) PurgeProject(ctx context.Context, projectID string) error {
-	if purger, ok := b.logs.(statsstore.Purger); ok {
-		return purger.PurgeProject(ctx, projectID)
-	}
-	if purger, ok := b.metrics.(statsstore.Purger); ok {
-		return purger.PurgeProject(ctx, projectID)
-	}
-	return fmt.Errorf("statistics fallback does not support project purge")
+func (b *Backend) PurgeProjectLogs(ctx context.Context, projectID string) error {
+	return b.logs.PurgeProjectLogs(ctx, projectID)
 }
 
-func (b *Backend) PurgeRun(ctx context.Context, projectID, runID string) error {
-	if purger, ok := b.logs.(statsstore.Purger); ok {
-		return purger.PurgeRun(ctx, projectID, runID)
-	}
-	if purger, ok := b.metrics.(statsstore.Purger); ok {
-		return purger.PurgeRun(ctx, projectID, runID)
-	}
-	return fmt.Errorf("statistics fallback does not support run purge")
+func (b *Backend) PurgeProjectMetrics(ctx context.Context, projectID string) error {
+	return b.metrics.PurgeProjectMetrics(ctx, projectID)
 }
 
 var _ statsstore.LogBackend = (*Backend)(nil)
 var _ statsstore.MetricBackend = (*Backend)(nil)
-var _ statsstore.Purger = (*Backend)(nil)

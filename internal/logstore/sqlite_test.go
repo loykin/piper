@@ -196,7 +196,7 @@ func TestSQLiteLogStore_QueryMetricPageFiltersKeysAndPaginates(t *testing.T) {
 	}
 }
 
-func TestSQLiteLogStore_PurgeProjectRemovesBothStatsKinds(t *testing.T) {
+func TestSQLiteLogStore_PurgeProjectSeparatesStatsKinds(t *testing.T) {
 	ls := openTestStore(t)
 	ctx := context.Background()
 	if err := ls.Append(ctx, []*logstore.Line{{ProjectID: "project-a", RunID: "r1", StepName: "s1", Ts: time.Now(), Stream: "stdout", Line: "log"}}); err != nil {
@@ -205,12 +205,19 @@ func TestSQLiteLogStore_PurgeProjectRemovesBothStatsKinds(t *testing.T) {
 	if err := ls.AppendMetrics(ctx, []*logstore.Metric{{ProjectID: "project-a", RunID: "r1", StepName: "s1", Key: "loss", Value: 1, Ts: time.Now()}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ls.PurgeProject(ctx, "project-a"); err != nil {
+	if err := ls.PurgeProjectLogs(ctx, "project-a"); err != nil {
 		t.Fatal(err)
 	}
 	logs, logErr := ls.Query("project-a", "r1", "s1", 0)
 	metrics, metricErr := ls.QueryMetrics("project-a", "r1", "s1")
-	if logErr != nil || metricErr != nil || len(logs) != 0 || len(metrics) != 0 {
+	if logErr != nil || metricErr != nil || len(logs) != 0 || len(metrics) != 1 {
+		t.Fatalf("after log purge: logs=%+v metrics=%+v logErr=%v metricErr=%v", logs, metrics, logErr, metricErr)
+	}
+	if err := ls.PurgeProjectMetrics(ctx, "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	metrics, metricErr = ls.QueryMetrics("project-a", "r1", "s1")
+	if metricErr != nil || len(metrics) != 0 {
 		t.Fatalf("logs=%+v metrics=%+v logErr=%v metricErr=%v", logs, metrics, logErr, metricErr)
 	}
 }

@@ -39,7 +39,9 @@ type fakeMemberClient struct {
 	runs      []memberclient.RunSummary
 	runsSteps map[string][]memberclient.StepSummary
 
-	listRunsReq memberclient.ListRunsRequest
+	listRunsReq        memberclient.ListRunsRequest
+	listExperimentsReq memberclient.ListExperimentsRequest
+	experiments        []memberclient.ExperimentSummary
 
 	submitRunFn       func(ctx context.Context, req memberclient.SubmitRunRequest) (memberclient.SubmitRunResponse, error)
 	submitSweepFn     func(ctx context.Context, req memberclient.SubmitSweepRequest) (memberclient.SubmitSweepResponse, error)
@@ -84,6 +86,11 @@ func (f *fakeMemberClient) ListRuns(_ context.Context, _ memberclient.AuthContex
 		resp.Steps = f.runsSteps
 	}
 	return resp, nil
+}
+
+func (f *fakeMemberClient) ListExperiments(_ context.Context, _ memberclient.AuthContext, _ project.ProjectRef, req memberclient.ListExperimentsRequest) (memberclient.ListExperimentsResponse, error) {
+	f.listExperimentsReq = req
+	return memberclient.ListExperimentsResponse{Experiments: f.experiments, Total: len(f.experiments)}, nil
 }
 
 func (f *fakeMemberClient) GetRun(context.Context, memberclient.AuthContext, project.ProjectRef, string) (memberclient.RunDetail, error) {
@@ -288,6 +295,21 @@ func (f *fakeMemberClient) ServeArtifact(context.Context, memberclient.AuthConte
 }
 
 var _ memberclient.Client = (*fakeMemberClient)(nil)
+
+func TestListExperimentsUsesBoundedMemberAggregate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	member := &fakeMemberClient{experiments: []memberclient.ExperimentSummary{{Name: "sweep-a", Runs: 3}}}
+	router := gin.New()
+	NewHandler(HandlerDeps{Member: member, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/experiments?name=sweep&limit=10&offset=20", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Total-Count") != "1" {
+		t.Fatalf("status=%d total=%q body=%s", rec.Code, rec.Header().Get("X-Total-Count"), rec.Body.String())
+	}
+	if got := member.listExperimentsReq; got.Name != "sweep" || got.Limit != 10 || got.Offset != 20 {
+		t.Fatalf("request = %+v", got)
+	}
+}
 
 // ── metric filter ─────────────────────────────────────────────────────────────
 

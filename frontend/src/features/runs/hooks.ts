@@ -14,6 +14,18 @@ export const runKeys = {
   metrics: (projectId: string, id: string) => ['runs', projectId, id, 'metrics'] as const,
   artifacts: (projectId: string, runId: string) => ['runs', projectId, runId, 'artifacts'] as const,
   statsCapabilities: (projectId: string) => ['runs', projectId, 'stats-capabilities'] as const,
+  experiments: (projectId: string, name: string, limit: number, offset: number) => ['experiments', projectId, name, limit, offset] as const,
+}
+
+export function useExperimentsPaged(name: string, limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: runKeys.experiments(projectId, name, limit, offset),
+    queryFn: () => api.listExperimentsPaged(projectId, name, limit, offset),
+    enabled: !!projectId,
+    placeholderData: prev => prev,
+    ...backgroundPolling(5000),
+  })
 }
 
 export function useStatsCapabilities() {
@@ -95,7 +107,10 @@ export function useDeleteRun() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.deleteRun(projectId, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all(projectId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: runKeys.all(projectId) })
+      void qc.invalidateQueries({ queryKey: ['experiments', projectId] })
+    },
   })
 }
 
@@ -122,7 +137,10 @@ export function useCreateSweep() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (req: SweepRequest) => api.createSweep(projectId, req),
-    onSuccess: () => qc.invalidateQueries({ queryKey: runKeys.all(projectId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: runKeys.all(projectId) })
+      void qc.invalidateQueries({ queryKey: ['experiments', projectId] })
+    },
   })
 }
 

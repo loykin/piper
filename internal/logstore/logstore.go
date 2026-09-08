@@ -21,11 +21,13 @@ type LogStore interface {
 	// Query returns log lines for a step.
 	// If afterID > 0, only lines with ID > afterID are returned (for incremental polling).
 	Query(projectID, runID, stepName string, afterID int64) ([]*Line, error)
+	PurgeProjectLogs(ctx context.Context, projectID string) error
 }
 
 type MetricStore interface {
 	AppendMetrics(ctx context.Context, metrics []*Metric) error
 	QueryMetrics(projectID, runID, stepName string) ([]*Metric, error)
+	PurgeProjectMetrics(ctx context.Context, projectID string) error
 }
 
 // LogPageStore is the bounded query extension implemented by bundled stores.

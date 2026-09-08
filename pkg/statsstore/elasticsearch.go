@@ -196,20 +196,16 @@ func (b *elasticsearchBackend) search(ctx context.Context, index string, query a
 	}
 	return json.Unmarshal(data, out)
 }
-func (b *elasticsearchBackend) PurgeProject(ctx context.Context, projectID string) error {
-	return b.deleteByQuery(ctx, map[string]any{"term": map[string]string{"project_id": projectID}})
+func (b *elasticsearchBackend) PurgeProjectLogs(ctx context.Context, projectID string) error {
+	return b.deleteByQuery(ctx, b.logsIndex, map[string]any{"term": map[string]string{"project_id": projectID}})
 }
-func (b *elasticsearchBackend) PurgeRun(ctx context.Context, projectID, runID string) error {
-	return b.deleteByQuery(ctx, map[string]any{"bool": map[string]any{"filter": []any{map[string]any{"term": map[string]string{"project_id": projectID}}, map[string]any{"term": map[string]string{"run_id": runID}}}}})
+func (b *elasticsearchBackend) PurgeProjectMetrics(ctx context.Context, projectID string) error {
+	return b.deleteByQuery(ctx, b.metricsIndex, map[string]any{"term": map[string]string{"project_id": projectID}})
 }
-func (b *elasticsearchBackend) deleteByQuery(ctx context.Context, q any) error {
+func (b *elasticsearchBackend) deleteByQuery(ctx context.Context, index string, q any) error {
 	body, _ := jsonBody(map[string]any{"query": q})
-	for _, index := range []string{b.logsIndex, b.metricsIndex} {
-		if _, err := b.http.request(ctx, http.MethodPost, index+"/_delete_by_query", url.Values{"conflicts": {"proceed"}}, body, "application/json"); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := b.http.request(ctx, http.MethodPost, index+"/_delete_by_query", url.Values{"conflicts": {"proceed"}, "ignore_unavailable": {"true"}}, body, "application/json")
+	return err
 }
 
 var _ = strconv.Itoa

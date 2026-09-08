@@ -69,6 +69,36 @@ func TestElasticsearchAdapterBulkSearchAndCredential(t *testing.T) {
 	}
 }
 
+func TestElasticsearchPurgeTargetsOnlyRequestedSignal(t *testing.T) {
+	var deleted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/_delete_by_query") {
+			deleted = append(deleted, r.URL.Path)
+			if r.URL.Query().Get("ignore_unavailable") != "true" {
+				t.Errorf("missing ignore_unavailable: %s", r.URL.RawQuery)
+			}
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	b, err := openElasticsearch(backendURL(server.URL, "elasticsearch", "piper"), nil, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = b.PurgeProjectLogs(context.Background(), "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 || deleted[0] != "/piper-logs/_delete_by_query" {
+		t.Fatalf("log purge paths = %v", deleted)
+	}
+	if err = b.PurgeProjectMetrics(context.Background(), "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 2 || deleted[1] != "/piper-metrics/_delete_by_query" {
+		t.Fatalf("metric purge paths = %v", deleted)
+	}
+}
+
 func TestClickHouseAdapterUsesJSONEachRowAndBoundedQuery(t *testing.T) {
 	var inserts, selects int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +134,33 @@ func TestClickHouseAdapterUsesJSONEachRowAndBoundedQuery(t *testing.T) {
 	page, err := b.QueryMetrics(context.Background(), MetricQuery{ProjectID: "p", RunID: "r", StepName: "s", Limit: 2})
 	if err != nil || len(page.Points) != 1 || inserts != 1 || selects != 1 {
 		t.Fatalf("page=%+v inserts=%d selects=%d err=%v", page, inserts, selects, err)
+	}
+}
+
+func TestClickHousePurgeTargetsOnlyRequestedSignal(t *testing.T) {
+	var deletes []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		if strings.HasPrefix(query, "ALTER TABLE") {
+			deletes = append(deletes, query)
+		}
+	}))
+	defer server.Close()
+	b, err := openClickHouse(backendURL(server.URL, "clickhouse", "stats?logs_table=log_rows&metrics_table=metric_rows"), nil, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = b.PurgeProjectLogs(context.Background(), "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deletes) != 1 || !strings.Contains(deletes[0], "ALTER TABLE stats.log_rows DELETE") {
+		t.Fatalf("log purge queries = %v", deletes)
+	}
+	if err = b.PurgeProjectMetrics(context.Background(), "project-a"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deletes) != 2 || !strings.Contains(deletes[1], "ALTER TABLE stats.metric_rows DELETE") {
+		t.Fatalf("metric purge queries = %v", deletes)
 	}
 }
 

@@ -171,6 +171,7 @@ func composePipelineRuntime(cfg Config, ctx context.Context, repos *storemod.Rep
 			PipelineRunnerImage: cfg.Runtime.K8s.PipelineRunnerImage, ImagePullPolicy: cfg.Runtime.K8s.ImagePullPolicy,
 			TTLAfterFinished: cfg.Runtime.K8s.TTLAfterFinished, MasterURL: cfg.Runtime.K8s.WorkloadURL,
 			WorkloadToken: cfg.Server.WorkloadToken, LogClient: logClient, Complete: complete, RenewLeases: q.RenewLeases,
+			KnownTask: q.IsTrackingTask,
 		})
 		return backend, backend, err
 	case RuntimeDocker:

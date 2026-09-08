@@ -408,7 +408,7 @@ func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
 	)
 	launcher := NewWithClient(Config{Namespace: "jobs", RuntimeID: "Worker 1"}, client)
 
-	launcher.RecoverJobs(context.Background())
+	launcher.RecoverJobs(context.Background(), nil)
 	taskIDs := launcher.ActiveTaskIDs()
 	if len(taskIDs) != 1 || taskIDs[0] != "run-1:step-1" {
 		t.Fatalf("active task IDs = %v", taskIDs)
@@ -421,6 +421,22 @@ func TestRecoverJobsRestoresActiveTaskIDs(t *testing.T) {
 	}
 	if rec.Attempt != 3 {
 		t.Fatalf("attempt = %d, want 3", rec.Attempt)
+	}
+}
+
+func TestRecoverJobsDoesNotWatchUnknownDBTask(t *testing.T) {
+	client := fake.NewSimpleClientset(&batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: "orphan", Namespace: "jobs",
+		Labels:      map[string]string{"app.kubernetes.io/managed-by": "piper"},
+		Annotations: map[string]string{"piper.io/task-id": "lost-run:train"},
+	}})
+	launcher := NewWithClient(Config{Namespace: "jobs"}, client)
+	launcher.RecoverJobs(context.Background(), func(string) bool { return false })
+	if got := launcher.ActiveTaskIDs(); len(got) != 0 {
+		t.Fatalf("orphan task was recovered: %v", got)
+	}
+	if _, err := client.BatchV1().Jobs("jobs").Get(context.Background(), "orphan", metav1.GetOptions{}); err != nil {
+		t.Fatalf("orphan should be preserved for explicit cleanup: %v", err)
 	}
 }
 

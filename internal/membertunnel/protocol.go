@@ -28,6 +28,7 @@ const (
 	MethodSubmitRun         = "SubmitRun"
 	MethodSubmitSweep       = "SubmitSweep"
 	MethodListRuns          = "ListRuns"
+	MethodListExperiments   = "ListExperiments"
 	MethodGetRun            = "GetRun"
 	MethodCancelRun         = "CancelRun"
 	MethodRerunRun          = "RerunRun"

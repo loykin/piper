@@ -221,36 +221,22 @@ func (b *spooledBackend) signal() {
 
 func (b *spooledBackend) close() { b.cancel(); b.wg.Wait() }
 
-func (b *spooledBackend) PurgeProject(ctx context.Context, projectID string) error {
+func (b *spooledBackend) PurgeProjectLogs(ctx context.Context, projectID string) error {
 	b.deliveryMu.Lock()
 	defer b.deliveryMu.Unlock()
-	if purger, ok := b.logs.(Purger); ok {
-		if err := purger.PurgeProject(ctx, projectID); err != nil {
-			return err
-		}
+	if err := b.logs.PurgeProjectLogs(ctx, projectID); err != nil {
+		return err
 	}
-	if purger, ok := b.metrics.(Purger); ok {
-		if err := purger.PurgeProject(ctx, projectID); err != nil {
-			return err
-		}
-	}
-	return b.spool.purge(projectID, "")
+	return b.spool.purge("logs", projectID)
 }
 
-func (b *spooledBackend) PurgeRun(ctx context.Context, projectID, runID string) error {
+func (b *spooledBackend) PurgeProjectMetrics(ctx context.Context, projectID string) error {
 	b.deliveryMu.Lock()
 	defer b.deliveryMu.Unlock()
-	if purger, ok := b.logs.(Purger); ok {
-		if err := purger.PurgeRun(ctx, projectID, runID); err != nil {
-			return err
-		}
+	if err := b.metrics.PurgeProjectMetrics(ctx, projectID); err != nil {
+		return err
 	}
-	if purger, ok := b.metrics.(Purger); ok {
-		if err := purger.PurgeRun(ctx, projectID, runID); err != nil {
-			return err
-		}
-	}
-	return b.spool.purge(projectID, runID)
+	return b.spool.purge("metrics", projectID)
 }
 
 func (b *spooledBackend) setError(err error) {

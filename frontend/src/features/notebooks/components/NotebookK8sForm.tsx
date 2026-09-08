@@ -299,6 +299,13 @@ export function NotebookK8sForm({
       ? !k8sForm.name.trim() || !k8sForm.image.trim() || !k8sForm.namespace.trim() || !k8sForm.storageSize.trim()
       : !workerForm.name.trim() || (runtime === 'docker' && !workerForm.dockerImage.trim())
   ))
+  const formValidationMessage = tab !== 'form' ? '' : runtime === 'k8s'
+    ? (!k8sForm.name.trim() ? 'Server Name is required.'
+      : !k8sForm.image.trim() ? 'Image is required.'
+        : !k8sForm.namespace.trim() ? 'Namespace is required.'
+          : !k8sForm.storageSize.trim() ? 'Storage Size is required.' : '')
+    : (!workerForm.name.trim() ? 'Server Name is required.'
+      : runtime === 'docker' && !workerForm.dockerImage.trim() ? 'Image is required.' : '')
 
   return (
     <DataBodyTemplate
@@ -361,7 +368,7 @@ export function NotebookK8sForm({
         )}
 
         <FormActions
-          status={error || undefined}
+          status={error || formValidationMessage || undefined}
           submitLabel={submitting ? 'Launching…' : volumeId ? 'Attach & Launch' : 'Launch'}
           submitDisabled={submitDisabled}
           onCancel={onCancel}

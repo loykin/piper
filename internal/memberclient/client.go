@@ -65,6 +65,7 @@ type Client interface {
 	SubmitRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, req SubmitRunRequest) (SubmitRunResponse, error)
 	SubmitSweep(ctx context.Context, auth AuthContext, ref project.ProjectRef, req SubmitSweepRequest) (SubmitSweepResponse, error)
 	ListRuns(ctx context.Context, auth AuthContext, ref project.ProjectRef, req ListRunsRequest) (ListRunsResponse, error)
+	ListExperiments(ctx context.Context, auth AuthContext, ref project.ProjectRef, req ListExperimentsRequest) (ListExperimentsResponse, error)
 	GetRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) (RunDetail, error)
 	CancelRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) error
 	RerunRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string, failedOnly bool) (newRunID string, err error)

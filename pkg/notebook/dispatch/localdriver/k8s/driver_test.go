@@ -358,3 +358,26 @@ func TestObservedStatefulSetStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestObserveQuarantinesMissingDBNotebook(t *testing.T) {
+	one := int32(1)
+	client := fake.NewSimpleClientset(&appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "orphan-sts", Namespace: "nb-ns", Labels: map[string]string{
+			"app.kubernetes.io/managed-by": "piper", "piper.io/workload-kind": "notebook",
+		}, Annotations: map[string]string{"piper.io/project-id": "lost", "piper.io/workload-id": "orphan"}},
+		Spec: appsv1.StatefulSetSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "orphan"}}},
+	})
+	calls := 0
+	d, err := New(Config{RuntimeID: "runtime", Namespaces: []string{"nb-ns"}, Client: client, ReportStatus: func(string, string, string, string, string, string, int, string) error {
+		calls++
+		return notebook.ErrNotFound
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.observeOnce(context.Background())
+	d.observeOnce(context.Background())
+	if calls != 1 {
+		t.Fatalf("status reports = %d, want one orphan diagnosis", calls)
+	}
+}

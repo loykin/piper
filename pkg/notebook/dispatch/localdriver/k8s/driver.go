@@ -23,6 +23,7 @@ package k8sdriver
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -84,6 +85,7 @@ type Driver struct {
 
 	statusMu   sync.Mutex
 	lastStatus map[string]string // "projectID:name" -> last reported status, for change dedup
+	orphaned   map[string]bool   // DB-missing workloads, diagnosed once and ignored until restart
 
 	logMu      sync.Mutex
 	logGens    map[string]uint64
@@ -110,6 +112,7 @@ func New(cfg Config) (*Driver, error) {
 	return &Driver{
 		cfg:        cfg,
 		lastStatus: make(map[string]string),
+		orphaned:   make(map[string]bool),
 		logGens:    make(map[string]uint64),
 		logCancels: make(map[string]context.CancelFunc),
 	}, nil
@@ -426,14 +429,23 @@ func (d *Driver) observeNamespace(ctx context.Context, ns string) {
 		if projectID == "" {
 			continue
 		}
+		key := notebookStatusKey(projectID, name)
+		if d.isOrphaned(key) {
+			continue
+		}
 		status := observedStatefulSetStatus(sts)
 		if status == notebook.StatusStarting && d.podsCrashLooping(ctx, sts) {
 			status = notebook.StatusFailed
 		}
-		if status == "" || !d.statusChanged(notebookStatusKey(projectID, name), status) {
+		if status == "" || !d.statusChanged(key, status) {
 			continue
 		}
 		if err := d.cfg.ReportStatus(projectID, name, status, "", "", "", 0, ""); err != nil {
+			if errors.Is(err, notebook.ErrNotFound) {
+				d.markOrphaned(key)
+				slog.Warn("k8sdriver: orphan notebook workload ignored", "project_id", projectID, "name", name, "namespace", ns, "statefulset", sts.Name)
+				continue
+			}
 			slog.Warn("k8sdriver: report status failed", "name", name, "status", status, "err", err)
 		}
 		if status == notebook.StatusRunning {
@@ -448,6 +460,18 @@ func (d *Driver) observeNamespace(ctx context.Context, ns string) {
 			d.logMu.Unlock()
 		}
 	}
+}
+
+func (d *Driver) isOrphaned(key string) bool {
+	d.statusMu.Lock()
+	defer d.statusMu.Unlock()
+	return d.orphaned[key]
+}
+
+func (d *Driver) markOrphaned(key string) {
+	d.statusMu.Lock()
+	d.orphaned[key] = true
+	d.statusMu.Unlock()
 }
 
 func (d *Driver) statusChanged(key, status string) bool {

@@ -95,3 +95,24 @@ type ListRunsResponse struct {
 	// existing X-Total-Count header semantics).
 	Total int
 }
+
+type ExperimentSummary struct {
+	Name    string `json:"name"`
+	Runs    int    `json:"runs"`
+	Success int    `json:"success"`
+	Failed  int    `json:"failed"`
+	Running int    `json:"running"`
+	Latest  string `json:"latest"`
+}
+
+type ListExperimentsRequest struct {
+	Name         string
+	PipelineName string
+	Limit        int
+	Offset       int
+}
+
+type ListExperimentsResponse struct {
+	Experiments []ExperimentSummary
+	Total       int
+}

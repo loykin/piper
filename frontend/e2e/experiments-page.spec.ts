@@ -27,8 +27,11 @@ spec:
   await page.getByRole('button', { name: 'New Sweep' }).click()
   await expect(page).toHaveURL(new RegExp(`${uiBase}/experiments/new$`))
   await page.locator('#experiment-name').fill(experimentName)
-  await page.locator('#sweep-pipeline').click()
-  await page.getByRole('option', { name: `${pipelineName} v1` }).click()
+  // The project has exactly one pipeline at this point, so the form
+  // auto-selects it into a disabled display input instead of an
+  // interactive combobox (see the `solePipeline` handling in
+  // ExperimentCreatePage.tsx) — assert the auto-fill rather than clicking.
+  await expect(page.locator('#sweep-pipeline')).toHaveValue(`${pipelineName} v1`)
   await page.locator('#sweep-trials').fill('[{"rate":0.1},{"rate":0.2}]')
   await page.getByRole('button', { name: 'Create Sweep' }).click()
 

@@ -33,8 +33,11 @@ test('creates an MLflow credential and manages an integration through the UI', a
   await page.getByRole('button', { name: 'New Integration' }).click()
   await page.locator('#mlflow-name').fill('qa-mlflow')
   await page.locator('#mlflow-uri').fill('https://mlflow.example.com')
-  await page.locator('#mlflow-credential').click()
-  await page.getByRole('option', { name: 'qa-mlflow-credential' }).click()
+  // Exactly one MLflow credential exists at this point, so the form
+  // auto-selects it into a disabled display input instead of an
+  // interactive combobox (see the `soleCredential` handling in
+  // MLflowIntegrationForm.tsx) — assert the auto-fill rather than clicking.
+  await expect(page.locator('#mlflow-credential')).toHaveValue('qa-mlflow-credential')
   await page.getByRole('button', { name: 'Save Integration' }).click()
   await page.waitForURL(new RegExp(`${uiBase}/integrations/mlflow$`))
 

@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,12 +20,50 @@ import (
 // a Repository or NotebookGateway directly (design doc §4.1's dependency
 // direction).
 type Handler struct {
-	svc *Service
+	svc   *Service
+	users security.UserDirectory
 }
 
-// NewHandler constructs a Handler.
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+// NewHandler constructs a Handler. users is optional (variadic, mirroring
+// pkg/project/member_handler.go's NewMemberHandler) — when supplied, list/get
+// responses resolve requested_by/approved_by/denied_by to usernames; when
+// omitted, those *_username fields are simply left empty.
+func NewHandler(svc *Service, users ...security.UserDirectory) *Handler {
+	h := &Handler{svc: svc}
+	if len(users) > 0 {
+		h.users = users[0]
+	}
+	return h
+}
+
+// attachActorNames resolves each response's actor IDs to usernames via
+// h.users, deduplicating lookups within the batch. Best-effort: an actor
+// that can't be resolved (deleted account, no directory configured) just
+// keeps its raw ID in the existing *_by field and an empty *_by_username.
+func (h *Handler) attachActorNames(ctx context.Context, list []*NotebookExecutionResponse) {
+	if h.users == nil {
+		return
+	}
+	names := make(map[string]string)
+	resolve := func(id string) string {
+		if id == "" {
+			return ""
+		}
+		if name, ok := names[id]; ok {
+			return name
+		}
+		name := ""
+		if user, err := h.users.GetUser(ctx, id); err == nil && user != nil {
+			name = user.Username
+		}
+		names[id] = name
+		return name
+	}
+	for _, r := range list {
+		r.RequestedByUsername = resolve(r.RequestedBy)
+		r.ApprovedByUsername = resolve(r.ApprovedBy)
+		r.DeniedByUsername = resolve(r.DeniedBy)
+	}
 }
 
 func currentProjectID(c *gin.Context) string {
@@ -293,7 +332,9 @@ func (h *Handler) listExecutions(c *gin.Context) {
 	if limit > 0 {
 		httpx.SetTotalCountHeader(c, limit, total)
 	}
-	c.JSON(http.StatusOK, NewNotebookExecutionResponses(list))
+	responses := NewNotebookExecutionResponses(list)
+	h.attachActorNames(c.Request.Context(), responses)
+	c.JSON(http.StatusOK, responses)
 }
 
 func (h *Handler) listProjectExecutions(c *gin.Context) {
@@ -306,7 +347,9 @@ func (h *Handler) listProjectExecutions(c *gin.Context) {
 	if limit > 0 {
 		httpx.SetTotalCountHeader(c, limit, total)
 	}
-	c.JSON(http.StatusOK, NewNotebookExecutionResponses(list))
+	responses := NewNotebookExecutionResponses(list)
+	h.attachActorNames(c.Request.Context(), responses)
+	c.JSON(http.StatusOK, responses)
 }
 
 func (h *Handler) getExecution(c *gin.Context) {
@@ -315,7 +358,9 @@ func (h *Handler) getExecution(c *gin.Context) {
 		writeExecutionError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, NewNotebookExecutionResponse(exec))
+	response := NewNotebookExecutionResponse(exec)
+	h.attachActorNames(c.Request.Context(), []*NotebookExecutionResponse{response})
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) cancelExecution(c *gin.Context) {

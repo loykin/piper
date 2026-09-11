@@ -1533,6 +1533,7 @@ components:
           type: string
           enum: [awaiting_approval, queued, running, succeeded, conflicted, failed, timed_out, cancelling, cancelled]
         requested_by: { type: string }
+        requested_by_username: { type: string, description: "Server-resolved display name for requested_by — present even when the viewer lacks system-admin access to GET /users." }
         client_id: { type: string }
         source_sha256: { type: string, description: "sha256 of the executed source — raw code is never stored." }
         base_content_hash: { type: string }
@@ -1556,8 +1557,10 @@ components:
         error_message: { type: string }
         output_summary: { type: object, description: "Capped structured status summary, not the full notebook output." }
         approved_by: { type: string }
+        approved_by_username: { type: string, description: "Server-resolved display name for approved_by." }
         approved_at: { type: string, format: date-time }
         denied_by: { type: string }
+        denied_by_username: { type: string, description: "Server-resolved display name for denied_by." }
         denied_at: { type: string, format: date-time }
         queued_at: { type: string, format: date-time }
         started_at: { type: string, format: date-time }

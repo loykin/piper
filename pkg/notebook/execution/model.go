@@ -254,31 +254,41 @@ type NotebookExecution struct {
 // directly) so the wire contract can't silently change just because an
 // internal-only field is added to NotebookExecution later.
 type NotebookExecutionResponse struct {
-	ID              string     `json:"id"`
-	ProjectID       string     `json:"project_id"`
-	NotebookName    string     `json:"notebook_name"`
-	NotebookPath    string     `json:"notebook_path"`
-	ResultPath      string     `json:"result_path,omitempty"`
-	KernelSessionID string     `json:"kernel_session_id,omitempty"`
-	Kind            string     `json:"kind"`
-	Status          string     `json:"status"`
-	RequestedBy     string     `json:"requested_by,omitempty"`
-	ClientID        string     `json:"client_id,omitempty"`
-	SourceSHA256    string     `json:"source_sha256,omitempty"`
-	BaseContentHash string     `json:"base_content_hash,omitempty"`
-	CurrentCell     int        `json:"current_cell"`
-	TotalCells      int        `json:"total_cells"`
-	ErrorCode       string     `json:"error_code,omitempty"`
-	ErrorMessage    string     `json:"error_message,omitempty"`
-	OutputSummary   []byte     `json:"output_summary,omitempty"`
-	ApprovedBy      string     `json:"approved_by,omitempty"`
-	ApprovedAt      *time.Time `json:"approved_at,omitempty"`
-	DeniedBy        string     `json:"denied_by,omitempty"`
-	DeniedAt        *time.Time `json:"denied_at,omitempty"`
-	QueuedAt        time.Time  `json:"queued_at"`
-	StartedAt       *time.Time `json:"started_at,omitempty"`
-	FinishedAt      *time.Time `json:"finished_at,omitempty"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              string `json:"id"`
+	ProjectID       string `json:"project_id"`
+	NotebookName    string `json:"notebook_name"`
+	NotebookPath    string `json:"notebook_path"`
+	ResultPath      string `json:"result_path,omitempty"`
+	KernelSessionID string `json:"kernel_session_id,omitempty"`
+	Kind            string `json:"kind"`
+	Status          string `json:"status"`
+	RequestedBy     string `json:"requested_by,omitempty"`
+	// RequestedByUsername/ApprovedByUsername/DeniedByUsername are resolved
+	// server-side (Handler.attachActorNames) because the viewer's own access
+	// to GET /users is system-admin-gated (pkg/auth/handler.go) but any
+	// actor who used their implicit system-admin access to run/approve/deny
+	// an execution in a project they aren't an explicit member of has no
+	// row in that project's members list either — a project viewer/member
+	// had no way to resolve that actor's raw ID to a username without this.
+	RequestedByUsername string     `json:"requested_by_username,omitempty"`
+	ClientID            string     `json:"client_id,omitempty"`
+	SourceSHA256        string     `json:"source_sha256,omitempty"`
+	BaseContentHash     string     `json:"base_content_hash,omitempty"`
+	CurrentCell         int        `json:"current_cell"`
+	TotalCells          int        `json:"total_cells"`
+	ErrorCode           string     `json:"error_code,omitempty"`
+	ErrorMessage        string     `json:"error_message,omitempty"`
+	OutputSummary       []byte     `json:"output_summary,omitempty"`
+	ApprovedBy          string     `json:"approved_by,omitempty"`
+	ApprovedByUsername  string     `json:"approved_by_username,omitempty"`
+	ApprovedAt          *time.Time `json:"approved_at,omitempty"`
+	DeniedBy            string     `json:"denied_by,omitempty"`
+	DeniedByUsername    string     `json:"denied_by_username,omitempty"`
+	DeniedAt            *time.Time `json:"denied_at,omitempty"`
+	QueuedAt            time.Time  `json:"queued_at"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	FinishedAt          *time.Time `json:"finished_at,omitempty"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // NewNotebookExecutionResponse maps a NotebookExecution to its wire

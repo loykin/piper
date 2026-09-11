@@ -1167,6 +1167,9 @@ export default function PipelineEditorPage() {
                 <span className="text-xs text-destructive">Volume unavailable</span>
               )}
             </div>
+            {error && (
+              <p className="shrink-0 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</p>
+            )}
 
             <Tabs value={activeTab} onValueChange={value => handleTabChange(value as ActiveTab)} className="flex min-h-0 flex-1 flex-col">
               <TabsList variant="line" className="shrink-0 border-b border-border px-4">
@@ -1211,7 +1214,6 @@ export default function PipelineEditorPage() {
                     ) : (
                       <p className="text-xs text-green-500">YAML is ready for Design. Server validation runs on submit.</p>
                     )}
-                    {error && <p className="text-sm text-destructive">{error}</p>}
                     <YamlMirror
                       value={yamlText}
                       onChange={e => {

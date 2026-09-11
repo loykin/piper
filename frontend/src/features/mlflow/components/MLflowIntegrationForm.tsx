@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -26,7 +27,7 @@ export function MLflowIntegrationForm({ initial, busy, error, onSubmit, onCancel
   // disabled elsewhere doesn't render the field as if the reference were
   // lost — the disabled suffix still communicates the real state.
   const mlflowCredentials = (credentials.data ?? []).filter(item => item.kind === 'mlflow' && (!item.disabled || item.name === initial?.credential_ref))
-  const { control, register, handleSubmit, formState: { errors } } = useForm<Values>({
+  const { control, register, handleSubmit, setValue, formState: { errors } } = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: initial?.name ?? '', tracking_uri: initial?.tracking_uri ?? '', credential_ref: initial?.credential_ref ?? '',
@@ -36,25 +37,40 @@ export function MLflowIntegrationForm({ initial, busy, error, onSubmit, onCancel
       export_notebook_executions: initial?.export_notebook_executions ?? false,
     },
   })
+  // @base-ui/react's Select never calls onValueChange when it has exactly
+  // one item (confirmed with pure keyboard input too, so it isn't an
+  // automation-click artifact — docs/qa/adversarial-qa-playbook.md §3c): the
+  // trigger visually shows the sole credential selected, but Save always
+  // submits an empty credential_ref. Only applies to a fresh, unset field —
+  // editing an integration that already has a credential_ref must not be
+  // clobbered by this.
+  const soleCredential = !initial?.credential_ref && mlflowCredentials.length === 1 ? mlflowCredentials[0].name : null
+  useEffect(() => {
+    if (soleCredential) setValue('credential_ref', soleCredential, { shouldValidate: true })
+  }, [soleCredential, setValue])
   return <form className="space-y-4" noValidate onSubmit={handleSubmit(value => onSubmit({ ...value, artifact_mode: 'reference' }))}>
     <FormField label="Name" htmlFor="mlflow-name" error={errors.name?.message}><Input id="mlflow-name" {...register('name')} placeholder="production-mlflow" /></FormField>
     <FormField label="Tracking URI" htmlFor="mlflow-uri" error={errors.tracking_uri?.message} helperText="HTTPS is required unless the server explicitly allows insecure local HTTP."><Input id="mlflow-uri" className="font-mono" {...register('tracking_uri')} placeholder="https://mlflow.example.com" /></FormField>
     <FormField label="Credential" htmlFor="mlflow-credential" error={errors.credential_ref?.message} helperText={mlflowCredentials.length === 0 ? 'Create an MLflow credential before configuring the integration.' : 'Credential values stay write-only; only this reference is stored here.'}>
-      {/* value must never be `undefined` here. @base-ui/react's Select
-          decides controlled-vs-uncontrolled on its first render only, and
-          warns ("changing the uncontrolled value state ... to be
-          controlled") if a later render passes a defined value where the
-          first render passed undefined. `field.value` starts as '' (RHF's
-          defaultValue), so `field.value || undefined` fed it undefined on
-          mount, then a real string once a credential was picked —
-          triggering exactly that illegal transition, after which Select's
-          internal display desynced from the value prop (reverted to the
-          placeholder on the next unrelated re-render, e.g. focus leaving
-          the field) and stopped reliably calling onValueChange, so Save
-          silently had nothing valid to submit. `null` is Base UI's
-          sentinel for "controlled, no value" — passing it instead keeps
-          the component controlled from mount and avoids the transition. */}
-      <Controller name="credential_ref" control={control} render={({ field }) => <Select items={mlflowCredentials.map(item => ({ value: item.name, label: `${item.name}${item.disabled ? ' (disabled)' : ''}` }))} value={field.value || null} onValueChange={v => field.onChange(v ?? '')} disabled={mlflowCredentials.length === 0}><SelectTrigger id="mlflow-credential" className="w-72"><SelectValue placeholder="Select a credential" /></SelectTrigger><SelectContent>{mlflowCredentials.map(item => <SelectItem key={item.name} value={item.name}>{item.name}{item.disabled ? ' (disabled)' : ''}</SelectItem>)}</SelectContent></Select>} />
+      {soleCredential ? (
+        <Input id="mlflow-credential" value={soleCredential} disabled readOnly />
+      ) : (
+        // value must never be `undefined` here. @base-ui/react's Select
+        // decides controlled-vs-uncontrolled on its first render only, and
+        // warns ("changing the uncontrolled value state ... to be
+        // controlled") if a later render passes a defined value where the
+        // first render passed undefined. `field.value` starts as '' (RHF's
+        // defaultValue), so `field.value || undefined` fed it undefined on
+        // mount, then a real string once a credential was picked —
+        // triggering exactly that illegal transition, after which Select's
+        // internal display desynced from the value prop (reverted to the
+        // placeholder on the next unrelated re-render, e.g. focus leaving
+        // the field) and stopped reliably calling onValueChange, so Save
+        // silently had nothing valid to submit. `null` is Base UI's
+        // sentinel for "controlled, no value" — passing it instead keeps
+        // the component controlled from mount and avoids the transition.
+        <Controller name="credential_ref" control={control} render={({ field }) => <Select items={mlflowCredentials.map(item => ({ value: item.name, label: `${item.name}${item.disabled ? ' (disabled)' : ''}` }))} value={field.value || null} onValueChange={v => field.onChange(v ?? '')} disabled={mlflowCredentials.length === 0}><SelectTrigger id="mlflow-credential" className="w-72"><SelectValue placeholder="Select a credential" /></SelectTrigger><SelectContent>{mlflowCredentials.map(item => <SelectItem key={item.name} value={item.name}>{item.name}{item.disabled ? ' (disabled)' : ''}</SelectItem>)}</SelectContent></Select>} />
+      )}
     </FormField>
     <FormField label="Experiment template" htmlFor="mlflow-template" error={errors.experiment_template?.message}><Input id="mlflow-template" className="font-mono" {...register('experiment_template')} /></FormField>
     <DataBodyTemplate.Group layout="stacked" title="Export scope" description="Artifacts remain authoritative in Piper; MLflow receives references.">

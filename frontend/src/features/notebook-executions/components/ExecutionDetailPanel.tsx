@@ -19,10 +19,12 @@ export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel, 
   // (AG: this panel used to be frozen at the moment it was opened, so an
   // approval or progress update never showed until it was closed and reopened).
   const { data: execution = initial } = useExecution(initial.notebook_name, initial.id, initial)
-  const actorName = (id?: string) => id ? actorNames.get(id) ?? id : '—'
-  const requestedBy = actorName(execution.requested_by)
-  const approvedBy = actorName(execution.approved_by)
-  const deniedBy = actorName(execution.denied_by)
+  // Prefer the server-resolved username (works regardless of the viewer's
+  // own privileges) and fall back to the project-member map, then the raw ID.
+  const actorName = (id?: string, username?: string) => username || (id ? actorNames.get(id) ?? id : '—')
+  const requestedBy = actorName(execution.requested_by, execution.requested_by_username)
+  const approvedBy = actorName(execution.approved_by, execution.approved_by_username)
+  const deniedBy = actorName(execution.denied_by, execution.denied_by_username)
   const awaiting = execution.status === 'awaiting_approval'
   const active = ['queued', 'running'].includes(execution.status)
 

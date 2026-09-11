@@ -7,6 +7,7 @@ import (
 
 	"github.com/loykin/piper/internal/logstore"
 	"github.com/loykin/piper/internal/store"
+	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/statsstore"
 )
 
@@ -17,6 +18,12 @@ func openTestStore(t *testing.T) *logstore.SQLiteLogStore {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = repos.Close() })
+	// logs/run_metrics FK-reference projects(id); every test below logs
+	// against "project-a", which must exist now that foreign_keys are
+	// actually enforced.
+	if err := repos.Project.Create(context.Background(), &project.Project{ID: "project-a", Name: "project-a"}); err != nil {
+		t.Fatal(err)
+	}
 	return repos.Log.(*logstore.SQLiteLogStore)
 }
 

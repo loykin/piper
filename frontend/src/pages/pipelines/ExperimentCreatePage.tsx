@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useNavigate } from '@tanstack/react-router'
 import { Controller, useForm } from 'react-hook-form'
@@ -46,10 +46,20 @@ export default function ExperimentCreatePage() {
   const pipelines = useMemo(() => pipelinesQuery.data ?? [], [pipelinesQuery.data])
   const items = useMemo(() => pipelines.map(pipeline => ({ value: pipeline.id, label: `${pipeline.name} v${pipeline.version}` })), [pipelines])
   const listPath = `/projects/${projectId}/experiments`
-  const { control, register, handleSubmit, formState: { errors } } = useForm<Values>({
+  const { control, register, handleSubmit, setValue, formState: { errors } } = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: { experiment: '', pipelineId: '', trials: '[\n  {"learning_rate": 0.01},\n  {"learning_rate": 0.1}\n]' },
   })
+  // @base-ui/react's Select never calls onValueChange when it has exactly
+  // one item (confirmed with pure keyboard input too, so it isn't an
+  // automation-click artifact — docs/qa/adversarial-qa-playbook.md §3c): the
+  // trigger visually shows the sole pipeline selected, but the field this
+  // form submits stays empty. A project with exactly one pipeline is a
+  // completely ordinary state, not an edge case.
+  const solePipeline = pipelines.length === 1 ? pipelines[0].id : null
+  useEffect(() => {
+    if (solePipeline) setValue('pipelineId', solePipeline, { shouldValidate: true })
+  }, [solePipeline, setValue])
 
   async function submit(values: Values) {
     setSubmitError('')
@@ -83,16 +93,20 @@ export default function ExperimentCreatePage() {
             <Input id="experiment-name" placeholder="learning-rate-search" aria-invalid={!!errors.experiment} {...register('experiment')} />
           </FormField>
           <FormField label="Pipeline" htmlFor="sweep-pipeline" error={errors.pipelineId?.message}>
-            <Controller
-              name="pipelineId"
-              control={control}
-              render={({ field }) => (
-                <Select items={items} value={field.value || null} onValueChange={value => field.onChange(value ?? '')}>
-                  <SelectTrigger id="sweep-pipeline" aria-invalid={!!errors.pipelineId}><SelectValue placeholder={pipelinesQuery.isPending ? 'Loading pipelines…' : 'Select a pipeline'} /></SelectTrigger>
-                  <SelectContent>{pipelines.map(pipeline => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name} v{pipeline.version}</SelectItem>)}</SelectContent>
-                </Select>
-              )}
-            />
+            {solePipeline ? (
+              <Input id="sweep-pipeline" value={`${pipelines[0].name} v${pipelines[0].version}`} disabled readOnly />
+            ) : (
+              <Controller
+                name="pipelineId"
+                control={control}
+                render={({ field }) => (
+                  <Select items={items} value={field.value || null} onValueChange={value => field.onChange(value ?? '')}>
+                    <SelectTrigger id="sweep-pipeline" aria-invalid={!!errors.pipelineId}><SelectValue placeholder={pipelinesQuery.isPending ? 'Loading pipelines…' : 'Select a pipeline'} /></SelectTrigger>
+                    <SelectContent>{pipelines.map(pipeline => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name} v{pipeline.version}</SelectItem>)}</SelectContent>
+                  </Select>
+                )}
+              />
+            )}
           </FormField>
           <FormField label="Trial parameters" htmlFor="sweep-trials" error={errors.trials?.message}>
             <div className="space-y-2">

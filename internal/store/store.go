@@ -95,7 +95,7 @@ type ExternalReposConfig struct {
 
 // Open opens a SQLite file and returns Repos with all repositories wired.
 func Open(path string) (*Repos, error) {
-	db, pool, executor, err := openDBStore("sqlite", path+"?_journal=WAL&_timeout=5000", sqlitePoolConfig())
+	db, pool, executor, err := openDBStore("sqlite", path+"?_journal=WAL&_timeout=5000&_foreign_keys=on", sqlitePoolConfig())
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}

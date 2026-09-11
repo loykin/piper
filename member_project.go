@@ -125,7 +125,7 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 	// function's doc comment. Guarded like alerting above: nil when the
 	// embedding Repos didn't supply a NotebookExecution repository.
 	if p.notebookExecutions != nil {
-		execution.NewHandler(p.notebookExecutions).RegisterRoutes(projectAPI)
+		execution.NewHandler(p.notebookExecutions, p.cfg.Auth.UserDirectory).RegisterRoutes(projectAPI)
 	}
 	// docs/jupyter-mcp-execution.md Phase 2 — read-only MCP endpoint
 	// (§8). Registered the same way as the execution REST handler right

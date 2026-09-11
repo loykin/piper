@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   DataBodyTemplate,
   FormActions,
   FormField,
+  Input,
   PageTopBar,
   Select,
   SelectContent,
@@ -33,6 +34,7 @@ export default function MemberCreatePage() {
   const {
     control,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<MemberValues>({
     resolver: zodResolver(memberSchema),
@@ -40,6 +42,19 @@ export default function MemberCreatePage() {
   })
 
   const listPath = `/projects/${projectId}/members`
+
+  // @base-ui/react's Select never calls onValueChange when it has exactly
+  // one item — confirmed with pure keyboard input too, so it isn't an
+  // automation-click artifact (docs/qa/adversarial-qa-playbook.md §3c): the
+  // trigger visually shows the sole candidate selected, but the callback
+  // this form relies on to update RHF's state never fires, so Add Member
+  // always submits an empty username. With only one candidate there is
+  // nothing to actually choose between anyway, so route around the buggy
+  // interaction entirely by auto-selecting it.
+  const soleCandidate = candidates.length === 1 ? candidates[0].username : null
+  useEffect(() => {
+    if (soleCandidate) setValue('username', soleCandidate, { shouldValidate: true })
+  }, [soleCandidate, setValue])
 
   async function submit(values: MemberValues) {
     setSubmitError('')
@@ -69,24 +84,37 @@ export default function MemberCreatePage() {
             error={errors.username?.message}
             helperText={!candidatesLoading && candidates.length === 0 ? 'No accounts are available to add.' : undefined}
           >
-            <Controller
-              name="username"
-              control={control}
-              render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange} disabled={candidatesLoading}>
-                  <SelectTrigger id="member-username" size="sm" aria-invalid={!!errors.username}>
-                    <SelectValue placeholder={candidatesLoading ? 'Loading users…' : 'Select a user'} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {candidates.map(candidate => (
-                      <SelectItem key={candidate.username} value={candidate.username}>
-                        {candidate.username}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
+            {soleCandidate ? (
+              <Input id="member-username" value={soleCandidate} disabled readOnly />
+            ) : (
+              <Controller
+                name="username"
+                control={control}
+                render={({ field }) => (
+                  // value must never be '' here — see MLflowIntegrationForm.tsx's
+                  // Credential Select for the full explanation. `field.value`
+                  // starts as '' (RHF's defaultValue), and @base-ui/react's
+                  // Select decides controlled-vs-uncontrolled on first render
+                  // only; feeding it a value later that differs from that
+                  // first-render sentinel desyncs its display from onValueChange,
+                  // so a selection appears to take but Add Member submits
+                  // nothing. `null` is Base UI's real "controlled, no value"
+                  // sentinel.
+                  <Select value={field.value || null} onValueChange={v => field.onChange(v ?? '')} disabled={candidatesLoading}>
+                    <SelectTrigger id="member-username" size="sm" aria-invalid={!!errors.username}>
+                      <SelectValue placeholder={candidatesLoading ? 'Loading users…' : 'Select a user'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {candidates.map(candidate => (
+                        <SelectItem key={candidate.username} value={candidate.username}>
+                          {candidate.username}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            )}
           </FormField>
           <FormField
             label="Project role"

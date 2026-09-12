@@ -26,6 +26,7 @@ import (
 	"github.com/loykin/piper/internal/pipelinedispatch"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/internal/queue"
+	"github.com/loykin/piper/internal/retention"
 	"github.com/loykin/piper/internal/runlifecycle"
 	ischeduler "github.com/loykin/piper/internal/scheduler"
 	"github.com/loykin/piper/internal/srcfetch"
@@ -118,6 +119,7 @@ type Piper struct {
 	scheduler       *ischeduler.Scheduler
 	startedAt       time.Time // wall-clock when New() ran; used for misfire detection
 	runs            *runlifecycle.Manager
+	retention       *retention.Runner    // scheduled from runCleanup; see New() for job registration
 	mlflowClients   mlflow.ClientFactory // per-integration MLflow REST client factory; used by both the dispatcher (piper.go's New) and the Integrations REST handler's connection-test endpoint (member_project.go)
 
 	stopCtx context.CancelFunc // cancels ctx on Close
@@ -547,6 +549,13 @@ func New(cfg Config) (*Piper, error) {
 		DeleteWorkspace:        deleteRunWorkspace,
 		EnqueuePipelineCreated: enqueuePipelineCreated,
 	})
+
+	p.retention = retention.NewRunner()
+	p.retention.Register("runs", retention.JobFunc(p.runs.CleanupRetention))
+	p.retention.Register("stats", retention.JobFunc(p.cleanupStats))
+	p.retention.Register("notebook_history", retention.TTLPurge("notebook_history", cfg.Retention.NotebookHistoryTTL, repos.Notebook.PurgeHistoryBefore))
+	p.retention.Register("service_history", retention.TTLPurge("service_history", cfg.Retention.ServiceHistoryTTL, repos.Serving.PurgeHistoryBefore))
+
 	backend, pipelineObserver, err := composePipelineRuntime(cfg, bgCtx, repos, q, p.events)
 	if err != nil {
 		stopFn()
@@ -730,8 +739,7 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			tick++
 			p.reconcileBackend(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
-			p.runs.CleanupRetention(ctx)
-			p.cleanupStats(ctx)
+			p.retention.Run(ctx)
 			p.cleanupOrphanArtifacts(ctx)
 			if tick%recoveryReconcileEvery == 0 {
 				p.runs.RecoverInterruptedRuns(ctx)

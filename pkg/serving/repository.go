@@ -1,6 +1,9 @@
 package serving
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Repository is the persistence interface for Service records.
 type Repository interface {
@@ -29,4 +32,8 @@ type Repository interface {
 	// CountHistory returns the total number of service history rows for
 	// projectID, ignoring limit/offset.
 	CountHistory(ctx context.Context, projectID string) (int, error)
+	// PurgeHistoryBefore deletes service_history rows whose stopped_at is
+	// strictly before cutoff, across all projects, and returns the number of
+	// rows removed. Used by the retention.TTLPurge job.
+	PurgeHistoryBefore(ctx context.Context, cutoff time.Time) (int64, error)
 }

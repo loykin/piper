@@ -127,7 +127,7 @@ func NewPiper(loader *cliconfig.Loader) (*piper.Piper, error) {
 		},
 		Server: piper.ServerConfig{Addr: root.Server.HTTPAddr, WorkloadToken: root.Server.WorkloadToken, SecretEncryptionKey: root.Server.SecretEncryptionKey, AllowInsecureDevKey: root.Server.AllowInsecureDevKey,
 			TLS: piper.TLSConfig{Enabled: root.Server.TLS.Enabled, CertFile: root.Server.TLS.CertFile, KeyFile: root.Server.TLS.KeyFile}},
-		Retention: piper.RetentionConfig{RunTTL: root.Server.Retention.RunTTL, ArtifactTTL: root.Server.Retention.ArtifactTTL},
+		Retention: piper.RetentionConfig{RunTTL: root.Server.Retention.RunTTL, ArtifactTTL: root.Server.Retention.ArtifactTTL, NotebookHistoryTTL: root.Server.Retention.NotebookHistoryTTL, ServiceHistoryTTL: root.Server.Retention.ServiceHistoryTTL},
 		Schedule:  piper.ScheduleConfig{MisfirePolicy: root.Server.Schedule.MisfirePolicy, MisfireGracePeriod: root.Server.Schedule.MisfireGracePeriod},
 		Serving:   piper.ServingConfig{ModelDir: root.Server.Serving.ModelDir},
 		DBDriver:  root.Server.DB.Driver, DBDSN: root.Server.DB.DSN, DBPath: root.Server.DB.Path,

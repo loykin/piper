@@ -316,6 +316,11 @@ type TLSConfig struct {
 type RetentionConfig struct {
 	RunTTL      time.Duration `yaml:"run_ttl"      mapstructure:"run_ttl"`
 	ArtifactTTL time.Duration `yaml:"artifact_ttl" mapstructure:"artifact_ttl"`
+	// NotebookHistoryTTL/ServiceHistoryTTL age out notebook_history/
+	// service_history rows independently of RunTTL/ArtifactTTL — these
+	// tables have their own lifecycle, unrelated to pipeline runs.
+	NotebookHistoryTTL time.Duration `yaml:"notebook_history_ttl" mapstructure:"notebook_history_ttl"`
+	ServiceHistoryTTL  time.Duration `yaml:"service_history_ttl"  mapstructure:"service_history_ttl"`
 }
 
 type StatsConfig struct {

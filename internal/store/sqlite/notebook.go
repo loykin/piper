@@ -163,3 +163,16 @@ func (r *notebookRepo) CountHistory(ctx context.Context, projectID string) (int,
 	})
 	return count, err
 }
+
+func (r *notebookRepo) PurgeHistoryBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	var affected int64
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		res, err := db.ExecContext(ctx, `DELETE FROM notebook_history WHERE stopped_at < ?`, cutoff)
+		if err != nil {
+			return err
+		}
+		affected, err = res.RowsAffected()
+		return err
+	})
+	return affected, err
+}

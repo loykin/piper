@@ -3,6 +3,7 @@ package manifestmigrate
 import (
 	"context"
 	"testing"
+	"time"
 
 	storemod "github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/pkg/notebook"
@@ -123,6 +124,9 @@ func (r *fakeNotebookRepo) ListHistory(context.Context, string, int, int) ([]*no
 	return nil, nil
 }
 func (r *fakeNotebookRepo) CountHistory(context.Context, string) (int, error) { return 0, nil }
+func (r *fakeNotebookRepo) PurgeHistoryBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
 
 // ─── fake serving.Repository ────────────────────────────────────────────────
 
@@ -174,6 +178,9 @@ func (r *fakeServingRepo) ListHistory(context.Context, string, int, int) ([]*ser
 	return nil, nil
 }
 func (r *fakeServingRepo) CountHistory(context.Context, string) (int, error) { return 0, nil }
+func (r *fakeServingRepo) PurgeHistoryBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
 
 // ─── tests ──────────────────────────────────────────────────────────────────
 

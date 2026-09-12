@@ -67,6 +67,9 @@ func (r *stubNotebookRepo) ListHistory(_ context.Context, _ string, _, _ int) ([
 func (r *stubNotebookRepo) CountHistory(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
+func (r *stubNotebookRepo) PurgeHistoryBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
 
 func injectNotebookProjectCtx(id string) gin.HandlerFunc {
 	return func(c *gin.Context) {

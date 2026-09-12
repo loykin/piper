@@ -200,3 +200,17 @@ func (r *servingRepo) CountHistory(ctx context.Context, projectID string) (int, 
 	})
 	return count, err
 }
+
+func (r *servingRepo) PurgeHistoryBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	var affected int64
+	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`DELETE FROM service_history WHERE stopped_at < ?`)
+		res, err := db.ExecContext(ctx, q, cutoff)
+		if err != nil {
+			return err
+		}
+		affected, err = res.RowsAffected()
+		return err
+	})
+	return affected, err
+}

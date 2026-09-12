@@ -120,6 +120,10 @@ func (r *fakeRepo) CountHistory(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
 
+func (r *fakeRepo) PurgeHistoryBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
 // helper: read history without lock (call only from same test goroutine after sync point)
 func (r *fakeRepo) historySnapshot() []*NotebookServer {
 	r.mu.Lock()

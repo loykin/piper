@@ -182,8 +182,10 @@ type DBConfig struct {
 }
 
 type RetentionConfig struct {
-	RunTTL      time.Duration `mapstructure:"run_ttl" yaml:"run_ttl"`
-	ArtifactTTL time.Duration `mapstructure:"artifact_ttl" yaml:"artifact_ttl"`
+	RunTTL             time.Duration `mapstructure:"run_ttl" yaml:"run_ttl"`
+	ArtifactTTL        time.Duration `mapstructure:"artifact_ttl" yaml:"artifact_ttl"`
+	NotebookHistoryTTL time.Duration `mapstructure:"notebook_history_ttl" yaml:"notebook_history_ttl"`
+	ServiceHistoryTTL  time.Duration `mapstructure:"service_history_ttl" yaml:"service_history_ttl"`
 }
 
 type ScheduleConfig struct {

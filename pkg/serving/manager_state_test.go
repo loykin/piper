@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/loykin/piper/internal/artifact"
 	"github.com/loykin/piper/pkg/manifest"
@@ -72,6 +73,9 @@ func (r *stateTestRepo) ListHistory(context.Context, string, int, int) ([]*Servi
 	return nil, nil
 }
 func (r *stateTestRepo) CountHistory(context.Context, string) (int, error) { return 0, nil }
+func (r *stateTestRepo) PurgeHistoryBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
 
 type stateTestDriver struct {
 	stopErr    error

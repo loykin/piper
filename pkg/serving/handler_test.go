@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/loykin/piper/pkg/project"
@@ -77,6 +78,9 @@ func (r *stubServingRepo) ListHistory(_ context.Context, _ string, _, _ int) ([]
 	return nil, nil
 }
 func (r *stubServingRepo) CountHistory(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+func (r *stubServingRepo) PurgeHistoryBefore(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }
 

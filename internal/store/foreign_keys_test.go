@@ -10,8 +10,10 @@ import (
 	"github.com/loykin/piper/internal/store/sqlite"
 	"github.com/loykin/piper/pkg/auth"
 	"github.com/loykin/piper/pkg/credential"
+	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/serving"
 )
 
 // Regression test for the SQLite driver silently ignoring the schema's
@@ -73,4 +75,54 @@ func TestSQLiteForeignKeyCascadeOnDelete(t *testing.T) {
 			t.Fatalf("project membership survived user deletion: got=%#v err=%v, want %v", got, err, sql.ErrNoRows)
 		}
 	})
+}
+
+// TestProjectDeleteDoesNotCascadeToHistory is the deliberate counterpart to
+// TestSQLiteForeignKeyCascadeOnDelete's credential case: notebook_history/
+// service_history are append-only audit logs (BA in the adversarial QA
+// review — deleting a project used to wipe its entire notebook/service
+// history via ON DELETE CASCADE the moment FK enforcement was actually
+// turned on). Migration 00047_history_drop_project_fk removed that FK
+// entirely; project_id is now a plain tag, and retention.
+// NotebookHistoryTTL/ServiceHistoryTTL (internal/retention) is the only
+// lifecycle policy for these rows. Deleting the project they reference must
+// not touch them.
+func TestProjectDeleteDoesNotCascadeToHistory(t *testing.T) {
+	ctx := context.Background()
+	repos, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repos.Close() })
+
+	proj := &project.Project{ID: "history-survives-project", Name: "history-survives-project"}
+	if err := repos.Project.Create(ctx, proj); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	if err := repos.Notebook.AppendHistory(ctx, &notebook.NotebookServer{ProjectID: proj.ID, Name: "nb", Status: "stopped", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("append notebook history: %v", err)
+	}
+	if err := repos.Serving.AppendHistory(ctx, &serving.Service{ProjectID: proj.ID, Name: "svc", Status: "stopped", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("append service history: %v", err)
+	}
+
+	if err := repos.Project.Delete(ctx, proj.ID); err != nil {
+		t.Fatalf("delete project: %v", err)
+	}
+
+	nbHist, err := repos.Notebook.ListHistory(ctx, proj.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list notebook history: %v", err)
+	}
+	if len(nbHist) != 1 {
+		t.Fatalf("notebook_history did not survive project deletion: got %d rows, want 1", len(nbHist))
+	}
+
+	svcHist, err := repos.Serving.ListHistory(ctx, proj.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list service history: %v", err)
+	}
+	if len(svcHist) != 1 {
+		t.Fatalf("service_history did not survive project deletion: got %d rows, want 1", len(svcHist))
+	}
 }

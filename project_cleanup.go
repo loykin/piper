@@ -18,6 +18,8 @@ func (p *Piper) projectCleanupDeps() projectcleanup.Deps {
 		ServiceRepo:  p.repos.Serving,
 		Runs:         p.runs,
 		RunRepo:      p.repos.Run,
+		Templates:    p.repos.PipelineTemplate,
+		Store:        p.store,
 	}
 }
 

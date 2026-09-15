@@ -71,6 +71,16 @@ func expectNoReport(t *testing.T, reports chan statusReport, within time.Duratio
 	}
 }
 
+func TestNotebookWorkloadNameBoundedTo63Chars(t *testing.T) {
+	long := notebookWorkloadName(
+		"qa-history-cascade-test-with-a-very-long-project-identifier",
+		"qa-cascade-history-nb-with-a-very-long-notebook-name",
+	)
+	if len(long) > 63 {
+		t.Fatalf("notebookWorkloadName produced a %d-char name (limit 63): %q", len(long), long)
+	}
+}
+
 func TestNewRejectsMissingConfig(t *testing.T) {
 	base := Config{
 		RuntimeID:    "w",

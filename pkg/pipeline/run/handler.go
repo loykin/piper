@@ -116,7 +116,6 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	member.POST("/runs/sweep", h.createSweep)
 	member.POST("/runs/:id/cancel", h.cancelRun)
 	member.POST("/runs/:id/rerun", h.rerunRun)
-	member.DELETE("/runs/:id", h.deleteRun)
 	member.POST("/runs/:id/steps/:step/retry", h.retryStep)
 }
 
@@ -360,34 +359,6 @@ func (h *Handler) rerunRun(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"run_id": newRunID})
-}
-
-// DELETE /runs/:id
-func (h *Handler) deleteRun(c *gin.Context) {
-	runID := c.Param("id")
-	ctx := c.Request.Context()
-	auth, ref := authFrom(c), h.ref(c)
-
-	detail, err := h.deps.Member.GetRun(ctx, auth, ref, runID)
-	if err != nil {
-		writeMemberError(c, err, http.StatusNotFound, "run not found")
-		return
-	}
-	if h.deps.Hooks != nil {
-		if err := h.deps.Hooks.BeforeGetRun(ctx, c.Request, runID); err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	if detail.Run.Status == StatusRunning {
-		c.JSON(http.StatusConflict, gin.H{"error": "cannot delete a running run"})
-		return
-	}
-	if err := h.deps.Member.DeleteRun(ctx, auth, ref, runID); err != nil {
-		writeMemberError(c, err, http.StatusInternalServerError, "")
-		return
-	}
-	c.Status(http.StatusNoContent)
 }
 
 // GET /runs/:id/steps

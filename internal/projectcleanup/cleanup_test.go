@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/serving"
 	"github.com/loykin/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/template"
 )
 
 // ---- notebook fakes ----
@@ -479,4 +482,96 @@ func TestCleanupLiveResourcesNoopWhenDepsUnset(t *testing.T) {
 	if err := d.CleanupLiveResources(context.Background(), "proj-a"); err != nil {
 		t.Fatalf("CleanupLiveResources() error = %v, want nil for empty Deps", err)
 	}
+}
+
+// ---- template fakes ----
+
+type fakeTemplateRepo struct {
+	byProject map[string][]*template.Template
+	listErr   error
+}
+
+func (r *fakeTemplateRepo) NextVersion(context.Context, string, string) (int, error) { return 1, nil }
+func (r *fakeTemplateRepo) Create(context.Context, *template.Template) error         { return nil }
+func (r *fakeTemplateRepo) Get(context.Context, string, string) (*template.Template, error) {
+	return nil, nil
+}
+func (r *fakeTemplateRepo) Count(_ context.Context, projectID string, _ template.Filter) (int, error) {
+	return len(r.byProject[projectID]), nil
+}
+func (r *fakeTemplateRepo) Delete(context.Context, string, string) error { return nil }
+
+func (r *fakeTemplateRepo) List(_ context.Context, projectID string, f template.Filter) ([]*template.Template, error) {
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	all := r.byProject[projectID]
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	start := f.Offset
+	if start >= len(all) {
+		return nil, nil
+	}
+	end := start + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[start:end], nil
+}
+
+func TestCleanupTemplateSnapshotsDeletesSnapshotObjects(t *testing.T) {
+	const projectID = "proj-a"
+	store := storage.NewMemStore()
+	if err := store.Put(context.Background(), "snapshots/snap-1/main.py", strings.NewReader("print(1)"), -1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(context.Background(), "snapshots/snap-1/util.py", strings.NewReader("x=1"), -1); err != nil {
+		t.Fatal(err)
+	}
+	repo := &fakeTemplateRepo{byProject: map[string][]*template.Template{
+		projectID: {{ID: "t1", ProjectID: projectID, SnapshotID: "snap-1"}},
+	}}
+
+	d := Deps{Templates: repo, Store: store}
+	d.cleanupTemplateSnapshots(context.Background(), projectID)
+
+	objs, err := store.List(context.Background(), "snapshots/snap-1/", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 0 {
+		t.Fatalf("snapshot objects still present after cleanup: %#v", objs)
+	}
+}
+
+func TestCleanupTemplateSnapshotsPaginatesPastFirstPage(t *testing.T) {
+	const projectID = "proj-a"
+	store := storage.NewMemStore()
+	templates := make([]*template.Template, 0, 60)
+	for i := 0; i < 60; i++ {
+		snapID := "snap-" + strconv.Itoa(i)
+		if err := store.Put(context.Background(), "snapshots/"+snapID+"/main.py", strings.NewReader("x"), -1); err != nil {
+			t.Fatal(err)
+		}
+		templates = append(templates, &template.Template{ID: "t" + strconv.Itoa(i), ProjectID: projectID, SnapshotID: snapID})
+	}
+	repo := &fakeTemplateRepo{byProject: map[string][]*template.Template{projectID: templates}}
+
+	d := Deps{Templates: repo, Store: store}
+	d.cleanupTemplateSnapshots(context.Background(), projectID)
+
+	objs, err := store.List(context.Background(), "snapshots/snap-59/", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 0 {
+		t.Fatalf("last-page snapshot object still present after cleanup: %#v", objs)
+	}
+}
+
+func TestCleanupTemplateSnapshotsNoopWhenStoreUnset(t *testing.T) {
+	d := Deps{Templates: &fakeTemplateRepo{}}
+	d.cleanupTemplateSnapshots(context.Background(), "proj-a") // must not panic
 }

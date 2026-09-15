@@ -308,6 +308,44 @@ func TestCancelRunDeletesJobsByRunLabel(t *testing.T) {
 	}
 }
 
+func TestDeleteJobRemovesOrphanPodsByJobNameLabel(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}
+
+	task := &proto.Task{RunID: "run-1", StepName: "train"}
+	job := mustBuildJob(t, l, task, "python:3.11", nil)
+	if _, err := clientset.BatchV1().Jobs("default").Create(context.Background(), job, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulates a cluster whose Job controller left the Pod's
+	// ownerReferences empty (a live QA finding) — standard Kubernetes GC has
+	// no way to know this Pod belongs to the Job, so DeleteJob must not rely
+	// on ownerReference-following GC alone.
+	orphanPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      job.Name + "-orphan",
+			Namespace: "default",
+			Labels:    map[string]string{"job-name": job.Name},
+		},
+	}
+	if _, err := clientset.CoreV1().Pods("default").Create(context.Background(), orphanPod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := l.DeleteJob(context.Background(), job.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	pods, err := clientset.CoreV1().Pods("default").List(context.Background(), metav1.ListOptions{LabelSelector: "job-name=" + job.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods.Items) != 0 {
+		t.Fatalf("orphan pod still present after DeleteJob: %#v", pods.Items)
+	}
+}
+
 func TestCancelRunContinuesAfterOneJobDeleteFails(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	l := &Launcher{cfg: Config{Namespace: "default"}, clientset: clientset}

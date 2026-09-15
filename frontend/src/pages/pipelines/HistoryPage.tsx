@@ -1,27 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RotateCcw, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { RotateCcw, RefreshCw, Search } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { runColumns } from '@/features/runs/columns'
 import { RunDetailPanel } from '@/features/runs/components/RunDetailPanel'
-import { useRunsPaged, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
+import { useRunsPaged, useRerunRun } from '@/features/runs/hooks'
 import { useSchedules } from '@/features/schedules/hooks'
 import { RowActions } from '@/shared/components/RowActions'
-import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import type { Run } from '@/features/runs/api'
 
 const PAGE_SIZE = 20
@@ -33,9 +22,7 @@ function HistoryPageInner() {
   const { data } = runsQuery
   const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
-  const { mutateAsync: deleteRunAsync, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
-  const { target: deleteTarget, open: deleteOpen, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<Run>()
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -65,15 +52,6 @@ function HistoryPageInner() {
     [schedules],
   )
 
-  const handleDelete = (e: React.MouseEvent, run: Run) => {
-    e.stopPropagation()
-    requestDelete(run)
-  }
-
-  function confirmDelete() {
-    return confirmDeleteTarget(t => deleteRunAsync(t.id))
-  }
-
   const handleRerun = async (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
     try {
@@ -98,10 +76,6 @@ function HistoryPageInner() {
           disabled={row.original.status !== 'failed'}
           onClick={(e) => handleRerun(e, row.original)}
           className="text-yellow-400 hover:bg-yellow-400/10" />
-        <IconButton icon={<Trash2 />} label="Delete"
-          disabled={row.original.status === 'running' || (deleting && deletingId === row.original.id)}
-          onClick={(e) => handleDelete(e, row.original)}
-          className="text-destructive hover:bg-destructive/10" />
       </RowActions>
     ),
   }
@@ -119,11 +93,10 @@ function HistoryPageInner() {
 
   const columns = useMemo(
     () => [scheduleColumn, ...runColumns, actionColumn],
-    [scheduleColumn, deleting, deletingId],
+    [scheduleColumn],
   )
 
   return (
-    <>
     <DataBodyTemplate
       title="Run History"
       description="All pipeline run records. Each square in Steps represents one step's status."
@@ -173,28 +146,6 @@ function HistoryPageInner() {
         </DataBodyTemplate.Resource>
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
-
-    <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this run?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Run {deleteTarget?.id} and its artifacts will be permanently removed.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={deleting}
-            onClick={() => void confirmDelete()}
-          >
-            {deleting ? 'Deleting…' : 'Delete run'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-    </>
   )
 }
 

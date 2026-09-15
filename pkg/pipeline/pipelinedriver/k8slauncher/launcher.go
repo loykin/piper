@@ -200,6 +200,19 @@ func (l *Launcher) DeleteJob(ctx context.Context, name string) error {
 	}
 	_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecretName(name), metav1.DeleteOptions{})
 	l.unwatchJob(name)
+	// Defense-in-depth: standard Job GC deletes the Job's Pods by following
+	// their ownerReferences, which the Job controller is supposed to set —
+	// but a live QA pass found a Pod whose ownerReferences were completely
+	// empty despite its event log showing the standard Job-controller
+	// creation path, leaving it running 60s+ after the Job itself was gone.
+	// Don't depend solely on that: also look up and delete Pods by the same
+	// job-name label streamJobLogs uses to find them, best-effort, so a
+	// cluster with broken GC/ownerReferences doesn't leak Pods indefinitely.
+	if pods, listErr := l.clientset.CoreV1().Pods(l.cfg.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + name}); listErr == nil {
+		for _, pod := range pods.Items {
+			_ = l.clientset.CoreV1().Pods(l.cfg.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		}
+	}
 	return nil
 }
 

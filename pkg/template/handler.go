@@ -236,6 +236,27 @@ func (h *Handler) delete(c *gin.Context) {
 		return
 	}
 
+	// Refuse to delete a version a schedule still points at — matching
+	// pkg/credential's InUseChecker precedent (Delete refuses with a
+	// referencer-naming error instead of silently breaking the referencer).
+	// Past runs also carry a copy of this version's SnapshotPrefix in their
+	// own already-rewritten pipeline_yaml, but runs have no indexed
+	// template-version reference to check cheaply; this guard only covers
+	// the schedule case.
+	if h.deps.Schedules != nil {
+		schedules, err := h.deps.Schedules.List(c.Request.Context(), projectContext.ID, 0, 0)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		for _, sc := range schedules {
+			if sc.VersionID == t.ID {
+				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("pipeline template version is still referenced by schedule %q", sc.Name)})
+				return
+			}
+		}
+	}
+
 	// Delete S3 snapshot prefix (best-effort list then delete)
 	if h.deps.Store != nil && t.SnapshotID != "" {
 		prefix := "snapshots/" + t.SnapshotID + "/"

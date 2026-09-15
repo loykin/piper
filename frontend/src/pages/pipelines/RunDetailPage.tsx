@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
-import { RotateCcw, RefreshCw, XCircle, Trash2 } from 'lucide-react'
+import { RotateCcw, RefreshCw, XCircle } from 'lucide-react'
 import { DetailBodyTemplate } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
-import { useRun, useRunSteps, useDeleteRun, useCancelRun, useRerunRun, useRetryStep, useStepArtifacts } from '@/features/runs/hooks'
+import { useRun, useRunSteps, useCancelRun, useRerunRun, useRetryStep, useStepArtifacts } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
 import RunDAG from '@/shared/components/RunDAG'
 import { StepList } from '@/features/runs/components/StepList'
@@ -26,7 +26,6 @@ export default function RunDetailPage() {
 
   const { data: allArtifacts = [] } = useStepArtifacts(id!, selectedStep)
 
-  const { mutate: deleteRun, isPending: deletingRun } = useDeleteRun()
   const { mutate: cancelRun, isPending: cancellingRun } = useCancelRun()
   const { mutate: rerunRun } = useRerunRun()
   const { mutate: retryStep } = useRetryStep()
@@ -82,10 +81,6 @@ export default function RunDetailPage() {
             disabled={run.status !== 'failed'}
             onClick={() => rerunRun(run.id, { onSuccess: (data) => navigate(`/projects/${projectId}/runs/${data.run_id}`) })}
             className="text-yellow-400 hover:bg-yellow-950" />
-          <IconButton icon={<Trash2 />} label="Delete Run"
-            disabled={run.status === 'running'}
-            onClick={() => requestConfirm('delete')}
-            className="text-destructive hover:bg-destructive/10" />
         </div>
       }
     >
@@ -130,9 +125,7 @@ export default function RunDetailPage() {
       action={confirmAction}
       onOpenChange={open => { if (!open) cancelConfirm() }}
       cancelling={cancellingRun}
-      deleting={deletingRun}
       onConfirmCancel={() => cancelRun(run.id)}
-      onConfirmDelete={() => deleteRun(run.id, { onSuccess: () => navigate(`/projects/${projectId}/history`) })}
     />
     </>
   )

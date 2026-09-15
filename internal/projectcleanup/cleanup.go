@@ -23,6 +23,8 @@ import (
 	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/serving"
+	"github.com/loykin/piper/pkg/storage"
+	"github.com/loykin/piper/pkg/template"
 )
 
 // Deps holds everything CleanupLiveResources needs to reach live resources.
@@ -34,6 +36,8 @@ type Deps struct {
 	ServiceRepo  serving.Repository
 	Runs         *runlifecycle.Manager
 	RunRepo      run.Repository
+	Templates    template.Repository
+	Store        storage.Store // nil when object storage is not configured
 }
 
 // CleanupLiveResources stops and deletes every live run, notebook, notebook
@@ -53,6 +57,7 @@ func (d Deps) CleanupLiveResources(ctx context.Context, projectID string) error 
 	if err := d.cleanupServices(ctx, projectID); err != nil {
 		return fmt.Errorf("projectcleanup: services: %w", err)
 	}
+	d.cleanupTemplateSnapshots(ctx, projectID)
 	return nil
 }
 
@@ -145,4 +150,53 @@ func (d Deps) cleanupServices(ctx context.Context, projectID string) error {
 		}
 	}
 	return nil
+}
+
+// cleanupTemplateSnapshots deletes every pipeline template version's S3/
+// object-storage snapshot prefix owned by projectID. Template rows
+// themselves carry no live workload — the ON DELETE CASCADE FK removes them
+// safely once the project row goes, same as the CASCADE backstop package doc
+// describes — but the snapshot files a version's row merely references in
+// object storage are outside that CASCADE's reach and, without this step,
+// stay behind forever with nothing left pointing at them. Mirrors
+// pkg/template's own delete handler's snapshot cleanup, since project
+// deletion never goes through that handler. Best-effort and non-fatal, like
+// the handler's own version, since a storage hiccup here should not block
+// deleting the project.
+func (d Deps) cleanupTemplateSnapshots(ctx context.Context, projectID string) {
+	if d.Templates == nil || d.Store == nil {
+		return
+	}
+	const pageSize = 50
+	for offset := 0; ; offset += pageSize {
+		templates, err := d.Templates.List(ctx, projectID, template.Filter{Limit: pageSize, Offset: offset})
+		if err != nil {
+			slog.Warn("projectcleanup: list templates failed", "project_id", projectID, "err", err)
+			return
+		}
+		for _, t := range templates {
+			if t.SnapshotID == "" {
+				continue
+			}
+			prefix := "snapshots/" + t.SnapshotID + "/"
+			objs, err := d.Store.List(ctx, prefix, "")
+			if err != nil {
+				slog.Warn("projectcleanup: list template snapshot objects failed", "project_id", projectID, "template_id", t.ID, "err", err)
+				continue
+			}
+			if len(objs) == 0 {
+				continue
+			}
+			keys := make([]string, len(objs))
+			for i, o := range objs {
+				keys[i] = o.Key
+			}
+			if err := d.Store.Delete(ctx, keys...); err != nil {
+				slog.Warn("projectcleanup: delete template snapshot objects failed", "project_id", projectID, "template_id", t.ID, "err", err)
+			}
+		}
+		if len(templates) < pageSize {
+			return
+		}
+	}
 }

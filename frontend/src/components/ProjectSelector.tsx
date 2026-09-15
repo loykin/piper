@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useNavigate } from '@/lib/router'
 import { Check, ChevronsUpDown, FolderKanban, Plus, Trash2 } from 'lucide-react'
 import {
@@ -29,6 +28,7 @@ import { useDeleteProject } from '@/features/projects/hooks'
 import type { Project } from '@/features/projects/types'
 import { useAuth } from '@/features/auth/context'
 import { useProjectContext } from '@/lib/projectContext'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 // pkg/project/ref.go: LocalMemberID = "member-local" — every other value is a
 // remote federation Member with its own separate config (including its own
@@ -43,9 +43,7 @@ export function ProjectSelector() {
   const { user, capabilities } = useAuth()
   const deleteProject = useDeleteProject()
   const navigate = useNavigate()
-
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleteError, setDeleteError] = useState('')
+  const { target: deleteTarget, open: deleteOpen, error: deleteError, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<Project>()
 
   const currentProject = projects.find(p => p.id === projectId)
   const canManageProjects = !capabilities?.authentication || user?.system_admin === true
@@ -54,18 +52,11 @@ export function ProjectSelector() {
     navigate(`/projects/${id}/schedules`, { replace: true })
   }
 
-  const handleDelete = async () => {
-    if (!currentProject || currentProject.id === 'default' || projects.length <= 1) return
-    setDeleteError('')
-    try {
-      await deleteProject.mutateAsync(currentProject.id)
-      const nextProject = projects.find(project => project.id !== currentProject.id)
-      setDeleteOpen(false)
-      if (nextProject) handleSelect(nextProject.id)
-    } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : String(error))
-    }
-  }
+  const handleDelete = () => confirmDeleteTarget(async (project) => {
+    await deleteProject.mutateAsync(project.id)
+    const nextProject = projects.find(p => p.id !== project.id)
+    if (nextProject) handleSelect(nextProject.id)
+  })
 
   return (
     <>
@@ -130,7 +121,7 @@ export function ProjectSelector() {
               )}
               {canManageProjects && currentProject && currentProject.id !== 'default' && projects.length > 1 && (
                 <DropdownMenuItem
-                  onClick={() => setDeleteOpen(true)}
+                  onClick={() => requestDelete(currentProject)}
                   className="gap-2 p-2 text-destructive"
                 >
                   <div className="flex size-6 items-center justify-center rounded-sm border border-destructive/30">
@@ -144,10 +135,10 @@ export function ProjectSelector() {
         </SidebarMenuItem>
       </SidebarMenu>
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {currentProject?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               This permanently deletes the project and its project-scoped data. This action cannot be undone.
             </AlertDialogDescription>

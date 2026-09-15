@@ -102,18 +102,6 @@ export function useRunMetrics(runId: string) {
   })
 }
 
-export function useDeleteRun() {
-  const projectId = useProjectId()
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => api.deleteRun(projectId, id),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: runKeys.all(projectId) })
-      void qc.invalidateQueries({ queryKey: ['experiments', projectId] })
-    },
-  })
-}
-
 export function useCancelRun() {
   const projectId = useProjectId()
   const qc = useQueryClient()

@@ -240,16 +240,27 @@ func (a *Runtime) observe(ctx context.Context, handle pdriver.Handle) {
 	}
 }
 
+// logRetryWarnEvery bounds how often streamJobLogs logs a retrying failure —
+// often enough that a persistent problem (missing pods/log RBAC, a
+// NetworkPolicy blocking the kubelet log fetch, the pod evicted before the
+// stream opens) is visible in server logs within a few seconds, rare enough
+// that the expected handful of retries during normal pod/container startup
+// doesn't spam them.
+const logRetryWarnEvery = 10
+
 func streamJobLogs(ctx context.Context, client kubernetes.Interface, namespace, jobName string, task *proto.Task, sink logsink.LogSink) {
 	if client == nil || sink == nil {
 		return
 	}
 	var podName string
-	for podName == "" {
+	for attempt := 0; podName == ""; attempt++ {
 		pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + jobName})
 		if err == nil && len(pods.Items) > 0 {
 			podName = pods.Items[0].Name
 			break
+		}
+		if err != nil && attempt%logRetryWarnEvery == 0 {
+			slog.Warn("k8s pipeline: list job pod failed, retrying", "run_id", task.RunID, "step", task.StepName, "job", jobName, "err", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -260,8 +271,11 @@ func streamJobLogs(ctx context.Context, client kubernetes.Interface, namespace, 
 	// Pod discovery can win the race with container startup. Opening logs once
 	// in that window returns PodInitializing/ContainerCreating and used to make
 	// short Jobs permanently lose all UI logs. Retry until the container is
-	// readable or the task observer is canceled.
-	for {
+	// readable or the task observer is canceled — but surface a persistent
+	// failure instead of retrying forever in silence (this used to be exactly
+	// how a run could complete with zero rows ever written to logs/run_metrics
+	// and no trace of why anywhere).
+	for attempt := 0; ; attempt++ {
 		stream, err := client.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{Follow: true}).Stream(ctx)
 		if err == nil {
 			scanner := bufio.NewScanner(stream)
@@ -270,6 +284,9 @@ func streamJobLogs(ctx context.Context, client kubernetes.Interface, namespace, 
 			}
 			_ = stream.Close()
 			return
+		}
+		if attempt%logRetryWarnEvery == 0 {
+			slog.Warn("k8s pipeline: open pod log stream failed, retrying", "run_id", task.RunID, "step", task.StepName, "pod", podName, "err", err)
 		}
 		select {
 		case <-ctx.Done():

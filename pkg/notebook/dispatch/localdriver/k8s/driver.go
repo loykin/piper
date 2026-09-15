@@ -588,8 +588,14 @@ func (d *Driver) k8sLabels(kind, id string) map[string]string {
 	return k8smanifest.WorkloadLabels(d.cfg.ClusterName, kind, id)
 }
 
+// notebookWorkloadName applies SafeName to the fully-joined string, not each
+// fragment independently — capping projectID and name separately before
+// concatenation still let the joined "piper-nb-"+projectID+"-"+name overflow
+// Kubernetes' 63-character resource-name limit for long (project, notebook)
+// pairs, silently failing Pod creation with no error surfaced anywhere above
+// the k8s event log. Mirrors servingResourceName's already-correct approach.
 func notebookWorkloadName(projectID, name string) string {
-	return "piper-nb-" + k8smanifest.SafeName(projectID) + "-" + k8smanifest.SafeName(name)
+	return k8smanifest.SafeName("piper-nb-" + projectID + "-" + name)
 }
 
 func notebookPVCName(volumeID string) string {

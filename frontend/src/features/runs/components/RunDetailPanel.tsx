@@ -1,11 +1,11 @@
-import { RotateCcw, RefreshCw, XCircle, Trash2, X } from 'lucide-react'
+import { RotateCcw, RefreshCw, XCircle, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Link } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { useRun, useRunSteps, useDeleteRun, useCancelRun, useRerunRun } from '@/features/runs/hooks'
+import { useRun, useRunSteps, useCancelRun, useRerunRun } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { RunActionConfirmDialog, type RunConfirmVerb } from '@/features/runs/components/RunActionConfirmDialog'
 import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
@@ -17,7 +17,6 @@ export function RunDetailPanel({ id }: { id: string }) {
   const { data: run = null, isLoading } = useRun(id)
   const { data: steps = [] } = useRunSteps(id)
 
-  const { mutate: deleteRun, isPending: deleting } = useDeleteRun()
   const { mutate: cancelRun, isPending: cancelling } = useCancelRun()
   const { mutateAsync: rerunRun } = useRerunRun()
   const { action: confirmAction, requestAction: requestConfirm, cancel: cancelConfirm } = useConfirmAction<RunConfirmVerb>()
@@ -68,10 +67,6 @@ export function RunDetailPanel({ id }: { id: string }) {
             disabled={run.status !== 'failed'}
             onClick={rerun}
             className="text-yellow-400 hover:bg-yellow-950" />
-          <IconButton icon={<Trash2 />} label="Delete"
-            disabled={run.status === 'running'}
-            onClick={() => requestConfirm('delete')}
-            className="text-destructive hover:bg-destructive/10" />
           {closeBtn}
         </div>
       }
@@ -116,9 +111,7 @@ export function RunDetailPanel({ id }: { id: string }) {
       action={confirmAction}
       onOpenChange={open => { if (!open) cancelConfirm() }}
       cancelling={cancelling}
-      deleting={deleting}
       onConfirmCancel={() => cancelRun(run.id)}
-      onConfirmDelete={() => deleteRun(run.id, { onSuccess: () => void close() })}
     />
     </>
   )

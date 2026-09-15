@@ -73,10 +73,6 @@ export async function rerunRun(projectId: string, id: string): Promise<{ run_id:
   return projectApi(projectId).post<{ run_id: string }>(`/runs/${id}/rerun`)
 }
 
-export async function deleteRun(projectId: string, id: string): Promise<void> {
-  return projectApi(projectId).delete(`/runs/${id}`)
-}
-
 export async function getRunLogs(
   projectId: string,
   runID: string,

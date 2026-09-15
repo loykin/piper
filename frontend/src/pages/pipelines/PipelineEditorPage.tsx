@@ -756,16 +756,30 @@ export default function PipelineEditorPage() {
       return { name: pipelineName, yaml: buildPipelineDraftYaml(draft) }
     }
 
+    let parsed
     try {
-      const parsed = parsePipelineDraftYaml(yamlText)
-      // YAML is the authoritative document in this tab. Do not round-trip it
-      // through the intentionally smaller Design model: the server's strict
-      // manifest decoder must see the exact fields the user entered.
-      return { name: parsed.name, yaml: yamlText }
+      parsed = parsePipelineDraftYaml(yamlText)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       return null
     }
+    // Parsing alone only proves the YAML is well-formed — it skips the same
+    // required-field checks the Design tab runs, so a required field left
+    // empty in YAML used to pass through silently until the server rejected
+    // it. Validate the parsed draft the same way, but still submit yamlText
+    // verbatim (not a round-tripped rebuild) so the server's strict manifest
+    // decoder sees exactly what the user typed.
+    const runtimeMessage = validateRuntimePlacement(parsed.defaults)
+    if (runtimeMessage) {
+      setError(runtimeMessage)
+      return null
+    }
+    const messages = validatePipelineDraft(parsed)
+    if (messages.length > 0) {
+      setError(messages[0])
+      return null
+    }
+    return { name: parsed.name, yaml: yamlText }
   }
 
   async function handleSubmit() {

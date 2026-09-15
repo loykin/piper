@@ -306,14 +306,14 @@ function RuntimeSection({
             </FormField>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <FormField label="CPU" htmlFor="deploy-k8s-cpu">
-              <Input id="deploy-k8s-cpu" className="h-8 text-sm" value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" />
+            <FormField label="CPU" htmlFor="deploy-k8s-cpu" helperText="Optional — example only, leave blank to omit a CPU request.">
+              <Input id="deploy-k8s-cpu" className="h-8 text-sm placeholder:italic" value={form.k8sCPU} onChange={e => setField('k8sCPU', e.target.value)} placeholder="2" />
             </FormField>
-            <FormField label="Memory" htmlFor="deploy-k8s-memory">
-              <Input id="deploy-k8s-memory" className="h-8 text-sm" value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" />
+            <FormField label="Memory" htmlFor="deploy-k8s-memory" helperText="Optional — example only, leave blank to omit a memory request.">
+              <Input id="deploy-k8s-memory" className="h-8 text-sm placeholder:italic" value={form.k8sMemory} onChange={e => setField('k8sMemory', e.target.value)} placeholder="4Gi" />
             </FormField>
-            <FormField label="GPU" htmlFor="deploy-k8s-gpu">
-              <Input id="deploy-k8s-gpu" className="h-8 text-sm" value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" />
+            <FormField label="GPU" htmlFor="deploy-k8s-gpu" helperText="Optional — example only, leave blank to omit a GPU request.">
+              <Input id="deploy-k8s-gpu" className="h-8 text-sm placeholder:italic" value={form.k8sGPU} onChange={e => setField('k8sGPU', e.target.value)} placeholder="1" />
             </FormField>
           </div>
         </>

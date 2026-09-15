@@ -182,7 +182,15 @@ documented domain constraint requires an exception:
    row must call `event.stopPropagation()` so they do not also open the detail
    panel.
 8. Use `AlertDialog` only for explicit confirmation of destructive or
-   irreversible actions.
+   irreversible actions. Back the "which row/action is pending confirmation"
+   state with `shared/hooks/useDeleteTarget.ts` (delete flows) or
+   `useConfirmAction.ts` (multi-verb flows like cancel/delete on a detail
+   view) instead of a hand-rolled `useState`. Always wire the dialog's
+   `onOpenChange` as `open => { if (!open) cancel() }` — forwarding an
+   `onOpenChange(true)` straight into state is what let one dialog reopen
+   itself against a different target right after a successful action. A
+   single-candidate `Select`/dropdown that would otherwise need a manual
+   choice should use `useAutoSelectSole.ts` instead.
 9. Surface a failed list query with `shared/components/QueryErrorNotice.tsx`
    in `DataBodyTemplate.Resource`'s `notice` prop — `message`, `error`, and
    `onRetry={() => void query.refetch()}`. Don't hand-roll an error `<p>`;

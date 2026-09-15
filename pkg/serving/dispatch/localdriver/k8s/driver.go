@@ -38,6 +38,7 @@ import (
 	iprocess "github.com/loykin/piper/internal/process"
 	"github.com/loykin/piper/pkg/manifest"
 	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
+	"github.com/loykin/piper/pkg/manifest/k8s/orphantrack"
 	"github.com/loykin/piper/pkg/serving"
 	"github.com/loykin/piper/pkg/serving/servingdriver"
 )
@@ -92,9 +93,10 @@ type Driver struct {
 	storageURL   string
 	storageToken string
 
-	statusMu   sync.Mutex
-	lastStatus map[string]string
-	orphaned   map[string]bool
+	// orphans deduplicates repeated status reports and remembers
+	// "projectID:name" workloads whose DB row is gone (diagnosed once and
+	// ignored until restart).
+	orphans *orphantrack.Tracker
 
 	logMu      sync.Mutex
 	logGens    map[string]uint64
@@ -120,8 +122,7 @@ func New(cfg Config) (*Driver, error) {
 	}
 	return &Driver{
 		cfg:        cfg,
-		lastStatus: make(map[string]string),
-		orphaned:   make(map[string]bool),
+		orphans:    orphantrack.New(),
 		logGens:    make(map[string]uint64),
 		logCancels: make(map[string]context.CancelFunc),
 	}, nil
@@ -436,27 +437,11 @@ func (d *Driver) observeOnce(ctx context.Context) {
 	}
 }
 
-func (d *Driver) isOrphaned(key string) bool {
-	d.statusMu.Lock()
-	defer d.statusMu.Unlock()
-	return d.orphaned[key]
-}
+func (d *Driver) isOrphaned(key string) bool { return d.orphans.IsOrphaned(key) }
 
-func (d *Driver) markOrphaned(key string) {
-	d.statusMu.Lock()
-	d.orphaned[key] = true
-	d.statusMu.Unlock()
-}
+func (d *Driver) markOrphaned(key string) { d.orphans.MarkOrphaned(key) }
 
-func (d *Driver) statusChanged(key, status string) bool {
-	d.statusMu.Lock()
-	defer d.statusMu.Unlock()
-	if d.lastStatus[key] == status {
-		return false
-	}
-	d.lastStatus[key] = status
-	return true
-}
+func (d *Driver) statusChanged(key, status string) bool { return d.orphans.StatusChanged(key, status) }
 
 func observedDeploymentStatus(deployment *appsv1.Deployment) string {
 	desired := int32(1)

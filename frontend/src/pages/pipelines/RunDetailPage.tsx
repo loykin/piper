@@ -3,16 +3,6 @@ import { useParams, Link, useNavigate } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
 import { RotateCcw, RefreshCw, XCircle, Trash2 } from 'lucide-react'
 import { DetailBodyTemplate } from '@loykin/designkit'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { useRun, useRunSteps, useDeleteRun, useCancelRun, useRerunRun, useRetryStep, useStepArtifacts } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -21,13 +11,15 @@ import { StepList } from '@/features/runs/components/StepList'
 import { LogViewer } from '@/features/runs/components/LogViewer'
 import { ArtifactPanel } from '@/features/runs/components/ArtifactPanel'
 import { MLflowRunLinks } from '@/features/mlflow/components/MLflowRunLinks'
+import { RunActionConfirmDialog, type RunConfirmVerb } from '@/features/runs/components/RunActionConfirmDialog'
+import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const projectId = useProjectId()
   const [selectedStep, setSelectedStep] = useState<string | null>(null)
-  const [confirmAction, setConfirmAction] = useState<'cancel' | 'delete' | null>(null)
+  const { action: confirmAction, requestAction: requestConfirm, cancel: cancelConfirm } = useConfirmAction<RunConfirmVerb>()
 
   const { data: run = null, isLoading, isError } = useRun(id!)
   const { data: steps = [] } = useRunSteps(id!)
@@ -80,7 +72,7 @@ export default function RunDetailPage() {
         <div className="flex items-center gap-0.5">
           <IconButton icon={<XCircle />} label="Cancel Run"
             disabled={run.status !== 'running' && run.status !== 'scheduled'}
-            onClick={() => setConfirmAction('cancel')}
+            onClick={() => requestConfirm('cancel')}
             className="text-orange-400 hover:bg-orange-950" />
           <IconButton icon={<RotateCcw />} label="Rerun"
             disabled={run.status === 'running' || run.status === 'scheduled'}
@@ -92,7 +84,7 @@ export default function RunDetailPage() {
             className="text-yellow-400 hover:bg-yellow-950" />
           <IconButton icon={<Trash2 />} label="Delete Run"
             disabled={run.status === 'running'}
-            onClick={() => setConfirmAction('delete')}
+            onClick={() => requestConfirm('delete')}
             className="text-destructive hover:bg-destructive/10" />
         </div>
       }
@@ -133,39 +125,15 @@ export default function RunDetailPage() {
       </DetailBodyTemplate.Section>
     </DetailBodyTemplate>
 
-    <AlertDialog open={confirmAction != null} onOpenChange={open => { if (!open) setConfirmAction(null) }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {confirmAction === 'cancel' ? 'Cancel this run?' : 'Delete this run?'}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {confirmAction === 'cancel'
-              ? `Run ${run.id} will be stopped immediately.`
-              : `Run ${run.id} and its artifacts will be permanently removed.`}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Back</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={confirmAction === 'cancel' ? cancellingRun : deletingRun}
-            onClick={() => {
-              if (confirmAction === 'cancel') {
-                cancelRun(run.id)
-              } else if (confirmAction === 'delete') {
-                deleteRun(run.id, { onSuccess: () => navigate(`/projects/${projectId}/history`) })
-              }
-              setConfirmAction(null)
-            }}
-          >
-            {confirmAction === 'cancel'
-              ? (cancellingRun ? 'Cancelling…' : 'Cancel run')
-              : (deletingRun ? 'Deleting…' : 'Delete run')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <RunActionConfirmDialog
+      runId={run.id}
+      action={confirmAction}
+      onOpenChange={open => { if (!open) cancelConfirm() }}
+      cancelling={cancellingRun}
+      deleting={deletingRun}
+      onConfirmCancel={() => cancelRun(run.id)}
+      onConfirmDelete={() => deleteRun(run.id, { onSuccess: () => navigate(`/projects/${projectId}/history`) })}
+    />
     </>
   )
 }

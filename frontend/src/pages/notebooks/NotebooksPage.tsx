@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { getNotebookColumns } from '@/features/notebooks/columns'
 import { NotebookDetailPanel } from '@/features/notebooks/components/NotebookDetailPanel'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import {
   useNotebooks, useNotebookVolumes,
   useStopNotebook, useStartNotebook, useDeleteNotebook,
@@ -42,8 +43,8 @@ function NotebooksPageInner() {
 
   const { mutate: stop, isPending: stopping, variables: stoppingName } = useStopNotebook()
   const { mutate: start, isPending: starting, variables: startingName } = useStartNotebook()
-  const { mutate: del, isPending: deleting, variables: deletingName } = useDeleteNotebook()
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const { mutateAsync: deleteAsync, isPending: deleting, variables: deletingName } = useDeleteNotebook()
+  const { target: deleteTarget, open: deleteOpen, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<string>()
 
   const busy = stopping ? (stoppingName ?? null)
     : starting ? (startingName ?? null)
@@ -52,11 +53,11 @@ function NotebooksPageInner() {
 
   const handleStop   = (name: string) => stop(name)
   const handleStart  = (name: string) => start(name)
-  const handleDelete = (name: string) => setDeleteTarget(name)
+  const handleDelete = (name: string) => requestDelete(name)
 
   const columns = useMemo(
     () => getNotebookColumns(busy, handleStop, handleStart, handleDelete, projectId),
-    [busy],
+    [busy, handleDelete],
   )
 
   return (
@@ -132,7 +133,7 @@ function NotebooksPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+    <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this notebook?</AlertDialogTitle>
@@ -145,11 +146,7 @@ function NotebooksPageInner() {
           <AlertDialogAction
             variant="destructive"
             disabled={deleting}
-            onClick={() => {
-              if (!deleteTarget) return
-              del(deleteTarget)
-              setDeleteTarget(null)
-            }}
+            onClick={() => void confirmDeleteTarget(name => deleteAsync(name))}
           >
             {deleting ? 'Deleting…' : 'Delete notebook'}
           </AlertDialogAction>

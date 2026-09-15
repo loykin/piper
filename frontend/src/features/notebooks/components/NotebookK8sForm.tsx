@@ -95,11 +95,11 @@ function K8sFieldsSection({
       <FormField label="Image" htmlFor="k8s-image" helperText="Required container image for the notebook server.">
         <Input id="k8s-image" className="h-8 text-sm" value={k8sForm.image} onChange={e => setK8sField('image', e.target.value)} placeholder="jupyter/scipy-notebook:latest" />
       </FormField>
-      <FormField label="Namespace" htmlFor="k8s-namespace" helperText="Required. Kubernetes namespace where the notebook and its volume will be created.">
-        <Input id="k8s-namespace" className="h-8 text-sm" value={k8sForm.namespace} onChange={e => setK8sField('namespace', e.target.value)} placeholder="notebooks" />
+      <FormField label="Namespace" htmlFor="k8s-namespace" helperText="Required. Kubernetes namespace where the notebook and its volume will be created. Defaults to notebooks.">
+        <Input id="k8s-namespace" className="h-8 text-sm" value={k8sForm.namespace} onChange={e => setK8sField('namespace', e.target.value)} />
       </FormField>
       <FormField label="Storage Size" htmlFor="k8s-storage-size" helperText="Required PVC size. Defaults to 10Gi.">
-        <Input id="k8s-storage-size" className="h-8 text-sm" value={k8sForm.storageSize} onChange={e => setK8sField('storageSize', e.target.value)} placeholder="10Gi" />
+        <Input id="k8s-storage-size" className="h-8 text-sm" value={k8sForm.storageSize} onChange={e => setK8sField('storageSize', e.target.value)} />
       </FormField>
       <FormField label="Prepare Commands" htmlFor="k8s-prepare" helperText="One command per line. Runs before notebook start.">
         <ShellMirror

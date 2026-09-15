@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link } from '@/lib/router'
 import { RefreshCw, Square, Trash2, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
@@ -18,6 +17,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useService, useStopService, useRestartService } from '@/features/serving/hooks'
 import { useProjectId } from '@/lib/projectContext'
+import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
 
 export function ServingDetailPanel({ name }: { name: string }) {
   const { close } = useSidePanel()
@@ -25,7 +25,7 @@ export function ServingDetailPanel({ name }: { name: string }) {
   const { data: service, isLoading } = useService(name)
   const { mutateAsync: stopService, isPending: stopping } = useStopService()
   const { mutateAsync: restartService } = useRestartService()
-  const [confirmAction, setConfirmAction] = useState<'stop' | 'delete' | null>(null)
+  const { action: confirmAction, requestAction: requestConfirm, cancel: cancelConfirm } = useConfirmAction<'stop' | 'delete'>()
 
   const closeBtn = (
     <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
@@ -62,7 +62,7 @@ export function ServingDetailPanel({ name }: { name: string }) {
       await stopService(name)
       if (confirmAction === 'delete') void close()
     } catch { /* no-op */ } finally {
-      setConfirmAction(null)
+      cancelConfirm()
     }
   }
 
@@ -78,11 +78,11 @@ export function ServingDetailPanel({ name }: { name: string }) {
             <IconButton icon={<RefreshCw />} label="Restart" onClick={handleRestart} />
           )}
           {service.status !== 'stopped' && (
-            <IconButton icon={<Square />} label="Stop" onClick={() => setConfirmAction('stop')}
+            <IconButton icon={<Square />} label="Stop" onClick={() => requestConfirm('stop')}
               className="text-destructive hover:bg-destructive/10" />
           )}
           {service.status === 'stopped' && (
-            <IconButton icon={<Trash2 />} label="Delete" onClick={() => setConfirmAction('delete')}
+            <IconButton icon={<Trash2 />} label="Delete" onClick={() => requestConfirm('delete')}
               className="text-destructive hover:bg-destructive/10" />
           )}
           {closeBtn}
@@ -122,7 +122,7 @@ export function ServingDetailPanel({ name }: { name: string }) {
       </PanelTemplate.Section>
     </PanelTemplate>
 
-    <AlertDialog open={confirmAction != null} onOpenChange={open => { if (!open) setConfirmAction(null) }}>
+    <AlertDialog open={confirmAction != null} onOpenChange={open => { if (!open) cancelConfirm() }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>

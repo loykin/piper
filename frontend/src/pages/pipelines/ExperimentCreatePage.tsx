@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useNavigate } from '@tanstack/react-router'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import {
   DataBodyTemplate,
@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { usePipelines } from '@/features/pipelines/hooks'
 import { useCreateSweep } from '@/features/runs/hooks'
 import { useProjectId } from '@/lib/projectContext'
+import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 
 const schema = z.object({
   experiment: z.string().trim().min(1, 'Experiment name is required.'),
@@ -50,16 +51,14 @@ export default function ExperimentCreatePage() {
     resolver: zodResolver(schema),
     defaultValues: { experiment: '', pipelineId: '', trials: '[\n  {"learning_rate": 0.01},\n  {"learning_rate": 0.1}\n]' },
   })
-  // @base-ui/react's Select never calls onValueChange when it has exactly
-  // one item (confirmed with pure keyboard input too, so it isn't an
-  // automation-click artifact — docs/qa/adversarial-qa-playbook.md §3c): the
-  // trigger visually shows the sole pipeline selected, but the field this
-  // form submits stays empty. A project with exactly one pipeline is a
-  // completely ordinary state, not an edge case.
+  const pipelineId = useWatch({ control, name: 'pipelineId' })
+  useAutoSelectSole(
+    pipelines,
+    pipelineId,
+    pipeline => pipeline.id,
+    v => setValue('pipelineId', v, { shouldValidate: true }),
+  )
   const solePipeline = pipelines.length === 1 ? pipelines[0].id : null
-  useEffect(() => {
-    if (solePipeline) setValue('pipelineId', solePipeline, { shouldValidate: true })
-  }, [solePipeline, setValue])
 
   async function submit(values: Values) {
     setSubmitError('')

@@ -123,13 +123,12 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
         void handleSubmit()
       }}
     >
-      <FormField label="Pipeline Name" htmlFor="schedule-pipeline-name">
+      <FormField label="Pipeline Name" htmlFor="schedule-pipeline-name" helperText="Defaults to my-pipeline.">
         <Input
           id="schedule-pipeline-name"
           className="h-8 text-sm"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="my-pipeline"
         />
       </FormField>
 

@@ -20,6 +20,7 @@ import (
 	"github.com/loykin/piper/internal/event"
 	"github.com/loykin/piper/internal/memberclient"
 	"github.com/loykin/piper/internal/projectclient"
+	"github.com/loykin/piper/internal/retention"
 	"github.com/loykin/piper/internal/ui"
 	"github.com/loykin/piper/pkg/credential"
 	"github.com/loykin/piper/pkg/federation"
@@ -112,19 +113,10 @@ func (p *Piper) Serve(ctx context.Context, opt ServeOption) error {
 	// Mark viewers left in starting/running from a previous run as failed.
 	viewerMgr.MarkStaleFailed(ctx)
 
-	// TTL cleanup: stop expired viewers every 5 minutes.
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				viewerMgr.CleanupExpired(ctx)
-			}
-		}
-	}()
+	// TTL cleanup: stop expired viewers, folded into the shared retention
+	// Runner so it rides runCleanup's existing 15s ticker instead of a
+	// separate standalone goroutine/ticker.
+	p.retention.Register("viewer_expired", retention.JobFunc(viewerMgr.CleanupExpired))
 
 	handler := p.newRouterWithFederation(opt.Extra, viewerMgr, opt.Member, opt.ProjectMember, opt.ProjectRef, opt.ProjectOwner, opt.HomeID)
 
@@ -237,6 +229,14 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	}
 	projectHandler := project.NewHandlerWithDirectory(p.repos.Project, p.cfg.Auth.Authorizer, projectOwner, projectCreator)
 	projectHandler.WithBeforeDelete(func(ctx context.Context, value *project.Project) error {
+		// Stop and delete every live run/notebook/service first — this is
+		// the finalizer's real cleanup, and its ordering relative to stats
+		// purging below matters: if it fails and aborts the delete, stats
+		// must NOT already be gone, or the project would survive with its
+		// stats wiped out from under it.
+		if err := p.CleanupProjectLiveResources(ctx, value.ID); err != nil {
+			return fmt.Errorf("clean up live resources: %w", err)
+		}
 		ref := projectRef(value.ID)
 		if value.OwnerMemberID != "" {
 			ref.MemberID = value.OwnerMemberID

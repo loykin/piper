@@ -555,6 +555,7 @@ func New(cfg Config) (*Piper, error) {
 	p.retention.Register("stats", retention.JobFunc(p.cleanupStats))
 	p.retention.Register("notebook_history", retention.TTLPurge("notebook_history", cfg.Retention.NotebookHistoryTTL, repos.Notebook.PurgeHistoryBefore))
 	p.retention.Register("service_history", retention.TTLPurge("service_history", cfg.Retention.ServiceHistoryTTL, repos.Serving.PurgeHistoryBefore))
+	p.retention.Register("orphan_artifacts", retention.JobFunc(p.cleanupOrphanArtifacts))
 
 	backend, pipelineObserver, err := composePipelineRuntime(cfg, bgCtx, repos, q, p.events)
 	if err != nil {
@@ -740,7 +741,6 @@ func (p *Piper) runCleanup(ctx context.Context) {
 			p.reconcileBackend(ctx)
 			p.queue.Cleanup(ctx, 4*time.Hour)
 			p.retention.Run(ctx)
-			p.cleanupOrphanArtifacts(ctx)
 			if tick%recoveryReconcileEvery == 0 {
 				p.runs.RecoverInterruptedRuns(ctx)
 			}

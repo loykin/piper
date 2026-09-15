@@ -21,6 +21,7 @@ import { RunDetailPanel } from '@/features/runs/components/RunDetailPanel'
 import { useRunsPaged, useDeleteRun, useRerunRun } from '@/features/runs/hooks'
 import { useSchedules } from '@/features/schedules/hooks'
 import { RowActions } from '@/shared/components/RowActions'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import type { Run } from '@/features/runs/api'
 
 const PAGE_SIZE = 20
@@ -32,9 +33,9 @@ function HistoryPageInner() {
   const { data } = runsQuery
   const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
-  const { mutate: deleteRun, isPending: deleting, variables: deletingId } = useDeleteRun()
+  const { mutateAsync: deleteRunAsync, isPending: deleting, variables: deletingId } = useDeleteRun()
   const { mutateAsync: rerunRun } = useRerunRun()
-  const [deleteTarget, setDeleteTarget] = useState<Run | null>(null)
+  const { target: deleteTarget, open: deleteOpen, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<Run>()
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -66,13 +67,11 @@ function HistoryPageInner() {
 
   const handleDelete = (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
-    setDeleteTarget(run)
+    requestDelete(run)
   }
 
   function confirmDelete() {
-    if (!deleteTarget) return
-    deleteRun(deleteTarget.id)
-    setDeleteTarget(null)
+    return confirmDeleteTarget(t => deleteRunAsync(t.id))
   }
 
   const handleRerun = async (e: React.MouseEvent, run: Run) => {
@@ -175,7 +174,7 @@ function HistoryPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+    <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this run?</AlertDialogTitle>
@@ -188,7 +187,7 @@ function HistoryPageInner() {
           <AlertDialogAction
             variant="destructive"
             disabled={deleting}
-            onClick={confirmDelete}
+            onClick={() => void confirmDelete()}
           >
             {deleting ? 'Deleting…' : 'Delete run'}
           </AlertDialogAction>

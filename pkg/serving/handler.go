@@ -18,6 +18,7 @@ type HandlerDeps struct {
 	Deploy   func(ctx context.Context, projectID string, yaml []byte) (*Service, error)
 	Stop     func(ctx context.Context, projectID, name string) error
 	Restart  func(ctx context.Context, projectID, name string) error
+	Delete   func(ctx context.Context, projectID, name string) error
 	Proxy    http.Handler
 }
 
@@ -148,22 +149,11 @@ func (h *Handler) getService(c *gin.Context) {
 // DELETE /services/:name
 func (h *Handler) deleteService(c *gin.Context) {
 	name := c.Param("name")
-	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if svc == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
-		return
-	}
-	if h.deps.Stop != nil {
-		if err := h.deps.Stop(c.Request.Context(), currentProjectID(c), name); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.deps.Delete(c.Request.Context(), currentProjectID(c), name); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 			return
 		}
-	}
-	if err := h.deps.Services.Delete(c.Request.Context(), currentProjectID(c), name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   DataBodyTemplate,
@@ -12,11 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@loykin/designkit'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useAddMember, useMemberCandidates } from '@/features/access/hooks'
 import { useProjectId } from '@/lib/projectContext'
 import { useNavigate } from '@/lib/router'
+import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 
 const memberSchema = z.object({
   username: z.string().trim().min(1, 'Username is required.'),
@@ -43,18 +44,14 @@ export default function MemberCreatePage() {
 
   const listPath = `/projects/${projectId}/members`
 
-  // @base-ui/react's Select never calls onValueChange when it has exactly
-  // one item — confirmed with pure keyboard input too, so it isn't an
-  // automation-click artifact (docs/qa/adversarial-qa-playbook.md §3c): the
-  // trigger visually shows the sole candidate selected, but the callback
-  // this form relies on to update RHF's state never fires, so Add Member
-  // always submits an empty username. With only one candidate there is
-  // nothing to actually choose between anyway, so route around the buggy
-  // interaction entirely by auto-selecting it.
+  const username = useWatch({ control, name: 'username' })
+  useAutoSelectSole(
+    candidates,
+    username,
+    candidate => candidate.username,
+    v => setValue('username', v, { shouldValidate: true }),
+  )
   const soleCandidate = candidates.length === 1 ? candidates[0].username : null
-  useEffect(() => {
-    if (soleCandidate) setValue('username', soleCandidate, { shouldValidate: true })
-  }, [soleCandidate, setValue])
 
   async function submit(values: MemberValues) {
     setSubmitError('')

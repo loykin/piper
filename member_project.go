@@ -101,6 +101,7 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 		Deploy:   p.DeployService,
 		Stop:     p.StopService,
 		Restart:  p.RestartService,
+		Delete:   p.DeleteService,
 		Proxy:    p.serving.proxy,
 	})
 	servingHandler.RegisterRoutes(projectAPI)

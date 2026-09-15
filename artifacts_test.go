@@ -241,6 +241,33 @@ func TestPiperCleanupOrphanArtifacts_ExcludesDefaultLocalStoreRoot(t *testing.T)
 	}
 }
 
+// TestPiperRetentionRunnerInvokesOrphanArtifactSweep asserts that
+// "orphan_artifacts" is actually wired into p.retention (New() registers it
+// next to "runs"/"stats"/"notebook_history"/"service_history") rather than
+// only checking Piper.cleanupOrphanArtifacts in isolation like the tests
+// above. retention.Runner exposes no way to list registered job names, so
+// this drives the registration indirectly: running p.retention.Run must
+// produce the same orphan-sweep side effect as calling
+// p.cleanupOrphanArtifacts directly.
+func TestPiperRetentionRunnerInvokesOrphanArtifactSweep(t *testing.T) {
+	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
+
+	old := time.Now().Add(-time.Hour)
+	orphanDir := filepath.Join(p.cfg.OutputDir, "run-orphan")
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(orphanDir, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	p.retention.Run(context.Background())
+
+	if _, err := os.Stat(orphanDir); !os.IsNotExist(err) {
+		t.Fatalf("expected p.retention.Run to invoke the registered orphan_artifacts job and remove the orphaned workspace dir, err=%v", err)
+	}
+}
+
 // TestPiperCleanupOrphanArtifacts_RelativeOutputDirExcludesStore is a
 // regression test for a real bug found during local QA (fed.md §14): when
 // OutputDir is a relative path (e.g. "./piper-data", the common case for a

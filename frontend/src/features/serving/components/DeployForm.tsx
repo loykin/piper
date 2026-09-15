@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
+import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 import { useRuns } from '@/features/runs/hooks'
 import type { Run } from '@/features/runs/api'
 import { listArtifacts, type StepArtifacts } from '@/features/runs/api'
@@ -97,6 +98,7 @@ function ServiceSection({ name, error, onChange }: ServiceSectionProps) {
 
 interface ModelSourceSectionProps {
   form: FormState
+  errors: FieldErrors<FormState>
   pipelines: string[]
   pipelineRuns: Run[]
   steps: string[]
@@ -104,27 +106,17 @@ interface ModelSourceSectionProps {
   setField: <K extends keyof FormState>(key: K, value: FormState[K]) => void
 }
 
-function ModelSourceSection({ form, pipelines, pipelineRuns, steps, artifactNames, setField }: ModelSourceSectionProps) {
-  // @base-ui/react's Select never calls onValueChange when it has exactly
-  // one item (confirmed with pure keyboard input too, so it isn't an
-  // automation-click artifact — docs/qa/adversarial-qa-playbook.md §3c): the
-  // trigger visually shows the sole option selected, but the underlying
-  // field this form submits stays empty. Auto-apply the sole option instead
-  // of relying on an interaction the component won't commit — a pipeline
-  // with one step producing one artifact is an entirely ordinary shape.
-  useEffect(() => {
-    if (!form.pipeline && pipelines.length === 1) setField('pipeline', pipelines[0])
-  }, [form.pipeline, pipelines, setField])
-  useEffect(() => {
-    if (!form.step && steps.length === 1) setField('step', steps[0])
-  }, [form.step, steps, setField])
-  useEffect(() => {
-    if (!form.artifact && artifactNames.length === 1) setField('artifact', artifactNames[0])
-  }, [form.artifact, artifactNames, setField])
+function ModelSourceSection({ form, errors, pipelines, pipelineRuns, steps, artifactNames, setField }: ModelSourceSectionProps) {
+  // Auto-apply the sole option instead of relying on an interaction the
+  // Select component won't commit — a pipeline with one step producing one
+  // artifact is an entirely ordinary shape (see useAutoSelectSole).
+  useAutoSelectSole(pipelines, form.pipeline, p => p, v => setField('pipeline', v))
+  useAutoSelectSole(steps, form.step, s => s, v => setField('step', v))
+  useAutoSelectSole(artifactNames, form.artifact, a => a, v => setField('artifact', v))
   return (
     <DataBodyTemplate.Group layout="stacked" title="Model Source">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <FormField label="Pipeline" htmlFor="deploy-pipeline">
+        <FormField label="Pipeline" htmlFor="deploy-pipeline" error={errors.pipeline?.message}>
           {pipelines.length === 1 ? (
             <Input id="deploy-pipeline" className="h-8 text-sm" value={pipelines[0]} disabled readOnly />
           ) : (
@@ -162,7 +154,7 @@ function ModelSourceSection({ form, pipelines, pipelineRuns, steps, artifactName
         </FormField>
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <FormField label="Step" htmlFor="deploy-step">
+        <FormField label="Step" htmlFor="deploy-step" error={errors.step?.message}>
           {steps.length === 1 ? (
             <Input id="deploy-step" className="h-8 text-sm" value={steps[0]} disabled readOnly />
           ) : (
@@ -174,7 +166,7 @@ function ModelSourceSection({ form, pipelines, pipelineRuns, steps, artifactName
             </Select>
           )}
         </FormField>
-        <FormField label="Artifact" htmlFor="deploy-artifact">
+        <FormField label="Artifact" htmlFor="deploy-artifact" error={errors.artifact?.message}>
           {artifactNames.length === 1 ? (
             <Input id="deploy-artifact" className="h-8 text-sm" value={artifactNames[0]} disabled readOnly />
           ) : (
@@ -255,12 +247,11 @@ function RuntimeSection({
             className="h-8 text-sm"
             value={form.port}
             onChange={e => setField('port', e.target.value)}
-            placeholder="8000"
             aria-invalid={!!errors.port}
           />
         </FormField>
-        <FormField label="Health Path" htmlFor="deploy-health-path">
-          <Input id="deploy-health-path" className="h-8 text-sm" value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} placeholder="/" />
+        <FormField label="Health Path" htmlFor="deploy-health-path" error={errors.healthPath?.message}>
+          <Input id="deploy-health-path" className="h-8 text-sm" value={form.healthPath} onChange={e => setField('healthPath', e.target.value)} />
         </FormField>
       </div>
 
@@ -328,7 +319,7 @@ function RuntimeSection({
         </>
       )}
 
-      <FormField label="Command" htmlFor="deploy-command" helperText="One argument per line. $PIPER_MODEL_DIR points to the artifact directory.">
+      <FormField label="Command" htmlFor="deploy-command" error={errors.command?.message} helperText="One argument per line. $PIPER_MODEL_DIR points to the artifact directory.">
         <YamlMirror
           className="bg-background"
           rows={4}
@@ -528,6 +519,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
 
             <ModelSourceSection
               form={form}
+              errors={errors}
               pipelines={pipelines}
               pipelineRuns={pipelineRuns}
               steps={steps}

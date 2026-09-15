@@ -22,6 +22,7 @@ import type { ProjectMember } from '@/features/access/types'
 import { useProjectId } from '@/lib/projectContext'
 import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 const PAGE_SIZE = 20
 
@@ -33,8 +34,7 @@ function MembersPageInner() {
   const membersQuery = useMembersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = membersQuery.data?.total ?? 0
   const removeMember = useRemoveMember()
-  const [removeTarget, setRemoveTarget] = useState<ProjectMember | null>(null)
-  const [actionError, setActionError] = useState('')
+  const { target: removeTarget, open: removeOpen, error: actionError, requestDelete: requestRemove, cancel: cancelRemove, confirm: confirmRemoveTarget } = useDeleteTarget<ProjectMember>()
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -45,15 +45,8 @@ function MembersPageInner() {
     return list.filter(m => (m.username ?? '').toLowerCase().includes(q))
   }, [membersQuery.data, nameFilter])
 
-  async function confirmRemove() {
-    if (!removeTarget) return
-    setActionError('')
-    try {
-      await removeMember.mutateAsync(removeTarget.user_id)
-      setRemoveTarget(null)
-    } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : String(cause))
-    }
+  function confirmRemove() {
+    return confirmRemoveTarget(t => removeMember.mutateAsync(t.user_id))
   }
 
   return (
@@ -106,7 +99,7 @@ function MembersPageInner() {
               rowHeight={44}
               rowCursor
               onRowClick={member => open(
-                <MemberDetailPanel member={member} onRemove={setRemoveTarget} />,
+                <MemberDetailPanel member={member} onRemove={requestRemove} />,
                 { size: 520 },
               )}
               classNames={{ footer: 'pt-3' }}
@@ -122,7 +115,7 @@ function MembersPageInner() {
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 
-      <AlertDialog open={removeTarget != null} onOpenChange={open => { if (!open) setRemoveTarget(null) }}>
+      <AlertDialog open={removeOpen} onOpenChange={open => { if (!open) cancelRemove() }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this project member?</AlertDialogTitle>

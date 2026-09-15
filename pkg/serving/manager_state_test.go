@@ -287,6 +287,58 @@ func TestManagerDeployArchivesPreviousVersionToHistory(t *testing.T) {
 	}
 }
 
+func TestManagerDeleteStopsRunningServiceThenDeletes(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning}}
+	m := New(repo, &stateTestDriver{})
+
+	if err := m.Delete(context.Background(), "project-a", "demo"); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+	if repo.service != nil {
+		t.Fatalf("service = %+v, want deleted", repo.service)
+	}
+}
+
+func TestManagerDeleteSkipsStopWhenAlreadyStopped(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusStopped}}
+	driver := &stateTestDriver{}
+	m := New(repo, driver)
+
+	if err := m.Delete(context.Background(), "project-a", "demo"); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+	if repo.service != nil {
+		t.Fatalf("service = %+v, want deleted", repo.service)
+	}
+}
+
+func TestManagerDeleteNotFound(t *testing.T) {
+	repo := &stateTestRepo{}
+	m := New(repo, &stateTestDriver{})
+
+	err := m.Delete(context.Background(), "project-a", "missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestManagerDeletePropagatesStopFailureAndKeepsRecord(t *testing.T) {
+	stopErr := errors.New("driver unavailable")
+	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning}}
+	m := New(repo, &stateTestDriver{stopErr: stopErr})
+
+	if err := m.Delete(context.Background(), "project-a", "demo"); !errors.Is(err, stopErr) {
+		t.Fatalf("Delete() error = %v, want %v", err, stopErr)
+	}
+	got, err := repo.Get(context.Background(), "project-a", "demo")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("service was deleted despite stop failure")
+	}
+}
+
 func cloneService(svc *Service) *Service {
 	if svc == nil {
 		return nil

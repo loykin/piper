@@ -43,6 +43,7 @@ import (
 	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/pkg/manifest"
 	k8smanifest "github.com/loykin/piper/pkg/manifest/k8s"
+	"github.com/loykin/piper/pkg/manifest/k8s/orphantrack"
 	"github.com/loykin/piper/pkg/notebook"
 )
 
@@ -83,9 +84,10 @@ type Config struct {
 type Driver struct {
 	cfg Config
 
-	statusMu   sync.Mutex
-	lastStatus map[string]string // "projectID:name" -> last reported status, for change dedup
-	orphaned   map[string]bool   // DB-missing workloads, diagnosed once and ignored until restart
+	// orphans deduplicates repeated status reports and remembers
+	// "projectID:name" workloads whose DB row is gone (diagnosed once and
+	// ignored until restart).
+	orphans *orphantrack.Tracker
 
 	logMu      sync.Mutex
 	logGens    map[string]uint64
@@ -111,8 +113,7 @@ func New(cfg Config) (*Driver, error) {
 	}
 	return &Driver{
 		cfg:        cfg,
-		lastStatus: make(map[string]string),
-		orphaned:   make(map[string]bool),
+		orphans:    orphantrack.New(),
 		logGens:    make(map[string]uint64),
 		logCancels: make(map[string]context.CancelFunc),
 	}, nil
@@ -462,27 +463,11 @@ func (d *Driver) observeNamespace(ctx context.Context, ns string) {
 	}
 }
 
-func (d *Driver) isOrphaned(key string) bool {
-	d.statusMu.Lock()
-	defer d.statusMu.Unlock()
-	return d.orphaned[key]
-}
+func (d *Driver) isOrphaned(key string) bool { return d.orphans.IsOrphaned(key) }
 
-func (d *Driver) markOrphaned(key string) {
-	d.statusMu.Lock()
-	d.orphaned[key] = true
-	d.statusMu.Unlock()
-}
+func (d *Driver) markOrphaned(key string) { d.orphans.MarkOrphaned(key) }
 
-func (d *Driver) statusChanged(key, status string) bool {
-	d.statusMu.Lock()
-	defer d.statusMu.Unlock()
-	if d.lastStatus[key] == status {
-		return false
-	}
-	d.lastStatus[key] = status
-	return true
-}
+func (d *Driver) statusChanged(key, status string) bool { return d.orphans.StatusChanged(key, status) }
 
 // ensureNotebookLogStream starts a PodLogs stream for a running notebook if
 // one is not already active. A no-op when LogClient is not configured.

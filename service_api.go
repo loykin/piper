@@ -132,6 +132,10 @@ func (p *Piper) StopService(ctx context.Context, projectID, name string) error {
 	return p.serving.manager.Stop(ctx, projectID, name)
 }
 
+func (p *Piper) DeleteService(ctx context.Context, projectID, name string) error {
+	return p.serving.manager.Delete(ctx, projectID, name)
+}
+
 func (p *Piper) RestartService(ctx context.Context, projectID, name string) error {
 	rec, err := p.repos.Serving.Get(ctx, projectID, name)
 	if err != nil || rec == nil {

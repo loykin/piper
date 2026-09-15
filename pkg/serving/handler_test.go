@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,11 +181,12 @@ func TestGetServiceFound(t *testing.T) {
 
 func TestDeleteService(t *testing.T) {
 	repo := newStubServingRepo(&Service{Name: "old-model", Status: StatusStopped})
-	stopped := false
+	deletedName := ""
 	router := newServingRouter(HandlerDeps{
 		Services: repo,
-		Stop: func(_ context.Context, _, name string) error {
-			stopped = true
+		Delete: func(_ context.Context, _, name string) error {
+			deletedName = name
+			delete(repo.services, name)
 			return nil
 		},
 	})
@@ -196,11 +198,28 @@ func TestDeleteService(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
 	}
-	if !stopped {
-		t.Fatal("Stop was not called")
+	if deletedName != "old-model" {
+		t.Fatalf("Delete called with %q, want old-model", deletedName)
 	}
 	if _, ok := repo.services["old-model"]; ok {
 		t.Fatal("service was not deleted from repo")
+	}
+}
+
+func TestDeleteServiceNotFound(t *testing.T) {
+	router := newServingRouter(HandlerDeps{
+		Services: newStubServingRepo(),
+		Delete: func(_ context.Context, _, name string) error {
+			return fmt.Errorf("%w: service %q", ErrNotFound, name)
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/services/nonexistent", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
 

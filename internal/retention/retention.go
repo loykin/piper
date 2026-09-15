@@ -11,6 +11,7 @@ package retention
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -55,6 +56,7 @@ type namedJob struct {
 // Runner holds an ordered list of named retention Jobs and runs them all
 // each tick. Registration order is execution order.
 type Runner struct {
+	mu   sync.Mutex
 	jobs []namedJob
 }
 
@@ -63,9 +65,13 @@ func NewRunner() *Runner {
 	return &Runner{}
 }
 
-// Register adds a named Job to the Runner. Not safe to call concurrently
-// with Run — all registration is expected to happen once during startup.
+// Register adds a named Job to the Runner. Safe to call concurrently with
+// Run and with other Register calls — a late registration (e.g. one made
+// during Serve() setup, after the periodic Run loop has already started in
+// New()) simply takes effect from the next tick onward, never mid-tick.
 func (r *Runner) Register(name string, job Job) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.jobs = append(r.jobs, namedJob{name: name, job: job})
 }
 
@@ -74,7 +80,12 @@ func (r *Runner) Register(name string, job Job) {
 // recovery beyond what each Job already does internally, matching the
 // existing CleanupRetention/cleanupStats behavior this replaces.
 func (r *Runner) Run(ctx context.Context) {
-	for _, nj := range r.jobs {
+	r.mu.Lock()
+	jobs := make([]namedJob, len(r.jobs))
+	copy(jobs, r.jobs)
+	r.mu.Unlock()
+
+	for _, nj := range jobs {
 		nj.job.Run(ctx)
 	}
 }

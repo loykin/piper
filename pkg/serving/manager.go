@@ -163,6 +163,30 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	return nil
 }
 
+// Delete stops a running service (if any) and removes its record.
+func (m *Manager) Delete(ctx context.Context, projectID, name string) error {
+	if projectID == "" {
+		return fmt.Errorf("serving: project ID is required")
+	}
+	svc, err := m.repo.Get(ctx, projectID, name)
+	if err != nil {
+		return fmt.Errorf("serving: get service: %w", err)
+	}
+	if svc == nil {
+		return fmt.Errorf("%w: service %q", ErrNotFound, name)
+	}
+	if svc.Status != StatusStopped && svc.Status != StatusStopping {
+		if err := m.Stop(ctx, projectID, name); err != nil {
+			return fmt.Errorf("serving: stop before delete: %w", err)
+		}
+	}
+	if err := m.repo.Delete(ctx, projectID, name); err != nil {
+		return fmt.Errorf("serving: delete record: %w", err)
+	}
+	m.emit(projectID, "service.deleted", map[string]any{"name": name})
+	return nil
+}
+
 // Restart stops and re-deploys a service with the resolved artifact.
 func (m *Manager) Restart(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) error {
 	if projectID == "" {

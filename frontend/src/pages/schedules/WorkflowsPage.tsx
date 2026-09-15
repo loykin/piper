@@ -26,6 +26,7 @@ import { RowActions } from '@/shared/components/RowActions'
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import type { Schedule } from '@/features/schedules/api'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 const PAGE_SIZE = 20
 
@@ -37,9 +38,9 @@ function WorkflowsPageInner() {
   const schedulesQuery = useSchedulesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = schedulesQuery.data?.total ?? 0
   const { data: pipelines = [] } = usePipelines()
-  const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
+  const { mutateAsync: deleteScheduleAsync, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
-  const [deleteTarget, setDeleteTarget] = useState<Schedule | null>(null)
+  const { target: deleteTarget, open: deleteOpen, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<Schedule>()
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -90,13 +91,13 @@ function WorkflowsPageInner() {
           <IconButton icon={<Trash2 />} label="Delete"
             onClick={(e) => {
               e.stopPropagation()
-              setDeleteTarget(s)
+              requestDelete(s)
             }}
             className="text-destructive hover:bg-destructive/10" />
         </RowActions>
       )
     },
-  }), [toggleSchedule])
+  }), [toggleSchedule, requestDelete])
 
   // Replace base name column with name+version combined column
   const columns = useMemo(
@@ -160,7 +161,7 @@ function WorkflowsPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+    <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
@@ -173,11 +174,7 @@ function WorkflowsPageInner() {
           <AlertDialogAction
             variant="destructive"
             disabled={deleting}
-            onClick={() => {
-              if (!deleteTarget) return
-              deleteSchedule(deleteTarget.id)
-              setDeleteTarget(null)
-            }}
+            onClick={() => void confirmDeleteTarget(t => deleteScheduleAsync(t.id))}
           >
             {deleting ? 'Deleting…' : 'Delete schedule'}
           </AlertDialogAction>

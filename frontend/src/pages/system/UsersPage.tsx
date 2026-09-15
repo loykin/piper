@@ -21,6 +21,7 @@ import { useDeleteUser, useUsersPaged } from '@/features/access/hooks'
 import type { User } from '@/features/access/types'
 import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 const PAGE_SIZE = 20
 
@@ -31,8 +32,7 @@ function UsersPageInner() {
   const usersQuery = useUsersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = usersQuery.data?.total ?? 0
   const deleteUser = useDeleteUser()
-  const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
-  const [actionError, setActionError] = useState('')
+  const { target: deleteTarget, open: deleteOpen, error: deleteError, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<User>()
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -43,15 +43,8 @@ function UsersPageInner() {
     return list.filter(u => u.username.toLowerCase().includes(q))
   }, [usersQuery.data, nameFilter])
 
-  async function confirmDelete() {
-    if (!deleteTarget) return
-    setActionError('')
-    try {
-      await deleteUser.mutateAsync(deleteTarget.id)
-      setDeleteTarget(null)
-    } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : String(cause))
-    }
+  function confirmDelete() {
+    return confirmDeleteTarget(t => deleteUser.mutateAsync(t.id))
   }
 
   return (
@@ -82,7 +75,7 @@ function UsersPageInner() {
                 New User
               </Button>
             }
-            notice={(usersQuery.isError || actionError) && (
+            notice={(usersQuery.isError || deleteError) && (
               <>
                 {usersQuery.isError && (
                   <QueryErrorNotice
@@ -91,7 +84,7 @@ function UsersPageInner() {
                     onRetry={() => void usersQuery.refetch()}
                   />
                 )}
-                {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+                {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
               </>
             )}
           >
@@ -104,7 +97,7 @@ function UsersPageInner() {
               rowHeight={44}
               rowCursor
               onRowClick={(user) => open(
-                <UserDetailPanel user={user} onDelete={setDeleteTarget} />,
+                <UserDetailPanel user={user} onDelete={requestDelete} />,
                 { size: 520 },
               )}
               classNames={{ footer: 'pt-3' }}
@@ -120,7 +113,7 @@ function UsersPageInner() {
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 
-      <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+      <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this user?</AlertDialogTitle>

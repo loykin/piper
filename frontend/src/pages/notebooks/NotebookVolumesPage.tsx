@@ -20,6 +20,7 @@ import { useNotebookVolumesPaged, usePurgeVolume } from '@/features/notebooks/ho
 import type { NotebookVolume } from '@/features/notebooks/api'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { NotebookVolumeDetailPanel } from '@/features/notebooks/components/NotebookVolumeDetailPanel'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 const PAGE_SIZE = 20
 
@@ -29,8 +30,8 @@ function NotebookVolumesPageInner() {
   const [pageIndex, setPageIndex] = useState(0)
   const volumesQuery = useNotebookVolumesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = volumesQuery.data?.total ?? 0
-  const { mutate: purgeVolume, isPending: purging, variables: purgingId } = usePurgeVolume()
-  const [purgeTarget, setPurgeTarget] = useState<NotebookVolume | null>(null)
+  const { mutateAsync: purgeVolumeAsync, isPending: purging, variables: purgingId } = usePurgeVolume()
+  const { target: purgeTarget, open: purgeOpen, requestDelete: requestPurge, cancel: cancelPurge, confirm: confirmPurge } = useDeleteTarget<NotebookVolume>()
   const [labelFilter, setLabelFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -43,13 +44,13 @@ function NotebookVolumesPageInner() {
 
   const busy = purging ? (purgingId ?? null) : null
 
-  const handlePurge = (vol: NotebookVolume) => setPurgeTarget(vol)
+  const handlePurge = (vol: NotebookVolume) => requestPurge(vol)
 
   const handleAttach = (volId: string) => navigate(`/notebooks/create?volume=${volId}`)
 
   const columns = useMemo(
     () => getNotebookVolumeColumns(busy, handleAttach, handlePurge),
-    [busy],
+    [busy, handlePurge],
   )
 
   return (
@@ -118,7 +119,7 @@ function NotebookVolumesPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={purgeTarget != null} onOpenChange={open => { if (!open) setPurgeTarget(null) }}>
+    <AlertDialog open={purgeOpen} onOpenChange={open => { if (!open) cancelPurge() }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Purge this volume?</AlertDialogTitle>
@@ -131,11 +132,7 @@ function NotebookVolumesPageInner() {
           <AlertDialogAction
             variant="destructive"
             disabled={purging}
-            onClick={() => {
-              if (!purgeTarget) return
-              purgeVolume(purgeTarget.id)
-              setPurgeTarget(null)
-            }}
+            onClick={() => void confirmPurge(v => purgeVolumeAsync(v.id))}
           >
             {purging ? 'Purging…' : 'Purge volume'}
           </AlertDialogAction>

@@ -1,23 +1,14 @@
-import { useState } from 'react'
 import { RotateCcw, RefreshCw, XCircle, Trash2, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Link } from '@/lib/router'
 import { useProjectId } from '@/lib/projectContext'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { useRun, useRunSteps, useDeleteRun, useCancelRun, useRerunRun } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { RunActionConfirmDialog, type RunConfirmVerb } from '@/features/runs/components/RunActionConfirmDialog'
+import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
 
 export function RunDetailPanel({ id }: { id: string }) {
   const { close, open } = useSidePanel()
@@ -29,7 +20,7 @@ export function RunDetailPanel({ id }: { id: string }) {
   const { mutate: deleteRun, isPending: deleting } = useDeleteRun()
   const { mutate: cancelRun, isPending: cancelling } = useCancelRun()
   const { mutateAsync: rerunRun } = useRerunRun()
-  const [confirmAction, setConfirmAction] = useState<'cancel' | 'delete' | null>(null)
+  const { action: confirmAction, requestAction: requestConfirm, cancel: cancelConfirm } = useConfirmAction<RunConfirmVerb>()
 
   const closeBtn = (
     <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
@@ -67,7 +58,7 @@ export function RunDetailPanel({ id }: { id: string }) {
         <div className="flex items-center gap-1">
           <IconButton icon={<XCircle />} label="Cancel"
             disabled={run.status !== 'running' && run.status !== 'scheduled'}
-            onClick={() => setConfirmAction('cancel')}
+            onClick={() => requestConfirm('cancel')}
             className="text-orange-400 hover:bg-orange-950" />
           <IconButton icon={<RotateCcw />} label="Rerun"
             disabled={run.status === 'running' || run.status === 'scheduled'}
@@ -79,7 +70,7 @@ export function RunDetailPanel({ id }: { id: string }) {
             className="text-yellow-400 hover:bg-yellow-950" />
           <IconButton icon={<Trash2 />} label="Delete"
             disabled={run.status === 'running'}
-            onClick={() => setConfirmAction('delete')}
+            onClick={() => requestConfirm('delete')}
             className="text-destructive hover:bg-destructive/10" />
           {closeBtn}
         </div>
@@ -120,39 +111,15 @@ export function RunDetailPanel({ id }: { id: string }) {
       </PanelTemplate.Section>
     </PanelTemplate>
 
-    <AlertDialog open={confirmAction != null} onOpenChange={open => { if (!open) setConfirmAction(null) }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {confirmAction === 'cancel' ? 'Cancel this run?' : 'Delete this run?'}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {confirmAction === 'cancel'
-              ? `Run ${run.id} will be stopped immediately.`
-              : `Run ${run.id} and its artifacts will be permanently removed.`}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Back</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={confirmAction === 'cancel' ? cancelling : deleting}
-            onClick={() => {
-              if (confirmAction === 'cancel') {
-                cancelRun(run.id)
-              } else if (confirmAction === 'delete') {
-                deleteRun(run.id, { onSuccess: () => void close() })
-              }
-              setConfirmAction(null)
-            }}
-          >
-            {confirmAction === 'cancel'
-              ? (cancelling ? 'Cancelling…' : 'Cancel run')
-              : (deleting ? 'Deleting…' : 'Delete run')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <RunActionConfirmDialog
+      runId={run.id}
+      action={confirmAction}
+      onOpenChange={open => { if (!open) cancelConfirm() }}
+      cancelling={cancelling}
+      deleting={deleting}
+      onConfirmCancel={() => cancelRun(run.id)}
+      onConfirmDelete={() => deleteRun(run.id, { onSuccess: () => void close() })}
+    />
     </>
   )
 }

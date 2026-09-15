@@ -1,11 +1,11 @@
-import { useEffect } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { DataBodyTemplate, FormActions, FormField, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useCredentials } from '@/features/credentials/hooks'
+import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 import type { MLflowIntegration, MLflowIntegrationRequest } from '../types'
 
 const schema = z.object({
@@ -37,17 +37,18 @@ export function MLflowIntegrationForm({ initial, busy, error, onSubmit, onCancel
       export_notebook_executions: initial?.export_notebook_executions ?? false,
     },
   })
-  // @base-ui/react's Select never calls onValueChange when it has exactly
-  // one item (confirmed with pure keyboard input too, so it isn't an
-  // automation-click artifact — docs/qa/adversarial-qa-playbook.md §3c): the
-  // trigger visually shows the sole credential selected, but Save always
-  // submits an empty credential_ref. Only applies to a fresh, unset field —
-  // editing an integration that already has a credential_ref must not be
-  // clobbered by this.
+  // Only applies to a fresh, unset field — editing an integration that
+  // already has a credential_ref must not be clobbered by this (see
+  // useAutoSelectSole for why the sole-candidate auto-select exists at all).
+  const credentialRef = useWatch({ control, name: 'credential_ref' })
+  useAutoSelectSole(
+    mlflowCredentials,
+    credentialRef,
+    credential => credential.name,
+    v => setValue('credential_ref', v, { shouldValidate: true }),
+    { skip: !!initial?.credential_ref },
+  )
   const soleCredential = !initial?.credential_ref && mlflowCredentials.length === 1 ? mlflowCredentials[0].name : null
-  useEffect(() => {
-    if (soleCredential) setValue('credential_ref', soleCredential, { shouldValidate: true })
-  }, [soleCredential, setValue])
   return <form className="space-y-4" noValidate onSubmit={handleSubmit(value => onSubmit({ ...value, artifact_mode: 'reference' }))}>
     <FormField label="Name" htmlFor="mlflow-name" error={errors.name?.message}><Input id="mlflow-name" {...register('name')} placeholder="production-mlflow" /></FormField>
     <FormField label="Tracking URI" htmlFor="mlflow-uri" error={errors.tracking_uri?.message} helperText="HTTPS is required unless the server explicitly allows insecure local HTTP."><Input id="mlflow-uri" className="font-mono" {...register('tracking_uri')} placeholder="https://mlflow.example.com" /></FormField>

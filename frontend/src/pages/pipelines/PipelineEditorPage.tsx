@@ -16,6 +16,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import PipelineCanvas from '@/shared/components/PipelineCanvas'
 import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
+import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 
 import { listNotebookVolumes, listVolumeFiles, type NotebookVolume } from '@/features/notebooks/api'
 import { useCredentials } from '@/features/credentials/hooks'
@@ -407,6 +408,12 @@ export default function PipelineEditorPage() {
   const [volumeFilesStatus, setVolumeFilesStatus] = useState<'ready' | 'transitioning' | 'unavailable' | null>(null)
   const [tasks, setTasks] = useState<PipelineStepDraft[]>(initialDraft.steps)
   const [defaults, setDefaults] = useState<PipelineDefaultsDraft>(initialDraft.defaults)
+
+  // Auto-apply the sole released volume instead of relying on an
+  // interaction @base-ui/react's Select won't commit when it has exactly
+  // one item — see useAutoSelectSole. Only relevant during setup, but
+  // harmless to evaluate unconditionally: it no-ops once formVolumeId is set.
+  useAutoSelectSole(volumes, formVolumeId, v => v.id, setFormVolumeId, { skip: formSourceKind !== 'notebook-volume' })
 
   // This Piper installation owns exactly one runtime (baremetal, docker, or
   // k8s) for direct in-process execution — prefill it once as the pipeline

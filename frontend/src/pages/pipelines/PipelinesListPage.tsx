@@ -24,6 +24,7 @@ import { DeployModal } from '@/features/pipelines/components/DeployModal'
 import { PipelineDetailPanel } from '@/features/pipelines/components/PipelineDetailPanel'
 import type { PipelineTemplate } from '@/features/pipelines/types'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 const PAGE_SIZE = 20
 
@@ -76,7 +77,7 @@ function PipelinesListPageInner() {
   const [deployCron, setDeployCron] = useState('0 2 * * *')
   const [deployEnabled, setDeployEnabled] = useState(true)
   const [actionError, setActionError] = useState('')
-  const [deleteTarget, setDeleteTarget] = useState<PipelineTemplate | null>(null)
+  const { target: deleteTarget, open: deleteOpen, error: deleteError, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<PipelineTemplate>()
   const [deleting, setDeleting] = useState(false)
 
   async function handleRun(t: PipelineTemplate) {
@@ -90,14 +91,9 @@ function PipelinesListPageInner() {
   }
 
   async function confirmDelete() {
-    if (!deleteTarget) return
-    setActionError('')
     setDeleting(true)
     try {
-      await deletePipeline(deleteTarget.id)
-      setDeleteTarget(null)
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
+      await confirmDeleteTarget(t => deletePipeline(t.id))
     } finally {
       setDeleting(false)
     }
@@ -128,7 +124,7 @@ function PipelinesListPageInner() {
         onRun={(x) => void handleRun(x)}
         onDeploy={openDeploy}
         onNewVersion={openNewVersionFrom}
-        onDelete={setDeleteTarget}
+        onDelete={requestDelete}
       />,
       { size: 520 },
     )
@@ -138,7 +134,7 @@ function PipelinesListPageInner() {
     onRun: (t) => void handleRun(t),
     onDeploy: openDeploy,
     onNewVersion: openNewVersionFrom,
-    onDelete: setDeleteTarget,
+    onDelete: requestDelete,
   })
 
   return (
@@ -168,7 +164,7 @@ function PipelinesListPageInner() {
                 <Plus size={14} className="mr-1.5" /> New Template
               </Button>
             }
-            notice={(initialLoadFailed || actionError) && (
+            notice={(initialLoadFailed || actionError || deleteError) && (
               <>
                 {initialLoadFailed && (
                   <QueryErrorNotice
@@ -178,6 +174,7 @@ function PipelinesListPageInner() {
                   />
                 )}
                 {actionError && <p className="text-sm text-destructive">{actionError}</p>}
+                {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
               </>
             )}
           >
@@ -218,7 +215,7 @@ function PipelinesListPageInner() {
         error={actionError}
       />
 
-      <AlertDialog open={deleteTarget != null} onOpenChange={open => { if (!open) setDeleteTarget(null) }}>
+      <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this pipeline template?</AlertDialogTitle>

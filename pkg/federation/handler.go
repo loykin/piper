@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"github.com/loykin/piper/internal/httpx"
 	"net/http"
 	"strconv"
 
@@ -43,7 +44,7 @@ func (h *Handler) requireSystemAdmin() gin.HandlerFunc {
 func (h *Handler) listMembers(c *gin.Context) {
 	members, err := h.repo.ListMembers(c.Request.Context(), h.homeID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, members)
@@ -61,7 +62,7 @@ func (h *Handler) listAuditEvents(c *gin.Context) {
 	}
 	events, err := h.repo.ListAuditEvents(c.Request.Context(), h.homeID, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, events)

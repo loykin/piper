@@ -40,7 +40,7 @@ func (r *viewerRepo) Get(ctx context.Context, id string) (*viewer.Viewer, error)
 			 FROM viewers WHERE id=?`, id)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("viewer not found")
+		return nil, viewer.ErrNotFound
 	}
 	return &v, err
 }

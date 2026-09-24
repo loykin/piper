@@ -1,10 +1,9 @@
-import { Copy, Download, Trash2, X } from 'lucide-react'
+import { Copy, Download, Trash2 } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
-import { useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { storageObjectURL, type StorageObjectInfo } from '@/features/storage/api'
 import { fmtBytes, fmtDate } from '@/lib/format'
+import { PanelCloseButton } from '@/shared/components/PanelPlaceholder'
 
 interface ObjectDetailPanelProps {
   projectId: string
@@ -13,7 +12,6 @@ interface ObjectDetailPanelProps {
 }
 
 export function ObjectDetailPanel({ projectId, object, onDelete }: ObjectDetailPanelProps) {
-  const { close } = useSidePanel()
 
   function handleDownload() {
     window.open(storageObjectURL(projectId, object.key), '_blank', 'noopener,noreferrer')
@@ -25,7 +23,7 @@ export function ObjectDetailPanel({ projectId, object, onDelete }: ObjectDetailP
 
   return (
     <PanelTemplate
-      eyebrow="Uploaded object"
+      eyebrow="Uploaded Object"
       title={object.key}
       actions={
         <div className="flex items-center gap-1">
@@ -34,12 +32,9 @@ export function ObjectDetailPanel({ projectId, object, onDelete }: ObjectDetailP
             icon={<Trash2 />}
             label="Delete"
             className="text-destructive hover:bg-destructive/10"
-            onClick={() => { onDelete(object); void close() }}
+            onClick={() => onDelete(object)}
           />
-          <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-            <X />
-            <span className="sr-only">Close</span>
-          </Button>
+          <PanelCloseButton />
         </div>
       }
     >
@@ -48,7 +43,7 @@ export function ObjectDetailPanel({ projectId, object, onDelete }: ObjectDetailP
           <PanelTemplate.Row label="Key">
             <div className="flex items-start gap-2">
               <span className="break-all font-mono text-xs">{object.key}</span>
-              <IconButton icon={<Copy />} label="Copy key" onClick={handleCopyKey} />
+              <IconButton icon={<Copy />} label="Copy Key" onClick={handleCopyKey} />
             </div>
           </PanelTemplate.Row>
           <PanelTemplate.Row label="Size">{fmtBytes(object.size)}</PanelTemplate.Row>

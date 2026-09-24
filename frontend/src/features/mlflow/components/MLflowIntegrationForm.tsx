@@ -1,12 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
-import { DataBodyTemplate, FormActions, FormField, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
+import { DataBodyTemplate, FormField, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useCredentials } from '@/features/credentials/hooks'
 import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 import type { MLflowIntegration, MLflowIntegrationRequest } from '../types'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
 
 const schema = z.object({
   name: z.string().trim().min(1, 'Name is required.'),
@@ -73,10 +74,12 @@ export function MLflowIntegrationForm({ initial, busy, error, onSubmit, onCancel
         <Controller name="credential_ref" control={control} render={({ field }) => <Select items={mlflowCredentials.map(item => ({ value: item.name, label: `${item.name}${item.disabled ? ' (disabled)' : ''}` }))} value={field.value || null} onValueChange={v => field.onChange(v ?? '')} disabled={mlflowCredentials.length === 0}><SelectTrigger id="mlflow-credential" className="w-72"><SelectValue placeholder="Select a credential" /></SelectTrigger><SelectContent>{mlflowCredentials.map(item => <SelectItem key={item.name} value={item.name}>{item.name}{item.disabled ? ' (disabled)' : ''}</SelectItem>)}</SelectContent></Select>} />
       )}
     </FormField>
-    <FormField label="Experiment template" htmlFor="mlflow-template" error={errors.experiment_template?.message}><Input id="mlflow-template" className="font-mono" {...register('experiment_template')} /></FormField>
-    <DataBodyTemplate.Group layout="stacked" title="Export scope" description="Artifacts remain authoritative in Piper; MLflow receives references.">
+    <FormField label="Experiment Template" htmlFor="mlflow-template" error={errors.experiment_template?.message}><Input id="mlflow-template" className="font-mono" {...register('experiment_template')} /></FormField>
+    <DataBodyTemplate.Group layout="stacked" title="Export Scope" description="Artifacts remain authoritative in Piper; MLflow receives references.">
       {([['enabled', 'Enable integration'], ['default', 'Use as project default'], ['export_pipelines', 'Export pipeline runs'], ['export_notebook_executions', 'Export notebook executions']] as const).map(([name, label]) => <Controller key={name} name={name} control={control} render={({ field }) => <div className="flex items-center justify-between rounded-md border border-border p-3"><span className="text-sm">{label}</span><Switch checked={field.value} onCheckedChange={field.onChange} aria-label={label} /></div>} />)}
     </DataBodyTemplate.Group>
-    <FormActions status={error} submitLabel={busy ? 'Saving…' : 'Save Integration'} submitDisabled={busy} onCancel={onCancel} />
+    {initial
+      ? <FormSubmitBar verb="Save" noun="Changes" pending={busy} error={error} onCancel={onCancel} />
+      : <FormSubmitBar verb="Create" noun="MLflow Integration" pending={busy} error={error} onCancel={onCancel} />}
   </form>
 }

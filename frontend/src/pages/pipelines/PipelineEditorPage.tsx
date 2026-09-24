@@ -31,6 +31,7 @@ import { PipelineSourceSetup } from '@/features/pipelines/components/editor/Pipe
 import { useTaskDraft } from '@/features/pipelines/useTaskDraft'
 import { TaskEditorPane } from '@/features/pipelines/components/editor/TaskEditorPane'
 import { SubmitTemplateDialog } from '@/features/pipelines/components/editor/SubmitTemplateDialog'
+import { createCopy } from '@/lib/copy'
 
 
 export default function PipelineEditorPage() {
@@ -343,8 +344,8 @@ export default function PipelineEditorPage() {
   if (!setupDone) {
     return (
       <DataBodyTemplate
-        topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Templates', to: `/projects/${projectId}/pipelines` }, 'New Pipeline']} />} />}
-        title="New Pipeline"
+        topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Templates', to: `/projects/${projectId}/pipelines` }, createCopy('Template').crumb]} />} />}
+        title={createCopy('Template').title}
         description="A pipeline uses exactly one source workspace. Lock it in before you start editing."
       >
         <DataBodyTemplate.Group layout="stacked">
@@ -368,8 +369,8 @@ export default function PipelineEditorPage() {
   return (
     <>
       <WorkbenchBodyTemplate
-        topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Templates', to: `/projects/${projectId}/pipelines` }, editorFromVersion ? 'New Version' : 'Pipeline Editor']} />} />}
-        title={editorFromVersion ? 'New Version' : 'Pipeline Editor'}
+        topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Templates', to: `/projects/${projectId}/pipelines` }, editorFromVersion ? 'New Version' : createCopy('Template').title]} />} />}
+        title={editorFromVersion ? 'New Version' : createCopy('Template').title}
         description="Build a Piper Pipeline YAML from a source workspace, a task canvas, and a separate YAML tab."
         actions={
           <>
@@ -496,7 +497,7 @@ export default function PipelineEditorPage() {
 
               <TabsContent value="design" className="relative min-h-0 flex-1 overflow-hidden p-3">
                 <div className="absolute right-5 top-5 z-10">
-                  <Button variant="outline" size="sm" onClick={resetLayout}>Reset layout</Button>
+                  <Button variant="outline" size="sm" onClick={resetLayout}>Reset Layout</Button>
                 </div>
                 <PipelineCanvas
                   steps={tasks}

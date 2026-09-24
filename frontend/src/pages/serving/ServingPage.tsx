@@ -1,8 +1,6 @@
-import { useNavigate } from '@/lib/router'
 import { useState } from 'react'
 import { RefreshCw, Search, Square } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
@@ -17,20 +15,22 @@ import type { Service } from '@/features/serving/api'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useTextFilter } from '@/shared/hooks/useTextFilter'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { CreateButton } from '@/shared/components/CreateButton'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { errorMessage } from '@/lib/format'
 
 const PAGE_SIZE = 20
 
 function ServingPageInner() {
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const projectId = useProjectId()
-  const navigate = useNavigate()
   const [pageIndex, setPageIndex] = useState(0)
   const servicesQuery = useServicesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const { data } = servicesQuery
   const total = data?.total ?? 0
-  const { mutate: stopService, isPending: stopping } = useStopService()
-  const { mutate: restartService } = useRestartService()
-  const [stopTarget, setStopTarget] = useState<Service | null>(null)
+  const { mutateAsync: stopService, isPending: stopping } = useStopService()
+  const restart = useRestartService()
+  const stopTarget = useDeleteTarget<Service>()
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -46,13 +46,13 @@ function ServingPageInner() {
         <RowActions className="justify-start">
           {svc.status === 'running' && (
             <IconButton icon={<RefreshCw />} label="Restart"
-              onClick={e => { e.stopPropagation(); restartService(svc.name) }} />
+              onClick={e => { e.stopPropagation(); restart.mutate(svc.name) }} />
           )}
           {svc.status !== 'stopped' && (
             <IconButton icon={<Square />} label="Stop"
               onClick={e => {
                 e.stopPropagation()
-                setStopTarget(svc)
+                stopTarget.requestDelete(svc)
               }}
               className="text-destructive hover:bg-destructive/10" />
           )}
@@ -85,15 +85,18 @@ function ServingPageInner() {
               />
             </div>
           }
-          toolbarRight={
-            <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/serving/new`)}>Deploy</Button>
-          }
-          notice={servicesQuery.isError && (
-            <QueryErrorNotice
-              message="Failed to load services"
-              error={servicesQuery.error}
-              onRetry={() => void servicesQuery.refetch()}
-            />
+          toolbarRight={<CreateButton verb="Deploy" noun="Service" to={`/projects/${projectId}/serving/new`} />}
+          notice={(servicesQuery.isError || restart.isError) && (
+            <>
+              {servicesQuery.isError && (
+                <QueryErrorNotice
+                  message="Failed to load services"
+                  error={servicesQuery.error}
+                  onRetry={() => void servicesQuery.refetch()}
+                />
+              )}
+              {restart.isError && <p className="text-sm text-destructive">{errorMessage(restart.error)}</p>}
+            </>
           )}
         >
           <DataGrid
@@ -101,7 +104,7 @@ function ServingPageInner() {
             columns={columns}
             emptyContent={!servicesQuery.isError && (
               <div className="py-12 text-center">
-                <p className="text-sm text-muted-foreground">No services deployed yet.</p>
+                <p className="text-sm text-muted-foreground">No services yet.</p>
                 <p className="mt-1 text-xs text-muted-foreground/60">
                   Deploy a ModelService from a pipeline artifact.
                 </p>
@@ -125,17 +128,18 @@ function ServingPageInner() {
     </DataBodyTemplate>
 
     <ConfirmDialog
-      open={stopTarget != null}
-      onCancel={() => setStopTarget(null)}
-      title="Stop this service?"
-      description={`"${stopTarget?.name}" will stop serving requests immediately.`}
+      open={stopTarget.open}
+      onCancel={stopTarget.cancel}
+      verb="Stop"
+      noun="service"
+      description={`"${stopTarget.target?.name}" will stop serving requests immediately.`}
+      error={stopTarget.error}
       pending={stopping}
-      confirmLabel={stopping ? 'Stopping…' : 'Stop service'}
-      onConfirm={() => {
-        if (!stopTarget) return
-        stopService(stopTarget.name)
-        setStopTarget(null)
-      }}
+      onConfirm={() => void stopTarget.confirm(async svc => {
+        await stopService(svc.name)
+        // A stopped service leaves this list (it moves to Serving History).
+        void close()
+      })}
     />
     </>
   )

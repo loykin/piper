@@ -16,6 +16,7 @@ import { BACKEND_LABELS, type StorageBackendType } from '@/features/storage/back
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import { InstanceScopedBadge } from './ArtifactStoreConfigSection'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
 
 // ── System Credentials ──────────────────────────────────────────────────────
 // The only editable part of this page now that Artifact Store Config above
@@ -124,7 +125,7 @@ export function StorageCredentialsSection({
               render={<Button type="button" variant="outline" size="sm" />}
             >
               <Plus className="mr-1.5 size-3.5" />
-              New credential
+              New Credential
               <ChevronRight className="ml-1.5 size-3.5 transition-transform duration-200 group-data-open/add-credential:rotate-90" />
             </CollapsibleTrigger>
           </div>
@@ -202,12 +203,13 @@ export function StorageCredentialsSection({
                 </>
               )}
 
-              {credentialError && <p className="text-sm text-destructive">{credentialError}</p>}
-              <div className="flex justify-end pt-2">
-                <Button type="submit" size="sm" disabled={createSystemCredential.isPending}>
-                  {createSystemCredential.isPending ? 'Creating…' : `Add ${activeCredentialKind} Credential`}
-                </Button>
-              </div>
+              <FormSubmitBar
+                verb="Add"
+                noun={`${BACKEND_LABELS[backend]} Credential`}
+                pending={createSystemCredential.isPending}
+                error={credentialError}
+                onCancel={() => setAddOpen(false)}
+              />
             </form>
           </CollapsibleContent>
         </Collapsible>
@@ -216,11 +218,11 @@ export function StorageCredentialsSection({
       <ConfirmDialog
         open={deleteTarget.open}
         onCancel={deleteTarget.cancel}
-        title="Delete this system credential?"
+        verb="Delete"
+        noun="system credential"
         description={<>&quot;{deleteTarget.target}&quot; will be permanently deleted.
 {credentialRef === deleteTarget.target && ' It is currently referenced by storage.credentialRef — deleting it will make the artifact store unavailable after the next restart until storage.yaml is updated.'}</>}
         error={deleteTarget.error}
-        confirmLabel={deleteSystemCredential.isPending ? 'Deleting…' : 'Delete credential'}
         pending={deleteSystemCredential.isPending}
         onConfirm={() => void deleteTarget.confirm(name => deleteSystemCredential.mutateAsync(name))}
       />

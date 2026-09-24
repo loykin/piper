@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   DataBodyTemplate,
-  FormActions,
   FormField,
   Input,
   PageTopBar,
@@ -19,6 +18,8 @@ import { useCreateProject } from '@/features/projects/hooks'
 import { useNavigate } from '@/lib/router'
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { createCopy } from '@/lib/copy'
 
 const projectSchema = z.object({
   id: z.string().trim().min(1, 'Project ID is required.').regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'Use lowercase letters, numbers, and hyphens only.'),
@@ -72,13 +73,13 @@ export default function ProjectCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['System', 'Projects', 'New Project']} />} />}
-      title="New Project"
+      topBar={<PageTopBar left={<PageCrumbs items={['System', 'Projects', createCopy('Project').crumb]} />} />}
+      title={createCopy('Project').title}
       description="Create the Home directory entry and choose the Member that owns its execution state."
     >
       <DataBodyTemplate.Group
         layout="stacked"
-        title="Project directory"
+        title="Project Directory"
         description="The Owner Member stores and executes this project's pipelines, runs, schedules, notebooks, and services."
       >
         <form className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
@@ -124,10 +125,11 @@ export default function ProjectCreatePage() {
               )}
             />
           </FormField>
-          <FormActions
-            status={submitError || undefined}
-            submitLabel={createProject.isPending ? 'Creating…' : 'Create Project'}
-            submitDisabled={createProject.isPending}
+          <FormSubmitBar
+            verb="Create"
+            noun="Project"
+            pending={createProject.isPending}
+            error={submitError}
             onCancel={() => void navigate(-1)}
           />
         </form>

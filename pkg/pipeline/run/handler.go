@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/loykin/piper/internal/httpx"
 	"io"
 	"log/slog"
 	"net/http"
@@ -85,8 +86,16 @@ func writeMemberError(c *gin.Context, err error, fallbackStatus int, fallbackMes
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "statistics backend unavailable", "code": memberclient.ErrorCodeStatsBackendUnavailable, "retryable": true})
 		return
 	}
+	if errors.Is(err, memberclient.ErrRunNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return
+	}
 	if errors.Is(err, memberclient.ErrStorageBackendMismatch) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": memberclient.ErrorCodeStorageBackendMismatch, "retryable": false})
+		return
+	}
+	if fallbackStatus >= http.StatusInternalServerError {
+		httpx.InternalError(c, err, fallbackMessage)
 		return
 	}
 	if fallbackMessage == "" {
@@ -224,8 +233,7 @@ func (h *Handler) createRun(c *gin.Context) {
 		Experiment string            `json:"experiment,omitempty"`
 		Vars       proto.BuiltinVars `json:"vars,omitempty"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 
@@ -258,8 +266,7 @@ func (h *Handler) createRun(c *gin.Context) {
 // POST /experiments — submit a sweep: one run per trial under a shared experiment name
 func (h *Handler) createSweep(c *gin.Context) {
 	var body SweepRequest
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	if body.Experiment == "" {

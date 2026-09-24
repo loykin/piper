@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   DataBodyTemplate,
-  FormActions,
   FormField,
   Input,
   PageTopBar,
@@ -20,6 +19,9 @@ import { useNavigate } from '@/lib/router'
 import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { createCopy } from '@/lib/copy'
+import { PROJECT_ROLE_ITEMS } from '@/features/access/types'
 
 const memberSchema = z.object({
   username: z.string().trim().min(1, 'Username is required.'),
@@ -67,13 +69,13 @@ export default function MemberCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Members', to: `/projects/${projectId}/members` }, 'New Member']} />} />}
-      title="New Member"
+      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Members', to: `/projects/${projectId}/members` }, createCopy('Member', 'Add').crumb]} />} />}
+      title={createCopy('Member', 'Add').title}
       description="Grant an existing Piper account access to this project."
     >
       <DataBodyTemplate.Group
         layout="stacked"
-        title="Project access"
+        title="Project Access"
         description="Select an existing account and choose its project-specific role."
       >
         <form className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
@@ -116,7 +118,7 @@ export default function MemberCreatePage() {
             )}
           </FormField>
           <FormField
-            label="Project role"
+            label="Project Role"
             htmlFor="member-role"
             helperText="Viewer can inspect resources, Member can operate workloads, and Admin can manage project access."
           >
@@ -125,11 +127,7 @@ export default function MemberCreatePage() {
               control={control}
               render={({ field }) => (
                 <Select
-                  items={[
-                    { value: 'viewer', label: 'Viewer' },
-                    { value: 'member', label: 'Member' },
-                    { value: 'admin', label: 'Admin' },
-                  ]}
+                  items={PROJECT_ROLE_ITEMS}
                   value={field.value}
                   onValueChange={field.onChange}
                 >
@@ -137,18 +135,18 @@ export default function MemberCreatePage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="viewer">Viewer</SelectItem>
-                    <SelectItem value="member">Member</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
+                    {PROJECT_ROLE_ITEMS.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               )}
             />
           </FormField>
-          <FormActions
-            status={submitError || undefined}
-            submitLabel={addMember.isPending ? 'Adding…' : 'Add Member'}
-            submitDisabled={addMember.isPending || candidates.length === 0}
+          <FormSubmitBar
+            verb="Add"
+            noun="Member"
+            pending={addMember.isPending}
+            error={submitError}
+            disabled={candidates.length === 0}
             onCancel={() => void navigate(listPath)}
           />
         </form>

@@ -59,7 +59,7 @@ export function SecretEntriesField<T extends SecretEntriesValues>({
       ))}
       <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={() => append({ key: '', value: '' })}>
         <Plus className="mr-1.5 size-3.5" />
-        Add field
+        Add Field
       </Button>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>

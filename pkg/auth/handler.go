@@ -52,8 +52,7 @@ type loginRequest struct {
 
 func (h *Handler) login(c *gin.Context) {
 	var req loginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	result, err := h.sessions.Login(c.Request.Context(), req.Username, req.Password)
@@ -184,7 +183,7 @@ func (h *UserHandler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *UserHandler) listUserMemberships(c *gin.Context) {
 	memberships, err := h.memberships.ListUserMemberships(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	out := make([]membershipViewDTO, len(memberships))
@@ -218,7 +217,7 @@ func (h *UserHandler) bootstrapStatus(c *gin.Context) {
 	}
 	total, err := h.directory.CountUsers(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"required": total == 0})
@@ -233,7 +232,7 @@ func (h *UserHandler) bootstrap(c *gin.Context) {
 
 	total, err := h.directory.CountUsers(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if total > 0 {
@@ -244,8 +243,7 @@ func (h *UserHandler) bootstrap(c *gin.Context) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	u, err := h.manager.CreateUser(c.Request.Context(), security.CreateUserInput{
@@ -264,13 +262,13 @@ func (h *UserHandler) listUsers(c *gin.Context) {
 	limit, offset := httpx.ParseLimitOffset(c)
 	users, err := h.directory.ListUsers(c.Request.Context(), limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.directory.CountUsers(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -288,8 +286,7 @@ func (h *UserHandler) createUser(c *gin.Context) {
 		Password    string `json:"password"`
 		SystemAdmin bool   `json:"system_admin"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	u, err := h.manager.CreateUser(c.Request.Context(), security.CreateUserInput{
@@ -307,7 +304,7 @@ func (h *UserHandler) createUser(c *gin.Context) {
 func (h *UserHandler) deleteUser(c *gin.Context) {
 	id := c.Param("id")
 	if err := h.manager.DeleteUser(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)

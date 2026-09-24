@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/loykin/piper/internal/httpx"
 	"net/http"
 	"regexp"
 	"strings"
@@ -108,7 +109,7 @@ func (h *Handler) list(c *gin.Context) {
 		if err := h.authorizer.AuthorizeSystem(ctx, identity); err != nil {
 			roles, err := h.authorizer.ListProjectRoles(ctx, identity)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "role lookup failed"})
+				httpx.InternalError(c, err, "role lookup failed")
 				return
 			}
 			if len(roles) == 0 {
@@ -134,7 +135,7 @@ func (h *Handler) list(c *gin.Context) {
 
 	projects, err := h.repo.List(ctx)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, visibleProjects(projects))
@@ -159,8 +160,7 @@ func (h *Handler) create(c *gin.Context) {
 		Description   string `json:"description"`
 		OwnerMemberID string `json:"owner_member_id"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	req.ID = strings.TrimSpace(req.ID)
@@ -217,7 +217,7 @@ func (h *Handler) get(c *gin.Context) {
 
 	p, err := h.repo.Get(c.Request.Context(), projectID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if p == nil {
@@ -239,7 +239,7 @@ func (h *Handler) delete(c *gin.Context) {
 	}
 	p, err := h.repo.Get(c.Request.Context(), projectID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if p == nil {
@@ -248,7 +248,7 @@ func (h *Handler) delete(c *gin.Context) {
 	}
 	projects, err := h.repo.List(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if len(visibleProjects(projects)) <= 1 {

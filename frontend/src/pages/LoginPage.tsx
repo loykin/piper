@@ -130,8 +130,8 @@ export default function LoginPage() {
           )}
           <Button type="submit" className="w-full" disabled={isSubmitting}>
             {isSubmitting
-              ? (needsBootstrap ? 'Creating account…' : 'Signing in…')
-              : (needsBootstrap ? 'Create admin account' : 'Sign in')}
+              ? (needsBootstrap ? 'Creating Account…' : 'Signing In…')
+              : (needsBootstrap ? 'Create Admin Account' : 'Sign In')}
           </Button>
         </form>
       </div>

@@ -2,6 +2,7 @@ package piper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -194,11 +195,11 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 			key = header.Filename
 		}
 		if err := p.UploadStorageObject(c.Request.Context(), key, file, header.Size); err != nil {
-			status := http.StatusInternalServerError
 			if p.store == nil {
-				status = http.StatusServiceUnavailable
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			} else {
+				httpx.InternalError(c, err)
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"key": key})
@@ -207,11 +208,11 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 		limit, offset := httpx.ParseLimitOffset(c)
 		objects, total, err := p.ListStorageObjects(c.Request.Context(), c.Query("prefix"), limit, offset)
 		if err != nil {
-			status := http.StatusInternalServerError
 			if p.store == nil {
-				status = http.StatusServiceUnavailable
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			} else {
+				httpx.InternalError(c, err)
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -225,13 +226,14 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 		}
 		rc, filename, err := p.OpenStorageObject(c.Request.Context(), key)
 		if err != nil {
-			status := http.StatusInternalServerError
-			if err == storage.ErrNotFound {
-				status = http.StatusNotFound
-			} else if p.store == nil {
-				status = http.StatusServiceUnavailable
+			switch {
+			case errors.Is(err, storage.ErrNotFound):
+				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			case p.store == nil:
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			default:
+				httpx.InternalError(c, err)
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		defer func() { _ = rc.Close() }()
@@ -246,11 +248,11 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 			return
 		}
 		if err := p.DeleteStorageObject(c.Request.Context(), key); err != nil {
-			status := http.StatusInternalServerError
 			if p.store == nil {
-				status = http.StatusServiceUnavailable
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			} else {
+				httpx.InternalError(c, err)
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 		c.Status(http.StatusNoContent)

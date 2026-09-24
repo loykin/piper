@@ -6,10 +6,11 @@ import { useMLflowIntegration, useUpdateMLflowIntegration } from '@/features/mlf
 import { useProjectId } from '@/features/projects/context'
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { PageState } from '@/shared/components/PageState'
 
 export default function MLflowIntegrationEditPage() {
   const { id } = useParams<{ id: string }>(); const projectId = useProjectId(); const navigate = useNavigate(); const query = useMLflowIntegration(id!); const update = useUpdateMLflowIntegration(id!); const [error, setError] = useState(''); const listPath = `/projects/${projectId}/integrations/mlflow`
-  if (query.isLoading) return <DataBodyTemplate title="Loading…" />
-  if (!query.data) return <DataBodyTemplate title="Integration not found" />
-  return <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'MLflow Integrations', to: listPath }, 'Edit']} />} />} title={`Edit ${query.data.name}`} description="Update connection and export behavior without exposing credential values."><DataBodyTemplate.Group layout="stacked" title="Connection"><MLflowIntegrationForm key={query.data.updated_at} initial={query.data} busy={update.isPending} error={error} onCancel={() => void navigate(listPath)} onSubmit={async value => { setError(''); try { await update.mutateAsync(value); void navigate(listPath) } catch (cause) { setError(errorMessage(cause)) } }} /></DataBodyTemplate.Group></DataBodyTemplate>
+  const topBar = <PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'MLflow Integrations', to: listPath }, 'Edit']} />} />
+  if (!query.data) return <PageState query={query} noun="MLflow integration" template="data" topBar={topBar} />
+  return <DataBodyTemplate topBar={topBar} title={`Edit ${query.data.name}`} description="Update connection and export behavior without exposing credential values."><DataBodyTemplate.Group layout="stacked" title="Connection"><MLflowIntegrationForm key={query.data.updated_at} initial={query.data} busy={update.isPending} error={error} onCancel={() => void navigate(listPath)} onSubmit={async value => { setError(''); try { await update.mutateAsync(value); void navigate(listPath) } catch (cause) { setError(errorMessage(cause)) } }} /></DataBodyTemplate.Group></DataBodyTemplate>
 }

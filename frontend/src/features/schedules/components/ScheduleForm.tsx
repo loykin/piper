@@ -5,7 +5,7 @@ import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { CronInput, toCronExpression, validateCronExpression, type CronValue } from '@loykin/cron-input'
 import { createShadcnAdapter } from '@loykin/cron-input/adapters/shadcn'
-import { FormActions, FormField } from '@loykin/designkit'
+import { FormField } from '@loykin/designkit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -15,6 +15,7 @@ import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useCreateSchedule } from '../hooks'
 import { errorMessage } from '@/lib/format'
 import { maxRunsField, toMaxRuns } from '../maxRuns'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
 
 // Built once at module scope — uiAdapter must be referentially stable, or the
 // adapted subtree remounts on every render (see @loykin/cron-input README).
@@ -186,10 +187,11 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
         />
       </FormField>
 
-      <FormActions
-        status={submitError || undefined}
-        submitLabel={submitting ? 'Submitting…' : 'Create Schedule'}
-        submitDisabled={submitting}
+      <FormSubmitBar
+        verb="Create"
+        noun="Schedule"
+        pending={submitting}
+        error={submitError}
         onCancel={onCancel}
       />
     </form>

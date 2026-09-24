@@ -6,6 +6,10 @@ export async function listAlertRules(projectId: string, limit: number, offset: n
   return projectApi(projectId).getPaged<AlertRule>(`/alert-rules?${params}`)
 }
 
+export function getAlertRule(projectId: string, id: string): Promise<AlertRule> {
+  return projectApi(projectId).get<AlertRule>(`/alert-rules/${encodeURIComponent(id)}`)
+}
+
 export function createAlertRule(projectId: string, request: CreateAlertRuleRequest): Promise<AlertRule> {
   return projectApi(projectId).post<AlertRule>('/alert-rules', request)
 }

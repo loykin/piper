@@ -1,12 +1,10 @@
-import { useNavigate } from '@/lib/router'
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Plus, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { FilterInput } from '@loykin/filter-input'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { useCanAdminProject } from '@/features/access/hooks'
 import { MLflowIntegrationDetailPanel } from '@/features/mlflow/components/MLflowIntegrationDetailPanel'
 import { mlflowKeys, useMLflowIntegrations } from '@/features/mlflow/hooks'
@@ -15,12 +13,12 @@ import StatusBadge from '@/shared/components/StatusBadge'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useProjectId } from '@/features/projects/context'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { CreateButton } from '@/shared/components/CreateButton'
 
 const PAGE_SIZE = 20
 
 function MLflowIntegrationsPageInner() {
   const projectId = useProjectId()
-  const navigate = useNavigate()
   const { open } = useSidePanel()
   const queryClient = useQueryClient()
   const canAdmin = useCanAdminProject()
@@ -52,14 +50,14 @@ function MLflowIntegrationsPageInner() {
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
           toolbarLeft={<div className="w-56"><FilterInput config={{ key: 'mlflowSearch', type: 'text', placeholder: 'Search current page…', display: { size: 'sm', leadingIcon: <Search /> } }} value={search} onChange={value => setSearch(typeof value === 'string' ? value : '')} /></div>}
-          toolbarRight={canAdmin ? <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/integrations/mlflow/new`)}><Plus />New Integration</Button> : undefined}
+          toolbarRight={canAdmin ? <CreateButton noun="MLflow Integration" to={`/projects/${projectId}/integrations/mlflow/new`} /> : undefined}
           notice={query.isError ? <QueryErrorNotice message="Failed to load MLflow integrations" error={query.error} onRetry={() => void query.refetch()} /> : undefined}
         >
           <DataGrid
             data={rows}
             columns={columns}
             isLoading={query.isLoading}
-            emptyMessage={query.isError ? undefined : 'No MLflow integrations configured.'}
+            emptyMessage={query.isError ? undefined : 'No MLflow integrations yet.'}
             tableWidthMode="fill-last"
             rowCursor
             onRowClick={item => { queryClient.setQueryData(mlflowKeys.detail(projectId, item.id), item); open(<MLflowIntegrationDetailPanel id={item.id} canAdmin={canAdmin} />, { size: 560 }) }}

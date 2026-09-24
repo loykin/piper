@@ -2,6 +2,7 @@ package viewer
 
 import (
 	"errors"
+	"github.com/loykin/piper/internal/httpx"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,8 +48,7 @@ func (h *Handler) openViewer(c *gin.Context) {
 	artifact := strings.TrimPrefix(c.Param("artifact"), "/")
 
 	var req openRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 
@@ -83,7 +83,7 @@ func (h *Handler) openViewer(c *gin.Context) {
 func (h *Handler) listViewers(c *gin.Context) {
 	viewers, err := h.repo.List(c.Request.Context(), pid(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, viewers)
@@ -91,8 +91,7 @@ func (h *Handler) listViewers(c *gin.Context) {
 
 func (h *Handler) getViewer(c *gin.Context) {
 	v, err := h.repo.Get(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "viewer not found"})
+	if httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c), ErrNotFound, "viewer not found") {
 		return
 	}
 	type response struct {
@@ -103,8 +102,13 @@ func (h *Handler) getViewer(c *gin.Context) {
 }
 
 func (h *Handler) stopViewer(c *gin.Context) {
+	// Viewers are looked up by id alone; scope them to the URL's project so
+	// one project can't read, stop, or proxy another project's viewer.
+	if v, err := h.repo.Get(c.Request.Context(), c.Param("id")); httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c), ErrNotFound, "viewer not found") {
+		return
+	}
 	if err := h.mgr.Stop(c.Request.Context(), c.Param("id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -112,8 +116,7 @@ func (h *Handler) stopViewer(c *gin.Context) {
 
 func (h *Handler) proxyViewer(c *gin.Context) {
 	v, err := h.repo.Get(c.Request.Context(), c.Param("id"))
-	if err != nil || v.Status != StatusRunning {
-		c.JSON(http.StatusNotFound, gin.H{"error": "viewer not found or not running"})
+	if httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c) && v.Status == StatusRunning, ErrNotFound, "viewer not found or not running") {
 		return
 	}
 
@@ -121,7 +124,7 @@ func (h *Handler) proxyViewer(c *gin.Context) {
 		// Process-based viewer (e.g. TensorBoard): reverse proxy to process.
 		target, err := url.Parse(v.Endpoint)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid endpoint"})
+			httpx.InternalError(c, err, "invalid endpoint")
 			return
 		}
 		proxyPrefix := v.ProxyURL(pid(c))
@@ -148,7 +151,7 @@ func (h *Handler) proxyViewer(c *gin.Context) {
 	}
 	absWorkDir, err := filepath.Abs(v.WorkDir)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid viewer workdir"})
+		httpx.InternalError(c, err, "invalid viewer workdir")
 		return
 	}
 	absPath, err := filepath.Abs(filepath.Join(absWorkDir, subPath))

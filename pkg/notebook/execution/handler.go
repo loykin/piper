@@ -152,7 +152,7 @@ func writeExecutionError(c *gin.Context, err error) {
 			c.JSON(statusForCode(de.Code), gin.H{"error": de.Message, "code": de.Code, "retryable": de.Retryable})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 	}
 }
 
@@ -200,8 +200,7 @@ func (h *Handler) putDocument(c *gin.Context) {
 		BaseHash string          `json:"base_hash"`
 		Content  json.RawMessage `json:"content"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	doc, err := jupyter.ParseNotebook(body.Content)
@@ -223,8 +222,7 @@ func (h *Handler) createKernelSession(c *gin.Context) {
 		Path       string `json:"path"`
 		KernelName string `json:"kernel_name"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	ks, err := h.svc.CreateKernelSession(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), CreateKernelSessionRequest{
@@ -296,8 +294,7 @@ func (h *Handler) createExecution(c *gin.Context) {
 		CreateIfMissing bool `json:"create_if_missing"`
 		TimeoutSeconds  int  `json:"timeout_seconds"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 
@@ -412,8 +409,7 @@ func (h *Handler) setPolicy(c *gin.Context) {
 	var body struct {
 		MCPPolicy string `json:"mcp_policy"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &body) {
 		return
 	}
 	if err := h.svc.SetPolicy(c.Request.Context(), actorFrom(c), currentProjectID(c), body.MCPPolicy); err != nil {

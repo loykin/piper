@@ -1,8 +1,8 @@
 import { Upload } from 'lucide-react'
 import { FormField, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { NotebookVolume } from '@/features/notebooks/types'
+import { DialogSubmitFooter } from '@/shared/components/DialogSubmitFooter'
 
 /**
  * Final confirmation before a pipeline template version is snapshotted.
@@ -50,13 +50,7 @@ export function SubmitTemplateDialog({
             </SelectContent>
           </Select>
         </FormField>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onClose} disabled={submitting}>Edit YAML</Button>
-          <Button size="sm" onClick={onConfirm} disabled={submitting}>
-            <Upload size={14} className="mr-1.5" />
-            {submitting ? 'Submitting…' : 'Confirm Submit'}
-          </Button>
-        </DialogFooter>
+        <DialogSubmitFooter verb="Submit" noun="Template" icon={<Upload />} pending={submitting} onCancel={onClose} onSubmit={onConfirm} />
       </DialogContent>
     </Dialog>
   )

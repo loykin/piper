@@ -1,10 +1,8 @@
-import { X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
-import { useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import type { ServiceHistory } from '@/features/serving/types'
 import { fmtDate } from '@/lib/format'
+import { PanelCloseButton } from '@/shared/components/PanelPlaceholder'
 
 function elapsed(deployedAt: string, stoppedAt: string): string {
   const ms = new Date(stoppedAt).getTime() - new Date(deployedAt).getTime()
@@ -15,18 +13,14 @@ function elapsed(deployedAt: string, stoppedAt: string): string {
 }
 
 export function ServingHistoryDetailPanel({ entry }: { entry: ServiceHistory }) {
-  const { close } = useSidePanel()
 
   return (
     <PanelTemplate
-      eyebrow="Service history"
+      eyebrow="Service History"
       title={entry.name}
       status={<StatusBadge status={entry.status} />}
       actions={
-        <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-          <X />
-          <span className="sr-only">Close</span>
-        </Button>
+        <PanelCloseButton />
       }
     >
       <PanelTemplate.Section title="Details">

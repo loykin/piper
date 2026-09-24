@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  DataBodyTemplate, FormActions, FormField,
+  DataBodyTemplate, FormField,
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
   Tabs, TabsList, TabsTrigger,
 } from '@loykin/designkit'
@@ -19,6 +19,7 @@ import {
   DEFAULT_K8S, DEFAULT_WORKER,
   type K8sFormState, type WorkerFormState,
 } from '../editor'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
 
 export type NotebookRuntime = 'k8s' | 'docker' | 'baremetal'
 
@@ -81,7 +82,6 @@ function K8sLaunchForm({ releasedVolumes, preselectedVolume = '', onSubmit, subm
       onSubmitYaml={yaml => onSubmit(yaml, volumeId || undefined)}
       submitting={submitting}
       error={error}
-      submitLabel={submitting ? 'Launching…' : volumeId ? 'Attach & Launch' : 'Launch'}
       onCancel={onCancel}
     >
       <DataBodyTemplate.Group layout="stacked" title="Server">
@@ -139,7 +139,6 @@ function WorkerLaunchForm({ runtime, releasedVolumes, preselectedVolume = '', on
       onSubmitYaml={yaml => onSubmit(yaml, volumeId || undefined)}
       submitting={submitting}
       error={error}
-      submitLabel={submitting ? 'Launching…' : volumeId ? 'Attach & Launch' : 'Launch'}
       onCancel={onCancel}
     >
       <DataBodyTemplate.Group layout="stacked" title="Server">
@@ -170,14 +169,13 @@ function WorkerLaunchForm({ runtime, releasedVolumes, preselectedVolume = '', on
 
 /** Form/YAML tabs plus the action row. YAML is seeded from the form on switch. */
 function LaunchFrame({
-  buildYaml, submitForm, onSubmitYaml, submitting, error, submitLabel, onCancel, children,
+  buildYaml, submitForm, onSubmitYaml, submitting, error, onCancel, children,
 }: {
   buildYaml: () => string
   submitForm: () => void
   onSubmitYaml: (yaml: string) => void
   submitting: boolean
   error?: string
-  submitLabel: string
   onCancel: () => void
   children: ReactNode
 }) {
@@ -211,10 +209,12 @@ function LaunchFrame({
             <YamlMirror rows={24} value={yaml} onChange={e => setYaml(e.target.value)} />
           </DataBodyTemplate.Group>
         )}
-        <FormActions
-          status={error || undefined}
-          submitLabel={submitLabel}
-          submitDisabled={submitting || (tab === 'yaml' && !yaml.trim())}
+        <FormSubmitBar
+          verb="Launch"
+          noun="Notebook"
+          pending={submitting}
+          error={error}
+          disabled={(tab === 'yaml' && !yaml.trim())}
           onCancel={onCancel}
         />
       </form>

@@ -68,8 +68,7 @@ func writeCredentialRefError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	slog.Error("mlflow: credential validation failed", "err", err)
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate MLflow credential"})
+	httpx.InternalError(c, err, "failed to validate MLflow credential")
 }
 
 // RegisterRoutes mounts the Integrations CRUD/test endpoints and the
@@ -114,13 +113,13 @@ func (h *Handler) list(c *gin.Context) {
 	limit, offset := httpx.ParseLimitOffset(c)
 	items, err := h.deps.Repo.ListIntegrations(c.Request.Context(), projectContext.ID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.deps.Repo.CountIntegrations(c.Request.Context(), projectContext.ID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -192,7 +191,7 @@ func (h *Handler) get(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	item, err := h.deps.Repo.GetIntegration(c.Request.Context(), projectContext.ID, c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if item == nil || item.IsDeleted() {
@@ -206,8 +205,7 @@ func (h *Handler) get(c *gin.Context) {
 func (h *Handler) create(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	var req integrationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if err := h.validateCredentialRef(c.Request.Context(), projectContext.ID, req.CredentialRef); err != nil {
@@ -245,7 +243,7 @@ func (h *Handler) update(c *gin.Context) {
 	id := c.Param("id")
 	existing, err := h.deps.Repo.GetIntegration(c.Request.Context(), projectContext.ID, id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if existing == nil || existing.IsDeleted() {
@@ -253,8 +251,7 @@ func (h *Handler) update(c *gin.Context) {
 		return
 	}
 	var req integrationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if err := h.validateCredentialRef(c.Request.Context(), projectContext.ID, req.CredentialRef); err != nil {
@@ -323,7 +320,7 @@ func (h *Handler) test(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	integration, err := h.deps.Repo.GetIntegration(c.Request.Context(), projectContext.ID, c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if integration == nil || integration.IsDeleted() {
@@ -370,7 +367,7 @@ func (h *Handler) runLinks(c *gin.Context) {
 	runID := c.Param("id")
 	integrations, err := h.deps.Repo.ListIntegrations(c.Request.Context(), projectContext.ID, 0, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	views := make([]runLinkView, 0, len(integrations))
@@ -401,6 +398,6 @@ func respondError(c *gin.Context, err error) {
 	case errors.Is(err, ErrInvalid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 	}
 }

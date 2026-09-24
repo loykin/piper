@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,6 +73,9 @@ func (r *pipelineRepo) Get(ctx context.Context, projectID, id string) (*template
 		q := db.Rebind(`SELECT ` + selectCols + ` FROM pipeline_templates WHERE project_id=? AND id=?`)
 		return db.GetContext(ctx, &t, q, projectID, id)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, template.ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}

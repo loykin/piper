@@ -13,18 +13,21 @@ import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import {
   useNotebooksPaged, useNotebookVolumes,
-  useStopNotebook, useStartNotebook, useDeleteNotebook,
+  useStopNotebook, useStartNotebook,
 } from '@/features/notebooks/hooks'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useTextFilter } from '@/shared/hooks/useTextFilter'
-import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { CreateButton } from '@/shared/components/CreateButton'
+import { MutationErrors } from '@/shared/components/MutationErrors'
+import { hasMutationError } from '@/shared/mutationErrors'
+import { DeleteNotebookDialog } from '@/features/notebooks/components/DeleteNotebookDialog'
 
 const PAGE_SIZE = 20
 
 function NotebooksPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const notebooksQuery = useNotebooksPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = notebooksQuery.data?.total ?? 0
@@ -35,14 +38,15 @@ function NotebooksPageInner() {
   const { data: allVolumes = [] } = useNotebookVolumes()
   const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
 
-  const { mutate: stop, isPending: stopping, variables: stoppingName } = useStopNotebook()
-  const { mutate: start, isPending: starting, variables: startingName } = useStartNotebook()
-  const { mutateAsync: deleteAsync, isPending: deleting, variables: deletingName } = useDeleteNotebook()
-  const { target: deleteTarget, open: deleteOpen, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<string>()
+  const stopMutation = useStopNotebook()
+  const startMutation = useStartNotebook()
+  const { mutate: stop, isPending: stopping, variables: stoppingName } = stopMutation
+  const { mutate: start, isPending: starting, variables: startingName } = startMutation
+  const deleteTarget = useDeleteTarget<string>()
+  const { requestDelete } = deleteTarget
 
   const busy = stopping ? (stoppingName ?? null)
     : starting ? (startingName ?? null)
-    : deleting ? (deletingName ?? null)
     : null
 
   const handleStop   = (name: string) => stop(name)
@@ -76,15 +80,18 @@ function NotebooksPageInner() {
               />
             </div>
           }
-          toolbarRight={
-            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/new`)}>Launch</Button>
-          }
-          notice={notebooksQuery.isError && (
-            <QueryErrorNotice
-              message="Failed to load notebooks"
-              error={notebooksQuery.error}
-              onRetry={() => void notebooksQuery.refetch()}
-            />
+          toolbarRight={<CreateButton verb="Launch" noun="Notebook" to={`/projects/${projectId}/notebooks/new`} />}
+          notice={(notebooksQuery.isError || hasMutationError([stopMutation, startMutation])) && (
+            <>
+              {notebooksQuery.isError && (
+                <QueryErrorNotice
+                  message="Failed to load notebooks"
+                  error={notebooksQuery.error}
+                  onRetry={() => void notebooksQuery.refetch()}
+                />
+              )}
+              <MutationErrors of={[stopMutation, startMutation]} />
+            </>
           )}
         >
           <DataGrid
@@ -92,10 +99,10 @@ function NotebooksPageInner() {
             columns={columns}
             emptyContent={!notebooksQuery.isError && (
               <div className="py-12 text-center">
-                <p className="text-sm text-muted-foreground">No notebook servers running.</p>
+                <p className="text-sm text-muted-foreground">No notebooks yet.</p>
                 {releasedVolumes.length > 0 && (
                   <p className="mt-1 text-xs text-muted-foreground/60">
-                    {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} available — click Launch to attach one.
+                    {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} available — use Launch Notebook to attach one.
                   </p>
                 )}
               </div>
@@ -134,15 +141,7 @@ function NotebooksPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <ConfirmDialog
-      open={deleteOpen}
-      onCancel={cancelDelete}
-      title="Delete this notebook?"
-      description={<>"{deleteTarget}" will be deleted. The volume and work directory are preserved — you can recover them from the Volumes page.</>}
-      confirmLabel={deleting ? 'Deleting…' : 'Delete notebook'}
-      pending={deleting}
-      onConfirm={() => void confirmDeleteTarget(name => deleteAsync(name))}
-    />
+    <DeleteNotebookDialog target={deleteTarget} onDeleted={() => void close()} />
     </>
   )
 }

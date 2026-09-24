@@ -20,6 +20,22 @@ const routerImport = {
   message: 'Import navigation from @/lib/router instead (only App.tsx and lib/router.tsx use TanStack Router directly).',
 }
 
+// Confirmations go through shared/components/ConfirmDialog, which derives the
+// title and button copy from verb + noun so every dialog reads the same way.
+const confirmMessage = 'Use ConfirmDialog from @/shared/components/ConfirmDialog instead of assembling an AlertDialog.'
+const alertDialogImports = [
+  { name: '@/components/ui/alert-dialog', message: confirmMessage },
+  { name: '@loykin/designkit', importNames: ['AlertDialog', 'AlertDialogContent', 'AlertDialogAction', 'AlertDialogCancel'], message: confirmMessage },
+]
+// Forms end with FormSubmitBar: FormActions' own status line is muted text,
+// so a server error passed to it looked like a neutral note.
+const formActionsImport = {
+  name: '@loykin/designkit',
+  importNames: ['FormActions'],
+  message: 'Use FormSubmitBar from @/shared/components/FormSubmitBar (errors in destructive color, labels from verb + noun).',
+}
+const featurePaths = [routerImport, ...alertDialogImports, formActionsImport]
+
 export default defineConfig([
   globalIgnores(['dist']),
   {
@@ -41,6 +57,13 @@ export default defineConfig([
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       // Underscore-prefixed params are intentionally unused (placeholder functions, etc.)
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // Browser dialogs block the page and are suppressed in embedded views;
+      // show errors inline and confirm with ConfirmDialog.
+      'no-restricted-globals': ['error',
+        { name: 'alert', message: 'Show the message inline (notice, dialog error, MutationErrors) instead.' },
+        { name: 'confirm', message: 'Use ConfirmDialog instead.' },
+        { name: 'prompt', message: 'Use a form field instead.' },
+      ],
       'no-restricted-syntax': ['error',
         { selector: `Literal[value=/${PALETTE_CLASS}/]`, message: paletteMessage },
         { selector: `TemplateElement[value.raw=/${PALETTE_CLASS}/]`, message: paletteMessage },
@@ -50,6 +73,12 @@ export default defineConfig([
         {
           selector: "JSXOpeningElement[name.name='AlertDialog'] > JSXAttribute[name.name='onOpenChange'] > JSXExpressionContainer > Identifier",
           message: 'Do not pass a state setter to AlertDialog onOpenChange — use `open => { if (!open) cancel() }` (see docs/frontend/develop.md rule 8).',
+        },
+        // A swallowed error is a failed action the user never hears about
+        // (the Serving panel's Restart/Stop did exactly this).
+        {
+          selector: 'CatchClause > BlockStatement[body.length=0]',
+          message: 'Do not swallow errors — show them (dialog `error`, notice) or handle them explicitly.',
         },
       ],
     },
@@ -72,7 +101,7 @@ export default defineConfig([
   {
     files: ['src/features/**', 'src/pages/**'],
     rules: {
-      'no-restricted-imports': ['error', { paths: [routerImport], patterns: [
+      'no-restricted-imports': ['error', { paths: featurePaths, patterns: [
         { group: ['@/pages/*'], message: 'features/ must not depend on pages/.' },
       ] }],
     },
@@ -86,7 +115,7 @@ export default defineConfig([
   {
     files: ['src/features/pipelines/**'],
     rules: {
-      'no-restricted-imports': ['error', { paths: [routerImport], patterns: [
+      'no-restricted-imports': ['error', { paths: featurePaths, patterns: [
         { group: ['@/pages/*'], message: 'features/ must not depend on pages/.' },
         { group: ['@/features/schedules/*'], message: 'pipelines must not import schedules (schedules → pipelines only).' },
       ] }],

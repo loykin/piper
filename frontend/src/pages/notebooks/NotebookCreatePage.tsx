@@ -7,6 +7,7 @@ import { errorMessage } from '@/lib/format'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { toneBadge } from '@/shared/status'
+import { createCopy } from '@/lib/copy'
 
 const RUNTIME_LABEL: Record<NotebookRuntime, string> = { k8s: 'Kubernetes', docker: 'Docker', baremetal: 'Bare-metal' }
 const RUNTIME_TONE = { k8s: toneBadge.info, docker: toneBadge.starting, baremetal: toneBadge.attention } as const
@@ -34,8 +35,8 @@ export default function NotebookCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['Development', { label: 'Notebooks', to: listPath }, 'Launch']} />} />}
-      title="Launch Notebook Server"
+      topBar={<PageTopBar left={<PageCrumbs items={['Development', { label: 'Notebooks', to: listPath }, createCopy('Notebook', 'Launch').crumb]} />} />}
+      title={createCopy('Notebook', 'Launch').title}
       description={<span className={`rounded px-2 py-0.5 text-xs font-medium ${RUNTIME_TONE[runtime]}`}>{RUNTIME_LABEL[runtime]}</span>}
     >
       <NotebookLaunchForm

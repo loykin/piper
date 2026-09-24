@@ -1,4 +1,5 @@
-import { Trash2, X } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
+import { PanelGuard } from '@loykin/side-panel'
 import {
   PanelTemplate,
   Select,
@@ -7,24 +8,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@loykin/designkit'
-import { useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { useUpdateMember } from '../hooks'
-import type { ProjectMember, ProjectRole } from '../types'
+import { errorMessage } from '@/lib/format'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
+import { useMembers, useUpdateMember } from '../hooks'
+import { PROJECT_ROLE_ITEMS, type ProjectMember, type ProjectRole } from '../types'
 
 interface Props {
-  member: ProjectMember
+  userId: string
   onRemove: (member: ProjectMember) => void
 }
 
-export function MemberDetailPanel({ member, onRemove }: Props) {
-  const { close } = useSidePanel()
+// There is no single-member endpoint; the project's full member list is
+// small and already cached by other pages.
+export function MemberDetailPanel({ userId, onRemove }: Props) {
+  const query = useMembers()
+  const members = query.data
   const updateMember = useUpdateMember()
+  const member = members?.find(m => m.user_id === userId)
+  if (!member) return <PanelPlaceholder query={query} noun="member" />
 
   return (
     <PanelTemplate
-      eyebrow="Project membership"
+      eyebrow="Project Membership"
       title={member.username || 'Unknown user'}
       actions={
         <div className="flex items-center gap-1">
@@ -32,15 +38,9 @@ export function MemberDetailPanel({ member, onRemove }: Props) {
             icon={<Trash2 />}
             label={`Remove ${member.username || 'member'}`}
             className="text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              onRemove(member)
-              void close()
-            }}
+            onClick={() => onRemove(member)}
           />
-          <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-            <X />
-            <span className="sr-only">Close</span>
-          </Button>
+          <PanelCloseButton />
         </div>
       }
     >
@@ -48,6 +48,7 @@ export function MemberDetailPanel({ member, onRemove }: Props) {
         <div className="space-y-1.5">
           <p className="text-xs text-muted-foreground">Project role</p>
           <Select
+            items={PROJECT_ROLE_ITEMS}
             value={member.role}
             onValueChange={value => {
               if (value) {
@@ -57,11 +58,16 @@ export function MemberDetailPanel({ member, onRemove }: Props) {
           >
             <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="viewer">Viewer</SelectItem>
-              <SelectItem value="member">Member</SelectItem>
-              <SelectItem value="admin">Admin</SelectItem>
+              {/* The popup renders outside the panel; without the guard,
+                  picking an option counts as an outside click and closes it. */}
+              <PanelGuard>
+                {PROJECT_ROLE_ITEMS.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+              </PanelGuard>
             </SelectContent>
           </Select>
+          {updateMember.isError && (
+            <p className="text-xs text-destructive">{errorMessage(updateMember.error)}</p>
+          )}
           <p className="text-xs text-muted-foreground">
             Viewer can inspect resources, Member can operate workloads, and Admin can manage project access.
           </p>

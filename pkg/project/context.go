@@ -2,6 +2,7 @@ package project
 
 import (
 	"context"
+	"github.com/loykin/piper/internal/httpx"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -56,7 +57,7 @@ func Require(repo Repository, authorizer security.Authorizer, minRole security.P
 		projectID := c.Param("project_id")
 		p, err := repo.Get(c.Request.Context(), projectID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			c.Abort()
 			return
 		}

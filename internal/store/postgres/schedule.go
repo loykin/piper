@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -36,6 +38,9 @@ func (r *scheduleRepo) Get(ctx context.Context, projectID, id string) (*schedule
 		q := db.Rebind(`SELECT ` + scheduleSelectCols + ` FROM schedules WHERE project_id=? AND id=?`)
 		return db.GetContext(ctx, &sc, q, projectID, id)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, schedule.ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}

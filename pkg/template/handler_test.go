@@ -1,7 +1,9 @@
 package template
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,10 +11,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/schedule"
 	"github.com/loykin/piper/pkg/security"
+	"github.com/loykin/piper/pkg/storage"
 )
 
 func TestRewriteLocalSourcesSkipsPureCommandSteps(t *testing.T) {
@@ -74,7 +78,7 @@ func (r *stubTemplateRepo) Create(context.Context, *Template) error             
 func (r *stubTemplateRepo) Get(_ context.Context, projectID, id string) (*Template, error) {
 	t := r.templates[id]
 	if t == nil || t.ProjectID != projectID {
-		return nil, schedule.ErrInvalidCronExpr
+		return nil, ErrNotFound
 	}
 	return t, nil
 }
@@ -219,5 +223,50 @@ func TestDeleteRefusesVersionReferencedBySchedule(t *testing.T) {
 				t.Fatalf("status = %d, body = %s; want 409 naming %q", rec.Code, rec.Body.String(), sc.Name)
 			}
 		})
+	}
+}
+
+type oneVolumeRepo struct {
+	notebook.VolumeRepository
+	vol *notebook.NotebookVolume
+}
+
+func (r oneVolumeRepo) Get(_ context.Context, id string) (*notebook.NotebookVolume, error) {
+	if r.vol != nil && r.vol.ID == id {
+		return r.vol, nil
+	}
+	return nil, nil
+}
+
+// Volumes are looked up by id alone. Submitting with another project's
+// volume id must read as "volume not found" — not snapshot that project's
+// files into this project's template.
+func TestSubmitRejectsAnotherProjectsVolume(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store, err := storage.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(HandlerDeps{
+		Templates: &stubTemplateRepo{templates: map[string]*Template{}},
+		Volumes:   oneVolumeRepo{vol: &notebook.NotebookVolume{ID: "vol-b", ProjectID: "proj-b", WorkDir: t.TempDir()}},
+		Store:     store,
+		Parse:     pipeline.Parse,
+	})
+	router := gin.New()
+	handler.RegisterRoutes(router.Group("/projects/:project_id", func(c *gin.Context) {
+		ctx := project.WithContext(c.Request.Context(), project.Context{ID: "proj-a", Role: security.ProjectRoleAdmin})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}))
+
+	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: steal\nspec:\n  steps:\n    - name: s\n      run:\n        type: python\n        source: local\n        path: secret.py\n"
+	body, _ := json.Marshal(map[string]string{"yaml": yaml, "volume_id": "vol-b"})
+	req := httptest.NewRequest(http.MethodPost, "/projects/proj-a/pipeline-templates", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
 	}
 }

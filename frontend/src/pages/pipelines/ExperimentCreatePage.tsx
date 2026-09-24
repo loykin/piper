@@ -5,7 +5,6 @@ import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import {
   DataBodyTemplate,
-  FormActions,
   FormField,
   PageTopBar,
   Select,
@@ -22,6 +21,8 @@ import { useProjectId } from '@/features/projects/context'
 import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { createCopy } from '@/lib/copy'
 
 const schema = z.object({
   experiment: z.string().trim().min(1, 'Experiment name is required.'),
@@ -84,13 +85,13 @@ export default function ExperimentCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Experiments', to: `/projects/${projectId}/experiments` }, 'New Sweep']} />} />}
-      title="New Sweep"
+      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Experiments', to: `/projects/${projectId}/experiments` }, createCopy('Sweep').crumb]} />} />}
+      title={createCopy('Sweep').title}
       description="Run one saved pipeline with multiple parameter sets under a shared experiment name."
     >
       <DataBodyTemplate.Group title="Sweep">
         <form className="max-w-2xl space-y-6" onSubmit={event => void handleSubmit(submit)(event)}>
-          <FormField label="Experiment name" htmlFor="experiment-name" error={errors.experiment?.message}>
+          <FormField label="Experiment Name" htmlFor="experiment-name" error={errors.experiment?.message}>
             <Input id="experiment-name" placeholder="learning-rate-search" aria-invalid={!!errors.experiment} {...register('experiment')} />
           </FormField>
           <FormField label="Pipeline" htmlFor="sweep-pipeline" error={errors.pipelineId?.message}>
@@ -109,16 +110,18 @@ export default function ExperimentCreatePage() {
               />
             )}
           </FormField>
-          <FormField label="Trial parameters" htmlFor="sweep-trials" error={errors.trials?.message}>
+          <FormField label="Trial Parameters" htmlFor="sweep-trials" error={errors.trials?.message}>
             <div className="space-y-2">
               <Textarea id="sweep-trials" className="min-h-44 font-mono" spellCheck={false} aria-invalid={!!errors.trials} {...register('trials')} />
               <p className="text-xs text-muted-foreground">JSON array; each object becomes one run&apos;s params.</p>
             </div>
           </FormField>
-          <FormActions
-            status={submitError || (pipelinesQuery.isError ? 'Failed to load pipelines.' : undefined)}
-            submitLabel={createSweep.isPending ? 'Creating…' : 'Create Sweep'}
-            submitDisabled={createSweep.isPending || pipelinesQuery.isPending || pipelines.length === 0}
+          <FormSubmitBar
+            verb="Create"
+            noun="Sweep"
+            pending={createSweep.isPending}
+            error={submitError || (pipelinesQuery.isError ? 'Failed to load pipelines.' : undefined)}
+            disabled={pipelinesQuery.isPending || pipelines.length === 0}
             onCancel={() => void navigate(listPath)}
           />
         </form>

@@ -19,20 +19,60 @@ export type Tone =
   | 'starting'
   | 'accent'
 
+// Every status string the backend sends (runs, steps, notebooks, services,
+// executions, volumes, integrations, kernels, federation members). An
+// unlisted status renders neutral grey, so `status.test.ts` fails when one
+// the UI shows is missing here.
 const STATUS_TONE: Record<string, Tone> = {
+  // finished well
   success: 'success',
+  succeeded: 'success',
   done: 'success',
+  ready: 'success',
+  healthy: 'success',
+  enabled: 'success',
+  online: 'success',
+  synced: 'success',
+  delivered: 'success',
+  // in progress
   running: 'info',
+  busy: 'info',
+  bound: 'info',
+  syncing: 'info',
+  delivering: 'info',
+  // failed
   failed: 'danger',
+  timed_out: 'danger',
+  conflicted: 'danger',
+  dead: 'danger',
+  unhealthy: 'danger',
+  offline: 'danger',
+  // needs attention
   skipped: 'warning',
+  degraded: 'warning',
+  awaiting_approval: 'warning',
+  retrying: 'warning',
   canceled: 'attention',
+  cancelled: 'attention',
+  cancelling: 'attention',
   stopping: 'attention',
+  recovering: 'attention',
+  // waiting / at rest
   pending: 'neutral',
+  queued: 'neutral',
   stopped: 'neutral',
+  released: 'neutral',
+  disabled: 'neutral',
+  idle: 'neutral',
+  closed: 'neutral',
   scheduled: 'scheduled',
   provisioning: 'scheduled',
   starting: 'starting',
+  restarting: 'starting',
 }
+
+/** Every status the table above knows — for the coverage test. */
+export const KNOWN_STATUSES = Object.keys(STATUS_TONE)
 
 /** Maps a backend run/step/notebook/service status to its tone. */
 export function statusTone(status: string): Tone {
@@ -40,7 +80,7 @@ export function statusTone(status: string): Tone {
 }
 
 /** Statuses that are still changing and get a pulsing indicator. */
-export const LIVE_STATUSES = new Set(['running', 'provisioning', 'starting', 'stopping'])
+export const LIVE_STATUSES = new Set(['running', 'provisioning', 'starting', 'stopping', 'restarting', 'cancelling', 'syncing', 'delivering', 'retrying', 'recovering'])
 
 /** Foreground text. */
 export const toneText: Record<Tone, string> = {

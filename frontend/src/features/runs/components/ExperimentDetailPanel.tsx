@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
-import { ArrowUpDown, X } from 'lucide-react'
+import { ArrowUpDown } from 'lucide-react'
 import { DataGrid, type DataGridColumnDef } from '@loykin/gridkit'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
@@ -13,6 +13,7 @@ import type { Run, RunMetricValues } from '@/features/runs/types'
 import { useProjectId } from '@/features/projects/context'
 import { RunDetailPanel } from './RunDetailPanel'
 import { fmtDate } from '@/lib/format'
+import { PanelCloseButton } from '@/shared/components/PanelPlaceholder'
 
 interface SortState { step: string; key: string; order: 'asc' | 'desc' }
 
@@ -22,7 +23,7 @@ function parseParams(json?: string): Record<string, unknown> {
 }
 
 export function ExperimentDetailPanel({ experiment }: { experiment: string }) {
-  const { close, open } = useSidePanel()
+  const { open } = useSidePanel()
   const projectId = useProjectId()
   const [sort, setSort] = useState<SortState | null>(null)
 
@@ -121,9 +122,7 @@ export function ExperimentDetailPanel({ experiment }: { experiment: string }) {
       eyebrow="Experiment"
       title={experiment}
       actions={
-        <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-          <X className="h-3.5 w-3.5" />
-        </Button>
+        <PanelCloseButton />
       }
       footer={
         <p className="text-xs text-muted-foreground">

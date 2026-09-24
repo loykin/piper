@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { DataBodyTemplate, FormActions, PageTopBar } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { SecretEntriesField } from '@/features/credentials/components/SecretEntriesField'
@@ -11,6 +11,8 @@ import { useProjectId } from '@/features/projects/context'
 import { errorMessage } from '@/lib/format'
 import { useNavigate, useParams } from '@/lib/router'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { PageState } from '@/shared/components/PageState'
 
 // A git credential authenticates with a token/password; other kinds only
 // need at least one named key (generic credentials may carry empty values).
@@ -43,12 +45,21 @@ export default function CredentialRotatePage() {
   const credential = useCredential(name)
   // Mount the form only once the kind is known, so its defaults and
   // validation rule match the credential being rotated.
-  return credential.data
-    ? <RotateForm credential={credential.data} />
-    : <RotateShell name={name} error={credential.isError ? errorMessage(credential.error) : ''} />
+  const projectId = useProjectId()
+  if (!credential.data) {
+    return (
+      <PageState
+        query={credential}
+        noun="credential"
+        template="data"
+        topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Credentials', to: `/projects/${projectId}/credentials` }, name, 'Rotate']} />} />}
+      />
+    )
+  }
+  return <RotateForm credential={credential.data} />
 }
 
-function RotateShell({ name, error, children }: { name: string; error?: string; children?: ReactNode }) {
+function RotateShell({ name, children }: { name: string; children: ReactNode }) {
   const projectId = useProjectId()
   return (
     <DataBodyTemplate
@@ -56,10 +67,8 @@ function RotateShell({ name, error, children }: { name: string; error?: string; 
       title={`Rotate ${name}`}
       description="Replace the stored secret values. The previous values are overwritten and cannot be recovered."
     >
-      <DataBodyTemplate.Group layout="stacked" title="Secret values" description="Values are write-only; the server never returns them.">
-        {children ?? (error
-          ? <p className="text-sm text-destructive">{error}</p>
-          : <p className="text-sm text-muted-foreground">Loading…</p>)}
+      <DataBodyTemplate.Group layout="stacked" title="Secret Values" description="Values are write-only; the server never returns them.">
+        {children}
       </DataBodyTemplate.Group>
     </DataBodyTemplate>
   )
@@ -96,10 +105,11 @@ function RotateForm({ credential }: { credential: Credential }) {
           keyPlaceholder="token"
           error={errors.entries?.root?.message ?? errors.entries?.message}
         />
-        <FormActions
-          status={submitError || undefined}
-          submitLabel={rotate.isPending ? 'Rotating…' : 'Rotate'}
-          submitDisabled={rotate.isPending}
+        <FormSubmitBar
+          verb="Rotate"
+          noun="Credential"
+          pending={rotate.isPending}
+          error={submitError}
           onCancel={() => void navigate(listPath)}
         />
       </form>

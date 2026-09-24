@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react'
-import { FolderOpen, Save } from 'lucide-react'
+import { FolderOpen, Upload } from 'lucide-react'
 import { FormField } from '@loykin/designkit'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useUploadObject } from '@/features/storage/hooks'
 import { errorMessage, fmtBytes } from '@/lib/format'
+import { DialogSubmitFooter } from '@/shared/components/DialogSubmitFooter'
 
 // ── Upload Object ───────────────────────────────────────────────────────────
 // A narrowly-scoped value-collection action (file + optional key), not an
@@ -37,14 +38,13 @@ export function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOp
     onOpenChange(next)
   }
 
-  async function handleUpload() {
+  function handleUpload() {
     if (!uploadFile) return
-    try {
-      await uploadObject.mutateAsync({ file: uploadFile, key: uploadKey.trim() || uploadFile.name })
-      handleOpenChange(false)
-    } catch {
-      // surfaced below via uploadObject.error
-    }
+    // A failure is surfaced below via uploadObject.error.
+    uploadObject.mutate(
+      { file: uploadFile, key: uploadKey.trim() || uploadFile.name },
+      { onSuccess: () => handleOpenChange(false) },
+    )
   }
 
   return (
@@ -55,7 +55,7 @@ export function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOp
         </DialogHeader>
         <div className="space-y-4">
           <FormField
-            label="Object key"
+            label="Object Key"
             htmlFor="upload-object-key"
             helperText="Leave empty to use the selected file name."
           >
@@ -83,7 +83,7 @@ export function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOp
                 onClick={() => fileInputRef.current?.click()}
               >
                 <FolderOpen className="mr-2 size-4" />
-                Choose file
+                Choose File
               </Button>
               <span className="text-sm text-muted-foreground">
                 {uploadFile ? uploadFile.name : 'No file chosen'}
@@ -102,13 +102,15 @@ export function UploadObjectDialog({ open, onOpenChange }: { open: boolean; onOp
             </p>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => void handleUpload()} disabled={!uploadFile || fileTooLarge || uploadObject.isPending}>
-            <Save className="mr-2 size-4" />
-            {uploadObject.isPending ? 'Uploading…' : 'Upload'}
-          </Button>
-        </DialogFooter>
+        <DialogSubmitFooter
+          verb="Upload"
+          noun="Object"
+          icon={<Upload />}
+          pending={uploadObject.isPending}
+          disabled={!uploadFile || fileTooLarge}
+          onCancel={() => handleOpenChange(false)}
+          onSubmit={handleUpload}
+        />
       </DialogContent>
     </Dialog>
   )

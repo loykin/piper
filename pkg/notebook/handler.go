@@ -78,13 +78,13 @@ func (h *Handler) listNotebooks(c *gin.Context) {
 	projectID := currentProjectID(c)
 	nbs, err := h.deps.Notebooks.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.deps.Notebooks.Count(c.Request.Context(), projectID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -100,8 +100,7 @@ func (h *Handler) createNotebook(c *gin.Context) {
 		YAML     string `json:"yaml"`
 		VolumeID string `json:"volume_id"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if req.YAML == "" {
@@ -156,13 +155,13 @@ func (h *Handler) listNotebookHistory(c *gin.Context) {
 	projectID := currentProjectID(c)
 	history, err := h.deps.Notebooks.ListHistory(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.deps.Notebooks.CountHistory(c.Request.Context(), projectID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -175,7 +174,7 @@ func (h *Handler) getNotebook(c *gin.Context) {
 	name := c.Param("name")
 	nb, err := h.deps.Notebooks.Get(c.Request.Context(), currentProjectID(c), name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if nb == nil {
@@ -229,13 +228,14 @@ func (h *Handler) deleteNotebook(c *gin.Context) {
 }
 
 func writeLifecycleError(c *gin.Context, err error) {
-	status := http.StatusInternalServerError
-	if errors.Is(err, ErrNotFound) {
-		status = http.StatusNotFound
-	} else if errors.Is(err, ErrConflict) {
-		status = http.StatusConflict
+	switch {
+	case errors.Is(err, ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, ErrConflict):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	default:
+		httpx.InternalError(c, err)
 	}
-	c.JSON(status, gin.H{"error": err.Error()})
 }
 
 // GET /notebook-volumes — list all volumes for the current project.
@@ -244,13 +244,13 @@ func (h *Handler) listVolumes(c *gin.Context) {
 	projectID := currentProjectID(c)
 	vols, err := h.deps.Volumes.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.deps.Volumes.Count(c.Request.Context(), projectID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -266,7 +266,7 @@ func (h *Handler) listVolumeFiles(c *gin.Context) {
 	id := c.Param("id")
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if vol == nil {
@@ -370,8 +370,7 @@ func (h *Handler) purgeVolume(c *gin.Context) {
 	id := c.Param("id")
 	// Verify volume belongs to current project before purging.
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
-	if err != nil || vol == nil || vol.ProjectID != currentProjectID(c) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+	if httpx.LookupFailed(c, err, vol != nil && vol.ProjectID == currentProjectID(c), ErrNotFound, "volume not found") {
 		return
 	}
 	if h.deps.PurgeVolume == nil {
@@ -396,8 +395,7 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 	projectID := currentProjectID(c)
 	name := c.Param("name")
 	nb, err := h.deps.Notebooks.Get(c.Request.Context(), projectID, name)
-	if err != nil || nb == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "notebook not found"})
+	if httpx.LookupFailed(c, err, nb != nil, ErrNotFound, "notebook not found") {
 		return
 	}
 	if nb.Status != StatusRunning || nb.Endpoint == "" {
@@ -407,7 +405,7 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 
 	target, err := url.Parse(nb.Endpoint)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid notebook endpoint"})
+		httpx.InternalError(c, err, "invalid notebook endpoint")
 		return
 	}
 
@@ -423,7 +421,7 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 		ProxyPrefix: proxyPrefix,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 

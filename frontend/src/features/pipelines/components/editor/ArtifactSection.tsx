@@ -51,7 +51,7 @@ export function ArtifactSection({
                   {canBrowse && (
                     <IconButton
                       icon={<FolderOpen />}
-                      label="Browse volume files"
+                      label="Browse Volume Files"
                       onClick={() => onBrowseToggle(browseKey)}
                     />
                   )}

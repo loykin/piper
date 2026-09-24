@@ -338,7 +338,7 @@ function AppSidebar() {
 
 function PageLoadingSkeleton() {
   return (
-    <div className="space-y-6 p-6" aria-label="Loading page">
+    <div className="space-y-6 p-6" aria-label="Loading Page">
       <div className="space-y-2">
         <Skeleton className="h-7 w-48" />
         <Skeleton className="h-4 w-80 max-w-full" />
@@ -438,7 +438,7 @@ function RootRedirect() {
 function NoProjectAccessNotice() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-      <h1 className="text-lg font-semibold">No project access</h1>
+      <h1 className="text-lg font-semibold">No Project Access</h1>
       <p className="max-w-sm text-sm text-muted-foreground">
         Your account isn't a member of any project yet. Ask a project or system admin to add you.
       </p>
@@ -455,7 +455,7 @@ function NotFoundPage({ homeTo }: { homeTo: string }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
       <p className="text-sm font-medium text-muted-foreground">404</p>
-      <h1 className="text-lg font-semibold">Page not found</h1>
+      <h1 className="text-lg font-semibold">Page Not Found</h1>
       <p className="max-w-sm text-sm text-muted-foreground">
         The page you requested doesn't exist or may have been moved.
       </p>

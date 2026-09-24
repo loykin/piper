@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "test:e2e": "playwright test",
     "test": "vitest run",
-    "gen:api": "openapi-typescript ../docs/openapi.yaml -o src/lib/openapi.gen.ts"
+    "gen:api": "openapi-typescript ../docs/openapi.yaml -o src/lib/openapi.gen.ts",
+    "test:e2e:auth": "playwright test -c playwright.auth.config.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

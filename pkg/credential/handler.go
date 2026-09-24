@@ -36,13 +36,13 @@ func (h *Handler) list(c *gin.Context) {
 	limit, offset := httpx.ParseLimitOffset(c)
 	items, err := h.store.List(c.Request.Context(), projectContext.ID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.store.Count(c.Request.Context(), projectContext.ID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -54,7 +54,7 @@ func (h *Handler) get(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	item, err := h.store.Get(c.Request.Context(), projectContext.ID, c.Param("name"))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if item == nil {
@@ -67,8 +67,7 @@ func (h *Handler) get(c *gin.Context) {
 func (h *Handler) create(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	var req CreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	item, err := h.store.Create(c.Request.Context(), projectContext.ID, req)
@@ -82,8 +81,7 @@ func (h *Handler) create(c *gin.Context) {
 func (h *Handler) rotate(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	var req RotateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if err := h.store.Rotate(c.Request.Context(), projectContext.ID, c.Param("name"), req); err != nil {
@@ -101,8 +99,7 @@ func (h *Handler) patch(c *gin.Context) {
 		return
 	}
 	var req PatchRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	item, err := h.store.Patch(c.Request.Context(), projectContext.ID, name, req)
@@ -118,8 +115,7 @@ func (h *Handler) test(c *gin.Context) {
 	name := strings.TrimSpace(c.Param("name"))
 	var req TestRequest
 	if c.Request.ContentLength != 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if !httpx.BindJSON(c, &req) {
 			return
 		}
 	}
@@ -164,6 +160,6 @@ func respondError(c *gin.Context, err error) {
 	case errors.Is(err, ErrScopeViolation):
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 	}
 }

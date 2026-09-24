@@ -1,23 +1,24 @@
-import { FlaskConical, Power, RotateCw, Trash2, X } from 'lucide-react'
+import { FlaskConical, Power, RotateCw, Trash2 } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
-import { useSidePanel } from '@loykin/side-panel'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
+import { useCredential } from '@/features/credentials/hooks'
 import type { Credential } from '@/features/credentials/types'
 import { fmtDate } from '@/lib/format'
-
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
 
 interface CredentialDetailPanelProps {
-  credential: Credential
+  name: string
   onTest: (credential: Credential) => void
   onRotate: (credential: Credential) => void
   onToggle: (credential: Credential) => void
   onDelete: (credential: Credential) => void
 }
 
-export function CredentialDetailPanel({ credential, onTest, onRotate, onToggle, onDelete }: CredentialDetailPanelProps) {
-  const { close } = useSidePanel()
+export function CredentialDetailPanel({ name, onTest, onRotate, onToggle, onDelete }: CredentialDetailPanelProps) {
+  const query = useCredential(name)
+  const credential = query.data
+  if (!credential) return <PanelPlaceholder query={query} noun="credential" />
 
   const statusBadge = credential.disabled
     ? <Badge variant="secondary">Disabled</Badge>
@@ -55,13 +56,10 @@ export function CredentialDetailPanel({ credential, onTest, onRotate, onToggle, 
           <IconButton
             icon={<Trash2 />}
             label="Delete"
-            onClick={() => { onDelete(credential); void close() }}
+            onClick={() => onDelete(credential)}
             className="text-destructive hover:bg-destructive/10"
           />
-          <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-            <X />
-            <span className="sr-only">Close</span>
-          </Button>
+          <PanelCloseButton />
         </div>
       }
     >

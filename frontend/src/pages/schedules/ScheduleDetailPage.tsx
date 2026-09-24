@@ -7,13 +7,15 @@ import { DetailBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
 import RunDAG from '@/features/runs/components/RunDAG'
-import { useSchedule, useScheduleRuns, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
+import { useSchedule, useScheduleRuns, useToggleSchedule } from '@/features/schedules/hooks'
 import { makeScheduleRunColumns } from '@/features/schedules/columns'
 import type { Schedule } from '@/features/schedules/types'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import { fmtDate } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
-import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { DeleteScheduleDialog } from '@/features/schedules/components/DeleteScheduleDialog'
+import { MutationErrors } from '@/shared/components/MutationErrors'
+import { PageState } from '@/shared/components/PageState'
 
 const TYPE_LABEL: Record<string, string> = {
   immediate: 'Immediate',
@@ -25,24 +27,24 @@ export default function ScheduleDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const projectId = useProjectId()
-  const { data: schedule, isLoading: scheduleLoading } = useSchedule(id!)
+  const scheduleQuery = useSchedule(id!)
+  const schedule = scheduleQuery.data
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id!)
-  const { mutateAsync: deleteSchedule, isPending: deleting } = useDeleteSchedule()
-  const { mutate: toggleSchedule } = useToggleSchedule()
+  const toggle = useToggleSchedule()
   const runColumns = useMemo(() => makeScheduleRunColumns(projectId), [projectId])
   const deleteTarget = useDeleteTarget<Schedule>()
 
-  if (!scheduleLoading && !schedule) {
+  if (!schedule) {
     return (
-      <DetailBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Schedules', to: `/projects/${projectId}/schedules` }, id ?? '']} />} />} title="Not Found">
-        <DetailBodyTemplate.Section>
-          <p className="text-sm text-muted-foreground">Schedule not found.</p>
-        </DetailBodyTemplate.Section>
-      </DetailBodyTemplate>
+      <PageState
+        query={scheduleQuery}
+        noun="schedule"
+        topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Schedules', to: `/projects/${projectId}/schedules` }, id ?? '']} />} />}
+      />
     )
   }
 
-  const isCron = schedule?.schedule_type === 'cron'
+  const isCron = schedule.schedule_type === 'cron'
 
   return (
     <>
@@ -54,7 +56,7 @@ export default function ScheduleDetailPage() {
         <div className="flex items-center gap-0.5">
           {isCron && (
             <IconButton icon={<Power />} label={schedule.enabled ? 'Disable' : 'Enable'}
-              onClick={() => toggleSchedule({ id: schedule.id, enabled: !schedule.enabled })}
+              onClick={() => toggle.mutate({ id: schedule.id, enabled: !schedule.enabled })}
               className={schedule.enabled ? 'text-primary hover:bg-primary/10' : ''} />
           )}
           <Badge variant="outline">{TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}</Badge>
@@ -64,10 +66,12 @@ export default function ScheduleDetailPage() {
         </div>
       )}
     >
+      {toggle.isError && (
+        <DetailBodyTemplate.Section>
+          <MutationErrors of={[toggle]} />
+        </DetailBodyTemplate.Section>
+      )}
       <DetailBodyTemplate.Section title="Details" surface="bordered">
-        {scheduleLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : schedule ? (
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             {isCron && (
               <div>
@@ -108,7 +112,6 @@ export default function ScheduleDetailPage() {
               <dd className="mt-1 text-sm font-semibold">{runs.length}</dd>
             </div>
           </dl>
-        ) : null}
       </DetailBodyTemplate.Section>
 
       <DetailBodyTemplate.Section surface="bordered">
@@ -125,7 +128,7 @@ export default function ScheduleDetailPage() {
           <p className="py-4 text-sm text-muted-foreground">Loading…</p>
         ) : runs.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">
-            {schedule?.schedule_type === 'immediate' ? 'Running...' : 'No runs yet.'}
+            {schedule?.schedule_type === 'immediate' ? 'Running…' : 'No runs yet.'}
           </p>
         ) : (
           <DataGrid
@@ -149,19 +152,7 @@ export default function ScheduleDetailPage() {
       </DetailBodyTemplate.Section>
     </DetailBodyTemplate>
 
-    <ConfirmDialog
-      open={deleteTarget.open}
-      onCancel={deleteTarget.cancel}
-      title="Delete this schedule?"
-      description={`"${deleteTarget.target?.name}" will be permanently deleted.`}
-      error={deleteTarget.error}
-      pending={deleting}
-      confirmLabel={deleting ? 'Deleting…' : 'Delete schedule'}
-      onConfirm={() => void deleteTarget.confirm(async target => {
-        await deleteSchedule(target.id)
-        navigate(`/projects/${projectId}/schedules`)
-      })}
-    />
+    <DeleteScheduleDialog target={deleteTarget} onDeleted={() => navigate(`/projects/${projectId}/schedules`)} />
     </>
   )
 }

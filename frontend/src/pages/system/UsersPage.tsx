@@ -1,26 +1,24 @@
 import { useState } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
-import { Button } from '@/components/ui/button'
 import { userColumns } from '@/features/access/columns'
 import { UserDetailPanel } from '@/features/access/components/UserDetailPanel'
 import { useDeleteUser, useUsersPaged } from '@/features/access/hooks'
 import type { User } from '@/features/access/types'
-import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useTextFilter } from '@/shared/hooks/useTextFilter'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { CreateButton } from '@/shared/components/CreateButton'
 
 const PAGE_SIZE = 20
 
 function UsersPageInner() {
-  const navigate = useNavigate()
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const usersQuery = useUsersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = usersQuery.data?.total ?? 0
@@ -32,7 +30,10 @@ function UsersPageInner() {
   const filteredUsers = useTextFilter(usersQuery.data?.items, nameFilter, u => u.username)
 
   function confirmDelete() {
-    return confirmDeleteTarget(t => deleteUser.mutateAsync(t.id))
+    return confirmDeleteTarget(async t => {
+      await deleteUser.mutateAsync(t.id)
+      void close()
+    })
   }
 
   return (
@@ -57,35 +58,25 @@ function UsersPageInner() {
                 />
               </div>
             }
-            toolbarRight={
-              <Button size="sm" onClick={() => void navigate('/users/new')}>
-                <Plus />
-                New User
-              </Button>
-            }
-            notice={(usersQuery.isError || deleteError) && (
-              <>
-                {usersQuery.isError && (
+            toolbarRight={<CreateButton noun="User" to="/users/new" />}
+            notice={usersQuery.isError && (
                   <QueryErrorNotice
                     message="Failed to load users"
                     error={usersQuery.error}
                     onRetry={() => void usersQuery.refetch()}
                   />
-                )}
-                {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
-              </>
             )}
           >
             <DataGrid
               data={filteredUsers}
               columns={userColumns}
               isLoading={usersQuery.isLoading}
-              emptyMessage={usersQuery.isError ? undefined : 'No users found.'}
+              emptyMessage={usersQuery.isError ? undefined : 'No users yet.'}
               tableWidthMode="fill-last"
               rowHeight={44}
               rowCursor
               onRowClick={(user) => open(
-                <UserDetailPanel user={user} onDelete={requestDelete} />,
+                <UserDetailPanel id={user.id} onDelete={requestDelete} />,
                 { size: 520 },
               )}
               classNames={{ footer: 'pt-3' }}
@@ -104,9 +95,10 @@ function UsersPageInner() {
       <ConfirmDialog
         open={deleteOpen}
         onCancel={cancelDelete}
-        title="Delete this user?"
-        description={<>{deleteTarget?.username} will lose access immediately. This action cannot be undone.</>}
-        confirmLabel={deleteUser.isPending ? 'Deleting…' : 'Delete user'}
+        verb="Delete"
+        noun="user"
+        description={`${deleteTarget?.username} will lose access immediately. This action cannot be undone.`}
+        error={deleteError}
         pending={deleteUser.isPending}
         onConfirm={() => void confirmDelete()}
       />

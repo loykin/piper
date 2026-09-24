@@ -1546,6 +1546,10 @@ func TestCleanupStatsUsesIndependentRetentionWindows(t *testing.T) {
 func TestLocalMemberLogCursorPaginationHasNoGapsOrDuplicates(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir()})
 	ctx := context.Background()
+	// Log queries 404 for a run that doesn't exist, so the run must too.
+	if err := p.repos.Run.Create(ctx, &run.Run{ID: "cursor-run", ProjectID: project.DefaultID, PipelineName: "cursor", Status: run.StatusSuccess, StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	base := time.Now().UTC().Add(-time.Minute)
 	for i := 0; i < 3; i++ {
 		if err := p.logs.Append(ctx, []*logstore.Line{{ProjectID: project.DefaultID, RunID: "cursor-run", StepName: "step", Ts: base.Add(time.Duration(i) * time.Second), Stream: "stdout", Line: fmt.Sprintf("line-%d", i)}}); err != nil {

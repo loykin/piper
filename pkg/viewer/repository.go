@@ -1,6 +1,12 @@
 package viewer
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrNotFound is returned by Repository.Get for an unknown viewer id.
+var ErrNotFound = errors.New("viewer not found")
 
 type Repository interface {
 	Create(ctx context.Context, v *Viewer) error

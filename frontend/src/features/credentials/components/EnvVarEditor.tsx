@@ -55,6 +55,7 @@ export function EnvVarEditor({
                   onChange={event => onUpdate(rowIndex, { name: event.target.value })}
                 />
                 <Select
+                  items={[{ value: 'value', label: 'Value' }, { value: 'credential', label: 'Credential' }]}
                   value={item.source}
                   onValueChange={value => onUpdate(rowIndex, {
                     source: (value ?? 'value') as EnvVarDraft['source'],

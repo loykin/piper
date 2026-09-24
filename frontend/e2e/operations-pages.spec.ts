@@ -29,8 +29,8 @@ test('creates an MLflow credential and manages an integration through the UI', a
 
   await page.goto(`${uiBase}/integrations/mlflow`)
   await expect(page.getByRole('heading', { name: 'MLflow Integrations' })).toBeVisible()
-  await expect(page.getByText('No MLflow integrations configured.')).toBeVisible()
-  await page.getByRole('button', { name: 'New Integration' }).click()
+  await expect(page.getByText('No MLflow integrations yet.')).toBeVisible()
+  await page.getByRole('button', { name: 'New MLflow Integration' }).click()
   await page.locator('#mlflow-name').fill('qa-mlflow')
   await page.locator('#mlflow-uri').fill('https://mlflow.example.com')
   // Exactly one MLflow credential exists at this point, so the form
@@ -38,7 +38,7 @@ test('creates an MLflow credential and manages an integration through the UI', a
   // interactive combobox (see the `soleCredential` handling in
   // MLflowIntegrationForm.tsx) — assert the auto-fill rather than clicking.
   await expect(page.locator('#mlflow-credential')).toHaveValue('qa-mlflow-credential')
-  await page.getByRole('button', { name: 'Save Integration' }).click()
+  await page.getByRole('button', { name: 'Create MLflow Integration' }).click()
   await page.waitForURL(new RegExp(`${uiBase}/integrations/mlflow$`))
 
   const row = page.getByRole('row', { name: /qa-mlflow/ })
@@ -51,18 +51,14 @@ test('creates an MLflow credential and manages an integration through the UI', a
 
   await row.click()
   await page.getByRole('button', { name: 'Delete' }).click()
-  await expect(page.getByRole('alertdialog')).toContainText('Existing MLflow runs are not deleted.')
+  await expect(page.getByRole('alertdialog')).toContainText('existing MLflow runs are not deleted.')
   const deleteResponse = page.waitForResponse(response => response.request().method() === 'DELETE' && response.url().includes('/mlflow-integrations/'))
-  // Base UI's modal focus/inert layer can swallow Playwright's synthetic
-  // pointer/keyboard input in a hidden headless tab (see the QA playbook).
-  // Dispatch against the rendered action after separately verifying that
-  // the real confirmation dialog and button are visible.
-  const deleteAction = page.getByRole('alertdialog').getByRole('button', { name: 'Delete' })
-  await expect(deleteAction).toBeVisible()
-  await deleteAction.dispatchEvent('click')
+  // A real click: this used to need dispatchEvent because the click that
+  // reached the dialog also closed the side panel underneath it first.
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete Integration' }).click()
   expect((await deleteResponse).status()).toBe(204)
   const listResponse = await page.request.get(`${backend}/api/projects/${projectID}/mlflow-integrations?limit=20&offset=0`)
   expect(await listResponse.json()).toEqual([])
   await expect(row).toHaveCount(0)
-  await expect(page.getByText('No MLflow integrations configured.')).toBeVisible()
+  await expect(page.getByText('No MLflow integrations yet.')).toBeVisible()
 })

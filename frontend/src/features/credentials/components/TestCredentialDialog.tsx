@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { CheckCircle, FlaskConical, XCircle } from 'lucide-react'
 import { FormField } from '@loykin/designkit'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { Credential, TestCredentialResult } from '@/features/credentials/types'
 import type { UseMutationResult } from '@tanstack/react-query'
 import { errorMessage } from '@/lib/format'
+import { DialogSubmitFooter } from '@/shared/components/DialogSubmitFooter'
 
 export default function TestCredentialDialog({
   target,
@@ -71,15 +71,14 @@ export default function TestCredentialDialog({
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Close</Button>
-          <Button
-            onClick={() => void runTest()}
-            disabled={testCredential.isPending || (target?.kind === 'git' && !repo.trim())}
-          >
-            {testCredential.isPending ? 'Testing...' : 'Run Test'}
-          </Button>
-        </DialogFooter>
+        <DialogSubmitFooter
+          verb="Test"
+          noun="Credential"
+          pending={testCredential.isPending}
+          disabled={target?.kind === 'git' && !repo.trim()}
+          onCancel={onClose}
+          onSubmit={() => void runTest()}
+        />
       </DialogContent>
     </Dialog>
   )

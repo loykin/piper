@@ -1,7 +1,9 @@
 import { DataBodyTemplate } from '@loykin/designkit'
 import { Badge } from '@/components/ui/badge'
 import type { StorageSettingsView } from '@/features/storage/api'
-import { errorMessage } from '@/lib/format'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import StatusBadge from '@/shared/components/StatusBadge'
+import { warningNotice } from '@/shared/status'
 import { BACKEND_LABELS, parseStorageURL } from '@/features/storage/backendUrl'
 
 // This settings surface (backend + credentials) always edits the Piper
@@ -43,9 +45,10 @@ interface ArtifactStoreConfigSectionProps {
   storage: StorageSettingsView | null
   isLoading: boolean
   loadError: unknown
+  onRetry: () => void
 }
 
-export function ArtifactStoreConfigSection({ storage, isLoading, loadError }: ArtifactStoreConfigSectionProps) {
+export function ArtifactStoreConfigSection({ storage, isLoading, loadError, onRetry }: ArtifactStoreConfigSectionProps) {
   if (isLoading) {
     return (
       <DataBodyTemplate.Group layout="stacked" title={<>Artifact Store Config<InstanceScopedBadge /></>}>
@@ -57,12 +60,7 @@ export function ArtifactStoreConfigSection({ storage, isLoading, loadError }: Ar
   if (loadError) {
     return (
       <DataBodyTemplate.Group layout="stacked" title={<>Artifact Store Config<InstanceScopedBadge /></>}>
-        <p className="text-sm text-destructive">
-          Couldn&apos;t load storage configuration:{' '}
-          {errorMessage(loadError)}.
-          {' '}This page only shows config for this Piper instance — a system admin on this
-          instance can check permissions or try again.
-        </p>
+        <QueryErrorNotice message="Failed to load storage configuration" error={loadError} onRetry={onRetry} />
       </DataBodyTemplate.Group>
     )
   }
@@ -78,20 +76,20 @@ export function ArtifactStoreConfigSection({ storage, isLoading, loadError }: Ar
       title={<>Artifact Store Config<InstanceScopedBadge /></>}
       description="Read-only. Changing the artifact storage backend requires editing storage.yaml directly on this server and restarting it — the same as runtime.type or the database driver."
     >
-      <DataBodyTemplate.Field label="Runtime status" description="What's actually active right now.">
+      <DataBodyTemplate.Field label="Runtime Status" description="What's actually active right now.">
         <div className="space-y-1 text-sm">
-          <p><span className="text-muted-foreground">Status: </span>{status}</p>
+          <p><span className="text-muted-foreground">Status: </span><StatusBadge status={status} /></p>
           <p><span className="text-muted-foreground">Backend: </span>{backendLabel}</p>
           <p><span className="text-muted-foreground">Reason: </span>{storage?.effective.reason || '—'}</p>
         </div>
       </DataBodyTemplate.Field>
 
-      <DataBodyTemplate.Field label="Config file" description="Read from this path on startup.">
+      <DataBodyTemplate.Field label="Config File" description="Read from this path on startup.">
         <span className="break-all font-mono text-xs">{storage?.config_path || '—'}</span>
       </DataBodyTemplate.Field>
 
       <DataBodyTemplate.Field
-        label="Pending config"
+        label="Pending Config"
         description={storage?.restart_required
           ? 'storage.yaml differs from the running configuration — restart the server to apply it.'
           : 'What storage.yaml currently holds. Matches the running configuration.'}
@@ -121,7 +119,7 @@ export function ArtifactStoreConfigSection({ storage, isLoading, loadError }: Ar
       </DataBodyTemplate.Field>
 
       {storage?.restart_required && (
-        <Badge variant="outline" className="w-fit">Restart required to apply storage.yaml</Badge>
+        <p className={`p-3 text-xs ${warningNotice}`}>Restart required to apply storage.yaml.</p>
       )}
     </DataBodyTemplate.Group>
   )

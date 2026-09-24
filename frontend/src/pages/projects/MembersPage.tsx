@@ -1,28 +1,26 @@
 import { useState } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
-import { Button } from '@/components/ui/button'
 import { memberColumns } from '@/features/access/memberColumns'
 import { MemberDetailPanel } from '@/features/access/components/MemberDetailPanel'
 import { useMembersPaged, useRemoveMember } from '@/features/access/hooks'
 import type { ProjectMember } from '@/features/access/types'
 import { useProjectId } from '@/features/projects/context'
-import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useTextFilter } from '@/shared/hooks/useTextFilter'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { CreateButton } from '@/shared/components/CreateButton'
 
 const PAGE_SIZE = 20
 
 function MembersPageInner() {
   const projectId = useProjectId()
-  const navigate = useNavigate()
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const membersQuery = useMembersPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = membersQuery.data?.total ?? 0
@@ -34,7 +32,10 @@ function MembersPageInner() {
   const filteredMembers = useTextFilter(membersQuery.data?.items, nameFilter, m => m.username)
 
   function confirmRemove() {
-    return confirmRemoveTarget(t => removeMember.mutateAsync(t.user_id))
+    return confirmRemoveTarget(async t => {
+      await removeMember.mutateAsync(t.user_id)
+      void close()
+    })
   }
 
   return (
@@ -59,35 +60,25 @@ function MembersPageInner() {
                 />
               </div>
             }
-            toolbarRight={
-              <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/members/new`)}>
-                <Plus />
-                New Member
-              </Button>
-            }
-            notice={(membersQuery.isError || actionError) && (
-              <>
-                {membersQuery.isError && (
+            toolbarRight={<CreateButton verb="Add" noun="Member" to={`/projects/${projectId}/members/new`} />}
+            notice={membersQuery.isError && (
                   <QueryErrorNotice
                     message="Failed to load project members"
                     error={membersQuery.error}
                     onRetry={() => void membersQuery.refetch()}
                   />
-                )}
-                {actionError && <p className="text-sm text-destructive">{actionError}</p>}
-              </>
             )}
           >
             <DataGrid
               data={filteredMembers}
               columns={memberColumns}
               isLoading={membersQuery.isLoading}
-              emptyMessage={membersQuery.isError ? undefined : 'No project members.'}
+              emptyMessage={membersQuery.isError ? undefined : 'No project members yet.'}
               tableWidthMode="fill-last"
               rowHeight={44}
               rowCursor
               onRowClick={member => open(
-                <MemberDetailPanel member={member} onRemove={requestRemove} />,
+                <MemberDetailPanel userId={member.user_id} onRemove={requestRemove} />,
                 { size: 520 },
               )}
               classNames={{ footer: 'pt-3' }}
@@ -106,9 +97,10 @@ function MembersPageInner() {
       <ConfirmDialog
         open={removeOpen}
         onCancel={cancelRemove}
-        title="Remove this project member?"
-        description={<>{removeTarget?.username || 'This user'} will lose access to this project.</>}
-        confirmLabel={removeMember.isPending ? 'Removing…' : 'Remove member'}
+        verb="Remove"
+        noun="member"
+        description={`${removeTarget?.username || 'This user'} will lose access to this project.`}
+        error={actionError}
         pending={removeMember.isPending}
         onConfirm={() => void confirmRemove()}
       />

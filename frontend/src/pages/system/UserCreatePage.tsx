@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   DataBodyTemplate,
-  FormActions,
   FormField,
   Input,
   Label,
@@ -15,6 +14,8 @@ import { useCreateUser } from '@/features/access/hooks'
 import { useNavigate } from '@/lib/router'
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { createCopy } from '@/lib/copy'
 
 const createUserSchema = z.object({
   username: z.string().trim().min(1, 'Username is required.').max(128, 'Username must be at most 128 characters.').regex(/^\S+$/, 'Username must not contain spaces.'),
@@ -54,8 +55,8 @@ export default function UserCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['System', { label: 'Users', to: '/users' }, 'New User']} />} />}
-      title="New User"
+      topBar={<PageTopBar left={<PageCrumbs items={['System', { label: 'Users', to: '/users' }, createCopy('User').crumb]} />} />}
+      title={createCopy('User').title}
       description="Create a local Piper account. Usernames are login identifiers and do not need to be email addresses."
     >
       <DataBodyTemplate.Group
@@ -80,7 +81,7 @@ export default function UserCreatePage() {
             />
           </FormField>
 
-          <FormField label="Temporary password" htmlFor="create-user-password" error={errors.password?.message}>
+          <FormField label="Temporary Password" htmlFor="create-user-password" error={errors.password?.message}>
             <Input
               id="create-user-password"
               type="password"
@@ -97,7 +98,7 @@ export default function UserCreatePage() {
             render={({ field }) => (
               <div className="flex items-center justify-between">
                 <div>
-                  <Label htmlFor="create-user-admin" className="text-sm">System administrator</Label>
+                  <Label htmlFor="create-user-admin" className="text-sm">System Administrator</Label>
                   <p className="text-xs text-muted-foreground">
                     Grants access to system-wide settings and all projects.
                   </p>
@@ -111,10 +112,11 @@ export default function UserCreatePage() {
             )}
           />
 
-          <FormActions
-            status={submitError || undefined}
-            submitLabel={createUser.isPending ? 'Creating…' : 'Create User'}
-            submitDisabled={createUser.isPending}
+          <FormSubmitBar
+            verb="Create"
+            noun="User"
+            pending={createUser.isPending}
+            error={submitError}
             onCancel={() => void navigate('/users')}
           />
         </form>

@@ -1,6 +1,5 @@
-import { useNavigate } from '@/lib/router'
 import { useState } from 'react'
-import { Plus, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
@@ -9,15 +8,14 @@ import { useExperimentsPaged } from '@/features/runs/hooks'
 import { ExperimentDetailPanel } from '@/features/runs/components/ExperimentDetailPanel'
 import { experimentColumns } from '@/features/runs/columns'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
-import { Button } from '@/components/ui/button'
 import { useProjectId } from '@/features/projects/context'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { CreateButton } from '@/shared/components/CreateButton'
 
 const PAGE_SIZE = 25
 
 function ExperimentsPageInner() {
   const { open } = useSidePanel()
-  const navigate = useNavigate()
   const projectId = useProjectId()
   const [nameFilter, setNameFilter] = useState('')
   const [pageIndex, setPageIndex] = useState(0)
@@ -47,11 +45,7 @@ function ExperimentsPageInner() {
               />
             </div>
           }
-          toolbarRight={
-            <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/experiments/new`)}>
-              <Plus className="mr-2 size-4" />New Sweep
-            </Button>
-          }
+          toolbarRight={<CreateButton noun="Sweep" to={`/projects/${projectId}/experiments/new`} />}
           notice={query.isError && (
             <QueryErrorNotice
               message="Failed to load experiments"
@@ -64,7 +58,7 @@ function ExperimentsPageInner() {
             data={experiments}
             columns={experimentColumns}
             isLoading={query.isPending}
-            emptyMessage={query.isError ? undefined : 'No experiments yet. Create a sweep to compare parameter trials.'}
+            emptyMessage={query.isError ? undefined : 'No experiments yet.'}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor

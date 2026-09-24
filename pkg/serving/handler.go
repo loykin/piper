@@ -64,13 +64,13 @@ func (h *Handler) listServices(c *gin.Context) {
 	projectID := currentProjectID(c)
 	svcs, err := h.deps.Services.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.deps.Services.Count(c.Request.Context(), projectID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -87,8 +87,7 @@ func (h *Handler) createService(c *gin.Context) {
 	var req struct {
 		YAML string `json:"yaml"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if h.deps.Deploy == nil {
@@ -117,13 +116,13 @@ func (h *Handler) listServiceHistory(c *gin.Context) {
 	projectID := currentProjectID(c)
 	history, err := h.deps.Services.ListHistory(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.deps.Services.CountHistory(c.Request.Context(), projectID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -136,7 +135,7 @@ func (h *Handler) getService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if svc == nil {
@@ -154,7 +153,7 @@ func (h *Handler) deleteService(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "service not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -165,7 +164,7 @@ func (h *Handler) restartService(c *gin.Context) {
 	name := c.Param("name")
 	svc, err := h.deps.Services.Get(c.Request.Context(), currentProjectID(c), name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if svc == nil {
@@ -174,7 +173,7 @@ func (h *Handler) restartService(c *gin.Context) {
 	}
 	if h.deps.Restart != nil {
 		if err := h.deps.Restart(c.Request.Context(), currentProjectID(c), name); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 	}

@@ -28,13 +28,13 @@ func (h *Handler) list(c *gin.Context) {
 	limit, offset := httpx.ParseLimitOffset(c)
 	items, err := h.service.List(c.Request.Context(), p.ID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.service.Count(c.Request.Context(), p.ID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -59,8 +59,7 @@ func (h *Handler) get(c *gin.Context) {
 func (h *Handler) create(c *gin.Context) {
 	p, _ := project.FromContext(c.Request.Context())
 	var req CreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	actor := ""
@@ -78,8 +77,7 @@ func (h *Handler) create(c *gin.Context) {
 func (h *Handler) patch(c *gin.Context) {
 	p, _ := project.FromContext(c.Request.Context())
 	var req PatchRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	rule, err := h.service.Patch(c.Request.Context(), p.ID, c.Param("id"), req)
@@ -108,6 +106,6 @@ func (h *Handler) respond(c *gin.Context, err error) {
 	case errors.Is(err, ErrAlreadyExists):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 	}
 }

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DataBodyTemplate,
-  FormActions, FormField,
+  FormField,
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue,
   Tabs, TabsList, TabsTrigger,
 } from '@loykin/designkit'
@@ -23,6 +23,7 @@ import { useSystemSettings } from '@/features/system/hooks'
 import { useProjectId } from '@/features/projects/context'
 import { buildYAML, DEFAULT_FORM, RUNTIME_TEMPLATES, type FormState } from '../editor'
 import { errorMessage, fmtDay } from '@/lib/format'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
 
 interface DeployFormProps {
   onClose: () => void
@@ -556,10 +557,11 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
           </DataBodyTemplate.Group>
         )}
 
-        <FormActions
-          status={error || undefined}
-          submitLabel={deploying ? 'Deploying…' : 'Deploy'}
-          submitDisabled={deploying}
+        <FormSubmitBar
+          verb="Deploy"
+          noun="Service"
+          pending={deploying}
+          error={error}
           onCancel={onClose}
         />
       </form>

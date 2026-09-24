@@ -1,24 +1,28 @@
-import { Trash2, X } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
-import { useSidePanel } from '@loykin/side-panel'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { useUserMemberships } from '../hooks'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
+import { useUserMemberships, useUsers } from '../hooks'
 import type { User } from '../types'
 
 interface Props {
-  user: User
+  id: string
   onDelete: (user: User) => void
 }
 
-export function UserDetailPanel({ user, onDelete }: Props) {
-  const { close } = useSidePanel()
-  const { data: memberships = [], isLoading } = useUserMemberships(user.id)
+// There is no single-user endpoint; the user directory is small and
+// `useUsers` is shared with the member pickers.
+export function UserDetailPanel({ id, onDelete }: Props) {
+  const query = useUsers()
+  const users = query.data
+  const { data: memberships = [], isLoading } = useUserMemberships(id)
+  const user = users?.find(u => u.id === id)
+  if (!user) return <PanelPlaceholder query={query} noun="user" />
 
   return (
     <PanelTemplate
-      eyebrow="System account"
+      eyebrow="System Account"
       title={user.username}
       status={
         <Badge variant={user.disabled ? 'secondary' : 'outline'}>
@@ -31,15 +35,9 @@ export function UserDetailPanel({ user, onDelete }: Props) {
             icon={<Trash2 />}
             label={`Delete ${user.username}`}
             className="text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              onDelete(user)
-              void close()
-            }}
+            onClick={() => onDelete(user)}
           />
-          <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-            <X />
-            <span className="sr-only">Close</span>
-          </Button>
+          <PanelCloseButton />
         </div>
       }
     >
@@ -49,7 +47,7 @@ export function UserDetailPanel({ user, onDelete }: Props) {
           <PanelTemplate.Row label="Access">{user.system_admin ? 'System administrator' : 'Standard user'}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
-      <PanelTemplate.Section title="Project roles">
+      <PanelTemplate.Section title="Project Roles">
         {isLoading ? (
           <p className="text-xs text-muted-foreground">Loading memberships…</p>
         ) : memberships.length === 0 ? (

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/loykin/piper/internal/httpx"
 	"io"
 	"log/slog"
 	"net/http"
@@ -514,7 +515,7 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 	rg.PUT("/*key", func(c *gin.Context) {
 		key := strings.TrimPrefix(c.Param("key"), "/")
 		if err := ls.Put(c.Request.Context(), key, c.Request.Body, c.Request.ContentLength); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		c.Status(http.StatusNoContent)
@@ -527,7 +528,7 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 			delimiter := c.Query("delimiter")
 			objs, err := ls.List(c.Request.Context(), prefix, delimiter)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				httpx.InternalError(c, err)
 				return
 			}
 			c.JSON(http.StatusOK, objs)
@@ -539,7 +540,7 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		defer func() { _ = rc.Close() }()
@@ -549,7 +550,7 @@ func (p *Piper) registerStoreRoutes(r *gin.Engine) {
 	rg.DELETE("/*key", func(c *gin.Context) {
 		key := strings.TrimPrefix(c.Param("key"), "/")
 		if err := ls.Delete(c.Request.Context(), key); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		c.Status(http.StatusNoContent)
@@ -844,7 +845,7 @@ func (p *Piper) newMetricsHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		registry := prometheus.NewPedanticRegistry()
 		if err := registry.Register(collector); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		gatherers := prometheus.Gatherers{prometheus.DefaultGatherer, registry}

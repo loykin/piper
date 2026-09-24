@@ -114,7 +114,7 @@ function DeleteButtonEdge({
             type="button"
             size="icon-xs"
             variant="outline"
-            aria-label="Delete connection"
+            aria-label="Delete Connection"
             style={{
               position: 'absolute',
               transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,

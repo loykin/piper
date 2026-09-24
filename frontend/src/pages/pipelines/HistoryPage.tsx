@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RotateCcw, RefreshCw, Search } from 'lucide-react'
+import { RotateCcw, Search } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
@@ -12,10 +12,9 @@ import { useRunsPaged, useRerunRun } from '@/features/runs/hooks'
 import { useSchedules } from '@/features/schedules/hooks'
 import { RowActions } from '@/shared/components/RowActions'
 import type { Run } from '@/features/runs/api'
-import { toneAction } from '@/shared/status'
-import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { MutationErrors } from '@/shared/components/MutationErrors'
 
 const PAGE_SIZE = 20
 
@@ -26,7 +25,7 @@ function HistoryPageInner() {
   const { data } = runsQuery
   const total = data?.total ?? 0
   const { data: schedules = [] } = useSchedules()
-  const { mutateAsync: rerunRun } = useRerunRun()
+  const rerun = useRerunRun()
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -51,14 +50,9 @@ function HistoryPageInner() {
     [schedules],
   )
 
-  const handleRerun = async (e: React.MouseEvent, run: Run) => {
+  const handleRerun = (e: React.MouseEvent, run: Run) => {
     e.stopPropagation()
-    try {
-      const result = await rerunRun(run.id)
-      open(<RunDetailPanel id={result.run_id} />, { size: 480 })
-    } catch (err) {
-      alert(errorMessage(err))
-    }
+    rerun.mutate(run.id, { onSuccess: result => open(<RunDetailPanel id={result.run_id} />, { size: 480 }) })
   }
 
   const actionColumn: DataGridColumnDef<Run> = {
@@ -71,10 +65,6 @@ function HistoryPageInner() {
           disabled={row.original.status === 'running' || row.original.status === 'scheduled'}
           onClick={(e) => handleRerun(e, row.original)}
           className="text-primary hover:bg-primary/10" />
-        <IconButton icon={<RefreshCw />} label="Retry Failed"
-          disabled={row.original.status !== 'failed'}
-          onClick={(e) => handleRerun(e, row.original)}
-          className={toneAction.warning} />
       </RowActions>
     ),
   }
@@ -116,12 +106,17 @@ function HistoryPageInner() {
               />
             </div>
           }
-          notice={runsQuery.isError && (
-            <QueryErrorNotice
-              message="Failed to load runs"
-              error={runsQuery.error}
-              onRetry={() => void runsQuery.refetch()}
-            />
+          notice={(runsQuery.isError || rerun.isError) && (
+            <>
+              {runsQuery.isError && (
+                <QueryErrorNotice
+                  message="Failed to load runs"
+                  error={runsQuery.error}
+                  onRetry={() => void runsQuery.refetch()}
+                />
+              )}
+              <MutationErrors of={[rerun]} />
+            </>
           )}
         >
           <DataGrid

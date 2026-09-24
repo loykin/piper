@@ -1,9 +1,8 @@
-import { RotateCcw, RefreshCw, XCircle, X } from 'lucide-react'
+import { RotateCcw, XCircle } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Link } from '@/lib/router'
 import { useProjectId } from '@/features/projects/context'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { useRun, useRunSteps, useCancelRun, useRerunRun } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -11,33 +10,22 @@ import { RunActionConfirmDialog, type RunConfirmVerb } from '@/features/runs/com
 import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
 import { toneAction } from '@/shared/status'
 import { fmtDate } from '@/lib/format'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
 
 export function RunDetailPanel({ id }: { id: string }) {
   const { close, open } = useSidePanel()
   const projectId = useProjectId()
 
-  const { data: run = null, isLoading } = useRun(id)
+  const query = useRun(id)
+  const run = query.data ?? null
   const { data: steps = [] } = useRunSteps(id)
 
-  const { mutate: cancelRun, isPending: cancelling } = useCancelRun()
+  const { mutateAsync: cancelRun, isPending: cancelling } = useCancelRun()
   const { mutateAsync: rerunRun } = useRerunRun()
-  const { action: confirmAction, requestAction: requestConfirm, cancel: cancelConfirm } = useConfirmAction<RunConfirmVerb>()
+  const confirmation = useConfirmAction<RunConfirmVerb>()
 
-  const closeBtn = (
-    <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-      <X className="h-3.5 w-3.5" />
-    </Button>
-  )
 
-  if (isLoading || !run) {
-    return (
-      <PanelTemplate title="Loading…" actions={closeBtn}>
-        <PanelTemplate.Section>
-          <p className="text-xs text-muted-foreground">Loading…</p>
-        </PanelTemplate.Section>
-      </PanelTemplate>
-    )
-  }
+  if (!run) return <PanelPlaceholder query={query} noun="run" />
 
   const failedSteps = steps.filter(s => s.status === 'failed' && s.error)
   const completedSteps = steps.filter(s => s.status === 'done').length
@@ -59,17 +47,13 @@ export function RunDetailPanel({ id }: { id: string }) {
         <div className="flex items-center gap-1">
           <IconButton icon={<XCircle />} label="Cancel"
             disabled={run.status !== 'running' && run.status !== 'scheduled'}
-            onClick={() => requestConfirm('cancel')}
+            onClick={() => confirmation.requestAction('cancel')}
             className={toneAction.attention} />
           <IconButton icon={<RotateCcw />} label="Rerun"
             disabled={run.status === 'running' || run.status === 'scheduled'}
             onClick={rerun}
             className={toneAction.accent} />
-          <IconButton icon={<RefreshCw />} label="Retry Failed"
-            disabled={run.status !== 'failed'}
-            onClick={rerun}
-            className={toneAction.warning} />
-          {closeBtn}
+          <PanelCloseButton />
         </div>
       }
     >
@@ -110,8 +94,7 @@ export function RunDetailPanel({ id }: { id: string }) {
 
     <RunActionConfirmDialog
       runId={run.id}
-      action={confirmAction}
-      onDismiss={cancelConfirm}
+      confirmation={confirmation}
       cancelling={cancelling}
       onConfirmCancel={() => cancelRun(run.id)}
     />

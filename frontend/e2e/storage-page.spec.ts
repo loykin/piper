@@ -19,13 +19,13 @@ test('storage credential form shows an explicit error on empty-name submit, and 
   // default; secret inputs are not rendered until the user opts in.
   await expect(page.getByRole('textbox', { name: 'access_key_id' })).not.toBeVisible()
   await expect(page.getByLabel('secret_access_key')).not.toBeVisible()
-  await page.getByRole('button', { name: 'New credential' }).click()
+  await page.getByRole('button', { name: 'New Credential' }).click()
   await expect(page.getByRole('textbox', { name: 'access_key_id' })).toBeVisible()
 
   await page.getByRole('textbox', { name: 'access_key_id' }).fill('AKIAEXAMPLE')
   await page.getByLabel('secret_access_key').fill('supersecretvalue')
 
-  const addButton = page.getByRole('button', { name: /Add s3 Credential/ })
+  const addButton = page.getByRole('button', { name: /Add S3-compatible Credential/ })
   await addButton.click()
 
   // No silent no-op: an explicit, visible validation error.
@@ -46,7 +46,7 @@ test('storage credential form shows an explicit error on empty-name submit, and 
   // of its own "Delete" button inside one row div.
   const row = page.getByText(credentialName, { exact: true }).locator('..')
   await row.getByRole('button', { name: 'Delete' }).click()
-  await page.getByRole('button', { name: 'Delete credential' }).click()
+  await page.getByRole('button', { name: 'Delete System Credential' }).click()
   await expect(page.getByText(credentialName, { exact: true })).not.toBeVisible()
 })
 

@@ -13,6 +13,7 @@ import { getExecutionColumns } from '@/features/notebook-executions/columns'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useSearchParams } from '@/lib/router'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { MutationErrors } from '@/shared/components/MutationErrors'
 
 const PAGE_SIZE = 20
 const POLICY_LABELS: Record<ExecutionPolicy, string> = {
@@ -57,9 +58,14 @@ function NotebookExecutionsPageInner() {
       <DataBodyTemplate.Resource
         toolbarLeft={<div className="w-56"><FilterInput config={{ key: 'executionSearch', type: 'text', placeholder: 'Search current page…', display: { size: 'sm', leadingIcon: <Search /> } }} value={search} onChange={value => setSearch(typeof value === 'string' ? value : '')} /></div>}
         toolbarRight={<div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">Execution policy</span><Select value={policy.data?.mcp_policy ?? 'approval_required'} onValueChange={value => updatePolicy.mutate(value as ExecutionPolicy)} disabled={!canAdmin || policy.isLoading || updatePolicy.isPending}><SelectTrigger className="w-48"><SelectValue>{value => POLICY_LABELS[value as ExecutionPolicy] ?? String(value)}</SelectValue></SelectTrigger><SelectContent><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="approval_required">Approval required</SelectItem><SelectItem value="allowed">Allowed</SelectItem></SelectContent></Select></div>}
-        notice={query.isError ? <QueryErrorNotice message="Failed to load notebook executions" error={query.error} onRetry={() => void query.refetch()} /> : undefined}
+        notice={(query.isError || updatePolicy.isError) && (
+          <>
+            {query.isError && <QueryErrorNotice message="Failed to load notebook executions" error={query.error} onRetry={() => void query.refetch()} />}
+            <MutationErrors of={[updatePolicy]} />
+          </>
+        )}
       >
-        <DataGrid data={rows} columns={columns} emptyMessage={query.isError ? undefined : 'No notebook executions yet.'} tableWidthMode="fill-last" rowCursor onRowClick={execution => open(<ExecutionDetailPanel execution={execution} canAdmin={canAdmin} canCancel={canAdmin || execution.requested_by === user?.id || trusted} actorNames={actorNames} />, { size: 580 })} pagination={{ pageSize: PAGE_SIZE, pageIndex, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), onPageChange: setPageIndex }} footer={table => <DataGridPaginationBar table={table} totalCount={total} />} />
+        <DataGrid data={rows} columns={columns} emptyMessage={query.isError ? undefined : 'No notebook executions yet.'} tableWidthMode="fill-last" rowCursor onRowClick={execution => open(<ExecutionDetailPanel id={execution.id} canAdmin={canAdmin} canCancel={requestedBy => canAdmin || requestedBy === user?.id || trusted} actorNames={actorNames} />, { size: 580 })} pagination={{ pageSize: PAGE_SIZE, pageIndex, pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)), onPageChange: setPageIndex }} footer={table => <DataGridPaginationBar table={table} totalCount={total} />} />
       </DataBodyTemplate.Resource>
     </DataBodyTemplate.Body>
   </DataBodyTemplate>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { DataBodyTemplate, FormActions, FormField, PageTopBar, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
+import { DataBodyTemplate, FormField, PageTopBar, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,8 @@ import { secretEntriesPayload, secretEntrySchema, type SecretEntry } from '@/fea
 import type { CredentialKind } from '@/features/credentials/types'
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { createCopy } from '@/lib/copy'
 
 const CREDENTIAL_KINDS: CredentialKind[] = ['generic', 'git', 's3', 'gcs', 'azure', 'slack', 'webhook', 'mlflow']
 
@@ -100,8 +102,8 @@ export default function CredentialCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Credentials', to: listPath }, 'New Credential']} />} />}
-      title="New Credential"
+      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Credentials', to: listPath }, createCopy('Credential').crumb]} />} />}
+      title={createCopy('Credential').title}
       description="Create a write-only credential. Stored values are never returned by the API."
     >
       <DataBodyTemplate.Group
@@ -173,10 +175,11 @@ export default function CredentialCreatePage() {
             error={entriesError}
           />
 
-          <FormActions
-            status={submitError || undefined}
-            submitLabel={createCredential.isPending ? 'Creating…' : 'Create Credential'}
-            submitDisabled={createCredential.isPending}
+          <FormSubmitBar
+            verb="Create"
+            noun="Credential"
+            pending={createCredential.isPending}
+            error={submitError}
             onCancel={() => void navigate(listPath)}
           />
         </form>

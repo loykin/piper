@@ -70,6 +70,7 @@ function StoragePageInner() {
           storage={storage}
           isLoading={settingsQuery.isPending}
           loadError={settingsQuery.error}
+          onRetry={() => void settingsQuery.refetch()}
         />
 
         {activeCredentialKind && (

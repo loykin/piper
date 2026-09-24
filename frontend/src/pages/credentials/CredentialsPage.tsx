@@ -4,8 +4,7 @@ import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, Sel
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
-import { FlaskConical, Plus, Power, RotateCw, Search, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { FlaskConical, Power, RotateCw, Search, Trash2 } from 'lucide-react'
 import { IconButton } from '@/components/ui/icon-button'
 import { credentialColumns } from '@/features/credentials/columns'
 import {
@@ -23,14 +22,12 @@ import { CredentialDetailPanel } from '@/features/credentials/components/Credent
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { CreateButton } from '@/shared/components/CreateButton'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 const PAGE_SIZE = 20
 
 type KindFilter = 'all' | CredentialKind
-type PendingAction =
-  | { type: 'toggle'; credential: Credential }
-  | { type: 'delete'; credential: Credential }
-
 function CredentialsPageInner() {
   const { open, close } = useSidePanel()
   const projectId = useProjectId()
@@ -50,7 +47,8 @@ function CredentialsPageInner() {
     [navigate, projectId],
   )
   const [testTarget, setTestTarget] = useState<Credential | null>(null)
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
+  const deleteTarget = useDeleteTarget<Credential>()
+  const { requestDelete } = deleteTarget
   const [actionError, setActionError] = useState('')
 
   // Filters only the current page — neither the kind nor name filter is
@@ -65,26 +63,15 @@ function CredentialsPageInner() {
     return rows
   }, [data, kindFilter, nameFilter])
 
-  const runPendingAction = useCallback(async () => {
-    if (!pendingAction) return
+  // Enable/disable is reversible, so it runs without a confirmation.
+  const toggle = useCallback(async (credential: Credential) => {
     setActionError('')
     try {
-      if (pendingAction.type === 'toggle') {
-        await patchCredential.mutateAsync({
-          name: pendingAction.credential.name,
-          patch: { enabled: pendingAction.credential.disabled },
-        })
-      } else {
-        await deleteCredential.mutateAsync(pendingAction.credential.name)
-      }
-      setPendingAction(null)
-      // The detail panel renders the credential it was opened with, so it
-      // would keep showing the old state.
-      void close()
+      await patchCredential.mutateAsync({ name: credential.name, patch: { enabled: credential.disabled } })
     } catch (err) {
       setActionError(errorMessage(err))
     }
-  }, [close, deleteCredential, patchCredential, pendingAction])
+  }, [patchCredential])
 
   const columns = useMemo<DataGridColumnDef<Credential>[]>(() => [
     ...credentialColumns,
@@ -109,30 +96,19 @@ function CredentialsPageInner() {
           <IconButton
             icon={<Power />}
             label={row.original.disabled ? 'Enable' : 'Disable'}
-            onClick={e => { e.stopPropagation(); setPendingAction({ type: 'toggle', credential: row.original }) }}
+            onClick={e => { e.stopPropagation(); void toggle(row.original) }}
             className={row.original.disabled ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted'}
           />
           <IconButton
             icon={<Trash2 />}
             label="Delete"
-            onClick={e => { e.stopPropagation(); setPendingAction({ type: 'delete', credential: row.original }) }}
+            onClick={e => { e.stopPropagation(); requestDelete(row.original) }}
             className="text-destructive hover:bg-destructive/10"
           />
         </RowActions>
       ),
     },
-  ], [rotate])
-
-  const pendingTitle = pendingAction
-    ? pendingAction.type === 'delete'
-      ? `Delete ${pendingAction.credential.name}`
-      : `${pendingAction.credential.disabled ? 'Enable' : 'Disable'} ${pendingAction.credential.name}`
-    : ''
-  const pendingDescription = pendingAction
-    ? pendingAction.type === 'delete'
-      ? 'This removes the credential and its encrypted values.'
-      : `This ${pendingAction.credential.disabled ? 'enables' : 'disables'} credential use for future resolutions.`
-    : ''
+  ], [rotate, toggle, requestDelete])
 
   return (
     <>
@@ -180,12 +156,7 @@ function CredentialsPageInner() {
               </Select>
             </>
           }
-          toolbarRight={
-            <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/credentials/new`)}>
-              <Plus className="mr-2 size-4" />
-              New Credential
-            </Button>
-          }
+          toolbarRight={<CreateButton noun="Credential" to={`/projects/${projectId}/credentials/new`} />}
           notice={(credentialsQuery.isError || actionError) && (
             <>
               {credentialsQuery.isError && (
@@ -203,16 +174,16 @@ function CredentialsPageInner() {
             data={filtered}
             columns={columns}
             isLoading={credentialsQuery.isLoading}
-            emptyMessage={credentialsQuery.isError ? undefined : 'No credentials configured.'}
+            emptyMessage={credentialsQuery.isError ? undefined : 'No credentials yet.'}
             tableWidthMode="fill-last"
             rowCursor
             onRowClick={(credential) => open(
               <CredentialDetailPanel
-                credential={credential}
+                name={credential.name}
                 onTest={setTestTarget}
                 onRotate={rotate}
-                onToggle={c => setPendingAction({ type: 'toggle', credential: c })}
-                onDelete={c => setPendingAction({ type: 'delete', credential: c })}
+                onToggle={c => void toggle(c)}
+                onDelete={deleteTarget.requestDelete}
               />,
               { size: 480 },
             )}
@@ -242,15 +213,17 @@ function CredentialsPageInner() {
       onClose={() => setTestTarget(null)}
     />
     <ConfirmDialog
-      open={!!pendingAction}
-      onCancel={() => setPendingAction(null)}
-      title={pendingTitle}
-      description={pendingDescription}
-      error={actionError}
-      destructive={pendingAction?.type === 'delete'}
-      pending={deleteCredential.isPending || patchCredential.isPending}
-      confirmLabel={pendingAction?.type === 'delete' ? 'Delete' : pendingAction?.credential.disabled ? 'Enable' : 'Disable'}
-      onConfirm={() => void runPendingAction()}
+      open={deleteTarget.open}
+      onCancel={deleteTarget.cancel}
+      verb="Delete"
+      noun="credential"
+      description={`"${deleteTarget.target?.name}" and its encrypted values will be permanently removed.`}
+      error={deleteTarget.error}
+      pending={deleteCredential.isPending}
+      onConfirm={() => void deleteTarget.confirm(async credential => {
+        await deleteCredential.mutateAsync(credential.name)
+        void close()
+      })}
     />
     </>
   )

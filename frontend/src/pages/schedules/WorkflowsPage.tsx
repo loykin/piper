@@ -1,16 +1,14 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from '@/lib/router'
 import { useProjectId } from '@/features/projects/context'
-import { Power, Plus, Search, Trash2 } from 'lucide-react'
+import { Power, Search, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { scheduleColumns } from '@/features/schedules/columns'
 import { ScheduleDetailPanel } from '@/features/schedules/components/ScheduleDetailPanel'
-import { useSchedulesPaged, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
+import { useSchedulesPaged, useToggleSchedule } from '@/features/schedules/hooks'
 import { usePipelines } from '@/features/pipelines/hooks'
 import { RowActions } from '@/shared/components/RowActions'
 import type { DataGridColumnDef } from '@loykin/gridkit'
@@ -19,21 +17,23 @@ import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useTextFilter } from '@/shared/hooks/useTextFilter'
-import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { CreateButton } from '@/shared/components/CreateButton'
+import { DeleteScheduleDialog } from '@/features/schedules/components/DeleteScheduleDialog'
+import { MutationErrors } from '@/shared/components/MutationErrors'
 
 const PAGE_SIZE = 20
 
 function WorkflowsPageInner() {
-  const navigate = useNavigate()
   const projectId = useProjectId()
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const [pageIndex, setPageIndex] = useState(0)
   const schedulesQuery = useSchedulesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = schedulesQuery.data?.total ?? 0
   const { data: pipelines = [] } = usePipelines()
-  const { mutateAsync: deleteScheduleAsync, isPending: deleting } = useDeleteSchedule()
-  const { mutate: toggleSchedule } = useToggleSchedule()
-  const { target: deleteTarget, open: deleteOpen, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<Schedule>()
+  const toggle = useToggleSchedule()
+  const { mutate: toggleSchedule } = toggle
+  const deleteTarget = useDeleteTarget<Schedule>()
+  const { requestDelete } = deleteTarget
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -115,23 +115,24 @@ function WorkflowsPageInner() {
               />
             </div>
           }
-          toolbarRight={
-            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/new`)}>
-              <Plus size={14} className="mr-1.5" /> Create
-            </Button>
-          }
-          notice={schedulesQuery.isError && (
-            <QueryErrorNotice
-              message="Failed to load schedules"
-              error={schedulesQuery.error}
-              onRetry={() => void schedulesQuery.refetch()}
-            />
+          toolbarRight={<CreateButton noun="Schedule" to={`/projects/${projectId}/schedules/new`} />}
+          notice={(schedulesQuery.isError || toggle.isError) && (
+            <>
+              {schedulesQuery.isError && (
+                <QueryErrorNotice
+                  message="Failed to load schedules"
+                  error={schedulesQuery.error}
+                  onRetry={() => void schedulesQuery.refetch()}
+                />
+              )}
+              <MutationErrors of={[toggle]} />
+            </>
           )}
         >
           <DataGrid
             data={filteredSchedules}
             columns={columns}
-            emptyMessage={schedulesQuery.isError ? undefined : 'No schedules yet. Create one to start.'}
+            emptyMessage={schedulesQuery.isError ? undefined : 'No schedules yet.'}
             tableWidthMode="fill-last"
             rowHeight={44}
             rowCursor
@@ -149,15 +150,7 @@ function WorkflowsPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <ConfirmDialog
-      open={deleteOpen}
-      onCancel={cancelDelete}
-      title="Delete this schedule?"
-      description={<>"{deleteTarget?.name}" will be permanently deleted.</>}
-      confirmLabel={deleting ? 'Deleting…' : 'Delete schedule'}
-      pending={deleting}
-      onConfirm={() => void confirmDeleteTarget(t => deleteScheduleAsync(t.id))}
-    />
+    <DeleteScheduleDialog target={deleteTarget} onDeleted={() => void close()} />
     </>
   )
 }

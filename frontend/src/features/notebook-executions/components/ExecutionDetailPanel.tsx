@@ -1,25 +1,34 @@
 import { Button } from '@/components/ui/button'
 import { PanelTemplate } from '@loykin/designkit'
-import { useSidePanel } from '@loykin/side-panel'
 import { Check, Square, X } from 'lucide-react'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useApproveExecution, useCancelExecution, useDenyExecution, useExecution } from '../hooks'
-import type { NotebookExecution } from '../types'
 import { fmtDate } from '@/lib/format'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { MutationErrors } from '@/shared/components/MutationErrors'
+import { hasMutationError } from '@/shared/mutationErrors'
+import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
 
 function date(value?: string) {
   return value ? fmtDate(value) : '—'
 }
 
-export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel, actorNames }: { execution: NotebookExecution; canAdmin: boolean; canCancel: boolean; actorNames: ReadonlyMap<string, string> }) {
-  const { close } = useSidePanel()
+export function ExecutionDetailPanel({ id, canAdmin, canCancel, actorNames }: {
+  id: string
+  canAdmin: boolean
+  /** Whether this viewer may cancel `requestedBy`'s execution. */
+  canCancel: (requestedBy: string | undefined) => boolean
+  actorNames: ReadonlyMap<string, string>
+}) {
   const approve = useApproveExecution()
   const deny = useDenyExecution()
   const cancel = useCancelExecution()
-  // Live-refreshed from initial's snapshot — see useExecution's doc comment
-  // (AG: this panel used to be frozen at the moment it was opened, so an
-  // approval or progress update never showed until it was closed and reopened).
-  const { data: execution = initial } = useExecution(initial.id, initial)
+  const cancelConfirmation = useConfirmAction<'cancel'>()
+  // Polls while the execution is still running — see useExecution.
+  const query = useExecution(id)
+  const execution = query.data
+  if (!execution) return <PanelPlaceholder query={query} noun="execution" />
   // Prefer the server-resolved username (works regardless of the viewer's
   // own privileges) and fall back to the project-member map, then the raw ID.
   const actorName = (id?: string, username?: string) => username || (id ? actorNames.get(id) ?? id : '—')
@@ -30,17 +39,23 @@ export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel, 
   const active = ['queued', 'running'].includes(execution.status)
 
   return (
+    <>
     <PanelTemplate
-      eyebrow="Notebook execution"
+      eyebrow="Notebook Execution"
       title={execution.id}
       status={<StatusBadge status={execution.status} />}
       actions={<div className="flex items-center gap-1">
         {awaiting && canAdmin && <Button size="sm" onClick={() => approve.mutate(execution)} disabled={approve.isPending}><Check />Approve</Button>}
         {awaiting && canAdmin && <Button size="sm" variant="destructive" onClick={() => deny.mutate(execution)} disabled={deny.isPending}><X />Deny</Button>}
-        {active && canCancel && <Button size="sm" variant="outline" onClick={() => cancel.mutate(execution)} disabled={cancel.isPending}><Square />Cancel</Button>}
-        <Button variant="ghost" size="icon-sm" onClick={() => void close()}><X /><span className="sr-only">Close</span></Button>
+        {active && canCancel(execution.requested_by) && <Button size="sm" variant="outline" onClick={() => cancelConfirmation.requestAction('cancel')}><Square />Cancel</Button>}
+        <PanelCloseButton />
       </div>}
     >
+      {hasMutationError([approve, deny]) && (
+        <PanelTemplate.Section>
+          <MutationErrors of={[approve, deny]} />
+        </PanelTemplate.Section>
+      )}
       <PanelTemplate.Section title="Target">
         <dl className="space-y-2">
           <PanelTemplate.Row label="Notebook">{execution.notebook_name}</PanelTemplate.Row>
@@ -65,9 +80,20 @@ export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel, 
         <p className="text-sm text-destructive">{execution.error_code || 'execution_error'}</p>
         <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{execution.error_message}</p>
       </PanelTemplate.Section>}
-      {execution.output_summary && <PanelTemplate.Section title="Output summary">
+      {execution.output_summary && <PanelTemplate.Section title="Output Summary">
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs text-muted-foreground">{execution.output_summary}</pre>
       </PanelTemplate.Section>}
     </PanelTemplate>
+    <ConfirmDialog
+      open={cancelConfirmation.open}
+      onCancel={cancelConfirmation.cancel}
+      verb="Cancel"
+      noun="execution"
+      description={`Execution ${execution.id} of "${execution.notebook_name}" will be stopped.`}
+      error={cancelConfirmation.error}
+      pending={cancel.isPending}
+      onConfirm={() => void cancelConfirmation.confirm(async () => { await cancel.mutateAsync(execution) })}
+    />
+    </>
   )
 }

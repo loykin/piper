@@ -229,20 +229,17 @@ documented domain constraint requires an exception:
 7. Set `rowCursor` when `onRowClick` is present. Interactive controls inside a
    row must call `event.stopPropagation()` so they do not also open the detail
    panel.
-8. Use `AlertDialog` only for explicit confirmation of destructive or
-   irreversible actions. Back the "which row/action is pending confirmation"
-   state with `shared/hooks/useDeleteTarget.ts` (delete flows) or
-   `useConfirmAction.ts` (multi-verb flows like cancel/delete on a detail
-   view) instead of a hand-rolled `useState`. Always wire the dialog's
-   `onOpenChange` as `open => { if (!open) cancel() }` — forwarding an
-   `onOpenChange(true)` straight into state is what let one dialog reopen
-   itself against a different target right after a successful action. A
-   single-candidate `Select`/dropdown that would otherwise need a manual
-   choice should use `useAutoSelectSole.ts` instead. For the common
-   title/description/Cancel/confirm shape, render
-   `shared/components/ConfirmDialog` instead of hand-assembling the
-   `AlertDialog*` parts; ESLint rejects passing a state setter straight to an
-   `AlertDialog`'s `onOpenChange`.
+8. Confirm with `shared/components/ConfirmDialog` — never assemble
+   `AlertDialog` parts or call `window.confirm` (both are lint errors). See
+   "Resource UI Rules" below for which actions confirm and how the copy reads.
+   Back the pending target with `shared/hooks/useDeleteTarget.ts` (one target)
+   or `useConfirmAction.ts` (several verbs on one view) instead of a
+   hand-rolled `useState`. When the same confirmation appears on a list page,
+   a panel, and a detail page, give it one per-domain component
+   (`features/schedules/components/DeleteScheduleDialog.tsx`) that owns the
+   mutation and takes an `onDeleted` callback. A single-candidate
+   `Select`/dropdown that would otherwise need a manual choice should use
+   `useAutoSelectSole.ts`.
 9. Surface a failed list query with `shared/components/QueryErrorNotice.tsx`
    in `DataBodyTemplate.Resource`'s `notice` prop — `message`, `error`, and
    `onRetry={() => void query.refetch()}`. Don't hand-roll an error `<p>`;
@@ -315,6 +312,28 @@ documented domain constraint requires an exception:
     due to CSS import-order — see
     `/Users/loykin/Project/basekit/packages/filter-input/ISSUES.md` for the
     full writeup. Don't fight this with utility class overrides.
+
+### Resource UI Rules
+
+The same action looks and behaves the same on every resource page. Each rule
+is carried by a shared component, so following it is the default:
+
+| Concern | Rule | Carried by |
+|---|---|---|
+| Create button | `toolbarRight`, "+ New {Noun}" (e.g. "New Rule"). A resource that is started rather than just created uses its verb: "Deploy Service", "Launch Notebook". | `shared/components/CreateButton` |
+| Which actions confirm | Irreversible or interrupting actions confirm: Delete, Remove, Stop, Cancel, Purge. Reversible ones run immediately: Enable/Disable, Start, Restart, Rerun, Approve/Deny. | `ConfirmVerb` in `ConfirmDialog` |
+| Confirm copy | Title "{Verb} this {noun}?", button "{Verb} {noun}" → "{Verbing}…" while pending, Cancel button ("Back" for the verb Cancel). The description names the specific target. | `ConfirmDialog` (`verb`, `noun`, `description`) |
+| Failed confirmed action | The dialog stays open and shows the error (`error` prop). Never close it before the mutation settles. | `useDeleteTarget` / `useConfirmAction` `.confirm()` |
+| Failed unconfirmed action | Shown in the page `notice` or at the top of the panel — never swallowed, never `alert()`. Empty `catch {}` and `alert` are lint errors. | `shared/components/MutationErrors` |
+| Detail panel data | The panel receives the resource **id** (or name) and reads it through a query — never the row object. The row is a snapshot; a panel holding it shows stale state after any action and computes the next action from old values (the alert-rule toggle bug). Without a single-item endpoint, find the item in the full-list hook (`useMembers`, `useUsers`, `useNotebookVolumes`). Immutable history entries are the only exception. | `PanelPlaceholder` for loading / gone |
+| After an action in a panel | The panel stays open and refreshes itself. It closes only when the resource is gone (delete, purge, and a service stop, which moves it to history) — the page closes it in the confirm handler after success, not before the dialog opens. | `useSidePanel().close()` in `onConfirm` |
+| Loading / missing / failed | Panels render `PanelPlaceholder query={…}`, pages `PageState query={…}`. Only a 404 says "Not Found"; any other error says "Failed to Load" with Retry (a 500 used to tell the user the resource had been deleted). | `shared/queryState.ts` `resourceState` |
+| Status colors | Every backend status string maps to a tone in `shared/status.ts`; an unlisted one renders neutral grey, so `status.test.ts` lists the backend's statuses and fails on a gap. Settings pages show status with `StatusBadge` and load errors with `QueryErrorNotice`, like list pages. | `StatusBadge`, `QueryErrorNotice` |
+| Panel chrome | Actions are `IconButton`s, then the shared close button. | `PanelCloseButton` |
+| Select labels | When an option's label differs from its value (`admin` → "Admin"), pass the options as the Select's `items` too — Base UI's trigger otherwise shows the raw value after a choice. Shared option lists live with their type (`PROJECT_ROLE_ITEMS`). | — |
+| Popups inside a panel | `@loykin/side-panel` closes on any click outside the panel element, and popups render in a portal outside it. Dialogs are exempt through the `data-state="open"` marker our `DialogContent`/`AlertDialogContent` add; wrap a `Select`/`DropdownMenu`/`Popover`'s content in `PanelGuard`, or choosing an option closes the panel. | `PanelGuard` from `@loykin/side-panel` |
+| Copy style | Labels, buttons, titles, panel eyebrows, and pending labels ("Signing In…") are Title Case, and an ellipsis is the single character "…" ("Cron Expression", "Deploy to Schedule"); descriptions, help text, messages, and questions are sentence case. Identifiers (`access_key_id`) and acronyms stay as written. | `lib/copy.ts` `titleCase`; `test/copy.test.ts` fails on a violation |
+| Empty list | `emptyMessage` "No {plural} yet." The create button is already in the toolbar, so no call to action; use `emptyContent` only for a hint the user can't infer. | — |
 
 Rule 5 has no standing exception for "the row only has a few columns" or
 "there's nothing more to show than the grid already displays" — a column
@@ -389,6 +408,18 @@ nested inside `Body`, `Group`, or another layout mode. Reference:
   with an arbitrary one-off width, or move its submit button into page actions.
 - Keep API submission in a feature mutation hook. The page handles navigation
   and user-visible submission errors.
+- End the form with `shared/components/FormSubmitBar` (`verb`, `noun`,
+  `pending`, `error`, `onCancel`) — never `FormActions` directly (lint
+  error): its status line is muted text, so a server error there read as a
+  neutral note. A dialog that submits uses `DialogSubmitFooter` the same way.
+- A create page takes its title and last breadcrumb from
+  `createCopy(noun, verb)` — the same call the list's `CreateButton` uses —
+  so the button, title, breadcrumb, and submit ("New Schedule" → "Create
+  Schedule") always agree. `page-conventions.spec.ts` checks each flow.
+- A page or form that loads its resource first (detail, edit, rotate,
+  deploy-from-template) renders `shared/components/PageState` until the data
+  is there: loading, **not found only for a 404**, otherwise "Failed to
+  Load" with Retry — and it keeps the breadcrumbs.
 
 ### Users and Project Members
 
@@ -549,9 +580,15 @@ Without `notifyOnChangeProps`, each poll fires two re-renders (`isFetching` true
 
 ## Tests
 
-- Unit: `pnpm test` (vitest, `src/**/*.test.ts`, node environment). Test
+- Unit: `pnpm test` (vitest, `src/**/*.test.ts` and `test/**/*.test.ts`,
+  node environment). `test/` holds checks that read the source tree, such as
+  the copy-style test. Test
   pure logic — YAML↔draft conversion, validation, formatters, the list
   contract in `lib/api.ts` — not component markup.
 - End to end: `pnpm test:e2e` (Playwright; starts `examples/frontend-e2e` on
   :18080 and a preview build on :4173, so both ports must be free).
+- Auth-mode end to end: `pnpm test:e2e:auth` runs `e2e-auth/` against a real
+  `piper server` with built-in authentication on a fresh SQLite database
+  (:18081, preview on :4174). The spec creates the admin account through the
+  bootstrap screen, then covers Users and Project Members.
   `PIPER_PIPELINE_TEMPLATE_E2E_ENV` points at a Python venv for the agent.

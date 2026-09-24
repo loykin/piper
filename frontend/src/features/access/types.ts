@@ -13,6 +13,16 @@ export interface CreateUserRequest {
 
 export type ProjectRole = 'viewer' | 'member' | 'admin'
 
+/**
+ * Select items for a project role. Pass them as the Select's `items` so the
+ * trigger shows "Admin", not the raw value "admin".
+ */
+export const PROJECT_ROLE_ITEMS: { value: ProjectRole; label: string }[] = [
+  { value: 'viewer', label: 'Viewer' },
+  { value: 'member', label: 'Member' },
+  { value: 'admin', label: 'Admin' },
+]
+
 export interface MemberCandidate {
   username: string
 }

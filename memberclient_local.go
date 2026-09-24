@@ -203,7 +203,20 @@ func (l *localMemberClient) RerunRun(ctx context.Context, auth memberclient.Auth
 	return l.p.RerunRun(ctx, runID, failedOnly)
 }
 
+// requireRun makes a run's sub-resources (steps, logs, metrics, artifacts)
+// answer 404 for a run that doesn't exist, like the run itself, instead of
+// an empty list that reads as "this run has none".
+func (l *localMemberClient) requireRun(ctx context.Context, ref project.ProjectRef, runID string) error {
+	if r, err := l.p.repos.Run.Get(ctx, ref.ProjectID, runID); err != nil || r == nil {
+		return memberclient.ErrRunNotFound
+	}
+	return nil
+}
+
 func (l *localMemberClient) ListSteps(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, runID string) ([]memberclient.StepSummary, error) {
+	if err := l.requireRun(ctx, ref, runID); err != nil {
+		return nil, err
+	}
 	steps, err := l.p.repos.Step.List(ctx, ref.ProjectID, runID)
 	if err != nil {
 		return nil, err
@@ -217,6 +230,9 @@ func (l *localMemberClient) RetryStep(ctx context.Context, auth memberclient.Aut
 }
 
 func (l *localMemberClient) QueryLogs(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error) {
+	if err := l.requireRun(ctx, ref, req.RunID); err != nil {
+		return memberclient.QueryLogsResponse{}, err
+	}
 	cursor := req.Cursor
 	if cursor == "" && req.AfterID > 0 {
 		cursor = statsstore.CursorFromID(req.AfterID)
@@ -248,6 +264,11 @@ func (l *localMemberClient) PurgeProjectStats(ctx context.Context, _ memberclien
 }
 
 func (l *localMemberClient) QueryMetrics(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error) {
+	if req.RunID != "" {
+		if err := l.requireRun(ctx, ref, req.RunID); err != nil {
+			return memberclient.QueryMetricsResponse{}, err
+		}
+	}
 	if l.p.stats.Metrics == nil {
 		return memberclient.QueryMetricsResponse{}, nil
 	}
@@ -266,6 +287,9 @@ func (l *localMemberClient) QueryMetrics(ctx context.Context, _ memberclient.Aut
 }
 
 func (l *localMemberClient) ListArtifacts(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) ([]any, error) {
+	if err := l.requireRun(ctx, ref, runID); err != nil {
+		return nil, err
+	}
 	ctx = withProjectContext(ctx, auth, ref)
 	return (&piperArtifacts{p: l.p}).List(ctx, runID)
 }

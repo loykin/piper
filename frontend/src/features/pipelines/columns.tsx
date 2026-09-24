@@ -83,7 +83,7 @@ export function usePipelineColumns(callbacks: PipelineColumnCallbacks): DataGrid
           <IconButton icon={<Play />} label="Run" onClick={() => callbacks.onRun(row.original)} />
           <IconButton
             icon={<CalendarClock />}
-            label="Deploy to schedule"
+            label="Deploy to Schedule"
             onClick={() => callbacks.onDeploy(row.original)}
           />
           <IconButton

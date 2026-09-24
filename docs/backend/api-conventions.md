@@ -36,6 +36,25 @@ must follow these rules so standalone and federated routing expose the same API.
 - Renaming or reshaping a published endpoint requires an explicit compatibility
   window in the OpenAPI contract and tests. Do not leave silent aliases or
   frontend-only compatibility branches behind.
+- A lookup of an unknown id answers `404` — never `500`, and never `200` with
+  an empty list for a sub-collection of a missing parent (`/runs/{id}/steps`).
+  Only a genuine not-found is a 404: a repository `Get` returns its domain
+  `ErrNotFound` for a missing row, and handlers use `httpx.LookupFailed`,
+  which maps that to 404 and any other error to 500. The UI shows "Not Found"
+  only for a 404, so mapping a database error to 404 tells the user the
+  resource was deleted. `missing_resource_contract_test.go` walks every
+  parameterized route with unknown ids.
+- A resource looked up by id alone (viewers, notebook volumes) must be checked
+  against the URL's project; another project's resource answers 404.
+- An unexpected failure answers through `httpx.InternalError(c, err, msg)`: the
+  full error is logged with a short reference id, and the response is only
+  `{"error":"<msg> (ref 3f9a2c1b)"}`. Never put `err.Error()` in a 500 body —
+  raw errors carry SQL, file paths, and upstream response bodies — and grep
+  the server log for the ref a user reports instead.
+  `internal_error_contract_test.go` fails on a 500 built from a value.
+  Expected failures (404, 409, 400 validation) keep their specific message.
+- Decode request bodies with `httpx.BindJSON`, whose 400 names the JSON field
+  ("type is required") instead of the validator's Go-side text.
 - `openapi_routes_test.go` fails when a registered JSON route is missing from
   `docs/openapi.yaml` or the spec documents a route the server no longer
   registers — update both in the same change.

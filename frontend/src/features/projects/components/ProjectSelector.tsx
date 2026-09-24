@@ -129,11 +129,11 @@ export function ProjectSelector() {
       <ConfirmDialog
         open={deleteOpen}
         onCancel={cancelDelete}
-        title={`Delete ${deleteTarget?.name}?`}
-        description="This permanently deletes the project and its project-scoped data. This action cannot be undone."
+        verb="Delete"
+        noun="project"
+        description={`"${deleteTarget?.name}" and all its project-scoped data will be permanently deleted. This action cannot be undone.`}
         error={deleteError}
         pending={deleteProject.isPending}
-        confirmLabel={deleteProject.isPending ? 'Deleting…' : 'Delete project'}
         onConfirm={() => void handleDelete()}
       />
     </>

@@ -1,38 +1,29 @@
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import type { useConfirmAction } from '@/shared/hooks/useConfirmAction'
 
 export type RunConfirmVerb = 'cancel'
 
 interface RunActionConfirmDialogProps {
   runId: string
-  action: RunConfirmVerb | null
-  /** Called when the dialog closes without confirming (Back, Esc, outside click). */
-  onDismiss: () => void
+  confirmation: ReturnType<typeof useConfirmAction<RunConfirmVerb>>
   cancelling: boolean
-  onConfirmCancel: () => void
+  onConfirmCancel: () => Promise<unknown>
 }
 
-// Cancel confirmation for a run — identical AlertDialog copy and behavior
-// between the full RunDetailPage and the RunDetailPanel side-panel view.
-export function RunActionConfirmDialog({
-  runId,
-  action,
-  onDismiss,
-  cancelling,
-  onConfirmCancel,
-}: RunActionConfirmDialogProps) {
+// Cancel confirmation for a run — identical copy and behavior between the
+// full RunDetailPage and the RunDetailPanel side-panel view. Stays open with
+// the error if the cancel fails.
+export function RunActionConfirmDialog({ runId, confirmation, cancelling, onConfirmCancel }: RunActionConfirmDialogProps) {
   return (
     <ConfirmDialog
-      open={action != null}
-      onCancel={onDismiss}
-      title="Cancel this run?"
+      open={confirmation.open}
+      onCancel={confirmation.cancel}
+      verb="Cancel"
+      noun="run"
       description={`Run ${runId} will be stopped immediately.`}
-      cancelLabel="Back"
+      error={confirmation.error}
       pending={cancelling}
-      confirmLabel={cancelling ? 'Cancelling…' : 'Cancel run'}
-      onConfirm={() => {
-        onConfirmCancel()
-        onDismiss()
-      }}
+      onConfirm={() => void confirmation.confirm(async () => { await onConfirmCancel() })}
     />
   )
 }

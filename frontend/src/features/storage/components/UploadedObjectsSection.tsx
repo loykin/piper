@@ -22,6 +22,7 @@ import { fmtBytes, fmtDate } from '@/lib/format'
 import { ObjectDetailPanel } from '@/features/storage/components/ObjectDetailPanel'
 import { UploadObjectDialog } from './UploadObjectDialog'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 
 // ── Uploaded Objects ────────────────────────────────────────────────────────
 // Folder-tree browser over this project's uploads/ prefix, with delete as its
@@ -44,7 +45,7 @@ function breadcrumbSegments(prefix: string): string[] {
 }
 
 export function UploadedObjectsSection({ projectId }: { projectId: string }) {
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const [appliedPrefix, setAppliedPrefix] = useState('')
   const [pageIndex, setPageIndex] = useState(0)
   const [nameFilter, setNameFilter] = useState('')
@@ -58,18 +59,12 @@ export function UploadedObjectsSection({ projectId }: { projectId: string }) {
     ? objects.filter(o => o.key.slice(appliedPrefix.length).toLowerCase().includes(nameFilter.trim().toLowerCase()))
     : objects
   const deleteObject = useDeleteObject()
-  const [deleteObjectTarget, setDeleteObjectTarget] = useState<string | null>(null)
+  const deleteTarget = useDeleteTarget<string>()
   const [uploadOpen, setUploadOpen] = useState(false)
 
   function navigateTo(nextPrefix: string) {
     setAppliedPrefix(nextPrefix)
     setPageIndex(0)
-  }
-
-  function confirmDeleteObject() {
-    if (!deleteObjectTarget) return
-    deleteObject.mutate(deleteObjectTarget)
-    setDeleteObjectTarget(null)
   }
 
   const segments = breadcrumbSegments(appliedPrefix)
@@ -131,7 +126,7 @@ export function UploadedObjectsSection({ projectId }: { projectId: string }) {
             icon={<Trash2 />}
             label="Delete"
             disabled={deleteObject.isPending && deleteObject.variables === row.original.key}
-            onClick={e => { e.stopPropagation(); setDeleteObjectTarget(row.original.key) }}
+            onClick={e => { e.stopPropagation(); deleteTarget.requestDelete(row.original.key) }}
             className="text-destructive hover:bg-destructive/10"
           />
         </RowActions>
@@ -229,7 +224,7 @@ export function UploadedObjectsSection({ projectId }: { projectId: string }) {
               <ObjectDetailPanel
                 projectId={projectId}
                 object={object}
-                onDelete={o => setDeleteObjectTarget(o.key)}
+                onDelete={o => deleteTarget.requestDelete(o.key)}
               />,
               { size: 480 },
             )
@@ -248,12 +243,17 @@ export function UploadedObjectsSection({ projectId }: { projectId: string }) {
       <UploadObjectDialog open={uploadOpen} onOpenChange={setUploadOpen} />
 
       <ConfirmDialog
-        open={deleteObjectTarget != null}
-        onCancel={() => setDeleteObjectTarget(null)}
-        title="Delete this object?"
-        description={`"${deleteObjectTarget}" will be permanently deleted from the object store.`}
-        confirmLabel="Delete object"
-        onConfirm={confirmDeleteObject}
+        open={deleteTarget.open}
+        onCancel={deleteTarget.cancel}
+        verb="Delete"
+        noun="object"
+        description={`"${deleteTarget.target}" will be permanently deleted from the object store.`}
+        error={deleteTarget.error}
+        pending={deleteObject.isPending}
+        onConfirm={() => void deleteTarget.confirm(async key => {
+          await deleteObject.mutateAsync(key)
+          void close()
+        })}
       />
     </>
   )

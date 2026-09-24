@@ -1,6 +1,7 @@
 package piper
 
 import (
+	"github.com/loykin/piper/internal/httpx"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -61,7 +62,7 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 	admin.GET("/storage/settings", func(c *gin.Context) {
 		view, err := p.StorageSettings()
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, view)
@@ -75,8 +76,7 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 	// editable form to source a candidate config from).
 	admin.POST("/storage/settings/test", func(c *gin.Context) {
 		var cfg StorageConfig
-		if err := c.ShouldBindJSON(&cfg); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if !httpx.BindJSON(c, &cfg) {
 			return
 		}
 		c.JSON(http.StatusOK, p.TestStorageSettings(c.Request.Context(), cfg))

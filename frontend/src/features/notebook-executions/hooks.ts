@@ -17,20 +17,18 @@ export const notebookExecutionKeys = {
 const TERMINAL_STATUSES: NotebookExecutionStatus[] = ['succeeded', 'failed', 'timed_out', 'cancelled', 'conflicted']
 
 /**
- * Live single-execution query, seeded with the row snapshot the detail panel
- * was opened with (`initial`) so the panel renders immediately, then kept
- * current by polling while the execution hasn't reached a terminal status.
+ * Live single-execution query, kept current by polling while the execution
+ * hasn't reached a terminal status.
  * Approve/deny/cancel mutations below invalidate `notebookExecutionKeys.all`,
  * which is a prefix of this query's key too, so an admin's own approval
  * refetches this panel immediately instead of waiting for the next poll tick.
  */
-export function useExecution(id: string, initial?: NotebookExecution) {
+export function useExecution(id: string) {
   const projectId = useProjectId()
   return useQuery({
     queryKey: notebookExecutionKeys.one(projectId, id),
     queryFn: () => getNotebookExecution(projectId, id),
     enabled: !!projectId && !!id,
-    initialData: initial,
     refetchInterval: query => (query.state.data && TERMINAL_STATUSES.includes(query.state.data.status) ? false : 2000),
     ...backgroundPollingNotifications,
   })

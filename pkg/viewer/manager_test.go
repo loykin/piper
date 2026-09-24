@@ -36,7 +36,7 @@ func (r *fakeRepo) Create(_ context.Context, v *Viewer) error {
 func (r *fakeRepo) Get(_ context.Context, id string) (*Viewer, error) {
 	v, ok := r.viewers[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, ErrNotFound
 	}
 	cp := *v
 	return &cp, nil
@@ -281,7 +281,7 @@ func (s *stubStore) Put(_ context.Context, _ string, _ io.Reader, _ int64) error
 func (s *stubStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	b, ok := s.data[key]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, ErrNotFound
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
 }

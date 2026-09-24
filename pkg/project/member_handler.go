@@ -56,12 +56,12 @@ func (h *MemberHandler) candidates(c *gin.Context) {
 	projectContext, _ := FromContext(c.Request.Context())
 	users, err := h.users.ListUsers(c.Request.Context(), 0, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	members, err := h.members.ListMembers(c.Request.Context(), projectContext.ID, 0, 0)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	existing := make(map[string]struct{}, len(members))
@@ -87,13 +87,13 @@ func (h *MemberHandler) list(c *gin.Context) {
 	limit, offset := httpx.ParseLimitOffset(c)
 	members, err := h.members.ListMembers(c.Request.Context(), projectContext.ID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.members.CountMembers(c.Request.Context(), projectContext.ID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -112,8 +112,7 @@ func (h *MemberHandler) add(c *gin.Context) {
 		Username string `json:"username"`
 		Role     string `json:"role"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	userID := req.UserID
@@ -150,18 +149,16 @@ func (h *MemberHandler) update(c *gin.Context) {
 	var req struct {
 		Role string `json:"role"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	member, err := h.members.GetMember(c.Request.Context(), projectContext.ID, userID)
-	if err != nil || member == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+	if httpx.LookupFailed(c, err, member != nil, nil, "member not found") {
 		return
 	}
 	member.Role = req.Role
 	if err := h.members.UpdateMember(c.Request.Context(), member); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, h.memberView(c, member))
@@ -180,7 +177,7 @@ func (h *MemberHandler) memberView(c *gin.Context, member *security.ProjectMembe
 func (h *MemberHandler) remove(c *gin.Context) {
 	projectContext, _ := FromContext(c.Request.Context())
 	if err := h.members.RemoveMember(c.Request.Context(), projectContext.ID, c.Param("user_id")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)

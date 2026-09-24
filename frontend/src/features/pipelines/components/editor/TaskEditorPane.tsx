@@ -55,9 +55,9 @@ export function TaskEditorPane({
             <p className="truncate text-xs text-muted-foreground">{task.name}</p>
           </div>
           <div className="flex items-center gap-1">
-            <IconButton icon={<ArrowUp />} label="Move up" onClick={() => moveTask(index, -1)} disabled={index === 0} />
-            <IconButton icon={<ArrowDown />} label="Move down" onClick={() => moveTask(index, 1)} disabled={index === taskCount - 1} />
-            <IconButton icon={<Trash2 />} label="Delete task" onClick={() => removeTask(index)} className="text-destructive hover:bg-destructive/10" />
+            <IconButton icon={<ArrowUp />} label="Move Up" onClick={() => moveTask(index, -1)} disabled={index === 0} />
+            <IconButton icon={<ArrowDown />} label="Move Down" onClick={() => moveTask(index, 1)} disabled={index === taskCount - 1} />
+            <IconButton icon={<Trash2 />} label="Delete Task" onClick={() => removeTask(index)} className="text-destructive hover:bg-destructive/10" />
             <IconButton icon={<X />} label="Close" onClick={onClose} />
           </div>
         </div>
@@ -110,7 +110,7 @@ export function TaskEditorPane({
                   {canBrowse && (
                     <IconButton
                       icon={<FolderOpen />}
-                      label="Browse files in volume"
+                      label="Browse Files in Volume"
                       onClick={() => { setBrowseQuery(''); setFileBrowserOpen(o => !o) }}
                     />
                   )}
@@ -167,7 +167,7 @@ export function TaskEditorPane({
                           {canBrowse && (
                             <IconButton
                               icon={<FolderOpen />}
-                              label="Browse volume files"
+                              label="Browse Volume Files"
                               onClick={() => { setBrowseQuery(''); setArtifactBrowseKey(k => k === browseKey ? null : browseKey) }}
                             />
                           )}

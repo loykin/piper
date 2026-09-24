@@ -2,12 +2,11 @@ import { useState } from 'react'
 import type { Row } from '@tanstack/react-table'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/features/projects/context'
-import { Plus, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { usePipelinesPaged, useDeletePipeline, useRunPipeline } from '@/features/pipelines/hooks'
 import { usePipelineColumns } from '@/features/pipelines/columns'
 import { PipelineDetailPanel } from '@/features/pipelines/components/PipelineDetailPanel'
@@ -18,6 +17,7 @@ import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useTextFilter } from '@/shared/hooks/useTextFilter'
 import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { CreateButton } from '@/shared/components/CreateButton'
 
 const PAGE_SIZE = 20
 
@@ -38,7 +38,7 @@ function GroupHeader({ row }: { row: Row<PipelineTemplate> }) {
 function PipelinesListPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const [searchParams] = useSearchParams()
   const filterName = searchParams.get('name') ?? ''
   const [pageIndex, setPageIndex] = useState(0)
@@ -58,12 +58,11 @@ function PipelinesListPageInner() {
   // (the ?name= URL param), which is an exact-match server-side filter used
   // by the "jump back to this template after create" flow, not a search box.
   const filteredTemplates = useTextFilter(templateData?.items, searchFilter, t => t.name)
-  const { mutateAsync: deletePipeline } = useDeletePipeline()
+  const { mutateAsync: deletePipeline, isPending: deleting } = useDeletePipeline()
   const { mutateAsync: runPipeline } = useRunPipeline()
 
   const [actionError, setActionError] = useState('')
   const { target: deleteTarget, open: deleteOpen, error: deleteError, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<PipelineTemplate>()
-  const [deleting, setDeleting] = useState(false)
 
   async function handleRun(t: PipelineTemplate) {
     setActionError('')
@@ -75,13 +74,11 @@ function PipelinesListPageInner() {
     }
   }
 
-  async function confirmDelete() {
-    setDeleting(true)
-    try {
-      await confirmDeleteTarget(t => deletePipeline(t.id))
-    } finally {
-      setDeleting(false)
-    }
+  function confirmDelete() {
+    return confirmDeleteTarget(async t => {
+      await deletePipeline(t.id)
+      void close()
+    })
   }
 
   function openDeploy(t: PipelineTemplate) {
@@ -102,7 +99,7 @@ function PipelinesListPageInner() {
   function openDetail(t: PipelineTemplate) {
     open(
       <PipelineDetailPanel
-        template={t}
+        id={t.id}
         onRun={(x) => void handleRun(x)}
         onDeploy={openDeploy}
         onNewVersion={openNewVersionFrom}
@@ -141,12 +138,8 @@ function PipelinesListPageInner() {
                 />
               </div>
             }
-            toolbarRight={
-              <Button size="sm" onClick={() => navigate(`/projects/${projectId}/pipelines/editor`)}>
-                <Plus size={14} className="mr-1.5" /> New Template
-              </Button>
-            }
-            notice={(initialLoadFailed || actionError || deleteError) && (
+            toolbarRight={<CreateButton noun="Template" to={`/projects/${projectId}/pipelines/editor`} />}
+            notice={(initialLoadFailed || actionError) && (
               <>
                 {initialLoadFailed && (
                   <QueryErrorNotice
@@ -156,7 +149,6 @@ function PipelinesListPageInner() {
                   />
                 )}
                 {actionError && <p className="text-sm text-destructive">{actionError}</p>}
-                {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
               </>
             )}
           >
@@ -189,9 +181,10 @@ function PipelinesListPageInner() {
       <ConfirmDialog
         open={deleteOpen}
         onCancel={cancelDelete}
-        title="Delete this pipeline template?"
+        verb="Delete"
+        noun="pipeline template"
         description={<>"{deleteTarget?.name}" v{deleteTarget?.version} ({deleteTarget?.id.slice(0, 8)}…) and its snapshot will be permanently deleted.</>}
-        confirmLabel={deleting ? 'Deleting…' : 'Delete template'}
+        error={deleteError}
         pending={deleting}
         onConfirm={() => void confirmDelete()}
       />

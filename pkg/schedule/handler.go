@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -77,13 +78,13 @@ func (h *Handler) listSchedules(c *gin.Context) {
 	projectID := currentProjectID(c)
 	schedules, err := h.deps.Schedules.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if limit > 0 {
 		total, err := h.deps.Schedules.Count(c.Request.Context(), projectID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
@@ -106,8 +107,7 @@ func (h *Handler) createSchedule(c *gin.Context) {
 		MaxRuns int            `json:"max_runs,omitempty"`
 		Params  map[string]any `json:"params,omitempty"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 
@@ -167,11 +167,11 @@ func (h *Handler) createSchedule(c *gin.Context) {
 	switch req.Type {
 	case "cron":
 		if err := ApplyCron(sc, req.Cron, now, h.deps.NextTime); err != nil {
-			status := http.StatusBadRequest
-			if err == ErrNextTimeMissing {
-				status = http.StatusInternalServerError
+			if errors.Is(err, ErrNextTimeMissing) {
+				httpx.InternalError(c, err)
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			}
-			c.JSON(status, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -187,7 +187,7 @@ func (h *Handler) createSchedule(c *gin.Context) {
 	}
 
 	if err := h.deps.Schedules.Create(c.Request.Context(), sc); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 
@@ -203,8 +203,7 @@ func (h *Handler) createSchedule(c *gin.Context) {
 func (h *Handler) getSchedule(c *gin.Context) {
 	id := c.Param("id")
 	sc, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+	if httpx.LookupFailed(c, err, sc != nil, ErrNotFound, "schedule not found") {
 		return
 	}
 	c.JSON(http.StatusOK, sc.Redact())
@@ -217,8 +216,7 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 		Enabled *bool `json:"enabled"`
 		MaxRuns *int  `json:"max_runs"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if req.Enabled == nil && req.MaxRuns == nil {
@@ -231,20 +229,19 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 	}
 	projectID := currentProjectID(c)
 	sc, err := h.deps.Schedules.Get(c.Request.Context(), projectID, id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+	if httpx.LookupFailed(c, err, sc != nil, ErrNotFound, "schedule not found") {
 		return
 	}
 	if req.MaxRuns != nil {
 		if err := h.deps.Schedules.SetMaxRuns(c.Request.Context(), projectID, id, *req.MaxRuns); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		sc.MaxRuns = *req.MaxRuns
 	}
 	if req.Enabled != nil {
 		if err := h.deps.Schedules.SetEnabled(c.Request.Context(), projectID, id, *req.Enabled); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		sc.Enabled = *req.Enabled
@@ -265,7 +262,7 @@ func (h *Handler) deleteSchedule(c *gin.Context) {
 		return
 	}
 	if err := h.deps.Schedules.Delete(c.Request.Context(), currentProjectID(c), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	h.sched().Remove(id)
@@ -283,8 +280,7 @@ func (h *Handler) backfillSchedule(c *gin.Context) {
 		From time.Time `json:"from"`
 		To   time.Time `json:"to"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if req.From.IsZero() || req.To.IsZero() || req.To.Before(req.From) {
@@ -313,7 +309,7 @@ func (h *Handler) listScheduleRuns(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	runs, err := h.deps.Runs.List(c.Request.Context(), projectContext.ID, run.RunFilter{ScheduleID: id})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	for _, r := range runs {

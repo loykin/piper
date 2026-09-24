@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/loykin/piper/internal/httpx"
 	"io"
 	"net/http"
 	"strings"
@@ -208,7 +209,7 @@ func (h *Handler) serveMCP(c *gin.Context) {
 	if isInitialize && hasResponse {
 		sess, err := h.sessions.Create(actor.ID, pctx.ID, clientID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create MCP session"})
+			httpx.InternalError(c, err, "failed to create MCP session")
 			return
 		}
 		c.Header(piperMCP.SessionIDHeader, sess.ID)

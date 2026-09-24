@@ -79,8 +79,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) get(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template version not found"})
+	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template version not found") {
 		return
 	}
 	c.JSON(http.StatusOK, t)
@@ -93,8 +92,7 @@ func (h *Handler) submit(c *gin.Context) {
 		YAML     string `json:"yaml"`
 		VolumeID string `json:"volume_id"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 
@@ -130,8 +128,9 @@ func (h *Handler) submit(c *gin.Context) {
 		}
 
 		vol, err := h.deps.Volumes.Get(c.Request.Context(), req.VolumeID)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "volume not found"})
+		// Volumes are looked up by id alone; another project's volume must
+		// read as missing, or its files would be snapshotted into this one.
+		if httpx.LookupFailed(c, err, vol != nil && vol.ProjectID == projectContext.ID, nil, "volume not found") {
 			return
 		}
 
@@ -146,7 +145,7 @@ func (h *Handler) submit(c *gin.Context) {
 				}
 				_ = h.deps.Store.Delete(c.Request.Context(), keys...)
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("snapshot upload failed: %s", uploadErr)})
+			httpx.InternalError(c, uploadErr, "snapshot upload failed")
 			return
 		}
 	}
@@ -157,7 +156,7 @@ func (h *Handler) submit(c *gin.Context) {
 		var err error
 		version, err = h.deps.Templates.NextVersion(c.Request.Context(), projectContext.ID, pl.Metadata.Name)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 	}
@@ -166,7 +165,7 @@ func (h *Handler) submit(c *gin.Context) {
 	pl.Metadata.Version = version
 	versionedYAML, err := yaml.Marshal(pl)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 
@@ -197,7 +196,7 @@ func (h *Handler) submit(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": "concurrent submit conflict, please retry"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 
@@ -211,13 +210,13 @@ func (h *Handler) list(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	templates, err := h.deps.Templates.List(c.Request.Context(), projectContext.ID, f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if f.Limit > 0 {
 		total, err := h.deps.Templates.Count(c.Request.Context(), projectContext.ID, f)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		httpx.SetTotalCountHeader(c, f.Limit, total)
@@ -234,8 +233,7 @@ func (h *Handler) delete(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template not found"})
+	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template not found") {
 		return
 	}
 
@@ -256,7 +254,7 @@ func (h *Handler) delete(c *gin.Context) {
 	if h.deps.Schedules != nil {
 		schedules, err := h.deps.Schedules.List(c.Request.Context(), projectContext.ID, 0, 0)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httpx.InternalError(c, err)
 			return
 		}
 		for _, sc := range schedules {
@@ -268,7 +266,7 @@ func (h *Handler) delete(c *gin.Context) {
 	}
 
 	if err := h.deps.Templates.Delete(c.Request.Context(), projectContext.ID, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 
@@ -294,8 +292,7 @@ func (h *Handler) triggerRun(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template not found"})
+	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template not found") {
 		return
 	}
 
@@ -316,7 +313,7 @@ func (h *Handler) triggerRun(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 
@@ -329,8 +326,7 @@ func (h *Handler) deploy(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "pipeline template not found"})
+	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template not found") {
 		return
 	}
 
@@ -341,8 +337,7 @@ func (h *Handler) deploy(c *gin.Context) {
 		Params  map[string]any `json:"params,omitempty"`
 	}
 	req.Enabled = true
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !httpx.BindJSON(c, &req) {
 		return
 	}
 	if req.Cron == "" {
@@ -395,7 +390,7 @@ func (h *Handler) deploy(c *gin.Context) {
 		return
 	}
 	if err := h.deps.Schedules.Create(c.Request.Context(), sc); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httpx.InternalError(c, err)
 		return
 	}
 	if h.deps.Sched != nil && sc.Enabled {

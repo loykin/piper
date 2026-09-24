@@ -4,6 +4,7 @@ import { useProjectId } from '@/features/projects/context'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { ScheduleForm } from '@/features/schedules/components/ScheduleForm'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { createCopy } from '@/lib/copy'
 
 export default function WorkflowCreatePage() {
   const navigate = useNavigate()
@@ -17,8 +18,8 @@ export default function WorkflowCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Schedules', to: `/projects/${projectId}/schedules` }, 'Create Schedule']} />} />}
-      title="Create Schedule"
+      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Schedules', to: `/projects/${projectId}/schedules` }, createCopy('Schedule').crumb]} />} />}
+      title={createCopy('Schedule').title}
       description="Register a pipeline and choose how it should be triggered."
     >
       <DataBodyTemplate.Group layout="stacked" title="Schedule" description="Pipeline source and trigger settings.">

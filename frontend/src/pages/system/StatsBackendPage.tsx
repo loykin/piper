@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { useStatsCapabilities } from '@/features/runs/hooks'
 import type { StatsCapabilities } from '@/features/runs/types'
-import { errorMessage } from '@/lib/format'
+import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
+import StatusBadge from '@/shared/components/StatusBadge'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 function backendLabel(kind: string): string {
@@ -20,13 +21,6 @@ function backendLabel(kind: string): string {
     case 'influxdb':     return 'InfluxDB'
     default:             return kind || '—'
   }
-}
-
-function statusVariant(stats: StatsCapabilities | undefined): 'default' | 'secondary' | 'destructive' {
-  if (!stats) return 'secondary'
-  if (!stats.healthy) return 'destructive'
-  if (stats.degraded) return 'destructive'
-  return 'default'
 }
 
 function statusLabel(stats: StatsCapabilities | undefined): string {
@@ -43,7 +37,7 @@ export default function StatsBackendPage() {
   return (
     <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', 'Stats Backend']} />} />}
       title="Stats Backend"
-      status={query.isSuccess && <Badge variant={statusVariant(stats)}>{statusLabel(stats)}</Badge>}
+      status={query.isSuccess && <StatusBadge status={statusLabel(stats)} />}
     >
       <DataBodyTemplate.Group
         layout="stacked"
@@ -53,25 +47,22 @@ export default function StatsBackendPage() {
         {query.isPending && <p className="text-sm text-muted-foreground">Loading…</p>}
 
         {query.isError && (
-          <p className="text-sm text-destructive">
-            Couldn&apos;t load stats backend status:{' '}
-            {errorMessage(query.error)}
-          </p>
+          <QueryErrorNotice message="Failed to load stats backend status" error={query.error} onRetry={() => void query.refetch()} />
         )}
 
         {stats && (
           <>
-            <DataBodyTemplate.Field label="Logs backend" description="Serves run log queries and the Log Viewer's stream.">
+            <DataBodyTemplate.Field label="Logs Backend" description="Serves run log queries and the Log Viewer's stream.">
               <span className="text-sm">{backendLabel(stats.logs_backend)}</span>
             </DataBodyTemplate.Field>
 
-            <DataBodyTemplate.Field label="Metrics backend" description="Serves recorded step metrics and metric-based Alert Rules.">
+            <DataBodyTemplate.Field label="Metrics Backend" description="Serves recorded step metrics and metric-based Alert Rules.">
               <span className="text-sm">{backendLabel(stats.metrics_backend)}</span>
             </DataBodyTemplate.Field>
 
             <DataBodyTemplate.Field label="Health" description="Live status, polled every few seconds.">
               <div className="space-y-1 text-sm">
-                <p><span className="text-muted-foreground">Status: </span>{statusLabel(stats)}</p>
+                <p><span className="text-muted-foreground">Status: </span><StatusBadge status={statusLabel(stats)} /></p>
                 <p>
                   <span className="text-muted-foreground">Pending (spooled) bytes: </span>
                   {stats.pending_bytes > 0
@@ -84,7 +75,7 @@ export default function StatsBackendPage() {
               </div>
             </DataBodyTemplate.Field>
 
-            <DataBodyTemplate.Field label="Query capabilities" description="What the active backend combination supports.">
+            <DataBodyTemplate.Field label="Query Capabilities" description="What the active backend combination supports.">
               <div className="flex flex-wrap gap-1.5">
                 <Badge variant={stats.full_text_search ? 'default' : 'outline'}>Full-text search</Badge>
                 <Badge variant={stats.time_range ? 'default' : 'outline'}>Time range</Badge>

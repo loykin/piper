@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
 	"time"
 
@@ -70,6 +72,9 @@ func (r *pipelineRepo) Get(ctx context.Context, projectID, id string) (*template
 			`SELECT `+selectCols+` FROM pipeline_templates WHERE project_id=? AND id=?`,
 			projectID, id)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, template.ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}

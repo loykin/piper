@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   DataBodyTemplate,
-  FormActions,
   FormField,
   PageTopBar,
   Select,
@@ -22,6 +21,8 @@ import { useCredentials } from '@/features/credentials/hooks'
 import { useProjectId } from '@/features/projects/context'
 import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { createCopy } from '@/lib/copy'
 
 const EVENT_TYPES = [
   'run.completed',
@@ -226,8 +227,8 @@ export default function AlertRuleCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Alert Rules', to: `/projects/${projectId}/alert-rules` }, 'New Rule']} />} />}
-      title="New Alert Rule"
+      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Alert Rules', to: `/projects/${projectId}/alert-rules` }, createCopy('Alert Rule').crumb]} />} />}
+      title={createCopy('Alert Rule').title}
       description="Notify one or more project channels when an event or metric condition matches."
     >
       <DataBodyTemplate.Group
@@ -260,7 +261,7 @@ export default function AlertRuleCreatePage() {
           </FormField>
           {source === 'event' ? (
             <>
-              <FormField label="Event type" htmlFor="event-type" error={errors.eventType?.message}>
+              <FormField label="Event Type" htmlFor="event-type" error={errors.eventType?.message}>
                 <Select
                   items={EVENT_TYPES.map(value => ({ value, label: value }))}
                   value={eventType || null}
@@ -336,7 +337,7 @@ export default function AlertRuleCreatePage() {
             </>
           ) : (
             <>
-              <FormField label="Metric key" htmlFor="metric-key" error={errors.metricKey?.message}>
+              <FormField label="Metric Key" htmlFor="metric-key" error={errors.metricKey?.message}>
                 <Input id="metric-key" className="font-mono" placeholder="accuracy" aria-invalid={!!errors.metricKey} {...register('metricKey')} />
               </FormField>
               <FormField label="Condition" htmlFor="metric-condition-value" error={errors.conditionValue?.message}>
@@ -374,7 +375,7 @@ export default function AlertRuleCreatePage() {
             <Input id="alert-cooldown" type="number" min={10} aria-invalid={!!errors.cooldown} {...register('cooldown', { valueAsNumber: true })} />
           </FormField>
           <div className="space-y-2">
-            <Label>Notification channels</Label>
+            <Label>Notification Channels</Label>
             {channels.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No Slack or webhook credential yet.{' '}
@@ -397,10 +398,12 @@ export default function AlertRuleCreatePage() {
             ))}
             {errors.notify?.message && <p className="text-sm text-destructive">{errors.notify.message}</p>}
           </div>
-          <FormActions
-            status={submitError || undefined}
-            submitLabel={createRule.isPending ? 'Creating…' : 'Create Rule'}
-            submitDisabled={createRule.isPending || channels.length === 0}
+          <FormSubmitBar
+            verb="Create"
+            noun="Alert Rule"
+            pending={createRule.isPending}
+            error={submitError}
+            disabled={channels.length === 0}
             onCancel={() => void navigate(listPath)}
           />
         </form>

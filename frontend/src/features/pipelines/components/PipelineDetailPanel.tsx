@@ -1,29 +1,27 @@
-import { CalendarClock, CopyPlus, Play, Trash2, X } from 'lucide-react'
+import { CalendarClock, CopyPlus, Play, Trash2 } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
+import { usePipeline } from '../hooks'
 import type { PipelineTemplate } from '../types'
 import { fmtDate } from '@/lib/format'
 
 interface Props {
-  template: PipelineTemplate
+  id: string
   onRun: (t: PipelineTemplate) => void
   onDeploy: (t: PipelineTemplate) => void
   onNewVersion: (t: PipelineTemplate) => void
   onDelete: (t: PipelineTemplate) => void
 }
 
-export function PipelineDetailPanel({ template: t, onRun, onDeploy, onNewVersion, onDelete }: Props) {
+export function PipelineDetailPanel({ id, onRun, onDeploy, onNewVersion, onDelete }: Props) {
   const { close } = useSidePanel()
-
-  const closeBtn = (
-    <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-      <X className="h-3.5 w-3.5" />
-    </Button>
-  )
+  const query = usePipeline(id)
+  const t = query.data
+  if (!t) return <PanelPlaceholder query={query} noun="pipeline template" />
 
   return (
     <PanelTemplate
@@ -32,14 +30,14 @@ export function PipelineDetailPanel({ template: t, onRun, onDeploy, onNewVersion
       actions={
         <div className="flex items-center gap-1">
           <IconButton icon={<Play />} label="Run" onClick={() => { onRun(t); void close() }} />
-          <IconButton icon={<CalendarClock />} label="Deploy to schedule" onClick={() => { onDeploy(t); void close() }} />
+          <IconButton icon={<CalendarClock />} label="Deploy to Schedule" onClick={() => { onDeploy(t); void close() }} />
           <IconButton icon={<CopyPlus />} label={`New version from v${t.version}`} onClick={() => { onNewVersion(t); void close() }} />
           <IconButton
             icon={<Trash2 />} label="Delete"
-            onClick={() => { onDelete(t); void close() }}
+            onClick={() => onDelete(t)}
             className="text-destructive hover:bg-destructive/10"
           />
-          {closeBtn}
+          <PanelCloseButton />
         </div>
       }
     >

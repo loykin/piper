@@ -19,14 +19,14 @@ import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 const PAGE_SIZE = 20
 
 function NotebookVolumesPageInner() {
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const navigate = useNavigate()
   const projectId = useProjectId()
   const [pageIndex, setPageIndex] = useState(0)
   const volumesQuery = useNotebookVolumesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = volumesQuery.data?.total ?? 0
   const { mutateAsync: purgeVolumeAsync, isPending: purging, variables: purgingId } = usePurgeVolume()
-  const { target: purgeTarget, open: purgeOpen, requestDelete: requestPurge, cancel: cancelPurge, confirm: confirmPurge } = useDeleteTarget<NotebookVolume>()
+  const { target: purgeTarget, open: purgeOpen, error: purgeError, requestDelete: requestPurge, cancel: cancelPurge, confirm: confirmPurge } = useDeleteTarget<NotebookVolume>()
   const [labelFilter, setLabelFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
@@ -79,8 +79,7 @@ function NotebookVolumesPageInner() {
             rowCursor
             onRowClick={(volume) => open(
               <NotebookVolumeDetailPanel
-                volume={volume}
-                busy={busy === volume.id}
+                id={volume.id}
                 onAttach={handleAttach}
                 onPurge={handlePurge}
               />,
@@ -112,11 +111,15 @@ function NotebookVolumesPageInner() {
     <ConfirmDialog
       open={purgeOpen}
       onCancel={cancelPurge}
-      title="Purge this volume?"
-      description={<>"{purgeTarget?.label}" will permanently delete {purgeTarget?.work_dir} and all its files. This cannot be undone.</>}
-      confirmLabel={purging ? 'Purging…' : 'Purge volume'}
+      verb="Purge"
+      noun="volume"
+      description={`"${purgeTarget?.label}" will permanently delete ${purgeTarget?.work_dir} and all its files. This cannot be undone.`}
+      error={purgeError}
       pending={purging}
-      onConfirm={() => void confirmPurge(v => purgeVolumeAsync(v.id))}
+      onConfirm={() => void confirmPurge(async v => {
+        await purgeVolumeAsync(v.id)
+        void close()
+      })}
     />
     </>
   )

@@ -62,7 +62,7 @@ async function replaceYaml(page: Page, yaml: string) {
 
 test('submits and runs a mixed template with dependency files in S3', async ({ page }) => {
   await page.goto(`${uiBase}/pipelines/editor?source=notebook-volume&volume=frontend-e2e-volume&name=frontend-mixed`)
-  await expect(page.getByRole('heading', { name: 'Pipeline Editor' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'New Template' })).toBeVisible()
   await expect(page.getByText('Frontend E2E Workspace')).toBeVisible()
 
   await page.getByRole('tab', { name: 'YAML' }).click()
@@ -76,7 +76,7 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
 
   await page.getByRole('button', { name: 'Submit' }).click()
   await expect(page.getByRole('heading', { name: 'Submit Pipeline Template' })).toBeVisible()
-  await page.getByRole('button', { name: 'Confirm Submit' }).click()
+  await page.getByRole('button', { name: 'Submit Template' }).click()
   await page.waitForURL(new RegExp(`/ui/projects/${projectID}/pipelines\\?name=frontend-mixed`))
 
   const templatesResponse = await page.request.get(
@@ -134,7 +134,7 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
 
 test('never discards YAML-only fields during tab changes or submit', async ({ page }) => {
   await page.goto(`${uiBase}/pipelines/editor?source=local&root=/tmp&name=yaml-lossless`)
-  await expect(page.getByRole('heading', { name: 'Pipeline Editor' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'New Template' })).toBeVisible()
   await page.getByRole('tab', { name: 'YAML' }).click()
 
   const supportedYAML = `apiVersion: piper/v1
@@ -177,9 +177,9 @@ spec:
   await expect(page.getByRole('tab', { name: 'YAML' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.cm-content')).toContainText('worker: legacy-worker')
   await page.getByRole('button', { name: 'Submit' }).click()
-  await page.getByRole('button', { name: 'Confirm Submit' }).click()
+  await page.getByRole('button', { name: 'Submit Template' }).click()
   await expect(page.getByText(/field worker not found/).last()).toBeVisible()
-  await page.getByRole('button', { name: 'Edit YAML' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
   await expect(page.getByText(/field worker not found/)).not.toBeVisible()
 
   await replaceYaml(page, 'apiVersion: piper/v1\nkind: Pipeline\nspec: [')
@@ -204,7 +204,7 @@ spec:
   await expect(page.getByText(/Design cannot preserve/).first()).toBeVisible()
   await page.getByRole('button', { name: 'Submit' }).click()
   await expect(page.getByRole('heading', { name: 'Submit Pipeline Template' })).toBeVisible()
-  await page.getByRole('button', { name: 'Confirm Submit' }).click()
+  await page.getByRole('button', { name: 'Submit Template' }).click()
   await page.waitForURL(new RegExp(`/ui/projects/${projectID}/pipelines\\?name=yaml-lossless`))
 
   const templatesResponse = await page.request.get(

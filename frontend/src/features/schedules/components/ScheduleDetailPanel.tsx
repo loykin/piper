@@ -1,20 +1,21 @@
 import { Link, useNavigate } from '@/lib/router'
-import { Power, Trash2, X } from 'lucide-react'
+import { Power, Trash2 } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
-import { useSchedule, useScheduleRuns, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
+import { useSchedule, useScheduleRuns, useToggleSchedule } from '@/features/schedules/hooks'
 import { usePipeline } from '@/features/pipelines/hooks'
 import { useProjectId } from '@/features/projects/context'
 import type { Run } from '@/features/runs/api'
 import { fmtDate } from '@/lib/format'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import type { Schedule } from '../types'
-import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
+import { DeleteScheduleDialog } from './DeleteScheduleDialog'
+import { MutationErrors } from '@/shared/components/MutationErrors'
 
 const TYPE_LABEL: Record<string, string> = {
   immediate: 'Immediate',
@@ -53,38 +54,14 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
   const { close } = useSidePanel()
   const navigate = useNavigate()
   const projectId = useProjectId()
-  const { data: schedule, isLoading: scheduleLoading } = useSchedule(id)
+  const query = useSchedule(id)
+  const schedule = query.data
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id)
   const { data: templateVersion } = usePipeline(schedule?.template_version_id ?? '')
-  const { mutateAsync: deleteSchedule, isPending: deleting } = useDeleteSchedule()
-  const { mutate: toggleSchedule } = useToggleSchedule()
+  const toggle = useToggleSchedule()
   const deleteTarget = useDeleteTarget<Schedule>()
 
-  const closeBtn = (
-    <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-      <X className="h-3.5 w-3.5" />
-    </Button>
-  )
-
-  if (scheduleLoading || runsLoading) {
-    return (
-      <PanelTemplate title="Loading…" actions={closeBtn}>
-        <PanelTemplate.Section>
-          <p className="text-xs text-muted-foreground">Loading…</p>
-        </PanelTemplate.Section>
-      </PanelTemplate>
-    )
-  }
-
-  if (!schedule) {
-    return (
-      <PanelTemplate title="Not Found" actions={closeBtn}>
-        <PanelTemplate.Section>
-          <p className="text-xs text-muted-foreground">Schedule not found.</p>
-        </PanelTemplate.Section>
-      </PanelTemplate>
-    )
-  }
+  if (!schedule) return <PanelPlaceholder query={query} noun="schedule" />
 
   const isCron = schedule.schedule_type === 'cron'
 
@@ -97,19 +74,24 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
         <div className="flex items-center gap-1">
           {isCron && (
             <IconButton icon={<Power />} label={schedule.enabled ? 'Disable' : 'Enable'}
-              onClick={() => toggleSchedule({ id: schedule.id, enabled: !schedule.enabled })}
+              onClick={() => toggle.mutate({ id: schedule.id, enabled: !schedule.enabled })}
               className={schedule.enabled ? 'text-primary hover:bg-primary/10' : ''} />
           )}
           <Badge variant="outline" className="text-[10px]">
             {TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}
           </Badge>
           <IconButton icon={<Trash2 />} label="Delete"
-            onClick={() => schedule && deleteTarget.requestDelete(schedule)}
+            onClick={() => deleteTarget.requestDelete(schedule)}
             className="text-destructive hover:bg-destructive/10" />
-          {closeBtn}
+          <PanelCloseButton />
         </div>
       }
     >
+      {toggle.isError && (
+        <PanelTemplate.Section>
+          <MutationErrors of={[toggle]} />
+        </PanelTemplate.Section>
+      )}
       <PanelTemplate.Section title="Details">
         <dl className="space-y-2">
           {isCron && (
@@ -153,7 +135,7 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
       <PanelTemplate.Section title="Run History">
         {runs.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            {schedule.schedule_type === 'immediate' ? 'Running…' : 'No runs yet.'}
+            {runsLoading ? 'Loading…' : schedule.schedule_type === 'immediate' ? 'Running…' : 'No runs yet.'}
           </p>
         ) : (
           <DataGrid
@@ -190,16 +172,7 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
       </PanelTemplate.Section>
     </PanelTemplate>
 
-    <ConfirmDialog
-      open={deleteTarget.open}
-      onCancel={deleteTarget.cancel}
-      title="Delete this schedule?"
-      description={<>"{deleteTarget.target?.name}" will be permanently deleted.</>}
-      error={deleteTarget.error}
-      confirmLabel={deleting ? 'Deleting…' : 'Delete schedule'}
-      pending={deleting}
-      onConfirm={() => void deleteTarget.confirm(async target => { await deleteSchedule(target.id); void close() })}
-    />
+    <DeleteScheduleDialog target={deleteTarget} onDeleted={() => void close()} />
     </>
   )
 }

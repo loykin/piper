@@ -1,51 +1,32 @@
-import { ExternalLink, RefreshCw, Square, Trash2, X } from 'lucide-react'
+import { ExternalLink, RefreshCw, Square, Trash2 } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
-import { useNotebook, useStopNotebook, useStartNotebook, useDeleteNotebook } from '@/features/notebooks/hooks'
+import { useNotebook, useStopNotebook, useStartNotebook } from '@/features/notebooks/hooks'
 import { Link } from '@/lib/router'
 import { fmtDate } from '@/lib/format'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
-import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
+import { DeleteNotebookDialog } from './DeleteNotebookDialog'
+import { MutationErrors } from '@/shared/components/MutationErrors'
+import { hasMutationError } from '@/shared/mutationErrors'
 
 export function NotebookDetailPanel({ name, projectId }: { name: string; projectId: string }) {
   const { close } = useSidePanel()
-  const { data: notebook, isLoading } = useNotebook(name)
-  const { mutateAsync: stop, isPending: stopping } = useStopNotebook()
-  const { mutateAsync: start, isPending: starting } = useStartNotebook()
-  const { mutateAsync: del, isPending: deleting } = useDeleteNotebook()
+  const query = useNotebook(name)
+  const notebook = query.data
+  const stopMutation = useStopNotebook()
+  const startMutation = useStartNotebook()
+  const stopping = stopMutation.isPending
+  const starting = startMutation.isPending
   const deleteTarget = useDeleteTarget<string>()
 
   const busy = stopping || starting
 
-  const closeBtn = (
-    <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-      <X className="h-3.5 w-3.5" />
-    </Button>
-  )
 
-  if (isLoading) {
-    return (
-      <PanelTemplate title="Loading…" actions={closeBtn}>
-        <PanelTemplate.Section>
-          <p className="text-xs text-muted-foreground">Loading…</p>
-        </PanelTemplate.Section>
-      </PanelTemplate>
-    )
-  }
-
-  if (!notebook) {
-    return (
-      <PanelTemplate title="Not Found" actions={closeBtn}>
-        <PanelTemplate.Section>
-          <p className="text-xs text-muted-foreground">Notebook not found.</p>
-        </PanelTemplate.Section>
-      </PanelTemplate>
-    )
-  }
+  if (!notebook) return <PanelPlaceholder query={query} noun="notebook" />
 
   const proxyURL = `/api/projects/${projectId}/notebooks/${notebook.name}/proxy/`
 
@@ -65,20 +46,25 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
           )}
           {notebook.status === 'running' && (
             <IconButton icon={<Square />} label="Stop" disabled={busy}
-              onClick={() => void stop(name)}
+              onClick={() => stopMutation.mutate(name)}
               className="text-destructive hover:bg-destructive/10" />
           )}
           {(notebook.status === 'stopped' || notebook.status === 'failed') && (
             <IconButton icon={<RefreshCw />} label="Start" disabled={busy}
-              onClick={() => void start(name)} />
+              onClick={() => startMutation.mutate(name)} />
           )}
           <IconButton icon={<Trash2 />} label="Delete" disabled={busy}
             onClick={() => deleteTarget.requestDelete(name)}
             className="text-muted-foreground hover:text-destructive" />
-          {closeBtn}
+          <PanelCloseButton />
         </div>
       }
     >
+      {hasMutationError([stopMutation, startMutation]) && (
+        <PanelTemplate.Section>
+          <MutationErrors of={[stopMutation, startMutation]} />
+        </PanelTemplate.Section>
+      )}
       <PanelTemplate.Section title="Details">
         <dl className="space-y-2">
           <PanelTemplate.Row label="Environment">{notebook.env || notebook.image || '—'}</PanelTemplate.Row>
@@ -104,16 +90,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
       </PanelTemplate.Section>
     </PanelTemplate>
 
-    <ConfirmDialog
-      open={deleteTarget.open}
-      onCancel={deleteTarget.cancel}
-      title="Delete this notebook?"
-      description={<>"{deleteTarget.target}" will be deleted. The volume and work directory are preserved.</>}
-      error={deleteTarget.error}
-      confirmLabel={deleting ? 'Deleting…' : 'Delete notebook'}
-      pending={deleting}
-      onConfirm={() => void deleteTarget.confirm(async target => { await del(target); void close() })}
-    />
+    <DeleteNotebookDialog target={deleteTarget} onDeleted={() => void close()} />
     </>
   )
 }

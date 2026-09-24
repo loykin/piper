@@ -47,17 +47,19 @@ interface ArtifactPanelProps {
 
 export function ArtifactPanel({ projectId, runId, artifacts }: ArtifactPanelProps) {
   const [preview, setPreview] = useState<{ title: string; text: string } | null>(null)
+  const [previewError, setPreviewError] = useState('')
 
   if (artifacts.length === 0) return null
 
   const previewArtifact = async (step: string, art: string, file: ArtifactFile) => {
+    setPreviewError('')
     if (file.size > 128 * 1024) {
-      alert('Preview is limited to files up to 128 KB.')
+      setPreviewError('Preview is limited to files up to 128 KB — download the file instead.')
       return
     }
     const res = await fetch(artifactDownloadURL({ projectId, runId, step, artifact: art, filePath: file.path }))
     if (!res.ok) {
-      alert(`Preview failed: ${res.status}`)
+      setPreviewError(`Preview failed: HTTP ${res.status}`)
       return
     }
     setPreview({ title: `${step}/${art}/${file.path}`, text: await res.text() })
@@ -66,6 +68,7 @@ export function ArtifactPanel({ projectId, runId, artifacts }: ArtifactPanelProp
   return (
     <>
       <PanelTemplate title="Artifacts" className="mb-4 h-auto rounded-lg border border-border" bodyClassName="p-0">
+        {previewError && <p className="px-4 pt-3 text-sm text-destructive">{previewError}</p>}
         <div className="divide-y divide-border">
           {artifacts.map((sa) =>
             sa.artifacts.map((art) => (

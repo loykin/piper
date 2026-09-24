@@ -1279,6 +1279,15 @@ func TemplateRepoSuite(t *testing.T, repo template.Repository, projectID string)
 		}
 	})
 
+	// Handlers answer 404 only for template.ErrNotFound; any other lookup
+	// error is a 500, so both backends must report a missing row this way.
+	t.Run("Get_missing_returns_ErrNotFound", func(t *testing.T) {
+		_, err := repo.Get(context.Background(), projectID, "no-such-template")
+		if !errors.Is(err, template.ErrNotFound) {
+			t.Fatalf("Get(missing) err = %v, want template.ErrNotFound", err)
+		}
+	})
+
 	t.Run("StorageBackend_roundtrips_through_Create_Get_and_List", func(t *testing.T) {
 		tmpl := &template.Template{
 			ProjectID:      projectID,

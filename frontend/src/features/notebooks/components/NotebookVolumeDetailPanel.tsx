@@ -1,29 +1,29 @@
-import { Copy, HardDriveDownload, Trash2, X } from 'lucide-react'
+import { Copy, HardDriveDownload, Trash2 } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
-import { useSidePanel } from '@loykin/side-panel'
-import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
+import { PanelCloseButton, PanelPlaceholder } from '@/shared/components/PanelPlaceholder'
+import { useNotebookVolumes } from '@/features/notebooks/hooks'
 import type { NotebookVolume } from '@/features/notebooks/types'
 import { fmtDate } from '@/lib/format'
 
 interface NotebookVolumeDetailPanelProps {
-  volume: NotebookVolume
-  busy: boolean
+  id: string
   onAttach: (volId: string) => void
   onPurge: (volume: NotebookVolume) => void
 }
 
-export function NotebookVolumeDetailPanel({ volume, busy, onAttach, onPurge }: NotebookVolumeDetailPanelProps) {
-  const { close } = useSidePanel()
-
-  function handleCopyId() {
-    void navigator.clipboard.writeText(volume.id)
-  }
+// There is no single-volume endpoint; the (polled) project volume list is
+// small and also keeps the status badge live.
+export function NotebookVolumeDetailPanel({ id, onAttach, onPurge }: NotebookVolumeDetailPanelProps) {
+  const query = useNotebookVolumes()
+  const volumes = query.data
+  const volume = volumes?.find(v => v.id === id)
+  if (!volume) return <PanelPlaceholder query={query} noun="volume" />
 
   return (
     <PanelTemplate
-      eyebrow="Notebook volume"
+      eyebrow="Notebook Volume"
       title={volume.label}
       status={<StatusBadge status={volume.status} />}
       actions={
@@ -32,21 +32,17 @@ export function NotebookVolumeDetailPanel({ volume, busy, onAttach, onPurge }: N
             <IconButton
               icon={<HardDriveDownload />}
               label="Attach"
-              disabled={busy}
-              onClick={() => { onAttach(volume.id); void close() }}
+              onClick={() => onAttach(volume.id)}
             />
           )}
           <IconButton
             icon={<Trash2 />}
             label={volume.status === 'bound' ? 'Delete the notebook server first' : 'Purge'}
-            disabled={busy || volume.status === 'bound'}
-            onClick={() => { onPurge(volume); void close() }}
+            disabled={volume.status === 'bound'}
+            onClick={() => onPurge(volume)}
             className="text-destructive hover:bg-destructive/10"
           />
-          <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
-            <X />
-            <span className="sr-only">Close</span>
-          </Button>
+          <PanelCloseButton />
         </div>
       }
     >
@@ -55,7 +51,7 @@ export function NotebookVolumeDetailPanel({ volume, busy, onAttach, onPurge }: N
           <PanelTemplate.Row label="ID">
             <div className="flex items-start gap-2">
               <span className="break-all font-mono text-xs">{volume.id}</span>
-              <IconButton icon={<Copy />} label="Copy ID" onClick={handleCopyId} />
+              <IconButton icon={<Copy />} label="Copy ID" onClick={() => void navigator.clipboard.writeText(volume.id)} />
             </div>
           </PanelTemplate.Row>
           <PanelTemplate.Row label="Work Dir">

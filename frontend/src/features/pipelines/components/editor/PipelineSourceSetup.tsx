@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  FormActions, FormField, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  FormField, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@loykin/designkit'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
@@ -10,6 +10,7 @@ import { useCredentials } from '@/features/credentials/hooks'
 import type { NotebookVolume } from '@/features/notebooks/types'
 import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 import { autoMatchGitCredential, type SourceKind } from '../../editorModel'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
 
 const setupSchema = z.object({
   name: z.string(),
@@ -192,7 +193,7 @@ export function PipelineSourceSetup({
           <Input id="pipeline-source-root" placeholder="/workspaces/project" aria-invalid={!!errors.root} {...register('root')} />
         </FormField>
       )}
-      <FormActions submitLabel="Start Editing" onCancel={onCancel} />
+      <FormSubmitBar verb="Start" noun="Editing" pending={false} onCancel={onCancel} />
     </form>
   )
 }

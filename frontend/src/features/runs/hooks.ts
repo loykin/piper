@@ -179,7 +179,9 @@ export function useRunLogs(runId: string, stepId: string | null) {
         try {
           const line = JSON.parse(ev.data as string) as LogLine
           setLines(prev => [...prev, line])
-        } catch { /* ignore */ }
+        } catch {
+          return // skip a malformed log line; the stream carries on
+        }
       }
       es.addEventListener('done', () => { setDone(true); es?.close() })
       es.addEventListener('stats_error', (event) => {

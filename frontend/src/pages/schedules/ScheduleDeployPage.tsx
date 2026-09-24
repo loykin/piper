@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   DataBodyTemplate,
-  FormActions,
   FormField,
   Input,
   Label,
@@ -18,6 +17,8 @@ import { errorMessage } from '@/lib/format'
 import { maxRunsField, toMaxRuns } from '@/features/schedules/maxRuns'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import { useNavigate, useParams } from '@/lib/router'
+import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
+import { PageState } from '@/shared/components/PageState'
 
 const deploySchema = z.object({
   cron: z.string().trim().min(1, 'Cron expression is required.'),
@@ -56,18 +57,20 @@ export default function ScheduleDeployPage() {
     }
   }
 
+  const topBar = <PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Templates', to: templatesPath }, templateLabel, 'Deploy']} />} />
+  if (!template.data) {
+    return <PageState query={template} noun="pipeline template" template="data" topBar={topBar} />
+  }
+
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Templates', to: templatesPath }, templateLabel, 'Deploy']} />} />}
+      topBar={topBar}
       title="Deploy to Schedule"
       description={`Creates a new cron schedule from ${templateLabel}. The schedule is independent — updating the template later does not affect it.`}
     >
       <DataBodyTemplate.Group layout="stacked" title="Schedule" description="When the schedule fires and how many completed runs it keeps.">
         <form id="deploy-schedule-form" className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
-          {template.isError && (
-            <p className="text-sm text-destructive">{errorMessage(template.error, 'Failed to load the template.')}</p>
-          )}
-          <FormField label="Cron expression" htmlFor="deploy-cron" error={errors.cron?.message}>
+          <FormField label="Cron Expression" htmlFor="deploy-cron" error={errors.cron?.message}>
             <Input
               id="deploy-cron"
               className="h-8 font-mono text-sm"
@@ -99,7 +102,7 @@ export default function ScheduleDeployPage() {
             render={({ field }) => (
               <div className="flex items-center justify-between">
                 <div>
-                  <Label htmlFor="deploy-enabled" className="text-sm">Enable immediately</Label>
+                  <Label htmlFor="deploy-enabled" className="text-sm">Enable Immediately</Label>
                   <p className="text-xs text-muted-foreground">A disabled schedule is saved but never fires until enabled.</p>
                 </div>
                 <Switch id="deploy-enabled" checked={field.value} onCheckedChange={field.onChange} />
@@ -107,10 +110,11 @@ export default function ScheduleDeployPage() {
             )}
           />
 
-          <FormActions
-            status={submitError || undefined}
-            submitLabel={deploy.isPending ? 'Deploying…' : 'Deploy'}
-            submitDisabled={deploy.isPending || !template.data}
+          <FormSubmitBar
+            verb="Create"
+            noun="Schedule"
+            pending={deploy.isPending}
+            error={submitError}
             onCancel={() => void navigate(templatesPath)}
           />
         </form>

@@ -53,7 +53,7 @@ func (r *fakeNotebookRepo) SetStatus(_ context.Context, projectID, name, status 
 	}
 	return nil
 }
-func (r *fakeNotebookRepo) List(_ context.Context, projectID string) ([]*notebook.NotebookServer, error) {
+func (r *fakeNotebookRepo) List(_ context.Context, projectID string, _, _ int) ([]*notebook.NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []*notebook.NotebookServer
@@ -290,4 +290,9 @@ func (g *fakeGateway) RestartKernel(context.Context, *notebook.NotebookServer, s
 }
 func (g *fakeGateway) OpenChannel(context.Context, *notebook.NotebookServer, string, string) (execution.KernelChannel, error) {
 	return nil, nil
+}
+
+func (r *fakeNotebookRepo) Count(ctx context.Context, projectID string) (int, error) {
+	items, err := r.List(ctx, projectID, 0, 0)
+	return len(items), err
 }

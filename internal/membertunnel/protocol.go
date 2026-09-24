@@ -32,7 +32,6 @@ const (
 	MethodGetRun            = "GetRun"
 	MethodCancelRun         = "CancelRun"
 	MethodRerunRun          = "RerunRun"
-	MethodDeleteRun         = "DeleteRun"
 	MethodListSteps         = "ListSteps"
 	MethodRetryStep         = "RetryStep"
 	MethodQueryLogs         = "QueryLogs"

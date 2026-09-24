@@ -4,12 +4,11 @@ import type { ExecutionPolicy, ExecutionPolicyResponse, NotebookExecution } from
 export async function listNotebookExecutions(projectId: string, limit: number, offset: number, notebook?: string) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (notebook) params.set('notebook', notebook)
-  const { data, total } = await projectApi(projectId).getWithTotal<NotebookExecution[]>(`/notebook-executions?${params}`)
-  return { executions: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<NotebookExecution>(`/notebook-executions?${params}`)
 }
 
-export function getNotebookExecution(projectId: string, notebookName: string, id: string) {
-  return projectApi(projectId).get<NotebookExecution>(`/notebooks/${encodeURIComponent(notebookName)}/executions/${encodeURIComponent(id)}`)
+export function getNotebookExecution(projectId: string, id: string) {
+  return projectApi(projectId).get<NotebookExecution>(`/notebook-executions/${encodeURIComponent(id)}`)
 }
 
 export function getExecutionPolicy(projectId: string) {
@@ -21,7 +20,7 @@ export function updateExecutionPolicy(projectId: string, policy: ExecutionPolicy
 }
 
 function executionPath(execution: NotebookExecution, action: string) {
-  return `/notebooks/${encodeURIComponent(execution.notebook_name)}/executions/${encodeURIComponent(execution.id)}/${action}`
+  return `/notebook-executions/${encodeURIComponent(execution.id)}/${encodeURIComponent(action)}`
 }
 
 export function approveNotebookExecution(projectId: string, execution: NotebookExecution) {

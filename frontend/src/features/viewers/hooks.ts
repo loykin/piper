@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { openViewer, stopViewer } from './api'
 import type { OpenViewerRequest } from './types'
 

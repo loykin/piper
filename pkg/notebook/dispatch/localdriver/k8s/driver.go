@@ -306,7 +306,10 @@ func (d *Driver) Start(ctx context.Context, spec notebook.Notebook, vol *noteboo
 		},
 	}
 
-	if _, err := d.cfg.Client.AppsV1().StatefulSets(ns).Create(ctx, sts, metav1.CreateOptions{}); err != nil {
+	created, err := d.cfg.Client.AppsV1().StatefulSets(ns).Create(ctx, sts, metav1.CreateOptions{})
+	if err == nil {
+		sts = created
+	} else {
 		if !k8serrors.IsAlreadyExists(err) {
 			return nil, fmt.Errorf("k8sdriver: create statefulset: %w", err)
 		}
@@ -322,7 +325,10 @@ func (d *Driver) Start(ctx context.Context, spec notebook.Notebook, vol *noteboo
 			}
 			existing.Annotations[k8smanifest.AnnotationProjectID] = projectID
 			existing.Annotations[k8smanifest.AnnotationVolumeID] = vol.ID
-			_, err = d.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{})
+			updated, err := d.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, existing, metav1.UpdateOptions{})
+			if err == nil {
+				sts = updated
+			}
 			return err
 		}); err != nil {
 			return nil, fmt.Errorf("k8sdriver: update statefulset: %w", err)
@@ -330,7 +336,13 @@ func (d *Driver) Start(ctx context.Context, spec notebook.Notebook, vol *noteboo
 	}
 
 	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: ns, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: resourceName, Namespace: ns, Labels: labels,
+			// Owned by the StatefulSet (the same ownerReferences cascade
+			// Kubeflow gets from its Notebook CR, without a CRD): deleting
+			// the StatefulSet lets GC remove the Service too.
+			OwnerReferences: []metav1.OwnerReference{statefulSetOwner(sts)},
+		},
 		Spec: corev1.ServiceSpec{
 			Selector:  labels,
 			ClusterIP: "None",
@@ -387,6 +399,34 @@ func (d *Driver) Stop(ctx context.Context, nb *notebook.NotebookServer) error {
 		_, err = d.cfg.Client.AppsV1().StatefulSets(ns).Update(ctx, current, metav1.UpdateOptions{})
 		return err
 	})
+}
+
+// Remove deletes the notebook's StatefulSet with background propagation; its
+// Pod and Service (owned by the StatefulSet) are garbage-collected with it.
+// The PVC is never touched — volumes outlive the notebook until purged.
+func (d *Driver) Remove(ctx context.Context, nb *notebook.NotebookServer) error {
+	name := notebookWorkloadName(nb.ProjectID, nb.Name)
+	ns, err := d.findNotebookNamespace(ctx, name)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	background := metav1.DeletePropagationBackground
+	if err := d.cfg.Client.AppsV1().StatefulSets(ns).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &background}); err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("k8sdriver: delete statefulset: %w", err)
+	}
+	return nil
+}
+
+func statefulSetOwner(sts *appsv1.StatefulSet) metav1.OwnerReference {
+	return metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "StatefulSet",
+		Name:       sts.Name,
+		UID:        sts.UID,
+	}
 }
 
 // Observe polls each configured namespace's notebook StatefulSets for
@@ -588,14 +628,19 @@ func (d *Driver) k8sLabels(kind, id string) map[string]string {
 	return k8smanifest.WorkloadLabels(d.cfg.ClusterName, kind, id)
 }
 
-// notebookWorkloadName applies SafeName to the fully-joined string, not each
-// fragment independently — capping projectID and name separately before
-// concatenation still let the joined "piper-nb-"+projectID+"-"+name overflow
-// Kubernetes' 63-character resource-name limit for long (project, notebook)
-// pairs, silently failing Pod creation with no error surfaced anywhere above
-// the k8s event log. Mirrors servingResourceName's already-correct approach.
+// notebookWorkloadMaxLen leaves room for the "-<revision-hash>" suffix (up to
+// 11 chars) the StatefulSet controller appends to form the ControllerRevision
+// name, which also becomes the Pod's controller-revision-hash label value and
+// must itself fit Kubernetes' 63-character label limit. Capping the
+// StatefulSet name at 63 still let Pod creation fail with "must be no more
+// than 63 characters" for long (project, notebook) pairs.
+const notebookWorkloadMaxLen = 63 - 11
+
+// notebookWorkloadName sanitizes the fully-joined string (not each fragment
+// independently) and caps it at notebookWorkloadMaxLen, hash-suffixing
+// truncated names so distinct long pairs don't collide.
 func notebookWorkloadName(projectID, name string) string {
-	return k8smanifest.SafeName("piper-nb-" + projectID + "-" + name)
+	return k8smanifest.SafeNameMax("piper-nb-"+projectID+"-"+name, notebookWorkloadMaxLen)
 }
 
 func notebookPVCName(volumeID string) string {

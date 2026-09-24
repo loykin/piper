@@ -44,6 +44,23 @@ which federates *management* across separate Piper installations — see
 - For `k8s`, the configured `runtime.namespaces` list is the complete namespace
   scope for creation, recovery, and cancellation — never silently expand it
   based on a workload manifest. Docker and baremetal have no namespace concept.
+- Delete K8s Jobs only through `k8slauncher`'s `deleteJobAndDependents`
+  (`PropagationPolicy: Background`). The API server's default for `batch/v1`
+  Jobs is `OrphanDependents`: an empty `DeleteOptions` leaves the Pods running
+  and strips their ownerReferences. `kubectl delete job` hides this because it
+  sends `--cascade=background`, so reproduce with the client, not kubectl.
+- Docker step containers must override the image `ENTRYPOINT` (as the K8s
+  launcher does with `Command`); otherwise an image with its own entrypoint
+  receives the agent path as an argument and exits.
+- `notebook.Manager.Delete` stops every notebook that isn't already
+  `stopped` — a `failed` or `starting` K8s notebook still has a StatefulSet
+  whose Pod crash-loops and pins its PVC until scaled down — then calls
+  `Driver.Remove` so no runtime object outlives the record. On K8s this is
+  ownerReference-based, like Kubeflow's Notebook CR but without a CRD: the
+  Service is owned by the StatefulSet, and deleting the StatefulSet
+  (background propagation) takes the Pod and Service with it. Stop only
+  scales to zero; the PVC is never owned by the workload and survives as a
+  released volume.
 - `placement.worker` and `placement.label` are invalid for all three direct
   runtimes (enforced by the shared `pipelinedispatch.validateDirectPlacement`
   helper). `placement.runtime` may be empty or match the configured
@@ -342,3 +359,35 @@ one that only does recursive listing and silently ignores `delimiter`.
   `AnnotationRunID`, etc.) used to stamp and later select the real
   Kubernetes objects Piper creates. It is not a schema and has no
   `Validate()` — do not confuse it with the YAML manifest kinds above.
+
+## Deletion Semantics — No General Soft-Delete
+
+Piper does not use `deleted_at` soft-delete as a general pattern, and new
+work should not introduce one. The schema has exactly one `deleted_at`
+column (`mlflow_integrations`), and it exists for a narrow, local reason:
+`mlflow_experiment_links`/`mlflow_run_links` reference the integration row
+through a composite FK, and hard-deleting it would CASCADE-wipe their
+mapping history — the column is an FK-anchor-preservation trick, not
+evidence of a repo-wide "keep everything for undo/audit" philosophy. Do not
+reach for it just because a resource "feels like" it should be recoverable.
+
+When a resource's data must survive the deletion of something else it
+normally belongs to, the established fix is to **drop the FK and treat the
+parent id as a plain tag**, not add a `deleted_at` flag:
+`internal/store/migrations/sqlite/00047_history_drop_project_fk.sql` did
+exactly this for `notebook_history`/`service_history` — they have no FK to
+`projects(id)` at all, and `internal/retention`'s TTL jobs are their only
+lifecycle policy, independent of whether the project they reference still
+exists.
+
+When a resource has no independent reason to survive at all, prefer
+removing the ability to delete it manually over adding a soft-delete escape
+hatch. Pipeline Run History's manual "Delete run" button was removed
+entirely (not converted to soft-delete) specifically to match
+Notebook/Serving history, neither of which ever exposed a manual delete —
+their lifecycle is governed solely by automatic retention. Before adding
+`deleted_at` to a table, check whether the actual requirement is "another
+table's FK needs this row to keep existing" (soft-delete fits) or "this data
+should outlive a different parent resource" (drop that FK instead) or
+"nothing needs this to be deletable by a user at all" (remove the delete
+path, lean on retention).

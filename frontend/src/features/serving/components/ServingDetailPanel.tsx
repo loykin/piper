@@ -2,22 +2,14 @@ import { Link } from '@/lib/router'
 import { RefreshCw, Square, Trash2, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useService, useStopService, useRestartService } from '@/features/serving/hooks'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
+import { fmtDate } from '@/lib/format'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 export function ServingDetailPanel({ name }: { name: string }) {
   const { close } = useSidePanel()
@@ -60,7 +52,9 @@ export function ServingDetailPanel({ name }: { name: string }) {
   async function handleConfirm() {
     try {
       await stopService(name)
-      if (confirmAction === 'delete') void close()
+      // A stopped service leaves the list (it moves to Serving History), so
+      // the panel would otherwise keep showing it as running.
+      void close()
     } catch { /* no-op */ } finally {
       cancelConfirm()
     }
@@ -110,8 +104,8 @@ export function ServingDetailPanel({ name }: { name: string }) {
           {service.pid > 0 && (
             <PanelTemplate.Row label="PID">{service.pid}</PanelTemplate.Row>
           )}
-          <PanelTemplate.Row label="Deployed">{new Date(service.created_at).toLocaleString()}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Updated">{new Date(service.updated_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Deployed">{fmtDate(service.created_at)}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Updated">{fmtDate(service.updated_at)}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
 
@@ -122,28 +116,15 @@ export function ServingDetailPanel({ name }: { name: string }) {
       </PanelTemplate.Section>
     </PanelTemplate>
 
-    <AlertDialog open={confirmAction != null} onOpenChange={open => { if (!open) cancelConfirm() }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {confirmAction === 'stop' ? 'Stop this service?' : 'Delete this service?'}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            "{name}" will stop serving requests immediately.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={stopping}
-            onClick={() => void handleConfirm()}
-          >
-            {stopping ? 'Working…' : confirmAction === 'stop' ? 'Stop service' : 'Delete service'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={confirmAction != null}
+      onCancel={cancelConfirm}
+      title={confirmAction === 'stop' ? 'Stop this service?' : 'Delete this service?'}
+      description={`"${name}" will stop serving requests immediately.`}
+      pending={stopping}
+      confirmLabel={stopping ? 'Working…' : confirmAction === 'stop' ? 'Stop service' : 'Delete service'}
+      onConfirm={() => void handleConfirm()}
+    />
     </>
   )
 }

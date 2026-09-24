@@ -203,11 +203,6 @@ func (l *localMemberClient) RerunRun(ctx context.Context, auth memberclient.Auth
 	return l.p.RerunRun(ctx, runID, failedOnly)
 }
 
-func (l *localMemberClient) DeleteRun(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) error {
-	ctx = withProjectContext(ctx, auth, ref)
-	return l.p.DeleteRun(ctx, runID)
-}
-
 func (l *localMemberClient) ListSteps(ctx context.Context, _ memberclient.AuthContext, ref project.ProjectRef, runID string) ([]memberclient.StepSummary, error) {
 	steps, err := l.p.repos.Step.List(ctx, ref.ProjectID, runID)
 	if err != nil {

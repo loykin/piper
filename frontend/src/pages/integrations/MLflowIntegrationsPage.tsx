@@ -1,8 +1,8 @@
+import { useNavigate } from '@/lib/router'
 import { useMemo, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { Plus, Search } from 'lucide-react'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { FilterInput } from '@loykin/filter-input'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
@@ -13,7 +13,8 @@ import { mlflowKeys, useMLflowIntegrations } from '@/features/mlflow/hooks'
 import type { MLflowIntegrationDetail } from '@/features/mlflow/types'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const PAGE_SIZE = 20
 
@@ -27,7 +28,7 @@ function MLflowIntegrationsPageInner() {
   const [search, setSearch] = useState('')
   const query = useMLflowIntegrations(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const rows = useMemo(() => {
-    const items = query.data?.integrations ?? []
+    const items = query.data?.items ?? []
     const needle = search.trim().toLowerCase()
     return needle
       ? items.filter(item => item.name.toLowerCase().includes(needle) || item.tracking_uri.toLowerCase().includes(needle))
@@ -44,14 +45,14 @@ function MLflowIntegrationsPageInner() {
   const total = query.data?.total ?? 0
 
   return (
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', 'Integrations', 'MLflow']} />} />}
       title="MLflow Integrations"
       description="Export Piper run state to a project-scoped MLflow Tracking Server."
-      actions={canAdmin ? <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/integrations/mlflow/new` })}><Plus />New Integration</Button> : undefined}
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource
           toolbarLeft={<div className="w-56"><FilterInput config={{ key: 'mlflowSearch', type: 'text', placeholder: 'Search current page…', display: { size: 'sm', leadingIcon: <Search /> } }} value={search} onChange={value => setSearch(typeof value === 'string' ? value : '')} /></div>}
+          toolbarRight={canAdmin ? <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/integrations/mlflow/new`)}><Plus />New Integration</Button> : undefined}
           notice={query.isError ? <QueryErrorNotice message="Failed to load MLflow integrations" error={query.error} onRetry={() => void query.refetch()} /> : undefined}
         >
           <DataGrid

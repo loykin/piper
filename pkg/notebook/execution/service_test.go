@@ -270,7 +270,7 @@ func (r *fakeNotebookRepo) SetStatus(_ context.Context, projectID, name, status 
 	}
 	return nil
 }
-func (r *fakeNotebookRepo) List(context.Context, string) ([]*notebook.NotebookServer, error) {
+func (r *fakeNotebookRepo) List(context.Context, string, int, int) ([]*notebook.NotebookServer, error) {
 	return nil, nil
 }
 func (r *fakeNotebookRepo) Delete(_ context.Context, projectID, name string) error {
@@ -1023,4 +1023,9 @@ func TestCreateExecution_RejectsTooLongIdempotencyKey(t *testing.T) {
 	if !isCode(err, ErrCodePathInvalid) {
 		t.Fatalf("err = %v, want ErrCodePathInvalid", err)
 	}
+}
+
+func (r *fakeNotebookRepo) Count(ctx context.Context, projectID string) (int, error) {
+	items, err := r.List(ctx, projectID, 0, 0)
+	return len(items), err
 }

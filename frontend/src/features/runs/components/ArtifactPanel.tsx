@@ -6,13 +6,8 @@ import { PanelTemplate } from '@loykin/designkit'
 import { artifactDownloadURL } from '../api'
 import { useOpenViewer } from '@/features/viewers/hooks'
 import type { ArtifactFile, ArtifactEntry, StepArtifacts } from '../types'
+import { fmtBytes, fmtDate } from '@/lib/format'
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
-}
 
 const viewerLabel: Record<string, string> = {
   tensorboard: 'Open TensorBoard',
@@ -86,8 +81,8 @@ export function ArtifactPanel({ projectId, runId, artifacts }: ArtifactPanelProp
                     <div key={f.path} className="flex items-center justify-between rounded px-2 py-1 hover:bg-accent">
                       <span className="font-mono text-xs text-muted-foreground">{f.path}</span>
                       <div className="flex items-center gap-4">
-                        <span className="text-xs text-muted-foreground">{formatFileSize(f.size)}</span>
-                        <span className="text-xs text-muted-foreground">{new Date(f.modified_at).toLocaleString()}</span>
+                        <span className="text-xs text-muted-foreground">{fmtBytes(f.size)}</span>
+                        <span className="text-xs text-muted-foreground">{fmtDate(f.modified_at)}</span>
                         <a
                           href={artifactDownloadURL({ projectId, runId, step: sa.step, artifact: art.name, filePath: f.path })}
                           download

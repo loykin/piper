@@ -1,6 +1,7 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import StatusBadge from '@/shared/components/StatusBadge'
 import type { Service, ServiceHistory } from './api'
+import { fmtDate } from '@/lib/format'
 
 export const serviceColumns: DataGridColumnDef<Service>[] = [
   {
@@ -57,7 +58,7 @@ export const serviceColumns: DataGridColumnDef<Service>[] = [
     meta: { minWidth: 150 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {new Date(row.original.updated_at).toLocaleString()}
+        {fmtDate(row.original.updated_at)}
       </span>
     ),
   },
@@ -120,7 +121,7 @@ export const serviceHistoryColumns: DataGridColumnDef<ServiceHistory>[] = [
     meta: { minWidth: 150 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {new Date(row.original.deployed_at).toLocaleString()}
+        {fmtDate(row.original.deployed_at)}
       </span>
     ),
   },
@@ -130,7 +131,7 @@ export const serviceHistoryColumns: DataGridColumnDef<ServiceHistory>[] = [
     meta: { minWidth: 150 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {new Date(row.original.stopped_at).toLocaleString()}
+        {fmtDate(row.original.stopped_at)}
       </span>
     ),
   },

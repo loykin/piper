@@ -400,17 +400,30 @@ func (m *Manager) Delete(ctx context.Context, projectID, name string) error {
 		return fmt.Errorf("%w: notebook %q", ErrNotFound, name)
 	}
 
-	if nb.Status == StatusRunning {
+	// Stop every non-stopped workload, not just "running" ones: a failed or
+	// still-starting K8s notebook keeps a StatefulSet whose Pod crash-loops
+	// (and pins its PVC) until scaled down. Driver Stop is idempotent when
+	// the workload is already gone.
+	if nb.Status != StatusStopped {
 		if err := m.driver.Stop(ctx, nb); err != nil {
 			return fmt.Errorf("notebook: stop before delete: %w", err)
 		}
 		// Record the real outcome before it's archived below — repo.Delete
 		// re-reads the row itself, so without this the history entry it
-		// writes would carry the pre-stop "running" status forever, making
-		// "Final Status" in the history UI actively misleading.
-		if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped); err != nil {
-			return fmt.Errorf("notebook: mark stopped before delete: %w", err)
+		// writes would carry the pre-stop status forever, making "Final
+		// Status" in the history UI actively misleading. A failure stays
+		// recorded as failed.
+		if nb.Status != StatusFailed {
+			if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped); err != nil {
+				return fmt.Errorf("notebook: mark stopped before delete: %w", err)
+			}
 		}
+	}
+
+	// Delete the runtime objects before the record, so a failure leaves the
+	// record in place for a retry instead of an untracked workload.
+	if err := m.driver.Remove(ctx, nb); err != nil {
+		return fmt.Errorf("notebook: remove runtime objects: %w", err)
 	}
 
 	// Remove the server record.

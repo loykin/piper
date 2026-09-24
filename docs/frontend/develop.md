@@ -20,8 +20,8 @@ frontend/src/
   main.tsx                 — entry point
   lib/
     api.ts                 — HTTP clients: api (system), projectApi (project-scoped)
-    projectContext.tsx     — ProjectProvider, useProjectId(), useProjectContext()
     utils.ts               — cn()
+    format.ts              — fmtDate/fmtTime/fmtDay/fmtBytes/errorMessage (never hand-roll these)
   features/
     <domain>/
       api.ts               — raw fetch functions (no React)
@@ -29,14 +29,22 @@ frontend/src/
       types.ts             — TypeScript interfaces
       columns.tsx          — DataGrid column definitions (list pages only)
       components/          — complex forms and sub-views for this domain
+    projects/context.tsx   — ProjectProvider, useProjectId(), useProjectContext()
   pages/                   — one file per route, thin composition layer
   components/
     ui/                    — shadcn primitives (Button, Input, Badge, …)
-    ProjectSelector.tsx
   shared/
-    components/            — cross-feature UI (PipelineCanvas, RunDAG, StatusBadge)
-    hooks/                 — cross-feature hooks (usePolling)
+    components/            — domain-free UI (StatusBadge, QueryErrorNotice)
+    hooks/                 — cross-feature hooks (useDeleteTarget, useConfirmAction, useAutoSelectSole)
+    status.ts              — status → color tones (see Color Policy)
 ```
+
+Dependencies point one way: `lib/`, `components/`, `shared/` → `features/` →
+`pages/`. A lower layer never imports a higher one — UI that needs a
+feature's hooks or types (a DAG of run steps, an env-var editor backed by
+credentials) belongs in that feature's `components/`, not in `shared/`.
+Between features, keep edges acyclic (`schedules` → `pipelines`, never the
+reverse). `eslint.config.js` enforces these with `no-restricted-imports`.
 
 ## API Clients (`lib/api.ts`)
 
@@ -51,15 +59,24 @@ projectApi(projectId).delete(`/notebooks/${name}`)
 
 // system-scoped — no project prefix
 import { api } from '@/lib/api'
-const settings = await api.get<SystemSettings>('/api/settings')
+const settings = await api.get<SystemSettings>('/api/system/settings')
 ```
 
 Never construct `/api/projects/${id}/...` URLs by hand — use `projectApi`.
 
+### Types vs. the OpenAPI spec
+
+`lib/openapi.gen.ts` is generated from `docs/openapi.yaml` — never edit it;
+run `pnpm gen:api` after changing the spec. Feature `types.ts` stay
+hand-written (the spec marks few fields required, so generated types would be
+looser), but `src/openapi.contract.ts` makes `tsc` fail when a feature type
+has a field the spec doesn't document. When you add a response type that has a
+spec schema, add one `Check<Documented<…>>` line there.
+
 ## Current Project ID
 
 ```ts
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 const projectId = useProjectId()
 ```
 
@@ -112,6 +129,19 @@ calling `x(pid)` and relying on the trailing `undefined` to partial-match.
 
 ## Routing
 
+- Navigate with `@/lib/router` (`useNavigate`, `useParams`, `useSearchParams`,
+  `Link`) — string paths, one API. Only `App.tsx` (the route tree) and
+  `lib/router.tsx` import `@tanstack/react-router`; ESLint enforces this.
+- Create pages live at `…/new` (`/users/new`, `/projects/:project_id/schedules/new`),
+  edit/sub-actions at `…/:id/<verb>` (`credentials/:name/rotate`,
+  `pipelines/:id/deploy`). When renaming a route, keep the old path as a
+  redirect (`RenamedRouteRedirect` in `App.tsx`) so bookmarks keep working.
+- Every page sets `topBar={<PageTopBar left={<PageCrumbs items={…} />} />}`:
+  the sidebar section, then ancestors as `{ label, to }` links, then the
+  current page. Use `shared/components/PageCrumbs` rather than DesignKit's
+  `PageBreadcrumb` — the latter renders plain `href`s that ignore the `/ui`
+  router basepath.
+
 ```
 /projects/:project_id/*   — project routes (most pages)
 /users                    — system user list
@@ -142,6 +172,23 @@ Always reach for these first:
 
 **Never write inline Tailwind to replicate a component's appearance.** If a variant or size is missing, add it to the component — don't work around it with one-off classes.
 
+## Color Policy
+
+- **Page chrome is fixed**: shells, toolbars, tables, pagination, form groups,
+  panels, control sizes, spacing, loading/error/empty states, and action
+  placement all come from DesignKit/`components/ui`. If a variant is missing,
+  add it there.
+- **Semantic status colors live in one place**: `src/shared/status.ts`. Map a
+  backend status with `statusTone(status)` and use its class sets
+  (`toneBadge`, `toneText`, `toneFill`, `toneOutline`, `toneAction`,
+  `warningNotice`). Every tone defines a light and a dark shade together.
+- **Domain views (DAG, log viewer, YAML/shell editors, charts) may shape
+  themselves freely**, but colors still come from semantic theme tokens
+  (`bg-card`, `text-muted-foreground`, `border-border`, …) or the tones above.
+- A raw palette class (`text-red-400`, `bg-green-500/20`, …) anywhere outside
+  `src/shared/status.ts` is an ESLint error (`no-restricted-syntax` in
+  `eslint.config.js`).
+
 ## CSS Setup
 
 Styles must be imported in `index.css` via `@import`, not in `main.tsx` via JS `import`. Libraries using `@layer` (e.g. gridkit) must be `@import`ed at the very end of `index.css` so their layer priority stays above Tailwind's `@layer base`.
@@ -159,7 +206,7 @@ Styles must be imported in `index.css` via `@import`, not in `main.tsx` via JS `
 
 - Pages are thin: fetch via hooks, compose with DesignKit template + DataGrid.
 - No business logic in pages — keep it in `features/<domain>/`.
-- Each page is lazy-loaded via `React.lazy` in `App.tsx`.
+- Each page is lazy-loaded in `App.tsx` (see Route Loading — `lazyRouteComponent`).
 - **Use `DataBodyTemplate`** for data/list/settings pages (see DesignKit section above).
 
 ### Resource List Interaction Pattern
@@ -168,7 +215,8 @@ Resource management pages must use the same interaction model unless a
 documented domain constraint requires an exception:
 
 1. The list route renders `DataBodyTemplate` with a `DataGrid`.
-2. The primary create action is placed in `DataBodyTemplate.actions` and
+2. The primary create action is placed in `DataBodyTemplate.Resource`'s
+   `toolbarRight` (the DesignKit managed-table contract) and
    navigates to a dedicated route such as `/users/new` or
    `/projects/:project_id/credentials/new`.
 3. Do not place a create/edit form permanently above the list.
@@ -190,7 +238,11 @@ documented domain constraint requires an exception:
    `onOpenChange(true)` straight into state is what let one dialog reopen
    itself against a different target right after a successful action. A
    single-candidate `Select`/dropdown that would otherwise need a manual
-   choice should use `useAutoSelectSole.ts` instead.
+   choice should use `useAutoSelectSole.ts` instead. For the common
+   title/description/Cancel/confirm shape, render
+   `shared/components/ConfirmDialog` instead of hand-assembling the
+   `AlertDialog*` parts; ESLint rejects passing a state setter straight to an
+   `AlertDialog`'s `onOpenChange`.
 9. Surface a failed list query with `shared/components/QueryErrorNotice.tsx`
    in `DataBodyTemplate.Resource`'s `notice` prop — `message`, `error`, and
    `onRetry={() => void query.refetch()}`. Don't hand-roll an error `<p>`;
@@ -238,12 +290,7 @@ documented domain constraint requires an exception:
     fills its container:
     ```tsx
     const [nameFilter, setNameFilter] = useState('')
-    const filtered = useMemo(() => {
-      const list = query.data?.items ?? []
-      if (!nameFilter.trim()) return list
-      const q = nameFilter.trim().toLowerCase()
-      return list.filter(item => item.name.toLowerCase().includes(q))
-    }, [query.data, nameFilter])
+    const filtered = useTextFilter(query.data?.items, nameFilter, item => item.name)
 
     <DataBodyTemplate.Resource
       toolbarLeft={
@@ -260,10 +307,9 @@ documented domain constraint requires an exception:
     On a paginated list, this only filters the current page — the same
     accepted trade-off as `CredentialsPage`'s `kind` filter (documented
     inline there) — since these endpoints don't support server-side
-    substring search yet. Derive the filtered list's `useMemo` dependency
-    from the query's `.data` object, not from a `?? []`-derived local
-    variable — the latter is a fresh array every render and defeats memoization
-    (flagged by `react-hooks/exhaustive-deps`).
+    substring search yet. Pass `useTextFilter` the query's own array
+    (`query.data?.items`), not a `?? []`-derived local — the latter is a fresh
+    array every render and defeats memoization.
     `FilterInput`'s own `inputClassName`/`classNames.control` cannot reliably
     override the package's base `.fi-control` styles (padding, height, etc.)
     due to CSS import-order — see
@@ -375,12 +421,20 @@ alternative, even for small collections. `pages/pipelines/HistoryPage.tsx` /
 `features/runs/{api,hooks}.ts` (`useRunsPaged`) is the reference
 implementation — copy its shape for a new list page:
 
-- API layer: a `listXPaged(projectId, limit, offset)` function that calls
-  `projectApi(projectId).getWithTotal<T[]>(...)` (or `api.getWithTotal` for
-  system-scoped lists) and returns `{ items, total }`. `total` comes from the
-  `X-Total-Count` response header, which the server only sets when a `limit`
-  query param was sent — see `internal/httpx.SetTotalCountHeader` on the Go
-  side.
+- API layer: a `listXPaged(projectId, limit, offset)` function that returns
+  `projectApi(projectId).getPaged<T>(...)` (or `api.getPaged` for
+  system-scoped lists) — a `Paged<T>` (`{ items, total }`, from `lib/api.ts`).
+  Never invent a per-feature envelope key (`{ users }`, `{ rules }`, …); every
+  paged list is `Paged<T>` and pages read `query.data?.items`. `total` comes
+  from the `X-Total-Count` response header, which the server only sets when a
+  `limit` query param was sent — see `internal/httpx.SetTotalCountHeader` on
+  the Go side — so a paged call must always send `limit`.
+- Unpaginated lists use `getList<T>(...)`, cursor lists `getCursorList<T>(...)`.
+  All three throw `ContractError` when the body isn't a JSON array (or the
+  total header is missing) — don't wrap them in `Array.isArray(data) ? data :
+  []`. That guard turned a backend regression into a silently empty list; the
+  backend's side of the contract (never `null`) is enforced by
+  `list_contract_test.go`.
 - Hook layer: a `useXPaged(limit, offset)` query with
   `placeholderData: (prev) => prev` so the grid doesn't flash empty between
   pages.
@@ -492,3 +546,12 @@ Without `notifyOnChangeProps`, each poll fires two re-renders (`isFetching` true
 4. Create `pages/<Domain>Page.tsx` using the appropriate DesignKit template.
 5. Register the route in `App.tsx`.
 6. Export new types through the feature's `api.ts` re-export if other features need them.
+
+## Tests
+
+- Unit: `pnpm test` (vitest, `src/**/*.test.ts`, node environment). Test
+  pure logic — YAML↔draft conversion, validation, formatters, the list
+  contract in `lib/api.ts` — not component markup.
+- End to end: `pnpm test:e2e` (Playwright; starts `examples/frontend-e2e` on
+  :18080 and a preview build on :4173, so both ports must be free).
+  `PIPER_PIPELINE_TEMPLATE_E2E_ENV` points at a Python venv for the agent.

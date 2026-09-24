@@ -1,28 +1,28 @@
+import { useNavigate } from '@/lib/router'
 import { useCallback, useMemo, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
-import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
+import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, PageTopBar } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
 import { FlaskConical, Plus, Power, RotateCw, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { IconButton } from '@/components/ui/icon-button'
 import { credentialColumns } from '@/features/credentials/columns'
 import {
   useCredentialsPaged,
   useDeleteCredential,
   usePatchCredential,
-  useRotateCredential,
   useTestCredential,
 } from '@/features/credentials/hooks'
 import type { Credential, CredentialKind } from '@/features/credentials/types'
-import { useProjectId } from '@/lib/projectContext'
-import RotateCredentialDialog from './RotateCredentialDialog'
-import TestCredentialDialog from './TestCredentialDialog'
+import { useProjectId } from '@/features/projects/context'
+import TestCredentialDialog from '@/features/credentials/components/TestCredentialDialog'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { RowActions } from '@/shared/components/RowActions'
 import { CredentialDetailPanel } from '@/features/credentials/components/CredentialDetailPanel'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
 
@@ -32,21 +32,23 @@ type PendingAction =
   | { type: 'delete'; credential: Credential }
 
 function CredentialsPageInner() {
-  const { open } = useSidePanel()
+  const { open, close } = useSidePanel()
   const projectId = useProjectId()
   const navigate = useNavigate()
   const [pageIndex, setPageIndex] = useState(0)
   const credentialsQuery = useCredentialsPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const data = useMemo(() => credentialsQuery.data?.credentials ?? [], [credentialsQuery.data])
+  const data = useMemo(() => credentialsQuery.data?.items ?? [], [credentialsQuery.data])
   const total = credentialsQuery.data?.total ?? 0
   const patchCredential = usePatchCredential()
-  const rotateCredential = useRotateCredential()
   const deleteCredential = useDeleteCredential()
   const testCredential = useTestCredential()
 
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [nameFilter, setNameFilter] = useState('')
-  const [rotateTarget, setRotateTarget] = useState<Credential | null>(null)
+  const rotate = useCallback(
+    (credential: Credential) => void navigate(`/projects/${projectId}/credentials/${encodeURIComponent(credential.name)}/rotate`),
+    [navigate, projectId],
+  )
   const [testTarget, setTestTarget] = useState<Credential | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionError, setActionError] = useState('')
@@ -76,10 +78,13 @@ function CredentialsPageInner() {
         await deleteCredential.mutateAsync(pendingAction.credential.name)
       }
       setPendingAction(null)
+      // The detail panel renders the credential it was opened with, so it
+      // would keep showing the old state.
+      void close()
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
+      setActionError(errorMessage(err))
     }
-  }, [deleteCredential, patchCredential, pendingAction])
+  }, [close, deleteCredential, patchCredential, pendingAction])
 
   const columns = useMemo<DataGridColumnDef<Credential>[]>(() => [
     ...credentialColumns,
@@ -98,7 +103,7 @@ function CredentialsPageInner() {
           <IconButton
             icon={<RotateCw />}
             label="Rotate"
-            onClick={e => { e.stopPropagation(); setRotateTarget(row.original) }}
+            onClick={e => { e.stopPropagation(); rotate(row.original) }}
             disabled={row.original.disabled}
           />
           <IconButton
@@ -116,7 +121,7 @@ function CredentialsPageInner() {
         </RowActions>
       ),
     },
-  ], [])
+  ], [rotate])
 
   const pendingTitle = pendingAction
     ? pendingAction.type === 'delete'
@@ -131,7 +136,7 @@ function CredentialsPageInner() {
 
   return (
     <>
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', 'Credentials']} />} />}
       title="Credentials"
       description="Project-scoped credentials for workload env and Git source access."
     >
@@ -176,7 +181,7 @@ function CredentialsPageInner() {
             </>
           }
           toolbarRight={
-            <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/credentials/new` })}>
+            <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/credentials/new`)}>
               <Plus className="mr-2 size-4" />
               New Credential
             </Button>
@@ -205,7 +210,7 @@ function CredentialsPageInner() {
               <CredentialDetailPanel
                 credential={credential}
                 onTest={setTestTarget}
-                onRotate={setRotateTarget}
+                onRotate={rotate}
                 onToggle={c => setPendingAction({ type: 'toggle', credential: c })}
                 onDelete={c => setPendingAction({ type: 'delete', credential: c })}
               />,
@@ -224,44 +229,29 @@ function CredentialsPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
     {/*
-      RotateCredentialDialog/TestCredentialDialog/the confirm Dialog below must
+      TestCredentialDialog/the ConfirmDialog below must
       render as siblings OUTSIDE <DataBodyTemplate>, not as children alongside
       <DataBodyTemplate.Body> — DataBodyTemplate only mounts children that are
       its own recognized sub-components (.Body/.Tab/.Group/...); a plain
       element placed directly beside .Body is silently dropped from the
       rendered tree even though the React state driving it updates normally.
     */}
-    <RotateCredentialDialog
-      key={rotateTarget?.name ?? 'rotate-credential'}
-      target={rotateTarget}
-      rotateCredential={rotateCredential}
-      onClose={() => setRotateTarget(null)}
-    />
     <TestCredentialDialog
       target={testTarget}
       testCredential={testCredential}
       onClose={() => setTestTarget(null)}
     />
-    <Dialog open={!!pendingAction} onOpenChange={open => { if (!open) setPendingAction(null) }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{pendingTitle}</DialogTitle>
-          <DialogDescription>{pendingDescription}</DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setPendingAction(null)}>
-            Cancel
-          </Button>
-          <Button
-            variant={pendingAction?.type === 'delete' ? 'destructive' : 'default'}
-            onClick={() => void runPendingAction()}
-            disabled={deleteCredential.isPending || patchCredential.isPending}
-          >
-            {pendingAction?.type === 'delete' ? 'Delete' : pendingAction?.credential.disabled ? 'Enable' : 'Disable'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={!!pendingAction}
+      onCancel={() => setPendingAction(null)}
+      title={pendingTitle}
+      description={pendingDescription}
+      error={actionError}
+      destructive={pendingAction?.type === 'delete'}
+      pending={deleteCredential.isPending || patchCredential.isPending}
+      confirmLabel={pendingAction?.type === 'delete' ? 'Delete' : pendingAction?.credential.disabled ? 'Enable' : 'Disable'}
+      onConfirm={() => void runPendingAction()}
+    />
     </>
   )
 }

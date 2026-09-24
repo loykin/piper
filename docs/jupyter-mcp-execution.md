@@ -381,11 +381,11 @@ cell index만으로 replace하지 않는다. 사람이 cell을 삽입하면 inde
 | Method | Path | 최소 역할 | 결과 |
 |---|---|---:|---|
 | `POST` | `/notebooks/{name}/executions` | member | `201 NotebookExecution` |
-| `GET` | `/notebooks/{name}/executions?limit=&offset=` | viewer | 실행 이력 + `X-Total-Count` |
-| `GET` | `/notebooks/{name}/executions/{id}` | viewer | 상태/진행률/요약 |
-| `POST` | `/notebooks/{name}/executions/{id}/cancel` | owner/admin | `204` |
-| `POST` | `/notebooks/{name}/executions/{id}/approve` | admin | `204` |
-| `POST` | `/notebooks/{name}/executions/{id}/deny` | admin | `204` |
+| `GET` | `/notebook-executions?notebook={name}&limit=&offset=` | viewer | 실행 이력 + `X-Total-Count` |
+| `GET` | `/notebook-executions/{id}` | viewer | 상태/진행률/요약 |
+| `POST` | `/notebook-executions/{id}/cancel` | owner/admin | `204` |
+| `POST` | `/notebook-executions/{id}/approve` | admin | `204` |
+| `POST` | `/notebook-executions/{id}/deny` | admin | `204` |
 
 생성 요청 예시:
 

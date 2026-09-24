@@ -153,3 +153,10 @@ func containsLine(script, want string) bool {
 	}
 	return false
 }
+
+func TestNotebookValidateRejectsReservedNames(t *testing.T) {
+	n := Notebook{Metadata: manifest.ObjectMeta{Name: "history"}}
+	if err := n.Validate(); err == nil {
+		t.Fatal("expected reserved-name error for notebook named history")
+	}
+}

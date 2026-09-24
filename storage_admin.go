@@ -218,7 +218,7 @@ func (p *Piper) ListStorageObjects(ctx context.Context, prefix string, limit, of
 		if !obj.IsDir {
 			info.Size = obj.Size
 			info.ModifiedAt = obj.ModifiedAt.UTC().Format(time.RFC3339)
-			info.DownloadURL = "/api/projects/" + projectID(ctx) + "/storage/object?key=" + url.QueryEscape(key)
+			info.DownloadURL = "/api/projects/" + projectID(ctx) + "/storage/objects/" + escapeObjectKey(key)
 		}
 		out = append(out, info)
 	}
@@ -330,4 +330,14 @@ func (p *Piper) storageBackendName() string {
 	default:
 		return ""
 	}
+}
+
+// escapeObjectKey path-escapes each segment of an object key while keeping
+// the `/` separators the `/storage/objects/*key` route expects.
+func escapeObjectKey(key string) string {
+	parts := strings.Split(key, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
 }

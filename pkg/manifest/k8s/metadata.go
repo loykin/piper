@@ -1,6 +1,10 @@
 package k8s
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
 const (
 	LabelManagedBy    = "app.kubernetes.io/managed-by"
@@ -67,9 +71,32 @@ func WorkloadAnnotations(id string) map[string]string {
 // SafeName converts an arbitrary name to a Kubernetes-safe resource name.
 // The result is lowercase, uses only [a-z0-9-], and is at most 63 characters.
 func SafeName(name string) string {
-	safe := strings.ToLower(name)
+	s := sanitizeName(name)
+	if len(s) > 63 {
+		s = strings.TrimRight(s[:63], "-")
+	}
+	return s
+}
+
+// SafeNameMax is SafeName with a caller-chosen length cap. When the sanitized
+// name exceeds max it is cut and suffixed with a short hash of the original
+// input, so two long names sharing the same prefix still map to distinct
+// resource names instead of silently colliding. Names that already fit are
+// returned unchanged (identical to SafeName), so existing workloads keep
+// their names.
+func SafeNameMax(name string, max int) string {
+	s := sanitizeName(name)
+	if len(s) <= max {
+		return s
+	}
+	sum := sha256.Sum256([]byte(name))
+	suffix := hex.EncodeToString(sum[:])[:6]
+	return strings.TrimRight(s[:max-len(suffix)-1], "-") + "-" + suffix
+}
+
+func sanitizeName(name string) string {
 	var b strings.Builder
-	for _, c := range safe {
+	for _, c := range strings.ToLower(name) {
 		switch {
 		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
 			b.WriteRune(c)
@@ -77,9 +104,5 @@ func SafeName(name string) string {
 			b.WriteRune('-')
 		}
 	}
-	s := strings.Trim(b.String(), "-")
-	if len(s) > 63 {
-		s = strings.TrimRight(s[:63], "-")
-	}
-	return s
+	return strings.Trim(b.String(), "-")
 }

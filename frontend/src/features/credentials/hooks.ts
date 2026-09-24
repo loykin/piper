@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import * as api from './api'
 import type {
   CreateCredentialRequest,
@@ -12,6 +12,16 @@ export const credentialKeys = {
   all: (projectId: string) => ['credentials', projectId] as const,
   list: (projectId: string) => ['credentials', projectId, 'list'] as const,
   listPaged: (projectId: string, limit: number, offset: number) => ['credentials', projectId, 'list', limit, offset] as const,
+  one: (projectId: string, name: string) => ['credentials', projectId, 'one', name] as const,
+}
+
+export function useCredential(name: string) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: credentialKeys.one(projectId, name),
+    queryFn: () => api.getCredential(projectId, name),
+    enabled: !!projectId && !!name,
+  })
 }
 
 export function useCredentials() {

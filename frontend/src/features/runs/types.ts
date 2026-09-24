@@ -3,7 +3,6 @@
 export interface Run {
   id: string
   schedule_id?: string
-  owner_id?: string
   experiment?: string
   pipeline_name: string
   pipeline_version?: number
@@ -55,7 +54,6 @@ export interface StatsCapabilities {
 
 export interface CreateRunOptions {
   params?: Record<string, unknown>
-  owner_id?: string
   vars?: {
     scheduled_at?: string
   }

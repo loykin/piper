@@ -53,7 +53,7 @@ type HandlerDeps struct {
 	GenID    func() string // generates a schedule ID; may be nil
 }
 
-// Handler is the Gin HTTP handler for the /pipelines domain.
+// Handler is the Gin HTTP handler for the /pipeline-templates domain.
 type Handler struct {
 	deps HandlerDeps
 }
@@ -63,19 +63,19 @@ func NewHandler(deps HandlerDeps) *Handler {
 	return &Handler{deps: deps}
 }
 
-// RegisterRoutes mounts all /pipelines routes.
+// RegisterRoutes mounts all /pipeline-templates routes.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.GET("/pipelines", h.list)
-	rg.GET("/pipelines/:id", h.get)
+	rg.GET("/pipeline-templates", h.list)
+	rg.GET("/pipeline-templates/:id", h.get)
 
 	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
-	member.POST("/pipelines", h.submit)
-	member.DELETE("/pipelines/:id", h.delete)
-	member.POST("/pipelines/:id/run", h.triggerRun)
-	member.POST("/pipelines/:id/deploy", h.deploy)
+	member.POST("/pipeline-templates", h.submit)
+	member.DELETE("/pipeline-templates/:id", h.delete)
+	member.POST("/pipeline-templates/:id/run", h.triggerRun)
+	member.POST("/pipeline-templates/:id/deploy", h.deploy)
 }
 
-// GET /pipelines/:id — get one pipeline template version
+// GET /pipeline-templates/:id — get one pipeline template version
 func (h *Handler) get(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, c.Param("id"))
@@ -86,7 +86,7 @@ func (h *Handler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, t)
 }
 
-// POST /pipelines — submit a new pipeline template
+// POST /pipeline-templates — submit a new pipeline template
 func (h *Handler) submit(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	var req struct {
@@ -204,7 +204,7 @@ func (h *Handler) submit(c *gin.Context) {
 	c.JSON(http.StatusCreated, t)
 }
 
-// GET /pipelines — list templates
+// GET /pipeline-templates — list templates
 func (h *Handler) list(c *gin.Context) {
 	f := Filter{Name: c.Query("name")}
 	f.Limit, f.Offset = httpx.ParseLimitOffset(c)
@@ -222,10 +222,13 @@ func (h *Handler) list(c *gin.Context) {
 		}
 		httpx.SetTotalCountHeader(c, f.Limit, total)
 	}
+	if templates == nil {
+		templates = []*Template{}
+	}
 	c.JSON(http.StatusOK, templates)
 }
 
-// DELETE /pipelines/:id — delete template and its S3 snapshot
+// DELETE /pipeline-templates/:id — delete template and its S3 snapshot
 func (h *Handler) delete(c *gin.Context) {
 	id := c.Param("id")
 	projectContext, _ := project.FromContext(c.Request.Context())
@@ -239,10 +242,17 @@ func (h *Handler) delete(c *gin.Context) {
 	// Refuse to delete a version a schedule still points at — matching
 	// pkg/credential's InUseChecker precedent (Delete refuses with a
 	// referencer-naming error instead of silently breaking the referencer).
-	// Past runs also carry a copy of this version's SnapshotPrefix in their
-	// own already-rewritten pipeline_yaml, but runs have no indexed
-	// template-version reference to check cheaply; this guard only covers
-	// the schedule case.
+	// A schedule references a version either through template_version_id
+	// (set by POST /pipeline-templates/:id/deploy) or, for schedules created from free
+	// YAML via POST /schedules, only through the version's snapshot prefix
+	// embedded in its pipeline_yaml — check both. Past runs also carry a copy
+	// of the prefix in their own already-rewritten pipeline_yaml, but runs
+	// have no indexed template-version reference to check cheaply; this guard
+	// only covers the schedule case.
+	snapshotRef := ""
+	if t.SnapshotID != "" {
+		snapshotRef = "snapshots/" + t.SnapshotID + "/"
+	}
 	if h.deps.Schedules != nil {
 		schedules, err := h.deps.Schedules.List(c.Request.Context(), projectContext.ID, 0, 0)
 		if err != nil {
@@ -250,17 +260,22 @@ func (h *Handler) delete(c *gin.Context) {
 			return
 		}
 		for _, sc := range schedules {
-			if sc.VersionID == t.ID {
+			if sc.VersionID == t.ID || (snapshotRef != "" && strings.Contains(sc.PipelineYAML, snapshotRef)) {
 				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("pipeline template version is still referenced by schedule %q", sc.Name)})
 				return
 			}
 		}
 	}
 
-	// Delete S3 snapshot prefix (best-effort list then delete)
+	if err := h.deps.Templates.Delete(c.Request.Context(), projectContext.ID, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Snapshot files go only after the row is gone, so a failed delete never
+	// leaves a version whose snapshot has been removed (best-effort).
 	if h.deps.Store != nil && t.SnapshotID != "" {
-		prefix := "snapshots/" + t.SnapshotID + "/"
-		objs, _ := h.deps.Store.List(c.Request.Context(), prefix, "")
+		objs, _ := h.deps.Store.List(c.Request.Context(), snapshotRef, "")
 		if len(objs) > 0 {
 			keys := make([]string, len(objs))
 			for i, o := range objs {
@@ -270,15 +285,10 @@ func (h *Handler) delete(c *gin.Context) {
 		}
 	}
 
-	if err := h.deps.Templates.Delete(c.Request.Context(), projectContext.ID, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
 	c.Status(http.StatusNoContent)
 }
 
-// POST /pipelines/:id/run — trigger an immediate run from a template
+// POST /pipeline-templates/:id/run — trigger an immediate run from a template
 func (h *Handler) triggerRun(c *gin.Context) {
 	id := c.Param("id")
 	projectContext, _ := project.FromContext(c.Request.Context())
@@ -313,7 +323,7 @@ func (h *Handler) triggerRun(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": runID})
 }
 
-// POST /pipelines/:id/deploy — deploy a template as a schedule
+// POST /pipeline-templates/:id/deploy — deploy a template as a schedule
 func (h *Handler) deploy(c *gin.Context) {
 	id := c.Param("id")
 	projectContext, _ := project.FromContext(c.Request.Context())

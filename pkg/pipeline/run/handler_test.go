@@ -47,7 +47,6 @@ type fakeMemberClient struct {
 	submitSweepFn     func(ctx context.Context, req memberclient.SubmitSweepRequest) (memberclient.SubmitSweepResponse, error)
 	cancelRunFn       func(ctx context.Context, runID string) error
 	rerunRunFn        func(ctx context.Context, runID string, failedOnly bool) (string, error)
-	deleteRunFn       func(ctx context.Context, runID string) error
 	retryStepFn       func(ctx context.Context, runID, stepName string) (string, error)
 	queryLogsFn       func(ctx context.Context, req memberclient.QueryLogsRequest) (memberclient.QueryLogsResponse, error)
 	queryMetricsFn    func(ctx context.Context, req memberclient.QueryMetricsRequest) (memberclient.QueryMetricsResponse, error)
@@ -112,13 +111,6 @@ func (f *fakeMemberClient) RerunRun(ctx context.Context, _ memberclient.AuthCont
 		return f.rerunRunFn(ctx, runID, failedOnly)
 	}
 	return "run-2", nil
-}
-
-func (f *fakeMemberClient) DeleteRun(ctx context.Context, _ memberclient.AuthContext, _ project.ProjectRef, runID string) error {
-	if f.deleteRunFn != nil {
-		return f.deleteRunFn(ctx, runID)
-	}
-	return nil
 }
 
 func (f *fakeMemberClient) ListSteps(context.Context, memberclient.AuthContext, project.ProjectRef, string) ([]memberclient.StepSummary, error) {
@@ -370,7 +362,7 @@ func TestCreateSweep_Success(t *testing.T) {
 	}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"metadata:\n  name: train\n","experiment":"lr-sweep","runs":[{"params":{"lr":0.01}},{"params":{"lr":0.1}}]}`
-	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/experiments", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -395,7 +387,7 @@ func TestCreateSweep_MissingExperiment(t *testing.T) {
 	NewHandler(HandlerDeps{Member: &fakeMemberClient{}, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"...","runs":[{"params":{"lr":0.01}}]}`
-	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/experiments", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -411,7 +403,7 @@ func TestCreateSweep_EmptyRuns(t *testing.T) {
 	NewHandler(HandlerDeps{Member: &fakeMemberClient{}, ProjectRef: project.LocalRef}).RegisterRoutes(router.Group("", injectProjectContext("test-proj")))
 
 	body := `{"yaml":"...","experiment":"lr-sweep","runs":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/runs/sweep", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/experiments", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

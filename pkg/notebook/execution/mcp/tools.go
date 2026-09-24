@@ -123,7 +123,7 @@ func audit(ctx context.Context, tool string, err error, isError bool) {
 
 func (d toolDeps) listNotebookServers(ctx context.Context, _ json.RawMessage) (*piperMCP.ToolCallResult, error) {
 	projectID := projectIDFrom(ctx)
-	servers, err := d.Notebooks.List(ctx, projectID)
+	servers, err := d.Notebooks.List(ctx, projectID, 0, 0)
 	audit(ctx, "piper_list_notebook_servers", err, false)
 	if err != nil {
 		return nil, err

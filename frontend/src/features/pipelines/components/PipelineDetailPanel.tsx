@@ -6,6 +6,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import type { PipelineTemplate } from '../types'
+import { fmtDate } from '@/lib/format'
 
 interface Props {
   template: PipelineTemplate
@@ -45,7 +46,7 @@ export function PipelineDetailPanel({ template: t, onRun, onDeploy, onNewVersion
       <PanelTemplate.Section title="Details">
         <dl className="space-y-2">
           <PanelTemplate.Row label="Version">v{t.version}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Submitted">{new Date(t.created_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Submitted">{fmtDate(t.created_at)}</PanelTemplate.Row>
           {t.volume_id && (
             <PanelTemplate.Row label="Volume">{t.volume_id}</PanelTemplate.Row>
           )}

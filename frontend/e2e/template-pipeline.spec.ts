@@ -80,7 +80,7 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
   await page.waitForURL(new RegExp(`/ui/projects/${projectID}/pipelines\\?name=frontend-mixed`))
 
   const templatesResponse = await page.request.get(
-    `${backend}${projectBase}/pipelines?name=frontend-mixed`,
+    `${backend}${projectBase}/pipeline-templates?name=frontend-mixed`,
   )
   expect(templatesResponse.ok()).toBeTruthy()
   const templates = await templatesResponse.json() as Array<{ id: string; snapshot_id: string }>
@@ -208,7 +208,7 @@ spec:
   await page.waitForURL(new RegExp(`/ui/projects/${projectID}/pipelines\\?name=yaml-lossless`))
 
   const templatesResponse = await page.request.get(
-    `${backend}${projectBase}/pipelines?name=yaml-lossless`,
+    `${backend}${projectBase}/pipeline-templates?name=yaml-lossless`,
   )
   expect(templatesResponse.ok()).toBeTruthy()
   const templates = await templatesResponse.json() as Array<{ id: string; yaml: string }>

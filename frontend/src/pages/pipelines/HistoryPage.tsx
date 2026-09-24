@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { RotateCcw, RefreshCw, Search } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
 import { IconButton } from '@/components/ui/icon-button'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
@@ -12,6 +12,10 @@ import { useRunsPaged, useRerunRun } from '@/features/runs/hooks'
 import { useSchedules } from '@/features/schedules/hooks'
 import { RowActions } from '@/shared/components/RowActions'
 import type { Run } from '@/features/runs/api'
+import { toneAction } from '@/shared/status'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
 
 const PAGE_SIZE = 20
 
@@ -26,12 +30,7 @@ function HistoryPageInner() {
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
-  const filteredRuns = useMemo(() => {
-    const list = data?.runs ?? []
-    if (!nameFilter.trim()) return list
-    const q = nameFilter.trim().toLowerCase()
-    return list.filter(r => r.pipeline_name.toLowerCase().includes(q))
-  }, [data, nameFilter])
+  const filteredRuns = useTextFilter(data?.items, nameFilter, r => r.pipeline_name)
 
   // Deleting the last row of the last page shrinks `total` below what
   // pageIndex needs, leaving the grid showing an empty page. This
@@ -58,7 +57,7 @@ function HistoryPageInner() {
       const result = await rerunRun(run.id)
       open(<RunDetailPanel id={result.run_id} />, { size: 480 })
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err))
+      alert(errorMessage(err))
     }
   }
 
@@ -75,7 +74,7 @@ function HistoryPageInner() {
         <IconButton icon={<RefreshCw />} label="Retry Failed"
           disabled={row.original.status !== 'failed'}
           onClick={(e) => handleRerun(e, row.original)}
-          className="text-yellow-400 hover:bg-yellow-400/10" />
+          className={toneAction.warning} />
       </RowActions>
     ),
   }
@@ -97,7 +96,7 @@ function HistoryPageInner() {
   )
 
   return (
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', 'Run History']} />} />}
       title="Run History"
       description="All pipeline run records. Each square in Steps represents one step's status."
     >

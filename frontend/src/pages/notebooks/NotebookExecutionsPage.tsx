@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
-import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
-import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
+import { DataBodyTemplate, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, PageTopBar } from '@loykin/designkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { FilterInput } from '@loykin/filter-input'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { useAuth } from '@/features/auth/context'
 import { useCanAdminProject, useMembers, useUsers } from '@/features/access/hooks'
 import { ExecutionDetailPanel } from '@/features/notebook-executions/components/ExecutionDetailPanel'
 import { useExecutionPolicy, useNotebookExecutions, useUpdateExecutionPolicy } from '@/features/notebook-executions/hooks'
-import type { ExecutionPolicy, NotebookExecution } from '@/features/notebook-executions/types'
-import StatusBadge from '@/shared/components/StatusBadge'
+import type { ExecutionPolicy } from '@/features/notebook-executions/types'
+import { getExecutionColumns } from '@/features/notebook-executions/columns'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useSearchParams } from '@/lib/router'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const PAGE_SIZE = 20
 const POLICY_LABELS: Record<ExecutionPolicy, string> = {
@@ -43,22 +44,15 @@ function NotebookExecutionsPageInner() {
   const updatePolicy = useUpdateExecutionPolicy()
   const trusted = capabilities?.authentication === false
   const rows = useMemo(() => {
-    const values = query.data?.executions ?? []
+    const values = query.data?.items ?? []
     const needle = search.trim().toLowerCase()
     if (!needle) return values
     return values.filter(item => [item.id, item.notebook_name, item.notebook_path, item.requested_by, item.status].some(value => value?.toLowerCase().includes(needle)))
   }, [query.data, search])
-  const columns = useMemo<DataGridColumnDef<NotebookExecution>[]>(() => [
-    { accessorKey: 'notebook_name', header: 'Notebook' },
-    { accessorKey: 'notebook_path', header: 'Path' },
-    { accessorKey: 'status', header: 'Status', cell: ({ row }) => <StatusBadge status={row.original.status} /> },
-    { id: 'progress', header: 'Progress', cell: ({ row }) => `${row.original.current_cell} / ${row.original.total_cells}` },
-    { accessorKey: 'requested_by', header: 'Requested by', cell: ({ row }) => row.original.requested_by_username || (row.original.requested_by ? actorNames.get(row.original.requested_by) ?? row.original.requested_by : '—') },
-    { accessorKey: 'queued_at', header: 'Queued', cell: ({ row }) => new Date(row.original.queued_at).toLocaleString() },
-  ], [actorNames])
+  const columns = useMemo(() => getExecutionColumns(actorNames), [actorNames])
   const total = query.data?.total ?? 0
 
-  return <DataBodyTemplate title="Notebook Executions" description={notebookFilter ? `Executions for ${notebookFilter}. Review approvals, progress, results, and failures.` : 'Review Jupyter executions, approvals, progress, results, and failures.'}>
+  return <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Development', 'Executions']} />} />} title="Notebook Executions" description={notebookFilter ? `Executions for ${notebookFilter}. Review approvals, progress, results, and failures.` : 'Review Jupyter executions, approvals, progress, results, and failures.'}>
     <DataBodyTemplate.Body>
       <DataBodyTemplate.Resource
         toolbarLeft={<div className="w-56"><FilterInput config={{ key: 'executionSearch', type: 'text', placeholder: 'Search current page…', display: { size: 'sm', leadingIcon: <Search /> } }} value={search} onChange={value => setSearch(typeof value === 'string' ? value : '')} /></div>}

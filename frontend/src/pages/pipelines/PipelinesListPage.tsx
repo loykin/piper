@@ -1,30 +1,23 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import type { Row } from '@tanstack/react-table'
 import { useNavigate, useSearchParams } from '@/lib/router'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { Plus, Search } from 'lucide-react'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { usePipelinesPaged, useDeletePipeline, useRunPipeline } from '@/features/pipelines/hooks'
 import { usePipelineColumns } from '@/features/pipelines/columns'
-import { DeployModal } from '@/features/pipelines/components/DeployModal'
 import { PipelineDetailPanel } from '@/features/pipelines/components/PipelineDetailPanel'
 import type { PipelineTemplate } from '@/features/pipelines/types'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
 
@@ -64,18 +57,10 @@ function PipelinesListPageInner() {
   // trade-off as CredentialsPage's kind filter. Separate from `filterName`
   // (the ?name= URL param), which is an exact-match server-side filter used
   // by the "jump back to this template after create" flow, not a search box.
-  const filteredTemplates = useMemo(() => {
-    const list = templateData?.templates ?? []
-    if (!searchFilter.trim()) return list
-    const q = searchFilter.trim().toLowerCase()
-    return list.filter(t => t.name.toLowerCase().includes(q))
-  }, [templateData, searchFilter])
+  const filteredTemplates = useTextFilter(templateData?.items, searchFilter, t => t.name)
   const { mutateAsync: deletePipeline } = useDeletePipeline()
   const { mutateAsync: runPipeline } = useRunPipeline()
 
-  const [deployTarget, setDeployTarget] = useState<PipelineTemplate | null>(null)
-  const [deployCron, setDeployCron] = useState('0 2 * * *')
-  const [deployEnabled, setDeployEnabled] = useState(true)
   const [actionError, setActionError] = useState('')
   const { target: deleteTarget, open: deleteOpen, error: deleteError, requestDelete, cancel: cancelDelete, confirm: confirmDeleteTarget } = useDeleteTarget<PipelineTemplate>()
   const [deleting, setDeleting] = useState(false)
@@ -86,7 +71,7 @@ function PipelinesListPageInner() {
       const result = await runPipeline({ id: t.id })
       navigate(`/projects/${projectId}/runs/${result.id}`)
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
+      setActionError(errorMessage(err))
     }
   }
 
@@ -100,10 +85,7 @@ function PipelinesListPageInner() {
   }
 
   function openDeploy(t: PipelineTemplate) {
-    setDeployTarget(t)
-    setDeployCron('0 2 * * *')
-    setDeployEnabled(true)
-    setActionError('')
+    navigate(`/projects/${projectId}/pipelines/${t.id}/deploy`)
   }
 
   function openNewVersionFrom(t: PipelineTemplate) {
@@ -139,7 +121,7 @@ function PipelinesListPageInner() {
 
   return (
     <>
-      <DataBodyTemplate
+      <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', 'Templates']} />} />}
         title="Pipeline Templates"
         description="Each submit creates a new versioned snapshot. Deploy to schedule or run on demand."
       >
@@ -204,37 +186,15 @@ function PipelinesListPageInner() {
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 
-      <DeployModal
-        template={deployTarget}
-        cron={deployCron}
-        enabled={deployEnabled}
-        onCronChange={setDeployCron}
-        onEnabledChange={setDeployEnabled}
-        onClose={() => setDeployTarget(null)}
-        onDeployed={(scheduleId) => navigate(`/projects/${projectId}/schedules/${scheduleId}`)}
-        error={actionError}
+      <ConfirmDialog
+        open={deleteOpen}
+        onCancel={cancelDelete}
+        title="Delete this pipeline template?"
+        description={<>"{deleteTarget?.name}" v{deleteTarget?.version} ({deleteTarget?.id.slice(0, 8)}…) and its snapshot will be permanently deleted.</>}
+        confirmLabel={deleting ? 'Deleting…' : 'Delete template'}
+        pending={deleting}
+        onConfirm={() => void confirmDelete()}
       />
-
-      <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this pipeline template?</AlertDialogTitle>
-            <AlertDialogDescription>
-              "{deleteTarget?.name}" v{deleteTarget?.version} ({deleteTarget?.id.slice(0, 8)}…) and its snapshot will be permanently deleted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={deleting}
-              onClick={() => void confirmDelete()}
-            >
-              {deleting ? 'Deleting…' : 'Delete template'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   )
 }

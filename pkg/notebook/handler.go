@@ -74,10 +74,20 @@ func (h *Handler) RegisterProxyRoutes(rg *gin.RouterGroup) {
 
 // GET /notebooks
 func (h *Handler) listNotebooks(c *gin.Context) {
-	nbs, err := h.deps.Notebooks.List(c.Request.Context(), currentProjectID(c))
+	limit, offset := httpx.ParseLimitOffset(c)
+	projectID := currentProjectID(c)
+	nbs, err := h.deps.Notebooks.List(c.Request.Context(), projectID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if limit > 0 {
+		total, err := h.deps.Notebooks.Count(c.Request.Context(), projectID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.SetTotalCountHeader(c, limit, total)
 	}
 	c.JSON(http.StatusOK, NewNotebookServerResponses(nbs))
 }

@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { errorMessage } from '@/lib/format'
 
 // Shared "which verb is pending confirmation" state for a detail view's
 // confirm AlertDialog (e.g. cancel/delete on a run, stop/delete on a
@@ -25,7 +26,7 @@ export function useConfirmAction<TVerb extends string>() {
       await fn(action)
       setAction(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
     }
   }, [action])
 

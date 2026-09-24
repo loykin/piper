@@ -103,7 +103,7 @@ func (d Deps) cleanupNotebooks(ctx context.Context, projectID string) error {
 	if d.Notebooks == nil || d.NotebookRepo == nil {
 		return nil
 	}
-	notebooks, err := d.NotebookRepo.List(ctx, projectID)
+	notebooks, err := d.NotebookRepo.List(ctx, projectID, 0, 0)
 	if err != nil {
 		return fmt.Errorf("list notebooks: %w", err)
 	}

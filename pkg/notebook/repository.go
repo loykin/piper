@@ -12,7 +12,12 @@ type Repository interface {
 	GetByVolumeID(ctx context.Context, projectID, volumeID string) (*NotebookServer, error)
 	Update(ctx context.Context, nb *NotebookServer) error
 	SetStatus(ctx context.Context, projectID, name, status string) error
-	List(ctx context.Context, projectID string) ([]*NotebookServer, error)
+	// List returns notebooks for projectID, newest first. limit 0 means no
+	// limit; offset is only meaningful when limit > 0.
+	List(ctx context.Context, projectID string, limit, offset int) ([]*NotebookServer, error)
+	// Count returns the total number of notebooks for projectID, ignoring
+	// limit/offset.
+	Count(ctx context.Context, projectID string) (int, error)
 	Delete(ctx context.Context, projectID, name string) error
 	// AppendHistory records nb as a past notebook lifecycle state in
 	// notebook_history, stamped with the current time as its stopped/replaced

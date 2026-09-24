@@ -157,7 +157,7 @@ func scanPipelines(ctx context.Context, repos *storemod.Repos, apply bool, proje
 }
 
 func scanNotebooks(ctx context.Context, repos *storemod.Repos, apply bool, projectID string) ([]Finding, error) {
-	notebooks, err := repos.Notebook.List(ctx, projectID)
+	notebooks, err := repos.Notebook.List(ctx, projectID, 0, 0)
 	if err != nil {
 		return nil, err
 	}

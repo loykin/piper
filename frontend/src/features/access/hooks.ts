@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/features/auth/context'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import {
   addMember, createUser, deleteUser, listMemberCandidates, listMembers, listMembersPaged,
   listUserMemberships, listUsers, listUsersPaged,
@@ -56,10 +56,13 @@ export function useUserMemberships(userId: string) {
 
 export function useMembers() {
   const projectId = useProjectId()
+  // Servers without member management (trusted mode) don't register the
+  // members API at all — don't fire a request that can only 404.
+  const { capabilities } = useAuth()
   return useQuery({
     queryKey: accessKeys.members(projectId),
     queryFn: () => listMembers(projectId),
-    enabled: !!projectId,
+    enabled: !!projectId && capabilities?.project_member_management === true,
   })
 }
 

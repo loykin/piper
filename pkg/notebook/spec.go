@@ -24,12 +24,20 @@ func (n Notebook) ValidateForExistingVolume() error {
 	return n.validate(false)
 }
 
+// reservedNotebookNames collide with fixed sibling routes under /notebooks
+// (gin prefers the static segment), so a notebook with one of these names
+// could never be fetched by name.
+var reservedNotebookNames = []string{"history"}
+
 func (n Notebook) validate(requireVolumeSize bool) error {
 	if err := manifest.ValidateTypeMeta(n.TypeMeta, "Notebook"); err != nil {
 		return err
 	}
 	if strings.TrimSpace(n.Metadata.Name) == "" {
 		return fmt.Errorf("metadata.name is required")
+	}
+	if slices.Contains(reservedNotebookNames, n.Metadata.Name) {
+		return fmt.Errorf("metadata.name %q is reserved", n.Metadata.Name)
 	}
 	switch n.Spec.Driver.Placement.Runtime {
 	case "baremetal":

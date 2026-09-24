@@ -30,10 +30,14 @@ paths:
   /api/projects/{project_id}/credentials:
     get:
       parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/ProjectID"
       responses:
         "200":
           description: Project credential metadata. Secret values are never returned.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -133,6 +137,8 @@ paths:
     get:
       summary: List MLflow tracking integrations (docs/mlflow-tracking-adapter.md section 11.1).
       parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
         - $ref: "#/components/parameters/ProjectID"
         - name: limit
           in: query
@@ -143,6 +149,8 @@ paths:
       responses:
         "200":
           description: Project MLflow integrations. Credential values are never returned — only credential_ref, a name reference into /credentials.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -252,13 +260,13 @@ paths:
     get:
       parameters:
         - $ref: "#/components/parameters/ProjectID"
-        - { name: limit, in: query, schema: { type: integer, minimum: 1 } }
-        - { name: offset, in: query, schema: { type: integer, minimum: 0 } }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Project alert rules.
           headers:
-            X-Total-Count: { schema: { type: integer } }
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AlertRule" } }
@@ -320,6 +328,8 @@ paths:
       - $ref: "#/components/parameters/ProjectID"
     get:
       parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
         - name: status
           in: query
           schema: { type: string }
@@ -329,6 +339,8 @@ paths:
       responses:
         "200":
           description: Runs. Step summaries are included only when include_steps=true.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -374,12 +386,6 @@ paths:
                   steps:
                     type: array
                     items: { $ref: "#/components/schemas/Step" }
-    delete:
-      parameters:
-        - $ref: "#/components/parameters/RunID"
-      responses:
-        "204":
-          description: Deleted.
   /api/projects/{project_id}/runs/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -574,9 +580,14 @@ paths:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
     get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Schedules.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -669,13 +680,18 @@ paths:
                   run_ids:
                     type: array
                     items: { type: string }
-  /api/projects/{project_id}/pipelines:
+  /api/projects/{project_id}/pipeline-templates:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
     get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Versioned pipeline templates.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -698,7 +714,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PipelineTemplate" }
-  /api/projects/{project_id}/pipelines/{id}:
+  /api/projects/{project_id}/pipeline-templates/{id}:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
       - name: id
@@ -719,9 +735,14 @@ paths:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
     get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Notebook servers.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -924,6 +945,8 @@ paths:
       - $ref: "#/components/parameters/ProjectID"
     get:
       parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
         - name: limit
           in: query
           required: false
@@ -940,6 +963,8 @@ paths:
       responses:
         "200":
           description: Project execution history across notebooks, most recently queued first. X-Total-Count is set when limit is provided.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -952,24 +977,6 @@ paths:
         in: path
         required: true
         schema: { type: string }
-    get:
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema: { type: integer }
-        - name: offset
-          in: query
-          required: false
-          schema: { type: integer }
-      responses:
-        "200":
-          description: Execution history, most recently queued first. X-Total-Count header set when limit is provided.
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/NotebookExecution" }
     post:
       parameters:
         - name: Idempotency-Key
@@ -996,13 +1003,9 @@ paths:
           description: Idempotency-Key reused with a different request payload, or a genuine content conflict.
         "429":
           description: notebook_execution concurrency limit reached (max_queued_per_project).
-  /api/projects/{project_id}/notebooks/{name}/executions/{id}:
+  /api/projects/{project_id}/notebook-executions/{id}:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
-      - name: name
-        in: path
-        required: true
-        schema: { type: string }
       - name: id
         in: path
         required: true
@@ -1014,13 +1017,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/NotebookExecution" }
-  /api/projects/{project_id}/notebooks/{name}/executions/{id}/cancel:
+  /api/projects/{project_id}/notebook-executions/{id}/cancel:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
-      - name: name
-        in: path
-        required: true
-        schema: { type: string }
       - name: id
         in: path
         required: true
@@ -1028,13 +1027,9 @@ paths:
     post:
       responses:
         "204": { description: Cancellation requested (own execution, or any execution for admin). }
-  /api/projects/{project_id}/notebooks/{name}/executions/{id}/approve:
+  /api/projects/{project_id}/notebook-executions/{id}/approve:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
-      - name: name
-        in: path
-        required: true
-        schema: { type: string }
       - name: id
         in: path
         required: true
@@ -1042,13 +1037,9 @@ paths:
     post:
       responses:
         "204": { description: awaiting_approval execution approved and queued (admin only). }
-  /api/projects/{project_id}/notebooks/{name}/executions/{id}/deny:
+  /api/projects/{project_id}/notebook-executions/{id}/deny:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
-      - name: name
-        in: path
-        required: true
-        schema: { type: string }
       - name: id
         in: path
         required: true
@@ -1085,9 +1076,14 @@ paths:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
     get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Deployed services.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
           content:
             application/json:
               schema:
@@ -1178,6 +1174,790 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Viewer" }
+  /api/capabilities:
+    get:
+      security: []
+      responses:
+        "200":
+          description: Which optional access-control capabilities this server has.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authentication: { type: boolean }
+                  login_routes: { type: boolean }
+                  login_mode: { type: string }
+                  login_url: { type: string }
+                  user_directory: { type: boolean }
+                  user_management: { type: boolean }
+                  project_member_management: { type: boolean }
+  /api/auth/bootstrap-status:
+    get:
+      security: []
+      responses:
+        "200":
+          description: Whether first-run admin setup is still required.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [required]
+                properties:
+                  required: { type: boolean }
+  /api/auth/bootstrap:
+    post:
+      security: []
+      description: Creates the first system-admin account. Only succeeds while no user exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "201":
+          description: Created admin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "409":
+          description: Setup was already completed.
+  /api/auth/login:
+    post:
+      security: []
+      description: Sets the access and refresh session cookies.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionUser" }
+        "401":
+          description: Invalid credentials.
+  /api/auth/refresh:
+    post:
+      security: []
+      description: Rotates the session using the refresh cookie (or a `refresh_token` JSON body).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: Session refreshed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionUser" }
+        "401":
+          description: Missing or invalid refresh token.
+  /api/auth/logout:
+    post:
+      responses:
+        "204":
+          description: Session revoked and cookies cleared.
+  /api/auth/me:
+    get:
+      responses:
+        "200":
+          description: The signed-in user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+  /api/system/users:
+    get:
+      description: System admin only.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Users.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/User" }
+    post:
+      description: System admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/Credentials"
+                - type: object
+                  properties:
+                    system_admin: { type: boolean }
+      responses:
+        "201":
+          description: Created user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+  /api/system/users/{id}:
+    delete:
+      description: System admin only.
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "204":
+          description: Deleted.
+  /api/system/users/{id}/memberships:
+    get:
+      description: System admin only.
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      responses:
+        "200":
+          description: The user's project memberships.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProjectMember" }
+  /api/system/settings:
+    get:
+      description: System admin only.
+      responses:
+        "200":
+          description: Server capability state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemSettings" }
+  /api/system/storage/settings:
+    get:
+      description: System admin only. Read-only diagnostic; the storage backend is deploy-time configuration.
+      responses:
+        "200":
+          description: Configured and effective artifact storage.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config_path: { type: string }
+                  config: { $ref: "#/components/schemas/StorageConfig" }
+                  effective: { $ref: "#/components/schemas/ArtifactStoreSettings" }
+                  restart_required: { type: boolean }
+  /api/system/storage/settings/test:
+    post:
+      description: System admin only. Checks a candidate configuration without persisting it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StorageConfig" }
+      responses:
+        "200":
+          description: Reachability result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  message: { type: string }
+  /api/system/credentials:
+    get:
+      description: System admin only. System-scoped credentials (e.g. the artifact-storage s3 credential).
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Credential metadata. Secret values are never returned.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Credential" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCredentialRequest" }
+      responses:
+        "201":
+          description: Created credential metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+  /api/system/credentials/{name}:
+    parameters:
+      - $ref: "#/components/parameters/CredentialName"
+    get:
+      responses:
+        "200":
+          description: Credential metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+    patch:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchCredentialRequest" }
+      responses:
+        "200":
+          description: Updated credential metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+    delete:
+      responses:
+        "204":
+          description: Deleted.
+  /api/system/credentials/{name}/rotate:
+    parameters:
+      - $ref: "#/components/parameters/CredentialName"
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RotateCredentialRequest" }
+      responses:
+        "204":
+          description: Rotated.
+  /api/system/credentials/{name}/test:
+    parameters:
+      - $ref: "#/components/parameters/CredentialName"
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TestCredentialRequest" }
+      responses:
+        "200":
+          description: Test result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestCredentialResult" }
+  /api/system/federation/members:
+    get:
+      description: System admin only. Members enrolled with this Home.
+      responses:
+        "200":
+          description: Federation members.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FederationMember" }
+  /api/system/federation/audit-events:
+    get:
+      description: System admin only. Newest first.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200":
+          description: Federation audit events.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FederationAuditEvent" }
+  /api/projects:
+    get:
+      description: Projects visible to the caller (all projects for a system admin).
+      responses:
+        "200":
+          description: Projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Project" }
+    post:
+      description: System admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name]
+              properties:
+                id: { type: string, pattern: "^[a-z0-9-]+$" }
+                name: { type: string }
+                description: { type: string }
+                owner_member_id: { type: string }
+      responses:
+        "201":
+          description: Created project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+  /api/projects/{project_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      responses:
+        "200":
+          description: Project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+    delete:
+      description: System admin only. Stops the project's live runs, notebooks, and services before deleting it.
+      responses:
+        "204":
+          description: Deleted.
+        "409":
+          description: The last remaining project cannot be deleted.
+  /api/projects/{project_id}/members:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Project members.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProjectMember" }
+    post:
+      description: Project admin only. Identify the user by `username` (or `user_id`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                user_id: { type: string }
+                username: { type: string }
+                role: { $ref: "#/components/schemas/ProjectRole" }
+      responses:
+        "201":
+          description: Added member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectMember" }
+  /api/projects/{project_id}/members/candidates:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      description: Project admin only. Users who are not yet members.
+      responses:
+        "200":
+          description: Candidate usernames.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    username: { type: string }
+  /api/projects/{project_id}/members/{user_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      description: Project admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/ProjectRole" }
+      responses:
+        "200":
+          description: Updated member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectMember" }
+    delete:
+      description: Project admin only.
+      responses:
+        "204":
+          description: Removed.
+  /api/projects/{project_id}/experiments:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      description: Aggregates of runs grouped by experiment name. Experiments are not a stored resource.
+      parameters:
+        - name: name
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Experiment summaries.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExperimentSummary" }
+    post:
+      description: Submits one run per trial under a shared experiment name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [yaml, experiment, runs]
+              properties:
+                yaml: { type: string }
+                experiment: { type: string }
+                runs:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    properties:
+                      params: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Submitted runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  experiment: { type: string }
+                  run_ids:
+                    type: array
+                    items: { type: string }
+  /api/projects/{project_id}/runs/{id}/steps:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+      responses:
+        "200":
+          description: Steps of the run.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Step" }
+  /api/projects/{project_id}/runs/{id}/artifacts/{path}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      description: Downloads an artifact file. `path` is `{step}/{artifact path...}` and may contain slashes.
+      parameters:
+        - $ref: "#/components/parameters/RunID"
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: File contents.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+  /api/projects/{project_id}/schedules/{id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/ScheduleID"
+      responses:
+        "200":
+          description: Runs created by the schedule.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Run" }
+  /api/projects/{project_id}/pipeline-templates/{id}/run:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    post:
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                params: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Started run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string }
+  /api/projects/{project_id}/pipeline-templates/{id}/deploy:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    post:
+      description: Creates a cron schedule bound to this template version.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cron]
+              properties:
+                cron: { type: string }
+                enabled: { type: boolean }
+                max_runs: { type: integer, minimum: 0 }
+                params: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created schedule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Schedule" }
+  /api/projects/{project_id}/notebooks/history:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Notebook launch history.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotebookHistory" }
+  /api/projects/{project_id}/notebook-volumes:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Notebook volumes.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotebookVolume" }
+  /api/projects/{project_id}/notebook-volumes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      description: Permanently deletes a released volume and its backing storage.
+      responses:
+        "204":
+          description: Deleted.
+  /api/projects/{project_id}/notebook-volumes/{id}/files:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      parameters:
+        - name: path
+          in: query
+          description: Workspace-relative directory.
+          schema: { type: string }
+        - name: ext
+          in: query
+          description: Only list files with this extension.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Workspace-relative file paths.
+          headers:
+            X-Piper-Files-Truncated:
+              schema: { type: string, enum: ["true", "false"] }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "409":
+          description: The volume's files are not reachable (e.g. no running notebook for a k8s volume).
+        "503":
+          description: The volume is transitioning; retry after `Retry-After` seconds.
+  /api/projects/{project_id}/services/history:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Serving deploy history.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ServiceHistory" }
+  /api/projects/{project_id}/storage/objects:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      description: One folder level of the artifact store (S3 delimiter semantics).
+      parameters:
+        - name: prefix
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Objects and pseudo-directories.
+          headers:
+            X-Total-Count: { $ref: "#/components/headers/TotalCount" }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StorageObjectInfo" }
+        "503":
+          description: No artifact store is configured.
+    post:
+      description: Project member only.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                key:
+                  type: string
+                  description: Object key; defaults to the uploaded file name.
+      responses:
+        "200":
+          description: Uploaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key: { type: string }
+  /api/projects/{project_id}/storage/objects/{key}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: key
+        in: path
+        required: true
+        description: Object key; may contain slashes.
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Object contents, served as an attachment.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+    delete:
+      description: Project member only.
+      responses:
+        "204":
+          description: Deleted.
+
+  /api/projects/{project_id}/viewers:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    get:
+      responses:
+        "200":
+          description: Artifact viewers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Viewer" }
+  /api/projects/{project_id}/viewers/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      responses:
+        "200":
+          description: Viewer plus its browser proxy URL.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Viewer"
+                  - type: object
+                    properties:
+                      url: { type: string }
+  /api/projects/{project_id}/viewers/{id}/stop:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      responses:
+        "204":
+          description: Stopped.
 components:
   securitySchemes:
     bearerAuth:
@@ -1214,7 +1994,167 @@ components:
       in: path
       required: true
       schema: { type: string }
+    UserID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      description: Page size. When set, the response carries `X-Total-Count`.
+      schema: { type: integer, minimum: 1 }
+    Offset:
+      name: offset
+      in: query
+      description: Rows to skip; only applies together with `limit`.
+      schema: { type: integer, minimum: 0 }
+  headers:
+    TotalCount:
+      description: Total rows matching the filter, ignoring limit/offset. Sent whenever `limit` is.
+      schema: { type: integer }
   schemas:
+    Credentials:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        username: { type: string }
+        system_admin: { type: boolean }
+        disabled: { type: boolean }
+    SessionUser:
+      type: object
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+    ProjectRole:
+      type: string
+      enum: [viewer, member, admin]
+    ProjectMember:
+      type: object
+      properties:
+        project_id: { type: string }
+        user_id: { type: string }
+        username: { type: string }
+        role: { $ref: "#/components/schemas/ProjectRole" }
+    Project:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        owner_member_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    FederationMember:
+      type: object
+      properties:
+        home_id: { type: string }
+        id: { type: string }
+        enabled: { type: boolean }
+        status: { type: string }
+        last_connected_at: { type: [string, "null"], format: date-time }
+        last_disconnected_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    FederationAuditEvent:
+      type: object
+      properties:
+        id: { type: string }
+        home_id: { type: string }
+        type: { type: string }
+        member_id: { type: string }
+        project_id: { type: string }
+        actor_id: { type: string }
+        detail: { type: string }
+        created_at: { type: string, format: date-time }
+    ArtifactStoreSettings:
+      type: object
+      properties:
+        status: { type: string, enum: [enabled, disabled, unavailable] }
+        backend: { type: string }
+        reason: { type: string }
+    SystemSettings:
+      type: object
+      properties:
+        artifact_store: { $ref: "#/components/schemas/ArtifactStoreSettings" }
+        runtime:
+          type: object
+          properties:
+            type: { type: string, enum: [baremetal, docker, k8s] }
+    StorageConfig:
+      type: object
+      properties:
+        url: { type: string }
+        disabled: { type: boolean }
+        token: { type: string }
+        credentialRef: { type: string }
+    StorageObjectInfo:
+      type: object
+      properties:
+        key: { type: string }
+        size: { type: integer, format: int64 }
+        modified_at: { type: string }
+        download_url: { type: string }
+        is_dir: { type: boolean }
+    ExperimentSummary:
+      type: object
+      properties:
+        name: { type: string }
+        runs: { type: integer }
+        success: { type: integer }
+        failed: { type: integer }
+        running: { type: integer }
+        latest: { type: string }
+    NotebookHistory:
+      type: object
+      properties:
+        id: { type: integer }
+        project_id: { type: string }
+        name: { type: string }
+        status: { type: string }
+        env: { type: string }
+        endpoint: { type: string }
+        pid: { type: integer }
+        work_dir: { type: string }
+        runtime_id: { type: string }
+        volume_id: { type: string }
+        image: { type: string }
+        yaml: { type: string }
+        created_by: { type: string }
+        deployed_at: { type: string, format: date-time }
+        stopped_at: { type: string, format: date-time }
+    NotebookVolume:
+      type: object
+      properties:
+        project_id: { type: string }
+        id: { type: string }
+        label: { type: string }
+        work_dir: { type: string }
+        status: { type: string }
+        runtime_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ServiceHistory:
+      type: object
+      properties:
+        id: { type: integer }
+        project_id: { type: string }
+        name: { type: string }
+        run_id: { type: string }
+        artifact: { type: string }
+        status: { type: string }
+        endpoint: { type: string }
+        namespace: { type: string }
+        pid: { type: integer }
+        yaml: { type: string }
+        created_by: { type: string }
+        deployed_at: { type: string, format: date-time }
+        stopped_at: { type: string, format: date-time }
     Credential:
       type: object
       properties:
@@ -1381,6 +2321,7 @@ components:
         schedule_id: { type: string }
         experiment: { type: string }
         pipeline_name: { type: string }
+        pipeline_version: { type: integer, description: Template version the run was started from, when it came from a pipeline template. }
         status: { type: string, enum: [scheduled, running, success, failed, canceled] }
         started_at: { type: string, format: date-time }
         ended_at: { type: string, format: date-time }

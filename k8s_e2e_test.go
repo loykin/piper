@@ -524,7 +524,7 @@ spec:
           path: model.txt
 `, ns),
 	})
-	templateResp, err := http.Post(serverURL+k8sE2EProjectBase()+"/pipelines", "application/json", bytes.NewReader(templateBody)) //nolint:noctx
+	templateResp, err := http.Post(serverURL+k8sE2EProjectBase()+"/pipeline-templates", "application/json", bytes.NewReader(templateBody)) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ spec:
 		t.Fatalf("snapshot object status=%d body=%q", snapshotResp.StatusCode, snapshotBody)
 	}
 
-	triggerResp, err := http.Post(serverURL+k8sE2EProjectBase()+"/pipelines/"+createdTemplate.ID+"/run", "application/json", bytes.NewReader([]byte(`{}`))) //nolint:noctx
+	triggerResp, err := http.Post(serverURL+k8sE2EProjectBase()+"/pipeline-templates/"+createdTemplate.ID+"/run", "application/json", bytes.NewReader([]byte(`{}`))) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}

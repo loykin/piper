@@ -1,6 +1,6 @@
+import { useNavigate } from '@/lib/router'
 import { useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useNavigate } from '@tanstack/react-router'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import {
@@ -18,8 +18,10 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { usePipelines } from '@/features/pipelines/hooks'
 import { useCreateSweep } from '@/features/runs/hooks'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const schema = z.object({
   experiment: z.string().trim().min(1, 'Experiment name is required.'),
@@ -74,15 +76,15 @@ export default function ExperimentCreatePage() {
         experiment: values.experiment.trim(),
         runs: trials.map(params => ({ params })),
       })
-      void navigate({ to: listPath })
+      void navigate(listPath)
     } catch (cause) {
-      setSubmitError(cause instanceof Error ? cause.message : String(cause))
+      setSubmitError(errorMessage(cause))
     }
   }
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Experiments / New Sweep" />}
+      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Experiments', to: `/projects/${projectId}/experiments` }, 'New Sweep']} />} />}
       title="New Sweep"
       description="Run one saved pipeline with multiple parameter sets under a shared experiment name."
     >
@@ -117,7 +119,7 @@ export default function ExperimentCreatePage() {
             status={submitError || (pipelinesQuery.isError ? 'Failed to load pipelines.' : undefined)}
             submitLabel={createSweep.isPending ? 'Creating…' : 'Create Sweep'}
             submitDisabled={createSweep.isPending || pipelinesQuery.isPending || pipelines.length === 0}
-            onCancel={() => void navigate({ to: listPath })}
+            onCancel={() => void navigate(listPath)}
           />
         </form>
       </DataBodyTemplate.Group>

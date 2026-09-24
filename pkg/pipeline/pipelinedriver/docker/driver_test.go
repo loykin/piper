@@ -88,6 +88,10 @@ func TestDockerDriverAppliesStepResources(t *testing.T) {
 	if got := cli.create.Config.Env; len(got) != 0 {
 		t.Fatalf("container env exposed resolved task env: %#v", got)
 	}
+	// The agent must run regardless of the step image's own ENTRYPOINT.
+	if ep := cli.create.Config.Entrypoint; len(ep) != 1 || ep[0] != pipelinedriver.ContainerPiperBin {
+		t.Fatalf("Entrypoint = %#v, want [%q]", ep, pipelinedriver.ContainerPiperBin)
+	}
 	for _, arg := range cli.create.Config.Cmd {
 		if arg == "--task-file=/piper-results/worker-1-run-1-train-a1.task.json" {
 			continue

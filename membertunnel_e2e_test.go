@@ -87,7 +87,7 @@ func TestMemberTunnelProjectAPIRelayEndToEnd(t *testing.T) {
 	}
 	router := homeP.newRouterWithFederation(nil, nil, remoteMember, remoteProject, refFor, nil, "")
 	body := `{"yaml":"apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: tunneled-template\nspec:\n  steps:\n    - name: hello\n      run:\n        command: [\\\"echo\\\", \\\"hello\\\"]\n"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipeline-templates", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "tunneled-template-1")
 	rec := httptest.NewRecorder()
@@ -95,7 +95,7 @@ func TestMemberTunnelProjectAPIRelayEndToEnd(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST status = %d, want 201: %s", rec.Code, rec.Body.String())
 	}
-	retryReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipeline-templates", strings.NewReader(body))
 	retryReq.Header.Set("Content-Type", "application/json")
 	retryReq.Header.Set("Idempotency-Key", "tunneled-template-1")
 	retryRec := httptest.NewRecorder()

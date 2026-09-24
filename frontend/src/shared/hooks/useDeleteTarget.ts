@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { errorMessage } from '@/lib/format'
 
 // Shared "which row is pending deletion" state for a resource list's
 // destructive-confirm AlertDialog. See docs/frontend/develop.md's Resource
@@ -24,7 +25,7 @@ export function useDeleteTarget<T>() {
       await fn(target)
       setTarget(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
     }
   }, [target])
 

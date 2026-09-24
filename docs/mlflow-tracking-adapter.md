@@ -744,7 +744,7 @@ POST /api/projects/{project_id}/mlflow-sync-jobs
 | Method | Path | 최소 역할 | 설명 |
 |---|---|---:|---|
 | `GET` | `/runs/{id}/mlflow-links` | viewer | sync 상태와 안전한 MLflow UI URL |
-| `GET` | `/notebooks/{name}/executions/{id}/mlflow-links` | viewer | Notebook execution link |
+| `GET` | `/notebook-executions/{id}/mlflow-links` | viewer | Notebook execution link |
 
 MLflow API credential이나 raw artifact URI는 반환하지 않는다.
 

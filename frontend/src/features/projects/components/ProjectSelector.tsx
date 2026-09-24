@@ -1,16 +1,6 @@
 import { useNavigate } from '@/lib/router'
 import { Check, ChevronsUpDown, FolderKanban, Plus, Trash2 } from 'lucide-react'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -27,8 +17,9 @@ import {
 import { useDeleteProject } from '@/features/projects/hooks'
 import type { Project } from '@/features/projects/types'
 import { useAuth } from '@/features/auth/context'
-import { useProjectContext } from '@/lib/projectContext'
+import { useProjectContext } from '@/features/projects/context'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 // pkg/project/ref.go: LocalMemberID = "member-local" — every other value is a
 // remote federation Member with its own separate config (including its own
@@ -135,27 +126,16 @@ export function ProjectSelector() {
         </SidebarMenuItem>
       </SidebarMenu>
 
-      <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This permanently deletes the project and its project-scoped data. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => void handleDelete()}
-              disabled={deleteProject.isPending}
-            >
-              {deleteProject.isPending ? 'Deleting…' : 'Delete project'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        onCancel={cancelDelete}
+        title={`Delete ${deleteTarget?.name}?`}
+        description="This permanently deletes the project and its project-scoped data. This action cannot be undone."
+        error={deleteError}
+        pending={deleteProject.isPending}
+        confirmLabel={deleteProject.isPending ? 'Deleting…' : 'Delete project'}
+        onConfirm={() => void handleDelete()}
+      />
     </>
   )
 }

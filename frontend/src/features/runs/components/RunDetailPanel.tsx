@@ -2,13 +2,15 @@ import { RotateCcw, RefreshCw, XCircle, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
 import { Link } from '@/lib/router'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { useRun, useRunSteps, useCancelRun, useRerunRun } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { RunActionConfirmDialog, type RunConfirmVerb } from '@/features/runs/components/RunActionConfirmDialog'
 import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
+import { toneAction } from '@/shared/status'
+import { fmtDate } from '@/lib/format'
 
 export function RunDetailPanel({ id }: { id: string }) {
   const { close, open } = useSidePanel()
@@ -58,23 +60,23 @@ export function RunDetailPanel({ id }: { id: string }) {
           <IconButton icon={<XCircle />} label="Cancel"
             disabled={run.status !== 'running' && run.status !== 'scheduled'}
             onClick={() => requestConfirm('cancel')}
-            className="text-orange-400 hover:bg-orange-950" />
+            className={toneAction.attention} />
           <IconButton icon={<RotateCcw />} label="Rerun"
             disabled={run.status === 'running' || run.status === 'scheduled'}
             onClick={rerun}
-            className="text-indigo-400 hover:bg-indigo-950" />
+            className={toneAction.accent} />
           <IconButton icon={<RefreshCw />} label="Retry Failed"
             disabled={run.status !== 'failed'}
             onClick={rerun}
-            className="text-yellow-400 hover:bg-yellow-950" />
+            className={toneAction.warning} />
           {closeBtn}
         </div>
       }
     >
       <PanelTemplate.Section title="Details">
         <dl className="space-y-2">
-          <PanelTemplate.Row label="Started">{new Date(run.started_at).toLocaleString()}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Ended">{run.ended_at ? new Date(run.ended_at).toLocaleString() : '—'}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Started">{fmtDate(run.started_at)}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Ended">{run.ended_at ? fmtDate(run.ended_at) : '—'}</PanelTemplate.Row>
           <PanelTemplate.Row label="Steps">{completedSteps} / {steps.length} completed</PanelTemplate.Row>
           {run.schedule_id && (
             <PanelTemplate.Row label="Schedule">{run.schedule_id.slice(0, 12)}…</PanelTemplate.Row>
@@ -109,7 +111,7 @@ export function RunDetailPanel({ id }: { id: string }) {
     <RunActionConfirmDialog
       runId={run.id}
       action={confirmAction}
-      onOpenChange={open => { if (!open) cancelConfirm() }}
+      onDismiss={cancelConfirm}
       cancelling={cancelling}
       onConfirmCancel={() => cancelRun(run.id)}
     />

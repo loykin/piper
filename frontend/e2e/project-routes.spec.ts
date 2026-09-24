@@ -26,7 +26,7 @@ test('project run and schedule detail routes are directly reachable', async ({ p
 
   await page.goto(`${uiBase}/runs/${runBody.run_id}`)
   await expect(page).toHaveURL(new RegExp(`/ui/projects/${projectID}/runs/${runBody.run_id}$`))
-  await expect(page.getByText(runBody.run_id)).toBeVisible()
+  await expect(page.locator('h1').getByText(runBody.run_id)).toBeVisible()
 
   const scheduleResponse = await page.request.post(`${backend}${projectBase}/schedules`, {
     data: {

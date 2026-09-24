@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useSystemSettings } from '@/features/system/hooks'
 import { useRunLogs, useStatsCapabilities } from '../hooks'
+import { toneFill, toneText, warningNotice } from '@/shared/status'
+import { fmtTime } from '@/lib/format'
 
 interface LogViewerProps {
   runId: string
@@ -44,7 +46,7 @@ export function LogViewer({ runId, stepId }: LogViewerProps) {
         <h3 className="text-sm font-semibold text-foreground">
           {stepId}
           {!done && (
-            <span className="ml-2 inline-block h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+            <span className={`ml-2 inline-block h-2 w-2 rounded-full animate-pulse ${toneFill.info}`} />
           )}
         </h3>
       </div>
@@ -83,7 +85,7 @@ export function LogViewer({ runId, stepId }: LogViewerProps) {
       </div>
       {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       {stats?.degraded && (
-        <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-400" role="status">
+        <p className={`${warningNotice} px-3 py-2 text-sm`} role="status">
           Statistics delivery is degraded. {stats.pending_bytes > 0 ? `${stats.pending_bytes} bytes are safely queued on this Member.` : 'The backend is unavailable.'}
         </p>
       )}
@@ -95,10 +97,10 @@ export function LogViewer({ runId, stepId }: LogViewerProps) {
         {visibleLogs.map((line, index) => (
           <div
             key={index}
-            className={`flex gap-3 ${line.stream === 'stderr' ? 'text-red-400' : 'text-foreground'}`}
+            className={`flex gap-3 ${line.stream === 'stderr' ? toneText.danger : 'text-foreground'}`}
           >
             <span className="w-20 shrink-0 select-none text-muted-foreground">
-              {new Date(line.ts).toLocaleTimeString()}
+              {fmtTime(line.ts)}
             </span>
             <span className="break-all">{line.line}</span>
           </div>

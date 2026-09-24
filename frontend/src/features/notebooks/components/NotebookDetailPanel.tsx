@@ -1,23 +1,15 @@
-import { useState } from 'react'
 import { ExternalLink, RefreshCw, Square, Trash2, X } from 'lucide-react'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useNotebook, useStopNotebook, useStartNotebook, useDeleteNotebook } from '@/features/notebooks/hooks'
 import { Link } from '@/lib/router'
+import { fmtDate } from '@/lib/format'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 export function NotebookDetailPanel({ name, projectId }: { name: string; projectId: string }) {
   const { close } = useSidePanel()
@@ -25,7 +17,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
   const { mutateAsync: stop, isPending: stopping } = useStopNotebook()
   const { mutateAsync: start, isPending: starting } = useStartNotebook()
   const { mutateAsync: del, isPending: deleting } = useDeleteNotebook()
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const deleteTarget = useDeleteTarget<string>()
 
   const busy = stopping || starting
 
@@ -81,7 +73,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
               onClick={() => void start(name)} />
           )}
           <IconButton icon={<Trash2 />} label="Delete" disabled={busy}
-            onClick={() => setConfirmDelete(true)}
+            onClick={() => deleteTarget.requestDelete(name)}
             className="text-muted-foreground hover:text-destructive" />
           {closeBtn}
         </div>
@@ -94,7 +86,7 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
           <PanelTemplate.Row label="Volume">{notebook.volume_id || '—'}</PanelTemplate.Row>
           <PanelTemplate.Row label="Runtime">{notebook.runtime_id || '—'}</PanelTemplate.Row>
           <PanelTemplate.Row label="Endpoint">{notebook.endpoint || '—'}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Created">{new Date(notebook.created_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Created">{fmtDate(notebook.created_at)}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
 
@@ -112,26 +104,16 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
       </PanelTemplate.Section>
     </PanelTemplate>
 
-    <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this notebook?</AlertDialogTitle>
-          <AlertDialogDescription>
-            "{name}" will be deleted. The volume and work directory are preserved.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={deleting}
-            onClick={() => void del(name).then(() => void close())}
-          >
-            {deleting ? 'Deleting…' : 'Delete notebook'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={deleteTarget.open}
+      onCancel={deleteTarget.cancel}
+      title="Delete this notebook?"
+      description={<>"{deleteTarget.target}" will be deleted. The volume and work directory are preserved.</>}
+      error={deleteTarget.error}
+      confirmLabel={deleting ? 'Deleting…' : 'Delete notebook'}
+      pending={deleting}
+      onConfirm={() => void deleteTarget.confirm(async target => { await del(target); void close() })}
+    />
     </>
   )
 }

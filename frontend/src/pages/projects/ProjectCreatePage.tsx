@@ -17,6 +17,8 @@ import { z } from 'zod'
 import { useFederationMembers } from '@/features/federation/hooks'
 import { useCreateProject } from '@/features/projects/hooks'
 import { useNavigate } from '@/lib/router'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const projectSchema = z.object({
   id: z.string().trim().min(1, 'Project ID is required.').regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'Use lowercase letters, numbers, and hyphens only.'),
@@ -64,13 +66,13 @@ export default function ProjectCreatePage() {
       })
       void navigate(`/projects/${project.id}/schedules`, { replace: true })
     } catch (cause) {
-      setSubmitError(cause instanceof Error ? cause.message : String(cause))
+      setSubmitError(errorMessage(cause))
     }
   }
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Projects / New Project" />}
+      topBar={<PageTopBar left={<PageCrumbs items={['System', 'Projects', 'New Project']} />} />}
       title="New Project"
       description="Create the Home directory entry and choose the Member that owns its execution state."
     >

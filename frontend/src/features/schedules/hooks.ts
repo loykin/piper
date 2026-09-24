@@ -1,8 +1,8 @@
 // schedules feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import type { CreateScheduleOptions } from './types'
-import { useProjectId } from '@/lib/projectContext'
+import type { CreateScheduleOptions, DeployTemplateRequest } from './types'
+import { useProjectId } from '@/features/projects/context'
 import { backgroundPolling } from '@/lib/query'
 
 export const scheduleKeys = {
@@ -79,6 +79,16 @@ export function useToggleSchedule() {
   return useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
       api.setScheduleEnabled(projectId, id, enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: scheduleKeys.all(projectId) }),
+  })
+}
+
+export function useDeployTemplate() {
+  const projectId = useProjectId()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ templateId, req }: { templateId: string; req: DeployTemplateRequest }) =>
+      api.deployTemplate(projectId, templateId, req),
     onSuccess: () => qc.invalidateQueries({ queryKey: scheduleKeys.all(projectId) }),
   })
 }

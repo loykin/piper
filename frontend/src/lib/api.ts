@@ -65,30 +65,53 @@ async function request<T = unknown>(url: string, init?: RequestInit): Promise<T>
   return text ? (JSON.parse(text) as T) : (undefined as T)
 }
 
+/** One page of a paginated list endpoint. */
+export type Paged<T> = { items: T[]; total: number }
+
 /**
- * Like `request`, but also reads the `X-Total-Count` response header —
- * for endpoints that support `limit`/`offset` pagination and report the
- * total row count matching the filter (ignoring limit/offset) that way.
- * `total` is null when the endpoint didn't set the header (e.g. no
- * limit was requested).
+ * Thrown when a response doesn't match the list contract — not an array, or
+ * a paginated response missing `X-Total-Count`. Surfacing this as an error
+ * (instead of coercing it to an empty list) keeps a backend regression from
+ * masquerading as "nothing here yet" on a list page.
  */
-async function requestWithTotal<T = unknown>(url: string, init?: RequestInit): Promise<{ data: T; total: number | null }> {
-  const res = await fetchOk(url, init)
-  const totalHeader = res.headers.get('X-Total-Count')
-  const text = await res.text()
-  return {
-    data: text ? (JSON.parse(text) as T) : (undefined as T),
-    total: totalHeader !== null ? Number(totalHeader) : null,
+export class ContractError extends ApiError {
+  constructor(url: string, detail: string) {
+    super(0, `Unexpected response from ${url}: ${detail}`)
+    this.name = 'ContractError'
   }
 }
 
-async function requestWithCursor<T = unknown>(url: string, init?: RequestInit): Promise<{ data: T; nextCursor: string | null }> {
-  const res = await fetchOk(url, init)
+async function readJSON(res: Response): Promise<unknown> {
   const text = await res.text()
-  return {
-    data: text ? (JSON.parse(text) as T) : (undefined as T),
-    nextCursor: res.headers.get('X-Next-Cursor'),
-  }
+  return text ? JSON.parse(text) : undefined
+}
+
+async function requestList<T>(url: string): Promise<T[]> {
+  const data = await readJSON(await fetchOk(url))
+  if (!Array.isArray(data)) throw new ContractError(url, 'expected a JSON array')
+  return data as T[]
+}
+
+/**
+ * GET a `limit`/`offset` paginated list. The server reports the total row
+ * count (ignoring limit/offset) in `X-Total-Count` whenever `limit` is sent.
+ */
+async function requestPaged<T>(url: string): Promise<Paged<T>> {
+  const res = await fetchOk(url)
+  const header = res.headers.get('X-Total-Count')
+  const data = await readJSON(res)
+  if (!Array.isArray(data)) throw new ContractError(url, 'expected a JSON array')
+  const total = header === null ? NaN : Number(header)
+  if (!Number.isFinite(total)) throw new ContractError(url, 'missing X-Total-Count header')
+  return { items: data as T[], total }
+}
+
+/** GET a cursor-paginated list; the next cursor comes from `X-Next-Cursor`. */
+async function requestCursorList<T>(url: string): Promise<{ items: T[]; nextCursor: string | null }> {
+  const res = await fetchOk(url)
+  const data = await readJSON(res)
+  if (!Array.isArray(data)) throw new ContractError(url, 'expected a JSON array')
+  return { items: data as T[], nextCursor: res.headers.get('X-Next-Cursor') }
 }
 
 async function upload<T = unknown>(url: string, form: FormData): Promise<T> {
@@ -108,8 +131,9 @@ async function requestRaw(url: string, init?: RequestInit): Promise<Response> {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  getWithTotal: <T>(path: string) => requestWithTotal<T>(path),
-  getWithCursor: <T>(path: string) => requestWithCursor<T>(path),
+  getList: <T>(path: string) => requestList<T>(path),
+  getPaged: <T>(path: string) => requestPaged<T>(path),
+  getCursorList: <T>(path: string) => requestCursorList<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown) =>
@@ -127,8 +151,9 @@ export function projectApi(projectId: string) {
   const base = `/api/projects/${encodeURIComponent(projectId)}`
   return {
     get: <T>(path: string) => request<T>(`${base}${path}`),
-    getWithTotal: <T>(path: string) => requestWithTotal<T>(`${base}${path}`),
-    getWithCursor: <T>(path: string) => requestWithCursor<T>(`${base}${path}`),
+    getList: <T>(path: string) => requestList<T>(`${base}${path}`),
+    getPaged: <T>(path: string) => requestPaged<T>(`${base}${path}`),
+    getCursorList: <T>(path: string) => requestCursorList<T>(`${base}${path}`),
     post: <T>(path: string, body?: unknown) =>
       request<T>(`${base}${path}`, {
         method: 'POST',

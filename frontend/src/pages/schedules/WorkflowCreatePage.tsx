@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from '@/lib/router'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { ScheduleForm } from '@/features/schedules/components/ScheduleForm'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 export default function WorkflowCreatePage() {
   const navigate = useNavigate()
@@ -16,7 +17,7 @@ export default function WorkflowCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Schedules / Create Schedule" />}
+      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Schedules', to: `/projects/${projectId}/schedules` }, 'Create Schedule']} />} />}
       title="Create Schedule"
       description="Register a pipeline and choose how it should be triggered."
     >

@@ -31,7 +31,7 @@ func callMethod[Req, Resp any](ctx context.Context, payload []byte, fn func(cont
 }
 
 // callVoidMethod is callMethod's counterpart for methods that return only
-// an error (CancelRun, DeleteRun).
+// an error (CancelRun).
 func callVoidMethod[Req any](ctx context.Context, payload []byte, fn func(context.Context, memberclient.AuthContext, project.ProjectRef, Req) error) ([]byte, error) {
 	env, err := decodeCall[Req](payload)
 	if err != nil {
@@ -61,8 +61,6 @@ func dispatch(ctx context.Context, member memberclient.Client, method string, pa
 		return callVoidMethod(ctx, payload, member.CancelRun)
 	case MethodRerunRun:
 		return callMethod(ctx, payload, adaptRerunRun(member))
-	case MethodDeleteRun:
-		return callVoidMethod(ctx, payload, member.DeleteRun)
 	case MethodListSteps:
 		return callMethod(ctx, payload, member.ListSteps)
 	case MethodRetryStep:

@@ -1,12 +1,14 @@
 // notebooks feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { backgroundPolling, backgroundPollingNotifications } from '@/lib/query'
 
 export const notebookKeys = {
   all: (projectId: string) => ['notebooks', projectId] as const,
   list: (projectId: string) => ['notebooks', projectId, 'list'] as const,
+  listPaged: (projectId: string, limit: number, offset: number) =>
+    ['notebooks', projectId, 'list', 'paged', limit, offset] as const,
   one: (projectId: string, name: string) => ['notebooks', projectId, name] as const,
   historyPaged: (projectId: string, limit: number, offset: number) =>
     ['notebooks', projectId, 'history', limit, offset] as const,
@@ -23,6 +25,17 @@ export function useNotebooks() {
     queryKey: notebookKeys.list(projectId),
     queryFn: () => api.listNotebooks(projectId),
     enabled: !!projectId,
+    ...backgroundPolling(5000),
+  })
+}
+
+export function useNotebooksPaged(limit: number, offset: number) {
+  const projectId = useProjectId()
+  return useQuery({
+    queryKey: notebookKeys.listPaged(projectId, limit, offset),
+    queryFn: () => api.listNotebooksPaged(projectId, limit, offset),
+    enabled: !!projectId,
+    placeholderData: (prev) => prev,
     ...backgroundPolling(5000),
   })
 }
@@ -114,9 +127,20 @@ export function useNotebookVolumesPaged(limit: number, offset: number) {
 
 export function useVolumeFiles(volumeId: string, ext?: string) {
   const projectId = useProjectId()
+  const qc = useQueryClient()
+  const queryKey = notebookKeys.volumeFiles(projectId, volumeId)
   return useQuery({
-    queryKey: notebookKeys.volumeFiles(projectId, volumeId),
-    queryFn: () => api.listVolumeFiles(projectId, volumeId, ext),
+    queryKey,
+    queryFn: async () => {
+      const result = await api.listVolumeFiles(projectId, volumeId, ext)
+      // A transitioning volume (notebook starting/stopping) answers with no
+      // files; keep showing the last known list instead of flashing empty.
+      if (result.state === 'transitioning') {
+        const previous = qc.getQueryData<typeof result>(queryKey)
+        return { ...result, files: previous?.files ?? [] }
+      }
+      return result
+    },
     enabled: !!projectId && !!volumeId,
     refetchInterval: (query) =>
       query.state.data?.state === 'transitioning' ? 2000 : false,

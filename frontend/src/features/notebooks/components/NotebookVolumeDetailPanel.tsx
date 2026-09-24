@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import type { NotebookVolume } from '@/features/notebooks/types'
+import { fmtDate } from '@/lib/format'
 
 interface NotebookVolumeDetailPanelProps {
   volume: NotebookVolume
@@ -61,8 +62,8 @@ export function NotebookVolumeDetailPanel({ volume, busy, onAttach, onPurge }: N
             <span className="break-all font-mono text-xs text-muted-foreground">{volume.work_dir || '—'}</span>
           </PanelTemplate.Row>
           <PanelTemplate.Row label="Runtime">{volume.runtime_id || '—'}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Created">{new Date(volume.created_at).toLocaleString()}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Updated">{new Date(volume.updated_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Created">{fmtDate(volume.created_at)}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Updated">{fmtDate(volume.updated_at)}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>
     </PanelTemplate>

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import * as api from './api'
 import type { CreateAlertRuleRequest, PatchAlertRuleRequest } from './types'
 

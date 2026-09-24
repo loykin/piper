@@ -2,6 +2,7 @@ package k8sdriver
 
 import (
 	"context"
+	k8stesting "k8s.io/client-go/testing"
 	"sync"
 	"testing"
 	"time"
@@ -71,13 +72,31 @@ func expectNoReport(t *testing.T, reports chan statusReport, within time.Duratio
 	}
 }
 
-func TestNotebookWorkloadNameBoundedTo63Chars(t *testing.T) {
+func TestNotebookWorkloadNameLeavesRoomForControllerRevisionHash(t *testing.T) {
+	// The exact QA repro: the StatefulSet name fit in 63 chars, but the
+	// ControllerRevision name (StatefulSet name + "-" + 10-char hash) did not.
+	repro := notebookWorkloadName("qa-history-cascade-test", "qa-cascade-history-nb")
+	if len(repro)+11 > 63 {
+		t.Fatalf("name %q (%d chars) + revision hash suffix exceeds 63", repro, len(repro))
+	}
 	long := notebookWorkloadName(
 		"qa-history-cascade-test-with-a-very-long-project-identifier",
 		"qa-cascade-history-nb-with-a-very-long-notebook-name",
 	)
-	if len(long) > 63 {
-		t.Fatalf("notebookWorkloadName produced a %d-char name (limit 63): %q", len(long), long)
+	if len(long) > notebookWorkloadMaxLen {
+		t.Fatalf("notebookWorkloadName produced a %d-char name (limit %d): %q", len(long), notebookWorkloadMaxLen, long)
+	}
+}
+
+func TestNotebookWorkloadNameTruncationStaysUnique(t *testing.T) {
+	project := "qa-history-cascade-test-with-a-very-long-project-identifier"
+	a := notebookWorkloadName(project, "notebook-a")
+	b := notebookWorkloadName(project, "notebook-b")
+	if a == b {
+		t.Fatalf("distinct notebooks collided on workload name %q", a)
+	}
+	if short := notebookWorkloadName("proj", "nb"); short != "piper-nb-proj-nb" {
+		t.Fatalf("short name changed: %q", short)
 	}
 }
 
@@ -183,6 +202,52 @@ func TestStartCreatesStatefulSetAndService(t *testing.T) {
 	}
 	if _, err := client.CoreV1().Services("nb-ns").Get(context.Background(), name, metav1.GetOptions{}); err != nil {
 		t.Fatalf("get service: %v", err)
+	}
+}
+
+// Deleting a notebook must leave no workload objects behind (only its
+// volume): the Service is owned by the StatefulSet, and Remove deletes the
+// StatefulSet with background propagation.
+func TestRemoveDeletesWorkloadButKeepsVolume(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	d, _ := newTestDriver(t, client, time.Second)
+	ctx := context.Background()
+
+	vol := &notebook.NotebookVolume{ID: "vol-1", WorkDir: notebook.ContainerWorkDir}
+	if err := d.ProvisionVolume(ctx, vol, testSpec("proj", "nb")); err != nil {
+		t.Fatalf("ProvisionVolume: %v", err)
+	}
+	if _, err := d.Start(ctx, testSpec("proj", "nb"), vol, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	name := notebookWorkloadName("proj", "nb")
+	svc, err := client.CoreV1().Services("nb-ns").Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get service: %v", err)
+	}
+	if len(svc.OwnerReferences) != 1 || svc.OwnerReferences[0].Kind != "StatefulSet" || svc.OwnerReferences[0].Name != name {
+		t.Fatalf("service ownerReferences = %+v, want the StatefulSet", svc.OwnerReferences)
+	}
+
+	if err := d.Remove(ctx, &notebook.NotebookServer{ProjectID: "proj", Name: "nb"}); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := client.AppsV1().StatefulSets("nb-ns").Get(ctx, name, metav1.GetOptions{}); err == nil {
+		t.Fatal("statefulset still exists after Remove")
+	}
+	if _, err := client.CoreV1().PersistentVolumeClaims("nb-ns").Get(ctx, notebookPVCName("vol-1"), metav1.GetOptions{}); err != nil {
+		t.Fatalf("volume must survive Remove: %v", err)
+	}
+	for _, action := range client.Actions() {
+		if da, ok := action.(k8stesting.DeleteAction); ok && action.GetResource().Resource == "statefulsets" {
+			if p := da.GetDeleteOptions().PropagationPolicy; p == nil || *p != metav1.DeletePropagationBackground {
+				t.Fatalf("statefulset delete PropagationPolicy = %v, want Background", p)
+			}
+		}
+	}
+	// Removing an already-removed notebook is a no-op.
+	if err := d.Remove(ctx, &notebook.NotebookServer{ProjectID: "proj", Name: "nb"}); err != nil {
+		t.Fatalf("second Remove: %v", err)
 	}
 }
 

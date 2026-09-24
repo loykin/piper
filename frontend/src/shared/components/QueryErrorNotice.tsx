@@ -1,5 +1,6 @@
 import { Button } from '@loykin/designkit'
 import { ApiError } from '@/lib/api'
+import { warningNotice } from '@/shared/status'
 
 interface QueryErrorNoticeProps {
   message: string
@@ -27,11 +28,11 @@ export function QueryErrorNotice({ message, error, onRetry }: QueryErrorNoticePr
     <div
       className={
         degraded
-          ? 'mb-4 flex items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2'
+          ? `mb-4 flex items-center justify-between gap-3 px-3 py-2 ${warningNotice}`
           : 'mb-4 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2'
       }
     >
-      <p className={degraded ? 'text-sm text-amber-700 dark:text-amber-400' : 'text-sm text-destructive'}>
+      <p className={degraded ? 'text-sm' : 'text-sm text-destructive'}>
         {memberUnavailable
           ? 'Member disconnected — waiting to reconnect. No data has been lost.'
           : statsUnavailable

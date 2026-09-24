@@ -20,7 +20,7 @@ spec:
         type: command
         command: [sh, -c, "echo trial"]
 `
-  const created = await page.request.post(`${backend}${projectBase}/pipelines`, { data: { yaml } })
+  const created = await page.request.post(`${backend}${projectBase}/pipeline-templates`, { data: { yaml } })
   expect(created.ok()).toBeTruthy()
 
   await page.goto(`${uiBase}/experiments`)

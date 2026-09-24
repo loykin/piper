@@ -3,8 +3,7 @@ import type { MLflowIntegration, MLflowIntegrationDetail, MLflowIntegrationReque
 
 export async function listIntegrations(projectId: string, limit: number, offset: number) {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<MLflowIntegrationDetail[]>(`/mlflow-integrations?${params}`)
-  return { integrations: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<MLflowIntegrationDetail>(`/mlflow-integrations?${params}`)
 }
 export function getIntegration(projectId: string, id: string) { return projectApi(projectId).get<MLflowIntegrationDetail>(`/mlflow-integrations/${encodeURIComponent(id)}`) }
 export function createIntegration(projectId: string, value: MLflowIntegrationRequest) { return projectApi(projectId).post<MLflowIntegration>('/mlflow-integrations', value) }
@@ -12,6 +11,5 @@ export function updateIntegration(projectId: string, id: string, value: MLflowIn
 export function deleteIntegration(projectId: string, id: string) { return projectApi(projectId).delete(`/mlflow-integrations/${encodeURIComponent(id)}`) }
 export function testIntegration(projectId: string, id: string) { return projectApi(projectId).post<MLflowTestResult>(`/mlflow-integrations/${encodeURIComponent(id)}/test`) }
 export async function listRunLinks(projectId: string, runId: string) {
-  const data = await projectApi(projectId).get<MLflowRunLink[]>(`/runs/${encodeURIComponent(runId)}/mlflow-links`)
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<MLflowRunLink>(`/runs/${encodeURIComponent(runId)}/mlflow-links`)
 }

@@ -1,5 +1,8 @@
 // schedules feature — Schedule creation form component
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { Controller, useForm, useWatch } from 'react-hook-form'
+import { z } from 'zod'
 import { CronInput, toCronExpression, validateCronExpression, type CronValue } from '@loykin/cron-input'
 import { createShadcnAdapter } from '@loykin/cron-input/adapters/shadcn'
 import { FormActions, FormField } from '@loykin/designkit'
@@ -10,7 +13,8 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import { useCreateSchedule } from '../hooks'
-import { parseMaxRuns } from '../maxRuns'
+import { errorMessage } from '@/lib/format'
+import { maxRunsField, toMaxRuns } from '../maxRuns'
 
 // Built once at module scope — uiAdapter must be referentially stable, or the
 // adapted subtree remounts on every render (see @loykin/cron-input README).
@@ -52,6 +56,30 @@ const TYPE_OPTIONS: { type: ScheduleType; label: string; desc: string }[] = [
   { type: 'cron',      label: 'Cron',      desc: 'Run repeatedly on a cron schedule.' },
 ]
 
+const scheduleSchema = z.object({
+  name: z.string().trim().min(1, 'Pipeline name is required.'),
+  yaml: z.string().trim().min(1, 'Pipeline YAML is required.'),
+  type: z.enum(['immediate', 'once', 'cron']),
+  runAt: z.string(),
+  cron: z.custom<CronValue>(),
+  maxRuns: maxRunsField,
+}).superRefine((values, ctx) => {
+  if (values.type === 'once' && !toISO(values.runAt)) {
+    ctx.addIssue({ code: 'custom', path: ['runAt'], message: 'Run time is required for a one-time schedule.' })
+  }
+  if (values.type === 'cron' && values.cron.type === 'custom' && !validateCronExpression(values.cron.expression)) {
+    ctx.addIssue({ code: 'custom', path: ['cron'], message: 'Cron expression is invalid.' })
+  }
+})
+
+type ScheduleValues = z.infer<typeof scheduleSchema>
+
+function toISO(local: string): string {
+  if (!local) return ''
+  const d = new Date(local)
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString()
+}
+
 interface ScheduleFormProps {
   initialYaml?: string
   onCreated: (scheduleId: string) => void
@@ -60,146 +88,106 @@ interface ScheduleFormProps {
 
 export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormProps) {
   const { mutateAsync: createSchedule, isPending: submitting } = useCreateSchedule()
-
-  const [name, setName] = useState(() => {
-    if (initialYaml) {
-      const match = initialYaml.match(/^\s*name:\s*(.+)$/m)
-      return match?.[1]?.trim() ?? 'my-pipeline'
-    }
-    return 'my-pipeline'
+  const [submitError, setSubmitError] = useState('')
+  const { control, register, handleSubmit, formState: { errors } } = useForm<ScheduleValues>({
+    resolver: zodResolver(scheduleSchema),
+    defaultValues: {
+      name: initialYaml?.match(/^\s*name:\s*(.+)$/m)?.[1]?.trim() ?? 'my-pipeline',
+      yaml: initialYaml ?? EXAMPLE_YAML,
+      type: 'immediate',
+      runAt: '',
+      cron: DEFAULT_CRON_VALUE,
+      maxRuns: '',
+    },
   })
-  const [yaml, setYaml] = useState(initialYaml ?? EXAMPLE_YAML)
-  const [scheduleType, setScheduleType] = useState<ScheduleType>('immediate')
-  const [runAt, setRunAt] = useState('')
-  const [cronValue, setCronValue] = useState<CronValue>(DEFAULT_CRON_VALUE)
-  const [maxRuns, setMaxRuns] = useState('')
-  const [error, setError] = useState('')
+  const scheduleType = useWatch({ control, name: 'type' })
 
-  const runAtISO = useMemo(() => {
-    if (!runAt) return ''
-    const d = new Date(runAt)
-    return Number.isNaN(d.getTime()) ? '' : d.toISOString()
-  }, [runAt])
-
-  const cronExpr = useMemo(() => toCronExpression(cronValue), [cronValue])
-  const cronValid = cronValue.type !== 'custom' || validateCronExpression(cronValue.expression)
-
-  async function handleSubmit() {
-    setError('')
-    const trimmedName = name.trim()
-    const trimmedYaml = yaml.trim()
-
-    if (!trimmedName) { setError('Pipeline name is required.'); return }
-    if (!trimmedYaml) { setError('Pipeline YAML is required.'); return }
-    if (scheduleType === 'once' && !runAtISO) { setError('Run time is required for once type.'); return }
-    if (scheduleType === 'cron' && !cronValid) { setError('Cron expression is invalid.'); return }
-    const parsedMaxRuns = parseMaxRuns(maxRuns)
-    if (parsedMaxRuns == null) {
-      setError('Max runs must be a non-negative integer.')
-      return
-    }
-
+  async function submit(values: ScheduleValues) {
+    setSubmitError('')
     try {
-      const normalizedYaml = applyPipelineName(trimmedYaml, trimmedName)
       const result = await createSchedule({
-        name: trimmedName,
-        yaml: normalizedYaml,
-        type: scheduleType,
-        cron: scheduleType === 'cron' ? cronExpr : undefined,
-        run_at: scheduleType === 'once' ? runAtISO : undefined,
-        max_runs: parsedMaxRuns,
+        name: values.name,
+        yaml: applyPipelineName(values.yaml, values.name),
+        type: values.type,
+        cron: values.type === 'cron' ? toCronExpression(values.cron) : undefined,
+        run_at: values.type === 'once' ? toISO(values.runAt) : undefined,
+        max_runs: toMaxRuns(values.maxRuns),
       })
       onCreated(result.schedule_id)
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e))
+    } catch (cause) {
+      setSubmitError(errorMessage(cause))
     }
   }
 
   return (
-    <form
-      className="space-y-3"
-      onSubmit={(e) => {
-        e.preventDefault()
-        void handleSubmit()
-      }}
-    >
-      <FormField label="Pipeline Name" htmlFor="schedule-pipeline-name" helperText="Defaults to my-pipeline.">
-        <Input
-          id="schedule-pipeline-name"
-          className="h-8 text-sm"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
+    <form className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
+      <FormField label="Pipeline Name" htmlFor="schedule-pipeline-name" error={errors.name?.message} helperText="Defaults to my-pipeline.">
+        <Input id="schedule-pipeline-name" className="h-8 text-sm" aria-invalid={!!errors.name} {...register('name')} />
       </FormField>
 
-      <div className="space-y-1.5">
-        <Label className="text-xs">Trigger Type</Label>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {TYPE_OPTIONS.map(({ type, label, desc }) => (
-            <Button
-              key={type}
-              type="button"
-              variant={scheduleType === type ? 'default' : 'outline'}
-              onClick={() => setScheduleType(type)}
-              className="h-auto flex-col items-start gap-0 py-3 text-left"
-            >
-              <div className="font-semibold">{label}</div>
-              <div className="mt-0.5 text-xs opacity-70">{desc}</div>
-            </Button>
-          ))}
-        </div>
-      </div>
+      <Controller
+        name="type"
+        control={control}
+        render={({ field }) => (
+          <div className="space-y-1.5">
+            <Label className="text-xs">Trigger Type</Label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {TYPE_OPTIONS.map(({ type, label, desc }) => (
+                <Button
+                  key={type}
+                  type="button"
+                  variant={field.value === type ? 'default' : 'outline'}
+                  onClick={() => field.onChange(type)}
+                  className="h-auto flex-col items-start gap-0 py-3 text-left"
+                >
+                  <div className="font-semibold">{label}</div>
+                  <div className="mt-0.5 text-xs opacity-70">{desc}</div>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+      />
 
       {scheduleType === 'once' && (
-        <FormField label="Run At" htmlFor="schedule-run-at">
-          <Input
-            id="schedule-run-at"
-            type="datetime-local"
-            className="h-8 text-sm"
-            value={runAt}
-            onChange={(e) => setRunAt(e.target.value)}
-          />
+        <FormField label="Run At" htmlFor="schedule-run-at" error={errors.runAt?.message}>
+          <Input id="schedule-run-at" type="datetime-local" className="h-8 text-sm" aria-invalid={!!errors.runAt} {...register('runAt')} />
         </FormField>
       )}
 
       {scheduleType === 'cron' && (
-        <FormField
-          label="Cron Schedule"
-          htmlFor="schedule-cron"
-          error={!cronValid ? 'Cron expression is invalid.' : undefined}
-        >
-          <CronInput
-            value={cronValue}
-            onChange={setCronValue}
-            uiAdapter={cronInputShadcnAdapter}
+        <FormField label="Cron Schedule" htmlFor="schedule-cron" error={errors.cron?.message}>
+          <Controller
+            name="cron"
+            control={control}
+            render={({ field }) => (
+              <CronInput value={field.value} onChange={field.onChange} uiAdapter={cronInputShadcnAdapter} />
+            )}
           />
         </FormField>
       )}
 
-      <FormField label="Retention" htmlFor="schedule-max-runs" helperText="Completed run records to keep, not a limit on how many times this schedule fires. 0 keeps all of them.">
-        <Input
-          id="schedule-max-runs"
-          type="number"
-          min={0}
-          step={1}
-          className="h-8 text-sm"
-          value={maxRuns}
-          onChange={(e) => setMaxRuns(e.target.value)}
-          placeholder="0"
-        />
+      <FormField
+        label="Retention"
+        htmlFor="schedule-max-runs"
+        error={errors.maxRuns?.message}
+        helperText="Completed run records to keep, not a limit on how many times this schedule fires. Leave blank or 0 to keep all of them."
+      >
+        <Input id="schedule-max-runs" type="number" min={0} step={1} className="h-8 text-sm" aria-invalid={!!errors.maxRuns} {...register('maxRuns')} />
       </FormField>
 
-      <FormField label="Pipeline YAML" htmlFor="schedule-yaml">
-        <YamlMirror
-          className="bg-background"
-          rows={14}
-          value={yaml}
-          onChange={(e) => setYaml(e.target.value)}
+      <FormField label="Pipeline YAML" htmlFor="schedule-yaml" error={errors.yaml?.message}>
+        <Controller
+          name="yaml"
+          control={control}
+          render={({ field }) => (
+            <YamlMirror className="bg-background" rows={14} value={field.value} onChange={e => field.onChange(e.target.value)} />
+          )}
         />
       </FormField>
 
       <FormActions
-        status={error || undefined}
+        status={submitError || undefined}
         submitLabel={submitting ? 'Submitting…' : 'Create Schedule'}
         submitDisabled={submitting}
         onCancel={onCancel}

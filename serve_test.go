@@ -237,3 +237,20 @@ func TestPiperCollectorErrorDoesNotStickCache(t *testing.T) {
 		t.Fatalf("ListRunsAcrossProjects called %d times after recovery, want 2 (retried, not stuck)", got)
 	}
 }
+
+// Blob uploads get the 4 GiB body limit instead of the JSON-API default; a
+// route rename that silently drops a path from this list would cap uploads.
+func TestIsBlobRoute(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/store/*key": true,
+		"/api/projects/:project_id/storage/objects":      true,
+		"/projects/:project_id/storage/objects":          true,
+		"/api/projects/:project_id/storage/objects/*key": true,
+		"/api/projects/:project_id/runs":                 false,
+		"/api/projects/:project_id/credentials":          false,
+	} {
+		if got := isBlobRoute(path); got != want {
+			t.Errorf("isBlobRoute(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

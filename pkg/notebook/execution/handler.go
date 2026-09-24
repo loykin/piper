@@ -100,9 +100,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	// does not grant viewer any kernel-session visibility.
 	rg.GET("/notebooks/:name/contents", h.listContents)
 	rg.GET("/notebooks/:name/documents", h.getDocument)
-	rg.GET("/notebooks/:name/executions", h.listExecutions)
-	rg.GET("/notebooks/:name/executions/:id", h.getExecution)
+	// Executions are addressed by id alone; they are created under their
+	// notebook (POST /notebooks/:name/executions) and listed project-wide,
+	// optionally filtered with ?notebook=.
 	rg.GET("/notebook-executions", h.listProjectExecutions)
+	rg.GET("/notebook-executions/:id", h.getExecution)
 	rg.GET("/notebook-execution-policy", h.getPolicy)
 
 	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
@@ -120,11 +122,11 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	// Service.CancelExecution (checkOwnership), not by the route's role
 	// floor, the same split pattern kernel-session interrupt/restart/close
 	// already uses above.
-	member.POST("/notebooks/:name/executions/:id/cancel", h.cancelExecution)
+	member.POST("/notebook-executions/:id/cancel", h.cancelExecution)
 
 	admin := rg.Group("", project.RequireRole(security.ProjectRoleAdmin))
-	admin.POST("/notebooks/:name/executions/:id/approve", h.approveExecution)
-	admin.POST("/notebooks/:name/executions/:id/deny", h.denyExecution)
+	admin.POST("/notebook-executions/:id/approve", h.approveExecution)
+	admin.POST("/notebook-executions/:id/deny", h.denyExecution)
 	admin.PUT("/notebook-execution-policy", h.setPolicy)
 }
 
@@ -322,21 +324,6 @@ func (h *Handler) createExecution(c *gin.Context) {
 	c.JSON(status, NewNotebookExecutionResponse(exec))
 }
 
-func (h *Handler) listExecutions(c *gin.Context) {
-	limit, offset := httpx.ParseLimitOffset(c)
-	list, total, err := h.svc.ListExecutions(c.Request.Context(), currentProjectID(c), c.Param("name"), limit, offset)
-	if err != nil {
-		writeExecutionError(c, err)
-		return
-	}
-	if limit > 0 {
-		httpx.SetTotalCountHeader(c, limit, total)
-	}
-	responses := NewNotebookExecutionResponses(list)
-	h.attachActorNames(c.Request.Context(), responses)
-	c.JSON(http.StatusOK, responses)
-}
-
 func (h *Handler) listProjectExecutions(c *gin.Context) {
 	limit, offset := httpx.ParseLimitOffset(c)
 	list, total, err := h.svc.ListExecutions(c.Request.Context(), currentProjectID(c), strings.TrimSpace(c.Query("notebook")), limit, offset)
@@ -353,7 +340,7 @@ func (h *Handler) listProjectExecutions(c *gin.Context) {
 }
 
 func (h *Handler) getExecution(c *gin.Context) {
-	exec, err := h.svc.GetExecutionForNotebook(c.Request.Context(), currentProjectID(c), c.Param("name"), c.Param("id"))
+	exec, err := h.svc.GetExecution(c.Request.Context(), currentProjectID(c), c.Param("id"))
 	if err != nil {
 		writeExecutionError(c, err)
 		return
@@ -364,7 +351,11 @@ func (h *Handler) getExecution(c *gin.Context) {
 }
 
 func (h *Handler) cancelExecution(c *gin.Context) {
-	if err := h.svc.CancelExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+	notebookName, ok := h.executionNotebook(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.CancelExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), notebookName, c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
 	}
@@ -372,7 +363,11 @@ func (h *Handler) cancelExecution(c *gin.Context) {
 }
 
 func (h *Handler) approveExecution(c *gin.Context) {
-	if err := h.svc.ApproveExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+	notebookName, ok := h.executionNotebook(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.ApproveExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), notebookName, c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
 	}
@@ -380,11 +375,26 @@ func (h *Handler) approveExecution(c *gin.Context) {
 }
 
 func (h *Handler) denyExecution(c *gin.Context) {
-	if err := h.svc.DenyExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), c.Param("id")); err != nil {
+	notebookName, ok := h.executionNotebook(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DenyExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), notebookName, c.Param("id")); err != nil {
 		writeExecutionError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// executionNotebook resolves the notebook an id-addressed execution belongs
+// to, for the Service methods that verify the (notebook, execution) pair.
+func (h *Handler) executionNotebook(c *gin.Context) (string, bool) {
+	exec, err := h.svc.GetExecution(c.Request.Context(), currentProjectID(c), c.Param("id"))
+	if err != nil {
+		writeExecutionError(c, err)
+		return "", false
+	}
+	return exec.NotebookName, true
 }
 
 // --- Policy ---------------------------------------------------------------

@@ -4,15 +4,19 @@ export type {
 } from './types'
 
 import type { NotebookServer, NotebookVolume, NotebookHistory } from './types'
-import { projectApi } from '@/lib/api'
+import { projectApi, type Paged } from '@/lib/api'
 
 export async function listNotebooks(projectId: string): Promise<NotebookServer[]> {
-  const data = await projectApi(projectId).get<NotebookServer[]>('/notebooks')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<NotebookServer>('/notebooks')
+}
+
+export async function listNotebooksPaged(projectId: string, limit: number, offset: number): Promise<Paged<NotebookServer>> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  return projectApi(projectId).getPaged<NotebookServer>(`/notebooks?${params.toString()}`)
 }
 
 export async function getNotebook(projectId: string, name: string): Promise<NotebookServer> {
-  return projectApi(projectId).get<NotebookServer>(`/notebooks/${name}`)
+  return projectApi(projectId).get<NotebookServer>(`/notebooks/${encodeURIComponent(name)}`)
 }
 
 export async function createNotebook(
@@ -27,39 +31,36 @@ export async function createNotebook(
 }
 
 export async function stopNotebook(projectId: string, name: string): Promise<void> {
-  return projectApi(projectId).post(`/notebooks/${name}/stop`)
+  return projectApi(projectId).post(`/notebooks/${encodeURIComponent(name)}/stop`)
 }
 
 export async function startNotebook(projectId: string, name: string): Promise<NotebookServer> {
-  return projectApi(projectId).post<NotebookServer>(`/notebooks/${name}/start`)
+  return projectApi(projectId).post<NotebookServer>(`/notebooks/${encodeURIComponent(name)}/start`)
 }
 
 export async function deleteNotebook(projectId: string, name: string): Promise<void> {
-  return projectApi(projectId).delete(`/notebooks/${name}`)
+  return projectApi(projectId).delete(`/notebooks/${encodeURIComponent(name)}`)
 }
 
 /** Like `listNotebooks`, but for a `limit`-paginated page — see `listServingPaged`. */
-export async function listNotebookHistoryPaged(projectId: string, limit: number, offset: number): Promise<{ history: NotebookHistory[]; total: number }> {
+export async function listNotebookHistoryPaged(projectId: string, limit: number, offset: number): Promise<Paged<NotebookHistory>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<NotebookHistory[]>(`/notebooks/history?${params.toString()}`)
-  return { history: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<NotebookHistory>(`/notebooks/history?${params.toString()}`)
 }
 
 /** Browser proxy URL for opening a notebook in the browser. */
 export function notebookProxyURL(projectId: string, name: string): string {
-  return `/projects/${encodeURIComponent(projectId)}/notebooks/${name}/proxy/lab/`
+  return `/projects/${encodeURIComponent(projectId)}/notebooks/${encodeURIComponent(name)}/proxy/lab/`
 }
 
 export async function listNotebookVolumes(projectId: string): Promise<NotebookVolume[]> {
-  const data = await projectApi(projectId).get<NotebookVolume[]>('/notebook-volumes')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<NotebookVolume>('/notebook-volumes')
 }
 
 /** Like `listNotebookVolumes`, but for a `limit`-paginated page — see `listServingPaged`. */
-export async function listNotebookVolumesPaged(projectId: string, limit: number, offset: number): Promise<{ volumes: NotebookVolume[]; total: number }> {
+export async function listNotebookVolumesPaged(projectId: string, limit: number, offset: number): Promise<Paged<NotebookVolume>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<NotebookVolume[]>(`/notebook-volumes?${params.toString()}`)
-  return { volumes: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<NotebookVolume>(`/notebook-volumes?${params.toString()}`)
 }
 
 export type VolumeFilesResult = {
@@ -75,8 +76,8 @@ export async function listVolumeFiles(
   ext?: string,
 ): Promise<VolumeFilesResult> {
   const path = ext
-    ? `/notebook-volumes/${volumeId}/files?ext=${encodeURIComponent(ext)}`
-    : `/notebook-volumes/${volumeId}/files`
+    ? `/notebook-volumes/${encodeURIComponent(volumeId)}/files?ext=${encodeURIComponent(ext)}`
+    : `/notebook-volumes/${encodeURIComponent(volumeId)}/files`
 
   const url = `/api/projects/${encodeURIComponent(projectId)}${path}`
   const res = await fetch(url)
@@ -99,5 +100,5 @@ export async function listVolumeFiles(
 }
 
 export async function purgeNotebookVolume(projectId: string, id: string): Promise<void> {
-  return projectApi(projectId).delete(`/notebook-volumes/${id}`)
+  return projectApi(projectId).delete(`/notebook-volumes/${encodeURIComponent(id)}`)
 }

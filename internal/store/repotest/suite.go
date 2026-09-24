@@ -700,7 +700,10 @@ func StepRepoSuite(t *testing.T, repo run.StepRepository, projectID string) {
 		// doesn't happen to match the host's local zone. Constructed
 		// directly (rather than via time.Parse) so the repro doesn't depend
 		// on — and can't accidentally match — the test host's local TZ.
-		started := time.Date(2026, 8, 1, 18, 39, 0, 123456789, time.FixedZone("", 5*3600+30*60))
+		// Microsecond fraction: Postgres TIMESTAMPTZ stores microseconds, and
+		// this case is about the instant surviving a non-UTC zone, not about
+		// sub-microsecond precision.
+		started := time.Date(2026, 8, 1, 18, 39, 0, 123456000, time.FixedZone("", 5*3600+30*60))
 		ended := started.Add(90 * time.Second)
 		step := &run.Step{
 			ProjectID: projectID,

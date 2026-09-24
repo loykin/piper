@@ -9,7 +9,7 @@ export async function openViewer(
   req: OpenViewerRequest,
 ): Promise<Viewer> {
   return projectApi(projectId).post<Viewer>(
-    `/runs/${runId}/artifacts/${step}/${artifact}/view`,
+    `/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(step)}/${encodeURIComponent(artifact)}/view`,
     req,
   )
 }
@@ -19,9 +19,9 @@ export async function listViewers(projectId: string): Promise<Viewer[]> {
 }
 
 export async function getViewer(projectId: string, id: string): Promise<Viewer> {
-  return projectApi(projectId).get<Viewer>(`/viewers/${id}`)
+  return projectApi(projectId).get<Viewer>(`/viewers/${encodeURIComponent(id)}`)
 }
 
 export async function stopViewer(projectId: string, id: string): Promise<void> {
-  await projectApi(projectId).post(`/viewers/${id}/stop`, {})
+  await projectApi(projectId).post(`/viewers/${encodeURIComponent(id)}/stop`, {})
 }

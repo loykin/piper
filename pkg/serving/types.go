@@ -2,6 +2,7 @@ package serving
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/loykin/piper/pkg/manifest"
@@ -14,12 +15,20 @@ type ModelService struct {
 	Spec              ModelServiceSpec    `yaml:"spec"`
 }
 
+// reservedServiceNames collide with fixed sibling routes under /services
+// (history listing, predict proxy — gin prefers the static segment), so a
+// service with one of these names could never be fetched or deleted by name.
+var reservedServiceNames = []string{"history", "predict"}
+
 func (s ModelService) Validate() error {
 	if err := manifest.ValidateTypeMeta(s.TypeMeta, "ModelService"); err != nil {
 		return err
 	}
 	if strings.TrimSpace(s.Metadata.Name) == "" {
 		return fmt.Errorf("metadata.name is required")
+	}
+	if slices.Contains(reservedServiceNames, s.Metadata.Name) {
+		return fmt.Errorf("metadata.name %q is reserved", s.Metadata.Name)
 	}
 	if (s.Spec.Model.FromArtifact == nil) == (strings.TrimSpace(s.Spec.Model.FromURI) == "") {
 		return fmt.Errorf("exactly one of model.from_artifact or model.from_uri is required")

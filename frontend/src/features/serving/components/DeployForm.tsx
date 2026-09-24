@@ -12,7 +12,7 @@ import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
-import { EnvVarEditor } from '@/shared/components/EnvVarEditor'
+import { EnvVarEditor } from '@/features/credentials/components/EnvVarEditor'
 import { emptyEnvVarDraft, type EnvVarDraft } from '@/shared/env'
 import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
 import { useRuns } from '@/features/runs/hooks'
@@ -20,8 +20,9 @@ import type { Run } from '@/features/runs/api'
 import { listArtifacts, type StepArtifacts } from '@/features/runs/api'
 import { useCreateService } from '../hooks'
 import { useSystemSettings } from '@/features/system/hooks'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { buildYAML, DEFAULT_FORM, RUNTIME_TEMPLATES, type FormState } from '../editor'
+import { errorMessage, fmtDay } from '@/lib/format'
 
 interface DeployFormProps {
   onClose: () => void
@@ -134,7 +135,7 @@ function ModelSourceSection({ form, errors, pipelines, pipelineRuns, steps, arti
               { value: 'latest', label: 'latest' },
               ...pipelineRuns.map(r => ({
                 value: r.id,
-                label: `${r.id.slice(0, 20)}… ${r.started_at ? new Date(r.started_at).toLocaleDateString() : ''}`,
+                label: `${r.id.slice(0, 20)}… ${r.started_at ? fmtDay(r.started_at) : ''}`,
               })),
             ]}
             value={form.run}
@@ -146,7 +147,7 @@ function ModelSourceSection({ form, errors, pipelines, pipelineRuns, steps, arti
               <SelectItem value="latest">latest</SelectItem>
               {pipelineRuns.map(r => (
                 <SelectItem key={r.id} value={r.id}>
-                  {r.id.slice(0, 20)}… {r.started_at ? new Date(r.started_at).toLocaleDateString() : ''}
+                  {r.id.slice(0, 20)}… {r.started_at ? fmtDay(r.started_at) : ''}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -471,7 +472,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
       onDeployed()
       onClose()
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorMessage(e))
     }
   }
 

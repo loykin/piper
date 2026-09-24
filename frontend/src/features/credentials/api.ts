@@ -8,7 +8,7 @@ export type {
   TestCredentialResult,
 } from './types'
 
-import { api, projectApi } from '@/lib/api'
+import { api, projectApi, type Paged } from '@/lib/api'
 import type {
   Credential,
   CreateCredentialRequest,
@@ -19,15 +19,17 @@ import type {
 } from './types'
 
 export async function listCredentials(projectId: string): Promise<Credential[]> {
-  const data = await projectApi(projectId).get<Credential[]>('/credentials')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<Credential>('/credentials')
 }
 
 /** Like `listCredentials`, but for a `limit`-paginated page — see `listServingPaged`. */
-export async function listCredentialsPaged(projectId: string, limit: number, offset: number): Promise<{ credentials: Credential[]; total: number }> {
+export async function listCredentialsPaged(projectId: string, limit: number, offset: number): Promise<Paged<Credential>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<Credential[]>(`/credentials?${params.toString()}`)
-  return { credentials: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<Credential>(`/credentials?${params.toString()}`)
+}
+
+export async function getCredential(projectId: string, name: string): Promise<Credential> {
+  return projectApi(projectId).get<Credential>(`/credentials/${encodeURIComponent(name)}`)
 }
 
 export async function createCredential(projectId: string, req: CreateCredentialRequest): Promise<Credential> {
@@ -57,8 +59,7 @@ export async function deleteCredential(projectId: string, name: string): Promise
 const SYSTEM_BASE = '/api/system'
 
 export async function listSystemCredentials(): Promise<Credential[]> {
-  const data = await api.get<Credential[]>(`${SYSTEM_BASE}/credentials`)
-  return Array.isArray(data) ? data : []
+  return api.getList<Credential>(`${SYSTEM_BASE}/credentials`)
 }
 
 export async function createSystemCredential(req: CreateCredentialRequest): Promise<Credential> {

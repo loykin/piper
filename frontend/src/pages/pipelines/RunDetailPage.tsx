@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link, useNavigate } from '@/lib/router'
-import { useProjectId } from '@/lib/projectContext'
+import { useParams, useNavigate } from '@/lib/router'
+import { useProjectId } from '@/features/projects/context'
 import { RotateCcw, RefreshCw, XCircle } from 'lucide-react'
-import { DetailBodyTemplate } from '@loykin/designkit'
+import { DetailBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import { useRun, useRunSteps, useCancelRun, useRerunRun, useRetryStep, useStepArtifacts } from '@/features/runs/hooks'
 import StatusBadge from '@/shared/components/StatusBadge'
-import RunDAG from '@/shared/components/RunDAG'
+import RunDAG from '@/features/runs/components/RunDAG'
 import { StepList } from '@/features/runs/components/StepList'
 import { LogViewer } from '@/features/runs/components/LogViewer'
 import { ArtifactPanel } from '@/features/runs/components/ArtifactPanel'
 import { MLflowRunLinks } from '@/features/mlflow/components/MLflowRunLinks'
 import { RunActionConfirmDialog, type RunConfirmVerb } from '@/features/runs/components/RunActionConfirmDialog'
 import { useConfirmAction } from '@/shared/hooks/useConfirmAction'
+import { toneAction } from '@/shared/status'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -39,7 +41,7 @@ export default function RunDetailPage() {
   if (isError || (!isLoading && !run)) {
     return (
       <DetailBodyTemplate
-        eyebrow={<Link to={`/projects/${projectId}/history`} className="hover:text-foreground transition-colors">← History</Link>}
+        topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Run History', to: `/projects/${projectId}/history` }, id ?? '']} />} />}
         title="Run not found"
       >
         <DetailBodyTemplate.Section>
@@ -53,7 +55,7 @@ export default function RunDetailPage() {
 
   if (isLoading || !run) {
     return (
-      <DetailBodyTemplate title="Loading…">
+      <DetailBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Run History', to: `/projects/${projectId}/history` }, id ?? '']} />} />} title="Loading…">
         <DetailBodyTemplate.Section>
           <p className="text-sm text-muted-foreground">Loading…</p>
         </DetailBodyTemplate.Section>
@@ -64,7 +66,7 @@ export default function RunDetailPage() {
   return (
     <>
     <DetailBodyTemplate
-      eyebrow={<Link to={`/projects/${projectId}/history`} className="hover:text-foreground transition-colors">← History</Link>}
+      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Run History', to: `/projects/${projectId}/history` }, id ?? '']} />} />}
       title={<span className="font-mono">{run.id}</span>}
       status={<StatusBadge status={run.status} />}
       actions={
@@ -72,15 +74,15 @@ export default function RunDetailPage() {
           <IconButton icon={<XCircle />} label="Cancel Run"
             disabled={run.status !== 'running' && run.status !== 'scheduled'}
             onClick={() => requestConfirm('cancel')}
-            className="text-orange-400 hover:bg-orange-950" />
+            className={toneAction.attention} />
           <IconButton icon={<RotateCcw />} label="Rerun"
             disabled={run.status === 'running' || run.status === 'scheduled'}
             onClick={() => rerunRun(run.id, { onSuccess: (data) => navigate(`/projects/${projectId}/runs/${data.run_id}`) })}
-            className="text-indigo-400 hover:bg-indigo-950" />
+            className={toneAction.accent} />
           <IconButton icon={<RefreshCw />} label="Retry Failed"
             disabled={run.status !== 'failed'}
             onClick={() => rerunRun(run.id, { onSuccess: (data) => navigate(`/projects/${projectId}/runs/${data.run_id}`) })}
-            className="text-yellow-400 hover:bg-yellow-950" />
+            className={toneAction.warning} />
         </div>
       }
     >
@@ -123,7 +125,7 @@ export default function RunDetailPage() {
     <RunActionConfirmDialog
       runId={run.id}
       action={confirmAction}
-      onOpenChange={open => { if (!open) cancelConfirm() }}
+      onDismiss={cancelConfirm}
       cancelling={cancellingRun}
       onConfirmCancel={() => cancelRun(run.id)}
     />

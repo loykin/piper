@@ -63,7 +63,7 @@ func TestRemoteProjectPipelineAPIWritesOnlyMemberRepository(t *testing.T) {
 	}
 	router := home.newRouterWithFederation(nil, nil, nil, NewLocalMemberClient(member), refFor, nil, "")
 	body := `{"yaml":"apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: member-owned\nspec:\n  steps:\n    - name: hello\n      run:\n        command: [\\\"echo\\\", \\\"hello\\\"]\n"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipeline-templates", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "pipeline-submit-1")
 	rec := httptest.NewRecorder()
@@ -71,7 +71,7 @@ func TestRemoteProjectPipelineAPIWritesOnlyMemberRepository(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST status = %d, want 201: %s", rec.Code, rec.Body.String())
 	}
-	retryReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(body))
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipeline-templates", strings.NewReader(body))
 	retryReq.Header.Set("Content-Type", "application/json")
 	retryReq.Header.Set("Idempotency-Key", "pipeline-submit-1")
 	retryRec := httptest.NewRecorder()
@@ -79,7 +79,7 @@ func TestRemoteProjectPipelineAPIWritesOnlyMemberRepository(t *testing.T) {
 	if retryRec.Code != http.StatusCreated || retryRec.Body.String() != rec.Body.String() {
 		t.Fatalf("idempotent retry status=%d body=%s, first=%s", retryRec.Code, retryRec.Body.String(), rec.Body.String())
 	}
-	conflictReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(strings.Replace(body, "member-owned", "different", 1)))
+	conflictReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipeline-templates", strings.NewReader(strings.Replace(body, "member-owned", "different", 1)))
 	conflictReq.Header.Set("Content-Type", "application/json")
 	conflictReq.Header.Set("Idempotency-Key", "pipeline-submit-1")
 	conflictRec := httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestRemoteProjectPipelineAPIWritesOnlyMemberRepository(t *testing.T) {
 		t.Fatalf("template leaked into Home repository: %+v", homeTemplates)
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/pipelines", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/pipeline-templates", nil)
 	listRec := httptest.NewRecorder()
 	router.ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), "member-owned") {
@@ -145,7 +145,7 @@ func TestMemberProjectRouterRechecksDelegatedMutationRole(t *testing.T) {
 		project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: "project-1"},
 		projectclient.Request{
 			Method: http.MethodPost,
-			Path:   "/pipelines",
+			Path:   "/pipeline-templates",
 			Header: http.Header{"Content-Type": []string{"application/json"}},
 			Body:   []byte(`{"yaml":"metadata:\n  name: forbidden\nspec:\n  steps: []\n"}`),
 		},
@@ -204,7 +204,7 @@ func TestRemoteStorageRoutesUseProjectHTTPStream(t *testing.T) {
 	// Storage object download must go through the streaming relay, not the
 	// buffered one — this is the route that used to fully buffer arbitrary-size
 	// blobs in memory on both the request and response side.
-	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/object?key=model.bin", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/objects/model.bin", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if !combo.streamCalled || combo.doCalled {
@@ -227,7 +227,7 @@ func TestRemoteStorageRoutesUseProjectHTTPStream(t *testing.T) {
 	if err := mw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	uploadReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/storage/object", uploadBody)
+	uploadReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/storage/objects", uploadBody)
 	uploadReq.Header.Set("Content-Type", mw.FormDataContentType())
 	uploadRec := httptest.NewRecorder()
 	router.ServeHTTP(uploadRec, uploadReq)
@@ -238,15 +238,15 @@ func TestRemoteStorageRoutesUseProjectHTTPStream(t *testing.T) {
 	// A non-storage mutation (template submission) must still go through the
 	// buffered, idempotency-key-aware relay — no regression from the storage split.
 	*combo = comboProjectClient{}
-	pipelineReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines", strings.NewReader(`{"yaml":"metadata:\n  name: x\nspec:\n  steps: []\n"}`))
+	pipelineReq := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipeline-templates", strings.NewReader(`{"yaml":"metadata:\n  name: x\nspec:\n  steps: []\n"}`))
 	pipelineReq.Header.Set("Content-Type", "application/json")
 	pipelineRec := httptest.NewRecorder()
 	router.ServeHTTP(pipelineRec, pipelineReq)
 	if !combo.doCalled || combo.streamCalled {
 		t.Fatalf("pipelines POST: doCalled=%v streamCalled=%v, want buffered only", combo.doCalled, combo.streamCalled)
 	}
-	if combo.doPath != "/pipelines" {
-		t.Fatalf("pipelines POST relayed path = %q, want /pipelines", combo.doPath)
+	if combo.doPath != "/pipeline-templates" {
+		t.Fatalf("pipelines POST relayed path = %q, want /pipeline-templates", combo.doPath)
 	}
 }
 

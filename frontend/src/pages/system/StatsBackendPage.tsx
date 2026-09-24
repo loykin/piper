@@ -6,9 +6,11 @@
 // system-level page means a degraded stats backend can actually be noticed
 // rather than discovered days later by accident.
 import { Badge } from '@/components/ui/badge'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { useStatsCapabilities } from '@/features/runs/hooks'
 import type { StatsCapabilities } from '@/features/runs/types'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 function backendLabel(kind: string): string {
   switch (kind) {
@@ -39,7 +41,7 @@ export default function StatsBackendPage() {
   const stats = query.data
 
   return (
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', 'Stats Backend']} />} />}
       title="Stats Backend"
       status={query.isSuccess && <Badge variant={statusVariant(stats)}>{statusLabel(stats)}</Badge>}
     >
@@ -53,7 +55,7 @@ export default function StatsBackendPage() {
         {query.isError && (
           <p className="text-sm text-destructive">
             Couldn&apos;t load stats backend status:{' '}
-            {query.error instanceof Error ? query.error.message : String(query.error)}
+            {errorMessage(query.error)}
           </p>
         )}
 

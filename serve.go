@@ -44,12 +44,15 @@ const maxBlobRequestBodyBytes int64 = 4 << 30 // 4 GiB
 // isBlobRoute reports whether fullPath is one of the artifact-transfer routes
 // that must use maxBlobRequestBodyBytes instead of the JSON-API default.
 // Matched by suffix because the same handlers are mounted under different
-// prefixes: "/store/*key" on the main engine, and ".../storage/object" both
-// on the main engine (behind /api/projects/:project_id) and on the Member
-// tunnel's own router (behind /projects/:project_id, no /api prefix).
+// prefixes: "/store/*key" on the main engine, and ".../storage/objects"
+// (upload) both on the main engine (behind /api/projects/:project_id) and on
+// the Member tunnel's own router (behind /projects/:project_id, no /api
+// prefix). The object download/delete route "…/storage/objects/*key" carries
+// no body but matches too, harmlessly.
 func isBlobRoute(fullPath string) bool {
 	return strings.HasPrefix(fullPath, "/store/") ||
-		strings.HasSuffix(fullPath, "/storage/object")
+		strings.HasSuffix(fullPath, "/storage/objects") ||
+		strings.HasSuffix(fullPath, "/storage/objects/*key")
 }
 
 var (
@@ -245,7 +248,7 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 	})
 	projectHandler.RegisterRoutes(userAPI)
 	if homeID != "" && p.repos.Federation != nil {
-		federation.NewHandler(p.repos.Federation, homeID, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI)
+		federation.NewHandler(p.repos.Federation, homeID, p.cfg.Auth.Authorizer).RegisterRoutes(userAPI.Group("/system"))
 	}
 	projectAPI := userAPI.Group("/projects/:project_id", project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer))
 	// System-scoped credentials (e.g. the artifact-storage s3 credential).
@@ -718,11 +721,6 @@ func (p *Piper) RerunRun(ctx context.Context, runID string, failedOnly bool) (st
 // RetryStep retries a single failed step within a run.
 func (p *Piper) RetryStep(ctx context.Context, runID, stepName string) (string, error) {
 	return p.runs.RetryStep(ctx, runID, stepName)
-}
-
-// DeleteRun deletes a run and its artifacts.
-func (p *Piper) DeleteRun(ctx context.Context, runID string) error {
-	return p.runs.DeleteRunWithArtifacts(ctx, runID)
 }
 
 // BackfillSchedule creates runs for every cron tick a schedule would have

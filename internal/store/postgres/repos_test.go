@@ -13,6 +13,7 @@ import (
 
 	"github.com/loykin/piper/internal/store"
 	"github.com/loykin/piper/internal/store/repotest"
+	"github.com/loykin/piper/pkg/integration/mlflow"
 	"github.com/loykin/piper/pkg/project"
 )
 
@@ -154,4 +155,33 @@ func TestNotebookExecutionRepo_Postgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	repotest.NotebookExecutionRepoSuite(t, repos.NotebookExecution, projectID)
+}
+
+// A project whose MLflow integration has outbox events must still be
+// deletable: migration 00048 makes the outbox FK cascade. Run against real
+// Postgres because the migration relies on the implicit constraint name.
+func TestProjectDeleteWithOutboxEvents_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+
+	const projectID = "doomed"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	integration := &mlflow.MLflowIntegration{
+		ID: "int-1", ProjectID: projectID, Name: "default",
+		TrackingURI: "https://mlflow.example.com", CredentialRef: "mlflow-cred",
+		Enabled: true, Default: true, ExportPipelines: true,
+		ExperimentTemplate: mlflow.DefaultExperimentTemplate, ArtifactMode: string(mlflow.ArtifactModeReference),
+	}
+	if err := repos.Mlflow.CreateIntegration(ctx, integration); err != nil {
+		t.Fatalf("CreateIntegration: %v", err)
+	}
+	if err := mlflow.EnqueuePipelineRunCreated(ctx, repos.Mlflow, repos.Outbox, projectID, "run-1",
+		nil, "train", 1, "", "alice", "baremetal", "/api/projects/"+projectID+"/runs/run-1", time.Now()); err != nil {
+		t.Fatalf("EnqueuePipelineRunCreated: %v", err)
+	}
+	if err := repos.Project.Delete(ctx, projectID); err != nil {
+		t.Fatalf("project delete blocked by outbox events: %v", err)
+	}
 }

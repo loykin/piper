@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { backgroundPollingNotifications } from '@/lib/query'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import {
   approveNotebookExecution, cancelNotebookExecution, denyNotebookExecution,
   getExecutionPolicy, getNotebookExecution, listNotebookExecutions, updateExecutionPolicy,
@@ -24,12 +24,12 @@ const TERMINAL_STATUSES: NotebookExecutionStatus[] = ['succeeded', 'failed', 'ti
  * which is a prefix of this query's key too, so an admin's own approval
  * refetches this panel immediately instead of waiting for the next poll tick.
  */
-export function useExecution(notebookName: string, id: string, initial?: NotebookExecution) {
+export function useExecution(id: string, initial?: NotebookExecution) {
   const projectId = useProjectId()
   return useQuery({
     queryKey: notebookExecutionKeys.one(projectId, id),
-    queryFn: () => getNotebookExecution(projectId, notebookName, id),
-    enabled: !!projectId && !!notebookName && !!id,
+    queryFn: () => getNotebookExecution(projectId, id),
+    enabled: !!projectId && !!id,
     initialData: initial,
     refetchInterval: query => (query.state.data && TERMINAL_STATUSES.includes(query.state.data.status) ? false : 2000),
     ...backgroundPollingNotifications,
@@ -43,7 +43,7 @@ export function useNotebookExecutions(limit: number, offset: number, notebook?: 
     queryFn: () => listNotebookExecutions(projectId, limit, offset, notebook),
     enabled: !!projectId,
     placeholderData: previous => previous,
-    refetchInterval: query => query.state.data?.executions.some(item => ['queued', 'running', 'cancelling'].includes(item.status)) ? 2000 : false,
+    refetchInterval: query => query.state.data?.items.some(item => ['queued', 'running', 'cancelling'].includes(item.status)) ? 2000 : false,
     ...backgroundPollingNotifications,
   })
 }

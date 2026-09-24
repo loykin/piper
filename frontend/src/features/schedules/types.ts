@@ -5,7 +5,6 @@ export type { Run }
 export interface Schedule {
   id: string
   name: string
-  owner_id?: string
   pipeline_yaml: string
   template_version_id?: string
   schedule_type: 'immediate' | 'once' | 'cron'
@@ -25,6 +24,13 @@ export interface CreateScheduleOptions {
   cron?: string
   run_at?: string
   max_runs?: number
-  owner_id?: string
+  params?: Record<string, unknown>
+}
+
+/** Body of POST /pipeline-templates/:id/deploy — a cron schedule bound to one template version. */
+export interface DeployTemplateRequest {
+  cron: string
+  enabled?: boolean
+  max_runs?: number
   params?: Record<string, unknown>
 }

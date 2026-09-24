@@ -79,7 +79,7 @@ func (r *fakeRepo) GetByVolumeID(_ context.Context, _, volumeID string) (*Notebo
 	return nil, nil
 }
 
-func (r *fakeRepo) List(_ context.Context, _ string) ([]*NotebookServer, error) {
+func (r *fakeRepo) List(_ context.Context, _ string, _, _ int) ([]*NotebookServer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]*NotebookServer, 0, len(r.servers))
@@ -815,6 +815,38 @@ func TestManager_Delete_RunningServerCallsStop(t *testing.T) {
 	}
 }
 
+// A failed or still-starting K8s notebook keeps a crash-looping Pod (and a
+// pinned PVC) until its StatefulSet is scaled down, so Delete must stop it
+// too — a live QA pass found project deletion leaving exactly that behind.
+func TestManager_Delete_NonRunningServerCallsStop(t *testing.T) {
+	for _, status := range []string{StatusFailed, StatusStarting, StatusProvisioning} {
+		t.Run(status, func(t *testing.T) {
+			repo := newFakeRepo()
+			drv := newFakeDriver()
+			m := New(repo, newFakeVols(), drv)
+			ctx := context.Background()
+			_ = repo.Create(ctx, &NotebookServer{Name: "nb", Status: status})
+
+			if err := m.Delete(ctx, "project-a", "nb"); err != nil {
+				t.Fatalf("Delete() error: %v", err)
+			}
+			select {
+			case <-drv.stopCalled:
+			case <-time.After(time.Second):
+				t.Fatalf("driver.Stop not called for a %s notebook", status)
+			}
+			history := repo.historySnapshot()
+			want := StatusStopped
+			if status == StatusFailed {
+				want = StatusFailed
+			}
+			if len(history) != 1 || history[0].Status != want {
+				t.Fatalf("archived status = %+v, want %q", history, want)
+			}
+		})
+	}
+}
+
 // TestManager_Delete_ArchivesStoppedNotRunning is a regression test for AM:
 // deleting a running notebook used to archive the pre-stop "running" status
 // as the history row's Final Status forever, since repo.Delete re-reads
@@ -1024,3 +1056,10 @@ func TestManager_UpdateStatus_PartialUpdate(t *testing.T) {
 		t.Errorf("Token was overwritten: %q", nb.Token)
 	}
 }
+
+func (r *fakeRepo) Count(ctx context.Context, projectID string) (int, error) {
+	items, err := r.List(ctx, projectID, 0, 0)
+	return len(items), err
+}
+
+func (d *fakeDriver) Remove(context.Context, *NotebookServer) error { return nil }

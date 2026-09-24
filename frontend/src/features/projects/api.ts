@@ -4,8 +4,7 @@ import type { Project, CreateProjectRequest } from './types'
 import { api } from '@/lib/api'
 
 export async function listProjects(): Promise<Project[]> {
-  const data = await api.get<Project[]>('/api/projects')
-  return Array.isArray(data) ? data : []
+  return api.getList<Project>('/api/projects')
 }
 
 export async function getProject(id: string): Promise<Project> {

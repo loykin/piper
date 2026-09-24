@@ -113,7 +113,7 @@ func (r *fakeNotebookRepo) Update(_ context.Context, nb *notebook.NotebookServer
 	return nil
 }
 func (r *fakeNotebookRepo) SetStatus(context.Context, string, string, string) error { return nil }
-func (r *fakeNotebookRepo) List(_ context.Context, projectID string) ([]*notebook.NotebookServer, error) {
+func (r *fakeNotebookRepo) List(_ context.Context, projectID string, _, _ int) ([]*notebook.NotebookServer, error) {
 	return r.byProject[projectID], nil
 }
 func (r *fakeNotebookRepo) Delete(context.Context, string, string) error { return nil }
@@ -357,4 +357,9 @@ func TestApply_OnlyFixesLatestPipelineVersion(t *testing.T) {
 	if len(findings) != 0 {
 		t.Fatalf("findings = %d, want 0 (latest version is already clean): %+v", len(findings), findings)
 	}
+}
+
+func (r *fakeNotebookRepo) Count(ctx context.Context, projectID string) (int, error) {
+	items, err := r.List(ctx, projectID, 0, 0)
+	return len(items), err
 }

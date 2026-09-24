@@ -124,6 +124,32 @@ func TestLocalStore(t *testing.T) {
 	runStoreTests(t, st)
 }
 
+// Deleting the last object in a "folder" removes the now-empty directory,
+// but keeps directories that still hold other objects.
+func TestLocalStore_DeletePrunesEmptyFolders(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := storage.NewLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Put(ctx, "a/b/only.txt", strings.NewReader("x"), 1)
+	_ = st.Put(ctx, "a/keep.txt", strings.NewReader("y"), 1)
+
+	if err := st.Delete(ctx, "a/b/only.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a", "b")); !os.IsNotExist(err) {
+		t.Fatalf("empty folder a/b still exists (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a", "keep.txt")); err != nil {
+		t.Fatalf("sibling object removed: %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("store root removed: %v", err)
+	}
+}
+
 func TestLocalStore_Root(t *testing.T) {
 	dir := t.TempDir()
 	st, err := storage.NewLocal(dir)

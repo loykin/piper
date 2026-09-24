@@ -24,6 +24,7 @@ import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { PipelineStepDraft } from '@/features/pipelines/editor'
 import type { DragEvent } from 'react'
+import { useIsDarkTheme } from '@/shared/hooks/useIsDarkTheme'
 
 interface PipelineCanvasProps {
   steps: PipelineStepDraft[]
@@ -166,6 +167,7 @@ function PipelineCanvasInner({
   onConnectSteps,
   onDisconnectSteps,
 }: PipelineCanvasProps) {
+  const isDark = useIsDarkTheme()
   const { screenToFlowPosition, fitView } = useReactFlow()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<StepNodeData>>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -293,6 +295,7 @@ function PipelineCanvasInner({
         onDrop={onDrop}
         onDragOver={onDragOver}
         deleteKeyCode="Delete"
+        colorMode={isDark ? 'dark' : 'light'}
         snapToGrid
         snapGrid={[20, 20]}
         defaultEdgeOptions={{ type: 'deleteEdge' }}
@@ -301,7 +304,7 @@ function PipelineCanvasInner({
         maxZoom={1.8}
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={20} size={1} color="#1f2937" />
+        <Background gap={20} size={1} color="var(--border)" />
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>

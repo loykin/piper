@@ -69,7 +69,6 @@ type Client interface {
 	GetRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) (RunDetail, error)
 	CancelRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) error
 	RerunRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string, failedOnly bool) (newRunID string, err error)
-	DeleteRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) error
 	ListSteps(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) ([]StepSummary, error)
 	RetryStep(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID, stepName string) (newRunID string, err error)
 	QueryLogs(ctx context.Context, auth AuthContext, ref project.ProjectRef, req QueryLogsRequest) (QueryLogsResponse, error)

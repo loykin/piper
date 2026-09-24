@@ -1,67 +1,24 @@
-import { Link, useNavigate, useParams } from '@/lib/router'
-import { useMemo, useState } from 'react'
-import { useProjectId } from '@/lib/projectContext'
+import { useNavigate, useParams } from '@/lib/router'
+import { useMemo } from 'react'
+import { useProjectId } from '@/features/projects/context'
 import { Power, Trash2 } from 'lucide-react'
-import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
-import { DetailBodyTemplate } from '@loykin/designkit'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
+import { DetailBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { IconButton } from '@/components/ui/icon-button'
 import { Badge } from '@/components/ui/badge'
-import RunDAG from '@/shared/components/RunDAG'
-import StatusBadge from '@/shared/components/StatusBadge'
+import RunDAG from '@/features/runs/components/RunDAG'
 import { useSchedule, useScheduleRuns, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
-import type { Run } from '@/features/runs/api'
+import { makeScheduleRunColumns } from '@/features/schedules/columns'
+import type { Schedule } from '@/features/schedules/types'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { fmtDate } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const TYPE_LABEL: Record<string, string> = {
   immediate: 'Immediate',
   once: 'Once',
   cron: 'Cron',
-}
-
-function makeRunColumns(projectId: string): DataGridColumnDef<Run>[] {
-  return [
-    {
-      id: 'id',
-      header: 'Run ID',
-      meta: { minWidth: 200, flex: 1 },
-      cell: ({ row }) => (
-        <Link to={`/projects/${projectId}/runs/${row.original.id}`} className="font-mono text-xs text-primary hover:underline">
-          {row.original.id}
-        </Link>
-      ),
-    },
-    {
-      id: 'status',
-      header: 'Status',
-      meta: { minWidth: 110 },
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
-    },
-    {
-      id: 'started_at',
-      header: 'Started',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => <span className="text-xs text-muted-foreground">{new Date(row.original.started_at).toLocaleString()}</span>,
-    },
-    {
-      id: 'ended_at',
-      header: 'Ended',
-      meta: { minWidth: 180 },
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">
-          {row.original.ended_at ? new Date(row.original.ended_at).toLocaleString() : '-'}
-        </span>
-      ),
-    },
-  ]
 }
 
 export default function ScheduleDetailPage() {
@@ -70,14 +27,14 @@ export default function ScheduleDetailPage() {
   const projectId = useProjectId()
   const { data: schedule, isLoading: scheduleLoading } = useSchedule(id!)
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id!)
-  const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
+  const { mutateAsync: deleteSchedule, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
-  const runColumns = useMemo(() => makeRunColumns(projectId), [projectId])
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const runColumns = useMemo(() => makeScheduleRunColumns(projectId), [projectId])
+  const deleteTarget = useDeleteTarget<Schedule>()
 
   if (!scheduleLoading && !schedule) {
     return (
-      <DetailBodyTemplate title="Not Found">
+      <DetailBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Schedules', to: `/projects/${projectId}/schedules` }, id ?? '']} />} />} title="Not Found">
         <DetailBodyTemplate.Section>
           <p className="text-sm text-muted-foreground">Schedule not found.</p>
         </DetailBodyTemplate.Section>
@@ -90,7 +47,7 @@ export default function ScheduleDetailPage() {
   return (
     <>
     <DetailBodyTemplate
-      eyebrow={<Link to={`/projects/${projectId}/schedules`} className="hover:text-foreground transition-colors">← Schedules</Link>}
+      topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', { label: 'Schedules', to: `/projects/${projectId}/schedules` }, schedule?.name ?? id ?? '']} />} />}
       title={schedule?.name ?? '…'}
       description={schedule ? `${TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type} schedule` : ''}
       actions={schedule && (
@@ -102,7 +59,7 @@ export default function ScheduleDetailPage() {
           )}
           <Badge variant="outline">{TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}</Badge>
           <IconButton icon={<Trash2 />} label="Delete"
-            onClick={() => setConfirmDelete(true)}
+            onClick={() => deleteTarget.requestDelete(schedule)}
             className="text-destructive hover:bg-destructive/10" />
         </div>
       )}
@@ -121,7 +78,7 @@ export default function ScheduleDetailPage() {
             {schedule.schedule_type === 'once' && (
               <div>
                 <dt className="text-xs text-muted-foreground">Scheduled At</dt>
-                <dd className="mt-1 text-sm">{new Date(schedule.next_run_at).toLocaleString()}</dd>
+                <dd className="mt-1 text-sm">{fmtDate(schedule.next_run_at)}</dd>
               </div>
             )}
             <div>
@@ -133,7 +90,7 @@ export default function ScheduleDetailPage() {
             <div>
               <dt className="text-xs text-muted-foreground">Last Run</dt>
               <dd className="mt-1 text-sm">
-                {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '-'}
+                {schedule.last_run_at ? fmtDate(schedule.last_run_at) : '-'}
               </dd>
             </div>
             <div>
@@ -144,7 +101,7 @@ export default function ScheduleDetailPage() {
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Created</dt>
-              <dd className="mt-1 text-sm">{new Date(schedule.created_at).toLocaleString()}</dd>
+              <dd className="mt-1 text-sm">{fmtDate(schedule.created_at)}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">Total Runs</dt>
@@ -192,30 +149,19 @@ export default function ScheduleDetailPage() {
       </DetailBodyTemplate.Section>
     </DetailBodyTemplate>
 
-    <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
-          <AlertDialogDescription>
-            "{schedule?.name}" will be permanently deleted.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={deleting}
-            onClick={() => {
-              if (!schedule) return
-              deleteSchedule(schedule.id, { onSuccess: () => navigate(`/projects/${projectId}/schedules`) })
-              setConfirmDelete(false)
-            }}
-          >
-            {deleting ? 'Deleting…' : 'Delete schedule'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={deleteTarget.open}
+      onCancel={deleteTarget.cancel}
+      title="Delete this schedule?"
+      description={`"${deleteTarget.target?.name}" will be permanently deleted.`}
+      error={deleteTarget.error}
+      pending={deleting}
+      confirmLabel={deleting ? 'Deleting…' : 'Delete schedule'}
+      onConfirm={() => void deleteTarget.confirm(async target => {
+        await deleteSchedule(target.id)
+        navigate(`/projects/${projectId}/schedules`)
+      })}
+    />
     </>
   )
 }

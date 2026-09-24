@@ -1,8 +1,9 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import { Badge } from '@/components/ui/badge'
 import type { AlertRule } from './types'
+import { fmtDate } from '@/lib/format'
 
-const date = (value?: string) => value ? new Date(value).toLocaleString() : '—'
+const date = (value?: string) => value ? fmtDate(value) : '—'
 export const alertRuleColumns: DataGridColumnDef<AlertRule>[] = [
   { accessorKey: 'name', header: 'Name', meta: { minWidth: 180, flex: 1 }, cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
   { accessorKey: 'on', header: 'Source', meta: { minWidth: 90 }, cell: ({ row }) => <Badge variant="outline">{row.original.on}</Badge> },

@@ -1,9 +1,8 @@
-import { api, projectApi } from '@/lib/api'
+import { api, projectApi, type Paged } from '@/lib/api'
 import type { CreateUserRequest, MemberCandidate, ProjectMember, ProjectRole, User } from './types'
 
 export async function listUsers(): Promise<User[]> {
-  const data = await api.get<User[]>('/api/users')
-  return Array.isArray(data) ? data : []
+  return api.getList<User>('/api/system/users')
 }
 
 /**
@@ -11,40 +10,35 @@ export async function listUsers(): Promise<User[]> {
  * total row count, read from the `X-Total-Count` response header the server
  * only sets when a limit was sent.
  */
-export async function listUsersPaged(limit: number, offset: number): Promise<{ users: User[]; total: number }> {
+export async function listUsersPaged(limit: number, offset: number): Promise<Paged<User>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await api.getWithTotal<User[]>(`/api/users?${params.toString()}`)
-  return { users: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return api.getPaged<User>(`/api/system/users?${params.toString()}`)
 }
 
 export function createUser(request: CreateUserRequest): Promise<User> {
-  return api.post<User>('/api/users', request)
+  return api.post<User>('/api/system/users', request)
 }
 
 export function deleteUser(id: string): Promise<void> {
-  return api.delete(`/api/users/${encodeURIComponent(id)}`)
+  return api.delete(`/api/system/users/${encodeURIComponent(id)}`)
 }
 
 export async function listUserMemberships(userId: string): Promise<ProjectMember[]> {
-  const data = await api.get<ProjectMember[]>(`/api/users/${encodeURIComponent(userId)}/memberships`)
-  return Array.isArray(data) ? data : []
+  return api.getList<ProjectMember>(`/api/system/users/${encodeURIComponent(userId)}/memberships`)
 }
 
 export async function listMembers(projectId: string): Promise<ProjectMember[]> {
-  const data = await projectApi(projectId).get<ProjectMember[]>('/members')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<ProjectMember>('/members')
 }
 
 /** Like `listMembers`, but for a `limit`-paginated page — see `listUsersPaged`. */
-export async function listMembersPaged(projectId: string, limit: number, offset: number): Promise<{ members: ProjectMember[]; total: number }> {
+export async function listMembersPaged(projectId: string, limit: number, offset: number): Promise<Paged<ProjectMember>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<ProjectMember[]>(`/members?${params.toString()}`)
-  return { members: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<ProjectMember>(`/members?${params.toString()}`)
 }
 
 export async function listMemberCandidates(projectId: string): Promise<MemberCandidate[]> {
-  const data = await projectApi(projectId).get<MemberCandidate[]>('/members/candidates')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<MemberCandidate>('/members/candidates')
 }
 
 export function addMember(projectId: string, username: string, role: ProjectRole): Promise<ProjectMember> {
@@ -52,7 +46,7 @@ export function addMember(projectId: string, username: string, role: ProjectRole
 }
 
 export function updateMember(projectId: string, userId: string, role: ProjectRole): Promise<ProjectMember> {
-  return projectApi(projectId).put<ProjectMember>(`/members/${encodeURIComponent(userId)}`, { role })
+  return projectApi(projectId).patch<ProjectMember>(`/members/${encodeURIComponent(userId)}`, { role })
 }
 
 export function removeMember(projectId: string, userId: string): Promise<void> {

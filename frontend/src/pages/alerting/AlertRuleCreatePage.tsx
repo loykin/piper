@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useNavigate } from '@tanstack/react-router'
 import {
   DataBodyTemplate,
   FormActions,
@@ -17,10 +16,12 @@ import { z } from 'zod'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Link } from '@/lib/router'
+import { Link, useNavigate } from '@/lib/router'
 import { useCreateAlertRule } from '@/features/alerting/hooks'
 import { useCredentials } from '@/features/credentials/hooks'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const EVENT_TYPES = [
   'run.completed',
@@ -210,9 +211,9 @@ export default function AlertRuleCreatePage() {
         cooldown_seconds: values.cooldown,
         enabled: true,
       })
-      void navigate({ to: listPath })
+      void navigate(listPath)
     } catch (cause) {
-      setSubmitError(cause instanceof Error ? cause.message : String(cause))
+      setSubmitError(errorMessage(cause))
     }
   }
 
@@ -225,7 +226,7 @@ export default function AlertRuleCreatePage() {
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Alert Rules / New Rule" />}
+      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Alert Rules', to: `/projects/${projectId}/alert-rules` }, 'New Rule']} />} />}
       title="New Alert Rule"
       description="Notify one or more project channels when an event or metric condition matches."
     >
@@ -400,7 +401,7 @@ export default function AlertRuleCreatePage() {
             status={submitError || undefined}
             submitLabel={createRule.isPending ? 'Creating…' : 'Create Rule'}
             submitDisabled={createRule.isPending || channels.length === 0}
-            onCancel={() => void navigate({ to: listPath })}
+            onCancel={() => void navigate(listPath)}
           />
         </form>
       </DataBodyTemplate.Group>

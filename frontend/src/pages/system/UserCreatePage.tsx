@@ -13,6 +13,8 @@ import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { useCreateUser } from '@/features/access/hooks'
 import { useNavigate } from '@/lib/router'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const createUserSchema = z.object({
   username: z.string().trim().min(1, 'Username is required.').max(128, 'Username must be at most 128 characters.').regex(/^\S+$/, 'Username must not contain spaces.'),
@@ -46,13 +48,13 @@ export default function UserCreatePage() {
       })
       void navigate('/users')
     } catch (cause) {
-      setSubmitError(cause instanceof Error ? cause.message : String(cause))
+      setSubmitError(errorMessage(cause))
     }
   }
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Users / New User" />}
+      topBar={<PageTopBar left={<PageCrumbs items={['System', { label: 'Users', to: '/users' }, 'New User']} />} />}
       title="New User"
       description="Create a local Piper account. Usernames are login identifiers and do not need to be email addresses."
     >

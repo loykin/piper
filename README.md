@@ -608,7 +608,7 @@ GET    /api/projects/{project_id}/services/{name}
 DELETE /api/projects/{project_id}/services/{name}
 POST   /api/projects/{project_id}/services/{name}/restart
 
-GET    /api/settings
+GET    /api/system/settings
 GET    /health
 ```
 

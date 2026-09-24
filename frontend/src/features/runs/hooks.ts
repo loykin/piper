@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import * as api from './api'
 import type { LogLine, RunFilter, SweepRequest } from './types'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { backgroundPolling, backgroundPollingNotifications } from '@/lib/query'
 
 export const runKeys = {

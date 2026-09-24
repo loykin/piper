@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { Credential, TestCredentialResult } from '@/features/credentials/types'
 import type { UseMutationResult } from '@tanstack/react-query'
+import { errorMessage } from '@/lib/format'
 
 export default function TestCredentialDialog({
   target,
@@ -31,7 +32,7 @@ export default function TestCredentialDialog({
       const res = await testCredential.mutateAsync({ name: target.name, req: { repo: repo.trim() || undefined } })
       setResult(res)
     } catch (err) {
-      setResult({ ok: false, message: err instanceof Error ? err.message : String(err) })
+      setResult({ ok: false, message: errorMessage(err) })
     }
   }
 

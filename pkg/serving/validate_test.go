@@ -59,3 +59,18 @@ func TestModelServiceValidateDriverRuntimeBranches(t *testing.T) {
 		})
 	}
 }
+
+func TestModelServiceValidateRejectsReservedNames(t *testing.T) {
+	for _, name := range []string{"history", "predict"} {
+		err := (ModelService{
+			Metadata: manifest.ObjectMeta{Name: name},
+			Spec: ModelServiceSpec{
+				Model: ModelRef{FromURI: "file:///model"},
+				Run:   ModelServiceRun{Command: []string{"serve"}, Port: 8080},
+			},
+		}).Validate()
+		if err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("Validate(name=%q) error = %v, want reserved-name error", name, err)
+		}
+	}
+}

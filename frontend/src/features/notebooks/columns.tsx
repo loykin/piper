@@ -6,6 +6,7 @@ import StatusBadge from '@/shared/components/StatusBadge'
 import { RowActions } from '@/shared/components/RowActions'
 import { notebookProxyURL } from './api'
 import type { NotebookServer, NotebookVolume, NotebookHistory } from './api'
+import { fmtDate } from '@/lib/format'
 
 // ── Notebook server columns (state-dependent: busy) ────────────────────────
 
@@ -130,7 +131,7 @@ export const notebookHistoryColumns: DataGridColumnDef<NotebookHistory>[] = [
     meta: { minWidth: 150 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {new Date(row.original.deployed_at).toLocaleString()}
+        {fmtDate(row.original.deployed_at)}
       </span>
     ),
   },
@@ -140,7 +141,7 @@ export const notebookHistoryColumns: DataGridColumnDef<NotebookHistory>[] = [
     meta: { minWidth: 150 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {new Date(row.original.stopped_at).toLocaleString()}
+        {fmtDate(row.original.stopped_at)}
       </span>
     ),
   },
@@ -207,7 +208,7 @@ export function getNotebookVolumeColumns(
       meta: { minWidth: 160 },
       cell: ({ row }) => (
         <span className="text-xs text-muted-foreground">
-          {new Date(row.original.created_at).toLocaleString()}
+          {fmtDate(row.original.created_at)}
         </span>
       ),
     },

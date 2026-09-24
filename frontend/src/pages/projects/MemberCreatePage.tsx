@@ -15,9 +15,11 @@ import {
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { useAddMember, useMemberCandidates } from '@/features/access/hooks'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { useNavigate } from '@/lib/router'
 import { useAutoSelectSole } from '@/shared/hooks/useAutoSelectSole'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const memberSchema = z.object({
   username: z.string().trim().min(1, 'Username is required.'),
@@ -59,13 +61,13 @@ export default function MemberCreatePage() {
       await addMember.mutateAsync(values)
       void navigate(listPath)
     } catch (cause) {
-      setSubmitError(cause instanceof Error ? cause.message : String(cause))
+      setSubmitError(errorMessage(cause))
     }
   }
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Project Members / New Member" />}
+      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Members', to: `/projects/${projectId}/members` }, 'New Member']} />} />}
       title="New Member"
       description="Grant an existing Piper account access to this project."
     >

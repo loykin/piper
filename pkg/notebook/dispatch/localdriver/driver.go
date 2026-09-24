@@ -156,6 +156,12 @@ func (d *Driver) ProvisionVolume(_ context.Context, vol *notebook.NotebookVolume
 }
 
 // DeprovisionVolume removes the host work directory backing vol.
+// Remove is Stop: the docker/process backends already delete the container
+// or process when stopping, leaving no other runtime objects.
+func (d *Driver) Remove(ctx context.Context, nb *notebook.NotebookServer) error {
+	return d.Stop(ctx, nb)
+}
+
 func (d *Driver) DeprovisionVolume(_ context.Context, vol *notebook.NotebookVolume) error {
 	if vol.ID == "" {
 		return nil

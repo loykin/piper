@@ -1,11 +1,10 @@
 export type { Service, ServiceHistory } from './types'
 
 import type { Service, ServiceHistory } from './types'
-import { projectApi } from '@/lib/api'
+import { projectApi, type Paged } from '@/lib/api'
 
 export async function listServing(projectId: string): Promise<Service[]> {
-  const data = await projectApi(projectId).get<Service[]>('/services')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<Service>('/services')
 }
 
 /**
@@ -13,14 +12,13 @@ export async function listServing(projectId: string): Promise<Service[]> {
  * total row count matching the filter (ignoring limit/offset), read from the
  * `X-Total-Count` response header the server only sets when a limit was sent.
  */
-export async function listServingPaged(projectId: string, limit: number, offset: number): Promise<{ services: Service[]; total: number }> {
+export async function listServingPaged(projectId: string, limit: number, offset: number): Promise<Paged<Service>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<Service[]>(`/services?${params.toString()}`)
-  return { services: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<Service>(`/services?${params.toString()}`)
 }
 
 export async function getServing(projectId: string, name: string): Promise<Service> {
-  return projectApi(projectId).get<Service>(`/services/${name}`)
+  return projectApi(projectId).get<Service>(`/services/${encodeURIComponent(name)}`)
 }
 
 export async function createServing(
@@ -31,23 +29,21 @@ export async function createServing(
 }
 
 export async function stopServing(projectId: string, name: string): Promise<void> {
-  return projectApi(projectId).delete(`/services/${name}`)
+  return projectApi(projectId).delete(`/services/${encodeURIComponent(name)}`)
 }
 
 export async function restartServing(projectId: string, name: string): Promise<void> {
-  return projectApi(projectId).post(`/services/${name}/restart`)
+  return projectApi(projectId).post(`/services/${encodeURIComponent(name)}/restart`)
 }
 
 export async function listServingHistory(projectId: string): Promise<ServiceHistory[]> {
-  const data = await projectApi(projectId).get<ServiceHistory[]>('/services/history')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<ServiceHistory>('/services/history')
 }
 
 /** Like `listServingHistory`, but for a `limit`-paginated page — see `listServingPaged`. */
-export async function listServingHistoryPaged(projectId: string, limit: number, offset: number): Promise<{ history: ServiceHistory[]; total: number }> {
+export async function listServingHistoryPaged(projectId: string, limit: number, offset: number): Promise<Paged<ServiceHistory>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<ServiceHistory[]>(`/services/history?${params.toString()}`)
-  return { history: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<ServiceHistory>(`/services/history?${params.toString()}`)
 }
 
 /** Browser predict proxy URL — /projects/:id/services/predict/* */

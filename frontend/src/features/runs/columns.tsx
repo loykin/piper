@@ -1,6 +1,9 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import StatusBadge from '@/shared/components/StatusBadge'
 import type { Run, Step } from './api'
+import type { ExperimentSummary } from './types'
+import { statusTone, toneFill, toneText } from '@/shared/status'
+import { fmtDate, fmtTime } from '@/lib/format'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -11,16 +14,6 @@ function elapsed(startedAt: string, endedAt?: string): string {
   return `${(ms / 60000).toFixed(1)}m`
 }
 
-const STEP_COLOR: Record<string, string> = {
-  done:     'bg-green-500',
-  success:  'bg-green-500',
-  running:  'bg-blue-400 animate-pulse',
-  failed:   'bg-red-500',
-  skipped:  'bg-yellow-600',
-  canceled: 'bg-orange-500',
-  pending:  'bg-gray-600',
-}
-
 function StepDots({ steps }: { steps: Step[] }) {
   if (!steps.length) return <span className="text-xs text-muted-foreground">—</span>
   return (
@@ -29,7 +22,7 @@ function StepDots({ steps }: { steps: Step[] }) {
         <span
           key={s.step_name}
           title={`${s.step_name}: ${s.status}`}
-          className={`inline-block h-3.5 w-3.5 rounded-sm ${STEP_COLOR[s.status] ?? 'bg-gray-600'}`}
+          className={`inline-block h-3.5 w-3.5 rounded-sm ${toneFill[statusTone(s.status)]}${s.status === 'running' ? ' animate-pulse' : ''}`}
         />
       ))}
     </div>
@@ -45,7 +38,7 @@ export const runColumns: DataGridColumnDef<Run>[] = [
     meta: { minWidth: 160 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {new Date(row.original.started_at).toLocaleString()}
+        {fmtDate(row.original.started_at)}
       </span>
     ),
   },
@@ -115,8 +108,8 @@ export const stepColumns: DataGridColumnDef<Step>[] = [
     header: 'Started',
     meta: { minWidth: 140 },
     cell: ({ row }) => (
-      <span className="text-gray-400">
-        {row.original.started_at ? new Date(row.original.started_at).toLocaleTimeString() : '—'}
+      <span className="text-muted-foreground">
+        {row.original.started_at ? fmtTime(row.original.started_at) : '—'}
       </span>
     ),
   },
@@ -126,7 +119,7 @@ export const stepColumns: DataGridColumnDef<Step>[] = [
     meta: { minWidth: 120, align: 'right' },
     cell: ({ row }) => {
       const step = row.original
-      if (!step.started_at) return <span className="text-gray-400">—</span>
+      if (!step.started_at) return <span className="text-muted-foreground">—</span>
       const start = new Date(step.started_at).getTime()
       const end = step.ended_at ? new Date(step.ended_at).getTime() : Date.now()
       const ms = Math.max(0, end - start)
@@ -134,7 +127,7 @@ export const stepColumns: DataGridColumnDef<Step>[] = [
       if (ms < 1000) dur = `${ms}ms`
       else if (ms < 60000) dur = `${(ms / 1000).toFixed(1)}s`
       else dur = `${(ms / 60000).toFixed(1)}m`
-      return <span className="text-gray-400">{dur}</span>
+      return <span className="text-muted-foreground">{dur}</span>
     },
   },
   {
@@ -142,7 +135,30 @@ export const stepColumns: DataGridColumnDef<Step>[] = [
     header: 'Error',
     meta: { minWidth: 240, flex: 1 },
     cell: ({ row }) => (
-      <span className="block truncate text-xs text-red-400">{row.original.error ?? '—'}</span>
+      <span className={`block truncate text-xs ${toneText.danger}`}>{row.original.error ?? '—'}</span>
     ),
   },
+]
+
+// ── Experiment columns ────────────────────────────────────────────────────────
+
+export const experimentColumns: DataGridColumnDef<ExperimentSummary>[] = [
+  { id: 'name',    header: 'Experiment',  accessorKey: 'name',    meta: { minWidth: 220 } },
+  { id: 'runs',    header: 'Runs',        accessorKey: 'runs',    meta: { minWidth: 80 } },
+  { id: 'success', header: 'Success',     accessorKey: 'success', meta: { minWidth: 80 },
+    cell: ({ row }) => <span className={toneText.success}>{row.original.success}</span> },
+  { id: 'failed',  header: 'Failed',      accessorKey: 'failed',  meta: { minWidth: 80 },
+    cell: ({ row }) => row.original.failed > 0
+      ? <span className={toneText.danger}>{row.original.failed}</span>
+      : <span>{row.original.failed}</span> },
+  { id: 'running', header: 'Running',     accessorKey: 'running', meta: { minWidth: 80 },
+    cell: ({ row }) => row.original.running > 0
+      ? <span className={toneText.info}>{row.original.running}</span>
+      : <span>{row.original.running}</span> },
+  { id: 'latest',  header: 'Latest Run',  accessorKey: 'latest',
+    cell: ({ row }) => (
+      <span className="text-muted-foreground text-xs">
+        {fmtDate(row.original.latest)}
+      </span>
+    ) },
 ]

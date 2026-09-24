@@ -1,28 +1,21 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Plus, Search } from 'lucide-react'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { memberColumns } from '@/features/access/memberColumns'
 import { MemberDetailPanel } from '@/features/access/components/MemberDetailPanel'
 import { useMembersPaged, useRemoveMember } from '@/features/access/hooks'
 import type { ProjectMember } from '@/features/access/types'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
 
@@ -38,12 +31,7 @@ function MembersPageInner() {
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
-  const filteredMembers = useMemo(() => {
-    const list = membersQuery.data?.members ?? []
-    if (!nameFilter.trim()) return list
-    const q = nameFilter.trim().toLowerCase()
-    return list.filter(m => (m.username ?? '').toLowerCase().includes(q))
-  }, [membersQuery.data, nameFilter])
+  const filteredMembers = useTextFilter(membersQuery.data?.items, nameFilter, m => m.username)
 
   function confirmRemove() {
     return confirmRemoveTarget(t => removeMember.mutateAsync(t.user_id))
@@ -51,7 +39,7 @@ function MembersPageInner() {
 
   return (
     <>
-      <DataBodyTemplate
+      <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', 'Members']} />} />}
         title="Project Members"
         description="Project-specific access for Piper user accounts."
       >
@@ -115,26 +103,15 @@ function MembersPageInner() {
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 
-      <AlertDialog open={removeOpen} onOpenChange={open => { if (!open) cancelRemove() }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove this project member?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removeTarget?.username || 'This user'} will lose access to this project.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={removeMember.isPending}
-              onClick={() => void confirmRemove()}
-            >
-              {removeMember.isPending ? 'Removing…' : 'Remove member'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={removeOpen}
+        onCancel={cancelRemove}
+        title="Remove this project member?"
+        description={<>{removeTarget?.username || 'This user'} will lose access to this project.</>}
+        confirmLabel={removeMember.isPending ? 'Removing…' : 'Remove member'}
+        pending={removeMember.isPending}
+        onConfirm={() => void confirmRemove()}
+      />
     </>
   )
 }

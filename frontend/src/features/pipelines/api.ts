@@ -1,11 +1,11 @@
 export type {
-  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest,
 } from './types'
 
 import type {
-  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest, DeployRequest,
+  PipelineTemplate, CreatePipelineRequest, TriggerRunRequest,
 } from './types'
-import { projectApi } from '@/lib/api'
+import { projectApi, type Paged } from '@/lib/api'
 
 export async function listPipelines(
   projectId: string,
@@ -16,8 +16,7 @@ export async function listPipelines(
   if (name) params.set('name', name)
   if (limit) params.set('limit', String(limit))
   const qs = params.size > 0 ? `?${params.toString()}` : ''
-  const data = await projectApi(projectId).get<PipelineTemplate[]>(`/pipelines${qs}`)
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<PipelineTemplate>(`/pipeline-templates${qs}`)
 }
 
 /**
@@ -30,26 +29,25 @@ export async function listPipelinesPaged(
   name: string | undefined,
   limit: number,
   offset: number,
-): Promise<{ templates: PipelineTemplate[]; total: number }> {
+): Promise<Paged<PipelineTemplate>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (name) params.set('name', name)
-  const { data, total } = await projectApi(projectId).getWithTotal<PipelineTemplate[]>(`/pipelines?${params.toString()}`)
-  return { templates: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<PipelineTemplate>(`/pipeline-templates?${params.toString()}`)
 }
 
 export async function createPipeline(
   projectId: string,
   req: CreatePipelineRequest,
 ): Promise<PipelineTemplate> {
-  return projectApi(projectId).post<PipelineTemplate>('/pipelines', req)
+  return projectApi(projectId).post<PipelineTemplate>('/pipeline-templates', req)
 }
 
 export async function getPipeline(projectId: string, id: string): Promise<PipelineTemplate> {
-  return projectApi(projectId).get<PipelineTemplate>(`/pipelines/${id}`)
+  return projectApi(projectId).get<PipelineTemplate>(`/pipeline-templates/${encodeURIComponent(id)}`)
 }
 
 export async function deletePipeline(projectId: string, id: string): Promise<void> {
-  return projectApi(projectId).delete(`/pipelines/${id}`)
+  return projectApi(projectId).delete(`/pipeline-templates/${encodeURIComponent(id)}`)
 }
 
 export async function runPipeline(
@@ -57,13 +55,6 @@ export async function runPipeline(
   id: string,
   req?: TriggerRunRequest,
 ): Promise<{ id: string }> {
-  return projectApi(projectId).post<{ id: string }>(`/pipelines/${id}/run`, req ?? {})
+  return projectApi(projectId).post<{ id: string }>(`/pipeline-templates/${encodeURIComponent(id)}/run`, req ?? {})
 }
 
-export async function deployPipeline(
-  projectId: string,
-  id: string,
-  req: DeployRequest,
-): Promise<import('@/features/schedules/api').Schedule> {
-  return projectApi(projectId).post(`/pipelines/${id}/deploy`, { enabled: true, ...req })
-}

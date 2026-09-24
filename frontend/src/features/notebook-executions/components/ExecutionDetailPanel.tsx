@@ -5,9 +5,10 @@ import { Check, Square, X } from 'lucide-react'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useApproveExecution, useCancelExecution, useDenyExecution, useExecution } from '../hooks'
 import type { NotebookExecution } from '../types'
+import { fmtDate } from '@/lib/format'
 
 function date(value?: string) {
-  return value ? new Date(value).toLocaleString() : '—'
+  return value ? fmtDate(value) : '—'
 }
 
 export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel, actorNames }: { execution: NotebookExecution; canAdmin: boolean; canCancel: boolean; actorNames: ReadonlyMap<string, string> }) {
@@ -18,7 +19,7 @@ export function ExecutionDetailPanel({ execution: initial, canAdmin, canCancel, 
   // Live-refreshed from initial's snapshot — see useExecution's doc comment
   // (AG: this panel used to be frozen at the moment it was opened, so an
   // approval or progress update never showed until it was closed and reopened).
-  const { data: execution = initial } = useExecution(initial.notebook_name, initial.id, initial)
+  const { data: execution = initial } = useExecution(initial.id, initial)
   // Prefer the server-resolved username (works regardless of the viewer's
   // own privileges) and fall back to the project-member map, then the raw ID.
   const actorName = (id?: string, username?: string) => username || (id ? actorNames.get(id) ?? id : '—')

@@ -94,7 +94,7 @@ func (r *cleanupTestNotebookRepo) SetStatus(_ context.Context, projectID, name, 
 	}
 	return nil
 }
-func (r *cleanupTestNotebookRepo) List(_ context.Context, projectID string) ([]*notebook.NotebookServer, error) {
+func (r *cleanupTestNotebookRepo) List(_ context.Context, projectID string, _, _ int) ([]*notebook.NotebookServer, error) {
 	var out []*notebook.NotebookServer
 	for _, nb := range r.servers {
 		if nb.ProjectID == projectID {
@@ -388,4 +388,13 @@ func TestProjectDeleteSucceedsAfterCleanupSucceeds(t *testing.T) {
 	if got, _ := svcRepo.Get(context.Background(), projectID, "live-svc"); got != nil {
 		t.Fatal("service row survived cleanup")
 	}
+}
+
+func (r *cleanupTestNotebookRepo) Count(ctx context.Context, projectID string) (int, error) {
+	items, err := r.List(ctx, projectID, 0, 0)
+	return len(items), err
+}
+
+func (d *cleanupTestNotebookDriver) Remove(context.Context, *notebook.NotebookServer) error {
+	return nil
 }

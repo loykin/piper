@@ -1,10 +1,9 @@
-import { projectApi } from '@/lib/api'
+import { projectApi, type Paged } from '@/lib/api'
 import type { AlertRule, CreateAlertRuleRequest, PatchAlertRuleRequest } from './types'
 
-export async function listAlertRules(projectId: string, limit: number, offset: number): Promise<{ rules: AlertRule[]; total: number }> {
+export async function listAlertRules(projectId: string, limit: number, offset: number): Promise<Paged<AlertRule>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<AlertRule[]>(`/alert-rules?${params}`)
-  return { rules: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<AlertRule>(`/alert-rules?${params}`)
 }
 
 export function createAlertRule(projectId: string, request: CreateAlertRuleRequest): Promise<AlertRule> {

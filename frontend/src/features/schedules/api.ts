@@ -1,29 +1,26 @@
 // schedules feature API
-export type { Schedule, CreateScheduleOptions } from './types'
+export type { Schedule, CreateScheduleOptions, DeployTemplateRequest } from './types'
 
 import type { Run } from '@/features/runs/api'
-import type { Schedule, CreateScheduleOptions } from './types'
-import { projectApi } from '@/lib/api'
+import type { Schedule, CreateScheduleOptions, DeployTemplateRequest } from './types'
+import { projectApi, type Paged } from '@/lib/api'
 
 export async function listSchedules(projectId: string): Promise<Schedule[]> {
-  const data = await projectApi(projectId).get<Schedule[]>('/schedules')
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<Schedule>('/schedules')
 }
 
 /** Like `listSchedules`, but for a `limit`-paginated page — see `listServingPaged`. */
-export async function listSchedulesPaged(projectId: string, limit: number, offset: number): Promise<{ schedules: Schedule[]; total: number }> {
+export async function listSchedulesPaged(projectId: string, limit: number, offset: number): Promise<Paged<Schedule>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
-  const { data, total } = await projectApi(projectId).getWithTotal<Schedule[]>(`/schedules?${params.toString()}`)
-  return { schedules: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<Schedule>(`/schedules?${params.toString()}`)
 }
 
 export async function getSchedule(projectId: string, id: string): Promise<Schedule> {
-  return projectApi(projectId).get<Schedule>(`/schedules/${id}`)
+  return projectApi(projectId).get<Schedule>(`/schedules/${encodeURIComponent(id)}`)
 }
 
 export async function listScheduleRuns(projectId: string, scheduleId: string): Promise<Run[]> {
-  const data = await projectApi(projectId).get<Run[]>(`/schedules/${scheduleId}/runs`)
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<Run>(`/schedules/${encodeURIComponent(scheduleId)}/runs`)
 }
 
 export async function createSchedule(
@@ -38,11 +35,11 @@ export async function setScheduleEnabled(
   id: string,
   enabled: boolean,
 ): Promise<void> {
-  return projectApi(projectId).patch(`/schedules/${id}`, { enabled })
+  return projectApi(projectId).patch(`/schedules/${encodeURIComponent(id)}`, { enabled })
 }
 
 export async function deleteSchedule(projectId: string, id: string): Promise<void> {
-  return projectApi(projectId).delete(`/schedules/${id}`)
+  return projectApi(projectId).delete(`/schedules/${encodeURIComponent(id)}`)
 }
 
 export async function backfillSchedule(
@@ -51,5 +48,14 @@ export async function backfillSchedule(
   from: string,
   to: string,
 ): Promise<{ run_ids: string[] }> {
-  return projectApi(projectId).post<{ run_ids: string[] }>(`/schedules/${id}/backfill`, { from, to })
+  return projectApi(projectId).post<{ run_ids: string[] }>(`/schedules/${encodeURIComponent(id)}/backfill`, { from, to })
+}
+
+/** Creates a cron schedule bound to one pipeline template version. */
+export async function deployTemplate(
+  projectId: string,
+  templateId: string,
+  req: DeployTemplateRequest,
+): Promise<Schedule> {
+  return projectApi(projectId).post<Schedule>(`/pipeline-templates/${encodeURIComponent(templateId)}/deploy`, { enabled: true, ...req })
 }

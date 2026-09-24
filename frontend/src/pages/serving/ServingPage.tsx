@@ -1,29 +1,22 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@/lib/router'
+import { useState } from 'react'
 import { RefreshCw, Search, Square } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
 import { useServicesPaged, useStopService, useRestartService } from '@/features/serving/hooks'
 import { ServingDetailPanel } from '@/features/serving/components/ServingDetailPanel'
 import { serviceColumns } from '@/features/serving/columns'
 import { RowActions } from '@/shared/components/RowActions'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import type { Service } from '@/features/serving/api'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
 
@@ -41,12 +34,7 @@ function ServingPageInner() {
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
-  const filteredServices = useMemo(() => {
-    const list = data?.services ?? []
-    if (!nameFilter.trim()) return list
-    const q = nameFilter.trim().toLowerCase()
-    return list.filter(s => s.name.toLowerCase().includes(q))
-  }, [data, nameFilter])
+  const filteredServices = useTextFilter(data?.items, nameFilter, s => s.name)
 
   const actionColumn: DataGridColumnDef<Service> = {
     id: 'actions',
@@ -77,7 +65,7 @@ function ServingPageInner() {
 
   return (
     <>
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Service', 'Serving']} />} />}
       title="Serving"
       description="Model serving endpoints deployed from pipeline artifacts."
     >
@@ -98,7 +86,7 @@ function ServingPageInner() {
             </div>
           }
           toolbarRight={
-            <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/serving/new` })}>Deploy</Button>
+            <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/serving/new`)}>Deploy</Button>
           }
           notice={servicesQuery.isError && (
             <QueryErrorNotice
@@ -136,30 +124,19 @@ function ServingPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={stopTarget != null} onOpenChange={open => { if (!open) setStopTarget(null) }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Stop this service?</AlertDialogTitle>
-          <AlertDialogDescription>
-            "{stopTarget?.name}" will stop serving requests immediately.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={stopping}
-            onClick={() => {
-              if (!stopTarget) return
-              stopService(stopTarget.name)
-              setStopTarget(null)
-            }}
-          >
-            {stopping ? 'Stopping…' : 'Stop service'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={stopTarget != null}
+      onCancel={() => setStopTarget(null)}
+      title="Stop this service?"
+      description={`"${stopTarget?.name}" will stop serving requests immediately.`}
+      pending={stopping}
+      confirmLabel={stopping ? 'Stopping…' : 'Stop service'}
+      onConfirm={() => {
+        if (!stopTarget) return
+        stopService(stopTarget.name)
+        setStopTarget(null)
+      }}
+    />
     </>
   )
 }

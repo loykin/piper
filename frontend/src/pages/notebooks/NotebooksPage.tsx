@@ -1,43 +1,37 @@
 import { useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
 import { useNavigate } from '@/lib/router'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { DataGrid, DataGridPaginationCompact } from '@loykin/gridkit'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { getNotebookColumns } from '@/features/notebooks/columns'
 import { NotebookDetailPanel } from '@/features/notebooks/components/NotebookDetailPanel'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
 import {
-  useNotebooks, useNotebookVolumes,
+  useNotebooksPaged, useNotebookVolumes,
   useStopNotebook, useStartNotebook, useDeleteNotebook,
 } from '@/features/notebooks/hooks'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
+
+const PAGE_SIZE = 20
 
 function NotebooksPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
   const { open } = useSidePanel()
-  const notebooksQuery = useNotebooks()
+  const [pageIndex, setPageIndex] = useState(0)
+  const notebooksQuery = useNotebooksPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
+  const total = notebooksQuery.data?.total ?? 0
   const [nameFilter, setNameFilter] = useState('')
-  const filteredNotebooks = useMemo(() => {
-    const list = notebooksQuery.data ?? []
-    if (!nameFilter.trim()) return list
-    const q = nameFilter.trim().toLowerCase()
-    return list.filter(n => n.name.toLowerCase().includes(q))
-  }, [notebooksQuery.data, nameFilter])
+  // Filters the current page only — same accepted trade-off as the other
+  // paginated list pages until the endpoint supports server-side search.
+  const filteredNotebooks = useTextFilter(notebooksQuery.data?.items, nameFilter, n => n.name)
   const { data: allVolumes = [] } = useNotebookVolumes()
   const releasedVolumes = useMemo(() => allVolumes.filter(v => v.status === 'released'), [allVolumes])
 
@@ -62,7 +56,7 @@ function NotebooksPageInner() {
 
   return (
     <>
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Development', 'Notebooks']} />} />}
       title="Notebooks"
       description="Jupyter notebook servers. Open launches a server in a new tab."
     >
@@ -83,7 +77,7 @@ function NotebooksPageInner() {
             </div>
           }
           toolbarRight={
-            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/create`)}>Launch</Button>
+            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/notebooks/new`)}>Launch</Button>
           }
           notice={notebooksQuery.isError && (
             <QueryErrorNotice
@@ -110,22 +104,29 @@ function NotebooksPageInner() {
             rowHeight={44}
             rowCursor
             onRowClick={(row) => open(<NotebookDetailPanel name={row.name} projectId={projectId} />, { size: 520 })}
-            pagination={{ pageSize: 20 }}
+            classNames={{ footer: 'pt-3' }}
+            pagination={{
+              pageSize: PAGE_SIZE,
+              pageIndex,
+              pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+              onPageChange: setPageIndex,
+            }}
             footer={(table) => (
-              <div className="flex h-9 items-center justify-between px-1 text-xs text-muted-foreground">
-                <span>{filteredNotebooks.length} servers</span>
+              <div className="flex flex-col gap-2">
                 {releasedVolumes.length > 0 && (
-                  <Button
-                    type="button"
-                    variant="link"
-                    size="sm"
-                    className="h-auto p-0 text-xs"
-                    onClick={() => navigate(`/projects/${projectId}/notebooks/create?volume=${releasedVolumes[0].id}`)}
-                  >
-                    {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
-                  </Button>
+                  <div className="text-xs text-muted-foreground">
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs"
+                      onClick={() => navigate(`/projects/${projectId}/notebooks/new?volume=${encodeURIComponent(releasedVolumes[0].id)}`)}
+                    >
+                      {releasedVolumes.length} released volume{releasedVolumes.length > 1 ? 's' : ''} — Attach
+                    </Button>
+                  </div>
                 )}
-                <DataGridPaginationCompact table={table} />
+                <DataGridPaginationBar table={table} totalCount={total} />
               </div>
             )}
           />
@@ -133,26 +134,15 @@ function NotebooksPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this notebook?</AlertDialogTitle>
-          <AlertDialogDescription>
-            "{deleteTarget}" will be deleted. The volume and work directory are preserved — you can recover them from the Volumes page.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={deleting}
-            onClick={() => void confirmDeleteTarget(name => deleteAsync(name))}
-          >
-            {deleting ? 'Deleting…' : 'Delete notebook'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={deleteOpen}
+      onCancel={cancelDelete}
+      title="Delete this notebook?"
+      description={<>"{deleteTarget}" will be deleted. The volume and work directory are preserved — you can recover them from the Volumes page.</>}
+      confirmLabel={deleting ? 'Deleting…' : 'Delete notebook'}
+      pending={deleting}
+      onConfirm={() => void confirmDeleteTarget(name => deleteAsync(name))}
+    />
     </>
   )
 }

@@ -1,20 +1,12 @@
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 export type RunConfirmVerb = 'cancel'
 
 interface RunActionConfirmDialogProps {
   runId: string
   action: RunConfirmVerb | null
-  onOpenChange: (open: boolean) => void
+  /** Called when the dialog closes without confirming (Back, Esc, outside click). */
+  onDismiss: () => void
   cancelling: boolean
   onConfirmCancel: () => void
 }
@@ -24,33 +16,23 @@ interface RunActionConfirmDialogProps {
 export function RunActionConfirmDialog({
   runId,
   action,
-  onOpenChange,
+  onDismiss,
   cancelling,
   onConfirmCancel,
 }: RunActionConfirmDialogProps) {
   return (
-    <AlertDialog open={action != null} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Cancel this run?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Run {runId} will be stopped immediately.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Back</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={cancelling}
-            onClick={() => {
-              onConfirmCancel()
-              onOpenChange(false)
-            }}
-          >
-            {cancelling ? 'Cancelling…' : 'Cancel run'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={action != null}
+      onCancel={onDismiss}
+      title="Cancel this run?"
+      description={`Run ${runId} will be stopped immediately.`}
+      cancelLabel="Back"
+      pending={cancelling}
+      confirmLabel={cancelling ? 'Cancelling…' : 'Cancel run'}
+      onConfirm={() => {
+        onConfirmCancel()
+        onDismiss()
+      }}
+    />
   )
 }

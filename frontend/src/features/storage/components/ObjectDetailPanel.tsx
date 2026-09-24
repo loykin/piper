@@ -4,7 +4,7 @@ import { useSidePanel } from '@loykin/side-panel'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { storageObjectURL, type StorageObjectInfo } from '@/features/storage/api'
-import { fmtBytes, fmtDate } from '@/features/storage/format'
+import { fmtBytes, fmtDate } from '@/lib/format'
 
 interface ObjectDetailPanelProps {
   projectId: string

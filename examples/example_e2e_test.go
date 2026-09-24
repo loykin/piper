@@ -409,7 +409,7 @@ func TestExampleNotebookPipelineTemplate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	go func() { _ = p.Serve(ctx, piper.ServeOption{}) }()
-	waitReady(t, projectAPI+"/pipelines", 10*time.Second)
+	waitReady(t, projectAPI+"/pipeline-templates", 10*time.Second)
 
 	templateID := submitPipelineTemplate(t, projectAPI, string(pipelineYAML), volumeID)
 	runID := runPipelineTemplate(t, projectAPI, templateID)
@@ -444,7 +444,7 @@ func submitPipelineTemplate(t *testing.T, projectAPI, yamlText, volumeID string)
 		"yaml":      yamlText,
 		"volume_id": volumeID,
 	})
-	resp, err := http.Post(projectAPI+"/pipelines", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(projectAPI+"/pipeline-templates", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /pipelines: %v", err)
 	}
@@ -464,14 +464,14 @@ func submitPipelineTemplate(t *testing.T, projectAPI, yamlText, volumeID string)
 
 func runPipelineTemplate(t *testing.T, projectAPI, templateID string) string {
 	t.Helper()
-	resp, err := http.Post(projectAPI+"/pipelines/"+templateID+"/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	resp, err := http.Post(projectAPI+"/pipeline-templates/"+templateID+"/run", "application/json", bytes.NewReader([]byte(`{}`)))
 	if err != nil {
-		t.Fatalf("POST /pipelines/:id/run: %v", err)
+		t.Fatalf("POST /pipeline-templates/:id/run: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		payload, _ := io.ReadAll(resp.Body)
-		t.Fatalf("POST /pipelines/:id/run returned %d: %s", resp.StatusCode, payload)
+		t.Fatalf("POST /pipeline-templates/:id/run returned %d: %s", resp.StatusCode, payload)
 	}
 	var result struct {
 		ID string `json:"id"`

@@ -1,13 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Search } from 'lucide-react'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
 import { useNotebookHistoryPaged } from '@/features/notebooks/hooks'
 import { notebookHistoryColumns } from '@/features/notebooks/columns'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { NotebookHistoryDetailPanel } from '@/features/notebooks/components/NotebookHistoryDetailPanel'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
 
 const PAGE_SIZE = 20
 
@@ -20,15 +22,10 @@ function NotebookHistoryPageInner() {
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
-  const filteredHistory = useMemo(() => {
-    const list = data?.history ?? []
-    if (!nameFilter.trim()) return list
-    const q = nameFilter.trim().toLowerCase()
-    return list.filter(h => h.name.toLowerCase().includes(q))
-  }, [data, nameFilter])
+  const filteredHistory = useTextFilter(data?.items, nameFilter, h => h.name)
 
   return (
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Development', 'Notebook History']} />} />}
       title="Notebook History"
       description="Past notebook server runs."
     >

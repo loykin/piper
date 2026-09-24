@@ -3,7 +3,7 @@ export type {
 } from './types'
 
 import type { StorageSettingsView, StorageObjectInfo, StorageUploadResult } from './types'
-import { api, projectApi } from '@/lib/api'
+import { api, projectApi, type Paged } from '@/lib/api'
 
 // ── System-scoped (admin) ─────────────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ import { api, projectApi } from '@/lib/api'
 // useCreateSystemCredential/useDeleteSystemCredential in
 // features/credentials/hooks.
 export async function getStorageSettings(): Promise<StorageSettingsView> {
-  return api.get<StorageSettingsView>('/api/storage/settings')
+  return api.get<StorageSettingsView>('/api/system/storage/settings')
 }
 
 // ── Project-scoped ────────────────────────────────────────────────────────────
@@ -30,20 +30,23 @@ export async function listStorageObjectsPaged(
   limit: number,
   offset: number,
   prefix = '',
-): Promise<{ objects: StorageObjectInfo[]; total: number }> {
+): Promise<Paged<StorageObjectInfo>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (prefix) params.set('prefix', prefix)
-  const { data, total } = await projectApi(projectId).getWithTotal<StorageObjectInfo[]>(`/storage/objects?${params.toString()}`)
-  return { objects: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<StorageObjectInfo>(`/storage/objects?${params.toString()}`)
+}
+
+/** Object keys are folder-like paths: escape each segment, keep the slashes. */
+function objectKeyPath(key: string): string {
+  return key.split('/').map(encodeURIComponent).join('/')
 }
 
 export function storageObjectURL(projectId: string, key: string): string {
-  const base = `/api/projects/${encodeURIComponent(projectId)}/storage/object`
-  return `${base}?key=${encodeURIComponent(key)}`
+  return `/api/projects/${encodeURIComponent(projectId)}/storage/objects/${objectKeyPath(key)}`
 }
 
 export async function deleteStorageObject(projectId: string, key: string): Promise<void> {
-  return projectApi(projectId).delete(`/storage/object?key=${encodeURIComponent(key)}`)
+  return projectApi(projectId).delete(`/storage/objects/${objectKeyPath(key)}`)
 }
 
 export async function uploadStorageObject(
@@ -54,5 +57,5 @@ export async function uploadStorageObject(
   const form = new FormData()
   form.set('file', file)
   if (key) form.set('key', key)
-  return projectApi(projectId).upload<StorageUploadResult>('/storage/object', form)
+  return projectApi(projectId).upload<StorageUploadResult>('/storage/objects', form)
 }

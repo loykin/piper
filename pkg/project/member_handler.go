@@ -33,7 +33,7 @@ func (h *MemberHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	admin := rg.Group("", RequireRole(security.ProjectRoleAdmin))
 	admin.GET("/members/candidates", h.candidates)
 	admin.POST("/members", h.add)
-	admin.PUT("/members/:user_id", h.update)
+	admin.PATCH("/members/:user_id", h.update)
 	admin.DELETE("/members/:user_id", h.remove)
 }
 

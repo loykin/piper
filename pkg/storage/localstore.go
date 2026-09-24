@@ -249,6 +249,14 @@ func (s *LocalStore) Delete(_ context.Context, keys ...string) error {
 		if err := root.Remove(name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		// Object stores have no folders; drop directories this delete left
+		// empty so they don't linger as empty "folders" in listings.
+		// Removing a non-empty directory fails, which ends the walk.
+		for dir := path.Dir(name); dir != "." && dir != "/"; dir = path.Dir(dir) {
+			if root.Remove(dir) != nil {
+				break
+			}
+		}
 	}
 	return nil
 }

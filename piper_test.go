@@ -188,7 +188,7 @@ func TestTemplateRunUsesConfiguredMemberRouting(t *testing.T) {
 		return project.ProjectRef{HomeID: "home-1", MemberID: "member-1", ProjectID: id}
 	}
 	router := p.newRouterWithMember(nil, nil, member, refFor)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipelines/"+tpl.ID+"/run", strings.NewReader(`{"params":{"lr":0.1}}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/pipeline-templates/"+tpl.ID+"/run", strings.NewReader(`{"params":{"lr":0.1}}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -446,7 +446,7 @@ func TestHandlerExposesArtifactStoreSettings(t *testing.T) {
 	})
 	router := p.Handler(nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/system/settings", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -481,7 +481,7 @@ func TestStorageSettingsWriteRouteRemoved(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: outputDir})
 	router := p.Handler(nil)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/storage/settings", strings.NewReader(`{"disabled":true,"url":"s3://bucket?endpoint=http://localhost:9000","token":"secret"}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/system/storage/settings", strings.NewReader(`{"disabled":true,"url":"s3://bucket?endpoint=http://localhost:9000","token":"secret"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -505,7 +505,7 @@ func TestStorageSettingsGetIsReadOnlyDiagnostic(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: outputDir})
 	router := p.Handler(nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/storage/settings", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/system/storage/settings", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -542,7 +542,7 @@ func TestStorageSettingsOverrideLoadsOnStartup(t *testing.T) {
 		t.Fatal("storage should be disabled by persisted override")
 	}
 	router := p.Handler(nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/storage/settings", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/system/storage/settings", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -610,7 +610,7 @@ func TestStorageObjectManagement(t *testing.T) {
 		t.Fatalf("objects = %#v", objs)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/object?key=runs/run-1/train/model.txt", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/projects/"+projectID+"/storage/objects/runs/run-1/train/model.txt", nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -620,7 +620,7 @@ func TestStorageObjectManagement(t *testing.T) {
 		t.Fatalf("download body = %q, want hello", got)
 	}
 
-	req = httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/storage/object?key=runs/run-1/train/model.txt", nil)
+	req = httptest.NewRequest(http.MethodDelete, "/api/projects/"+projectID+"/storage/objects/runs/run-1/train/model.txt", nil)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -652,7 +652,7 @@ func TestStorageObjectUpload(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/storage/object", &buf)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+projectID+"/storage/objects", &buf)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -1466,13 +1466,13 @@ func TestAuthCapabilitiesControlRouteRegistration(t *testing.T) {
 	if !hasRoute(router, http.MethodGet, "/api/capabilities") {
 		t.Fatal("capabilities route was not registered")
 	}
-	if !hasRoute(router, http.MethodGet, "/api/users") {
+	if !hasRoute(router, http.MethodGet, "/api/system/users") {
 		t.Fatal("user directory route was not registered")
 	}
-	if hasRoute(router, http.MethodPost, "/api/users") {
+	if hasRoute(router, http.MethodPost, "/api/system/users") {
 		t.Fatal("user create route registered without UserManager")
 	}
-	if hasRoute(router, http.MethodDelete, "/api/users/:id") {
+	if hasRoute(router, http.MethodDelete, "/api/system/users/:id") {
 		t.Fatal("user delete route registered without UserManager")
 	}
 	if hasRoute(router, http.MethodGet, "/api/projects/:project_id/members") {

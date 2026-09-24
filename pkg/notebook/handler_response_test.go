@@ -47,7 +47,7 @@ func (r *stubNotebookRepo) SetStatus(_ context.Context, _, name, status string) 
 	}
 	return nil
 }
-func (r *stubNotebookRepo) List(_ context.Context, _ string) ([]*NotebookServer, error) {
+func (r *stubNotebookRepo) List(_ context.Context, _ string, _, _ int) ([]*NotebookServer, error) {
 	out := make([]*NotebookServer, 0, len(r.servers))
 	for _, nb := range r.servers {
 		out = append(out, nb)
@@ -257,4 +257,9 @@ func TestNewNotebookServerResponseNilSafe(t *testing.T) {
 	if got := NewNotebookServerResponses(nil); got == nil || len(got) != 0 {
 		t.Fatalf("expected empty non-nil slice, got %+v", got)
 	}
+}
+
+func (r *stubNotebookRepo) Count(ctx context.Context, projectID string) (int, error) {
+	items, err := r.List(ctx, projectID, 0, 0)
+	return len(items), err
 }

@@ -10,8 +10,9 @@ import { useRuns, runKeys } from '@/features/runs/hooks'
 import { getRunMetrics } from '@/features/runs/api'
 import { groupRunMetrics } from '@/features/runs/metrics'
 import type { Run, RunMetricValues } from '@/features/runs/types'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { RunDetailPanel } from './RunDetailPanel'
+import { fmtDate } from '@/lib/format'
 
 interface SortState { step: string; key: string; order: 'asc' | 'desc' }
 
@@ -68,7 +69,7 @@ export function ExperimentDetailPanel({ experiment }: { experiment: string }) {
         id: 'started_at', header: 'Started', meta: { minWidth: 130 },
         cell: ({ row }) => (
           <span className="text-xs text-muted-foreground">
-            {new Date(row.original.started_at).toLocaleString()}
+            {fmtDate(row.original.started_at)}
           </span>
         ),
       },

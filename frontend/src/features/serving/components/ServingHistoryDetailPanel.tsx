@@ -4,6 +4,7 @@ import { useSidePanel } from '@loykin/side-panel'
 import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import type { ServiceHistory } from '@/features/serving/types'
+import { fmtDate } from '@/lib/format'
 
 function elapsed(deployedAt: string, stoppedAt: string): string {
   const ms = new Date(stoppedAt).getTime() - new Date(deployedAt).getTime()
@@ -40,8 +41,8 @@ export function ServingHistoryDetailPanel({ entry }: { entry: ServiceHistory }) 
           <PanelTemplate.Row label="Endpoint">
             <span className="break-all font-mono text-xs text-muted-foreground">{entry.endpoint || '—'}</span>
           </PanelTemplate.Row>
-          <PanelTemplate.Row label="Deployed">{new Date(entry.deployed_at).toLocaleString()}</PanelTemplate.Row>
-          <PanelTemplate.Row label="Stopped">{new Date(entry.stopped_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Deployed">{fmtDate(entry.deployed_at)}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Stopped">{fmtDate(entry.stopped_at)}</PanelTemplate.Row>
           <PanelTemplate.Row label="Duration">{elapsed(entry.deployed_at, entry.stopped_at)}</PanelTemplate.Row>
         </dl>
       </PanelTemplate.Section>

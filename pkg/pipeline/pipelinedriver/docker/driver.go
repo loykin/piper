@@ -258,10 +258,14 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 
 	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
 		Config: &container.Config{
-			Image:  image,
-			Cmd:    cmd,
-			Env:    env,
-			Labels: labels,
+			Image: image,
+			// Override the image's ENTRYPOINT (as the K8s launcher does with
+			// Command): otherwise an image like `ENTRYPOINT ["/piper"]` receives
+			// the agent path as its first argument and exits before running.
+			Entrypoint: cmd[:1],
+			Cmd:        cmd[1:],
+			Env:        env,
+			Labels:     labels,
 		},
 		HostConfig: &container.HostConfig{
 			Mounts:      mounts,

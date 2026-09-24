@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { RowActions } from '@/shared/components/RowActions'
 import type { Step } from '../types'
+import { toneAction, toneText } from '@/shared/status'
+import { fmtTime } from '@/lib/format'
 
 function formatStepTime(value?: string): string {
   if (!value) return '—'
-  return new Date(value).toLocaleTimeString()
+  return fmtTime(value)
 }
 
 function formatStepDuration(step: Step): string {
@@ -58,20 +60,20 @@ export function StepList({ steps, selectedId, onSelect, onRetry }: StepListProps
       accessorKey: 'started_at',
       header: 'Started',
       meta: { minWidth: 140 },
-      cell: ({ row }) => <span className="text-gray-400">{formatStepTime(row.original.started_at)}</span>,
+      cell: ({ row }) => <span className="text-muted-foreground">{formatStepTime(row.original.started_at)}</span>,
     },
     {
       id: 'duration',
       header: 'Duration',
       meta: { minWidth: 120, align: 'right' },
-      cell: ({ row }) => <span className="text-gray-400">{formatStepDuration(row.original)}</span>,
+      cell: ({ row }) => <span className="text-muted-foreground">{formatStepDuration(row.original)}</span>,
     },
     {
       id: 'error',
       header: 'Error',
       meta: { minWidth: 240, flex: 1 },
       cell: ({ row }) => (
-        <span className="block truncate text-xs text-red-400">{row.original.error ?? '—'}</span>
+        <span className={`block truncate text-xs ${toneText.danger}`}>{row.original.error ?? '—'}</span>
       ),
     },
     ...(onRetry ? [{
@@ -86,7 +88,7 @@ export function StepList({ steps, selectedId, onSelect, onRetry }: StepListProps
               e.stopPropagation()
               onRetry(row.original.step_name)
             }}
-            className="text-yellow-400 hover:bg-yellow-950" />
+            className={toneAction.warning} />
         </RowActions>
       ),
     }] : []),

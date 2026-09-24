@@ -163,11 +163,6 @@ func (r *remoteMemberClient) RerunRun(ctx context.Context, auth memberclient.Aut
 	return call[RerunRunRequest, string](ctx, r, MethodRerunRun, auth, ref, RerunRunRequest{RunID: runID, FailedOnly: failedOnly})
 }
 
-func (r *remoteMemberClient) DeleteRun(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) error {
-	_, err := call[string, struct{}](ctx, r, MethodDeleteRun, auth, ref, runID)
-	return err
-}
-
 func (r *remoteMemberClient) ListSteps(ctx context.Context, auth memberclient.AuthContext, ref project.ProjectRef, runID string) ([]memberclient.StepSummary, error) {
 	return call[string, []memberclient.StepSummary](ctx, r, MethodListSteps, auth, ref, runID)
 }

@@ -13,6 +13,8 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import type { Step } from '@/features/runs/api'
+import { statusTone, toneFill, toneOutline } from '@/shared/status'
+import { useIsDarkTheme } from '@/shared/hooks/useIsDarkTheme'
 
 // ── YAML parser (minimal — no external dep) ──────────────────────────────────
 
@@ -100,24 +102,6 @@ function layoutNodes(steps: StepDef[]): Map<string, { x: number; y: number }> {
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
-const STATUS_BORDER: Record<string, string> = {
-  done:    'border-green-500',
-  success: 'border-green-500',
-  running: 'border-blue-400',
-  failed:  'border-red-500',
-  pending: 'border-gray-600',
-  skipped: 'border-yellow-500',
-}
-
-const STATUS_BG: Record<string, string> = {
-  done:    'bg-green-500/10',
-  success: 'bg-green-500/10',
-  running: 'bg-blue-500/10',
-  failed:  'bg-red-500/10',
-  pending: 'bg-gray-800',
-  skipped: 'bg-yellow-500/10',
-}
-
 const STATUS_DOT: Record<string, string> = {
   done:    '✅',
   success: '✅',
@@ -138,27 +122,26 @@ interface StepNodeData {
 }
 
 function StepNode({ data }: { data: StepNodeData }) {
-  const border = STATUS_BORDER[data.status] ?? STATUS_BORDER.pending
-  const bg     = STATUS_BG[data.status]    ?? STATUS_BG.pending
+  const outline = toneOutline[statusTone(data.status)]
   const dot    = STATUS_DOT[data.status]   ?? '⌛'
-  const ring   = data.selected ? 'ring-2 ring-indigo-400 ring-offset-1 ring-offset-gray-950' : ''
+  const ring   = data.selected ? 'ring-2 ring-ring ring-offset-1 ring-offset-background' : ''
 
   return (
     <div
       onClick={data.onClick}
       className={`
-        cursor-pointer rounded-lg border-2 ${border} ${bg} ${ring}
+        cursor-pointer rounded-lg border-2 ${outline} ${ring}
         px-3 py-2 w-40 text-center transition-all
         hover:brightness-125
       `}
     >
-      <Handle type="target" position={Position.Left} className="bg-gray-600! border-gray-500!" />
-      <div className="text-xs text-gray-400 mb-0.5">{dot}</div>
-      <div className="text-sm font-medium text-gray-100 truncate">{data.label}</div>
+      <Handle type="target" position={Position.Left} className="bg-muted-foreground! border-border!" />
+      <div className="text-xs text-muted-foreground mb-0.5">{dot}</div>
+      <div className="text-sm font-medium text-foreground truncate">{data.label}</div>
       {data.status === 'running' && (
-        <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+        <span className={`mt-1 inline-block h-1.5 w-1.5 rounded-full animate-pulse ${toneFill.info}`} />
       )}
-      <Handle type="source" position={Position.Right} className="bg-gray-600! border-gray-500!" />
+      <Handle type="source" position={Position.Right} className="bg-muted-foreground! border-border!" />
     </div>
   )
 }
@@ -175,6 +158,7 @@ interface RunDAGProps {
 }
 
 export default function RunDAG({ pipelineYaml, steps, selected, onSelectStep }: RunDAGProps) {
+  const isDark = useIsDarkTheme()
   const stepMap = useMemo(() => {
     const m = new Map<string, Step>()
     for (const s of steps) m.set(s.step_name, s)
@@ -270,9 +254,9 @@ export default function RunDAG({ pipelineYaml, steps, selected, onSelectStep }: 
   if (stepDefs.length === 0) return null
 
   return (
-    <section className="rounded-xl border border-gray-800 bg-gray-950 overflow-hidden">
-      <div className="border-b border-gray-800 bg-gray-900 px-4 py-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-300">Pipeline DAG</h2>
+    <section className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="border-b border-border bg-muted px-4 py-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Pipeline DAG</h2>
       </div>
       <div style={{ height: Math.max(260, stepDefs.length * 30 + 120) }}>
         <ReactFlow
@@ -285,11 +269,11 @@ export default function RunDAG({ pipelineYaml, steps, selected, onSelectStep }: 
           fitView
           fitViewOptions={{ padding: 0.3 }}
           proOptions={{ hideAttribution: true }}
-          colorMode="dark"
-          className="bg-gray-950"
+          colorMode={isDark ? 'dark' : 'light'}
+          className="bg-card"
         >
-          <Background color="#1f2937" gap={20} />
-          <Controls className="bg-gray-900! border-gray-700! text-gray-300!" />
+          <Background color="var(--border)" gap={20} />
+          <Controls className="bg-card! border-border! text-foreground!" />
         </ReactFlow>
       </div>
     </section>

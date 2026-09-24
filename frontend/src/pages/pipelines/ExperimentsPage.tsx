@@ -1,16 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useNavigate } from '@/lib/router'
+import { useState } from 'react'
 import { Plus, Search } from 'lucide-react'
-import { useNavigate } from '@tanstack/react-router'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
-import { DataGrid, DataGridPaginationBar, type DataGridColumnDef } from '@loykin/gridkit'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
 import { useExperimentsPaged } from '@/features/runs/hooks'
 import { ExperimentDetailPanel } from '@/features/runs/components/ExperimentDetailPanel'
-import type { ExperimentSummary } from '@/features/runs/types'
+import { experimentColumns } from '@/features/runs/columns'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { Button } from '@/components/ui/button'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const PAGE_SIZE = 25
 
@@ -21,32 +22,12 @@ function ExperimentsPageInner() {
   const [nameFilter, setNameFilter] = useState('')
   const [pageIndex, setPageIndex] = useState(0)
   const query = useExperimentsPaged(nameFilter.trim(), PAGE_SIZE, pageIndex * PAGE_SIZE)
-  const experiments = query.data?.experiments ?? []
+  const experiments = query.data?.items ?? []
   const total = query.data?.total ?? 0
 
-  const columns = useMemo<DataGridColumnDef<ExperimentSummary>[]>(() => [
-    { id: 'name',    header: 'Experiment',  accessorKey: 'name',    meta: { minWidth: 220 } },
-    { id: 'runs',    header: 'Runs',        accessorKey: 'runs',    meta: { minWidth: 80 } },
-    { id: 'success', header: 'Success',     accessorKey: 'success', meta: { minWidth: 80 },
-      cell: ({ row }) => <span className="text-green-400">{row.original.success}</span> },
-    { id: 'failed',  header: 'Failed',      accessorKey: 'failed',  meta: { minWidth: 80 },
-      cell: ({ row }) => row.original.failed > 0
-        ? <span className="text-red-400">{row.original.failed}</span>
-        : <span>{row.original.failed}</span> },
-    { id: 'running', header: 'Running',     accessorKey: 'running', meta: { minWidth: 80 },
-      cell: ({ row }) => row.original.running > 0
-        ? <span className="text-blue-400">{row.original.running}</span>
-        : <span>{row.original.running}</span> },
-    { id: 'latest',  header: 'Latest Run',  accessorKey: 'latest',
-      cell: ({ row }) => (
-        <span className="text-muted-foreground text-xs">
-          {new Date(row.original.latest).toLocaleString()}
-        </span>
-      ) },
-  ], [])
 
   return (
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', 'Experiments']} />} />}
       title="Experiments"
       description="Grouped sweep runs. Click an experiment to compare runs by params and metrics."
     >
@@ -67,7 +48,7 @@ function ExperimentsPageInner() {
             </div>
           }
           toolbarRight={
-            <Button size="sm" onClick={() => void navigate({ to: `/projects/${projectId}/experiments/new` })}>
+            <Button size="sm" onClick={() => void navigate(`/projects/${projectId}/experiments/new`)}>
               <Plus className="mr-2 size-4" />New Sweep
             </Button>
           }
@@ -81,7 +62,7 @@ function ExperimentsPageInner() {
         >
           <DataGrid
             data={experiments}
-            columns={columns}
+            columns={experimentColumns}
             isLoading={query.isPending}
             emptyMessage={query.isError ? undefined : 'No experiments yet. Create a sweep to compare parameter trials.'}
             tableWidthMode="fill-last"

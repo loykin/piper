@@ -6,7 +6,7 @@ export type {
 } from './types'
 
 import type { Run, RunDetail, Step, LogLine, StepArtifacts, RunFilter, SweepRequest, SweepResponse, ExperimentSummary, RunMetric, RunMetrics, StatsCapabilities } from './types'
-import { projectApi } from '@/lib/api'
+import { projectApi, type Paged } from '@/lib/api'
 
 function runListParams(filter?: RunFilter): URLSearchParams {
   const params = new URLSearchParams()
@@ -25,8 +25,7 @@ function runListParams(filter?: RunFilter): URLSearchParams {
 
 export async function listRuns(projectId: string, filter?: RunFilter): Promise<Run[]> {
   const qs = runListParams(filter).toString()
-  const data = await projectApi(projectId).get<Run[]>(`/runs${qs ? `?${qs}` : ''}`)
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<Run>(`/runs${qs ? `?${qs}` : ''}`)
 }
 
 /**
@@ -34,10 +33,9 @@ export async function listRuns(projectId: string, filter?: RunFilter): Promise<R
  * total row count matching the filter (ignoring limit/offset), read from the
  * `X-Total-Count` response header the server only sets when a limit was sent.
  */
-export async function listRunsPaged(projectId: string, filter: RunFilter): Promise<{ runs: Run[]; total: number }> {
+export async function listRunsPaged(projectId: string, filter: RunFilter): Promise<Paged<Run>> {
   const qs = runListParams(filter).toString()
-  const { data, total } = await projectApi(projectId).getWithTotal<Run[]>(`/runs${qs ? `?${qs}` : ''}`)
-  return { runs: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<Run>(`/runs${qs ? `?${qs}` : ''}`)
 }
 
 export async function createRun(projectId: string, yaml: string, params?: Record<string, unknown>): Promise<{ run_id: string }> {
@@ -45,32 +43,30 @@ export async function createRun(projectId: string, yaml: string, params?: Record
 }
 
 export async function createSweep(projectId: string, req: SweepRequest): Promise<SweepResponse> {
-  return projectApi(projectId).post<SweepResponse>('/runs/sweep', req)
+  return projectApi(projectId).post<SweepResponse>('/experiments', req)
 }
 
-export async function listExperimentsPaged(projectId: string, name: string, limit: number, offset: number): Promise<{ experiments: ExperimentSummary[]; total: number }> {
+export async function listExperimentsPaged(projectId: string, name: string, limit: number, offset: number): Promise<Paged<ExperimentSummary>> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (name) params.set('name', name)
-  const { data, total } = await projectApi(projectId).getWithTotal<ExperimentSummary[]>(`/experiments?${params}`)
-  return { experiments: Array.isArray(data) ? data : [], total: total ?? 0 }
+  return projectApi(projectId).getPaged<ExperimentSummary>(`/experiments?${params}`)
 }
 
 export async function getRun(projectId: string, id: string): Promise<Run> {
-  const data = await projectApi(projectId).get<RunDetail>(`/runs/${id}`)
+  const data = await projectApi(projectId).get<RunDetail>(`/runs/${encodeURIComponent(id)}`)
   return data.run
 }
 
 export async function getRunSteps(projectId: string, runID: string): Promise<Step[]> {
-  const data = await projectApi(projectId).get<Step[]>(`/runs/${runID}/steps`)
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<Step>(`/runs/${encodeURIComponent(runID)}/steps`)
 }
 
 export async function cancelRun(projectId: string, id: string): Promise<void> {
-  return projectApi(projectId).post(`/runs/${id}/cancel`)
+  return projectApi(projectId).post(`/runs/${encodeURIComponent(id)}/cancel`)
 }
 
 export async function rerunRun(projectId: string, id: string): Promise<{ run_id: string }> {
-  return projectApi(projectId).post<{ run_id: string }>(`/runs/${id}/rerun`)
+  return projectApi(projectId).post<{ run_id: string }>(`/runs/${encodeURIComponent(id)}/rerun`)
 }
 
 export async function getRunLogs(
@@ -80,10 +76,9 @@ export async function getRunLogs(
   afterID?: number,
 ): Promise<LogLine[]> {
   const params = afterID != null ? `?after_id=${afterID}` : ''
-  const data = await projectApi(projectId).get<LogLine[]>(
-    `/runs/${runID}/steps/${step}/logs${params}`,
+  return projectApi(projectId).getList<LogLine>(
+    `/runs/${encodeURIComponent(runID)}/steps/${encodeURIComponent(step)}/logs${params}`,
   )
-  return Array.isArray(data) ? data : []
 }
 
 export interface RunLogPageOptions {
@@ -105,10 +100,10 @@ export async function getRunLogPage(
   if (options.since) params.set('since', options.since)
   if (options.until) params.set('until', options.until)
   const query = params.toString()
-  const response = await projectApi(projectId).getWithCursor<LogLine[]>(
-    `/runs/${runID}/steps/${step}/logs${query ? `?${query}` : ''}`,
+  const response = await projectApi(projectId).getCursorList<LogLine>(
+    `/runs/${encodeURIComponent(runID)}/steps/${encodeURIComponent(step)}/logs${query ? `?${query}` : ''}`,
   )
-  return { lines: Array.isArray(response.data) ? response.data : [], nextCursor: response.nextCursor }
+  return { lines: response.items, nextCursor: response.nextCursor }
 }
 
 export async function getStatsCapabilities(projectId: string): Promise<StatsCapabilities> {
@@ -116,13 +111,12 @@ export async function getStatsCapabilities(projectId: string): Promise<StatsCapa
 }
 
 export function runLogsStreamURL(projectId: string, runID: string, step: string, cursor?: string): string {
-  const base = `/api/projects/${encodeURIComponent(projectId)}/runs/${runID}/steps/${step}/logs/stream`
+  const base = `/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runID)}/steps/${encodeURIComponent(step)}/logs/stream`
   return cursor ? `${base}?cursor=${encodeURIComponent(cursor)}` : base
 }
 
 export async function listArtifacts(projectId: string, runID: string): Promise<StepArtifacts[]> {
-  const data = await projectApi(projectId).get<StepArtifacts[]>(`/runs/${runID}/artifacts`)
-  return Array.isArray(data) ? data : []
+  return projectApi(projectId).getList<StepArtifacts>(`/runs/${encodeURIComponent(runID)}/artifacts`)
 }
 
 export interface ArtifactDownloadURLParams {
@@ -152,11 +146,11 @@ export async function retryStep(
   runID: string,
   step: string,
 ): Promise<{ run_id: string }> {
-  return projectApi(projectId).post<{ run_id: string }>(`/runs/${runID}/steps/${step}/retry`)
+  return projectApi(projectId).post<{ run_id: string }>(`/runs/${encodeURIComponent(runID)}/steps/${encodeURIComponent(step)}/retry`)
 }
 
 export async function getRunMetrics(projectId: string, runID: string): Promise<RunMetrics> {
-  return projectApi(projectId).get<RunMetrics>(`/runs/${runID}/metrics`)
+  return projectApi(projectId).get<RunMetrics>(`/runs/${encodeURIComponent(runID)}/metrics`)
 }
 
 export interface RunMetricPageOptions {
@@ -181,10 +175,10 @@ export async function getRunMetricPage(
   if (options.since) params.set('since', options.since)
   if (options.until) params.set('until', options.until)
   const query = params.toString()
-  const response = await projectApi(projectId).getWithCursor<RunMetric[]>(
-    `/runs/${runID}/metrics${query ? `?${query}` : ''}`,
+  const response = await projectApi(projectId).getCursorList<RunMetric>(
+    `/runs/${encodeURIComponent(runID)}/metrics${query ? `?${query}` : ''}`,
   )
-  return { points: Array.isArray(response.data) ? response.data : [], nextCursor: response.nextCursor }
+  return { points: response.items, nextCursor: response.nextCursor }
 }
 
 /** SSE event stream URL, filtered to a specific project when projectId is provided. */

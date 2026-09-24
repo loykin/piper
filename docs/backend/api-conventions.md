@@ -6,11 +6,21 @@ must follow these rules so standalone and federated routing expose the same API.
 - Project-owned resources live below `/api/projects/{project_id}`. System-owned
   resources live below `/api/system`; authentication endpoints live below
   `/api/auth`.
-- Resource paths use plural nouns. Use a nested `POST /{resource}/{id}/{action}`
+- Resource paths use plural nouns (`/pipeline-templates`, `/storage/objects`).
+  A per-project singleton setting is the one singular exception
+  (`/notebook-execution-policy`). Use a nested `POST /{resource}/{id}/{action}`
   only when the operation is not ordinary CRUD.
+- Once created, a resource is addressed by its own id at its own collection
+  (`/notebook-executions/{id}`), even when it is created under a parent
+  (`POST /notebooks/{name}/executions`). Clients must not need the parent's
+  name to read or act on it. Keys that contain `/` use a catch-all path
+  segment (`/storage/objects/{key}`), never a `?key=` query.
+- `PATCH` changes some fields and leaves the rest; `PUT` replaces the whole
+  resource or document. Pick by what the handler does, not by habit.
 - JSON fields and query parameters use `snake_case`. Error responses use exactly
   `{"error":"message"}` unless the OpenAPI contract declares extra fields.
-- `GET` returns `200`; a collection returns a JSON array and a detail endpoint
+- `GET` returns `200`; a collection returns a JSON array — `[]` when empty,
+  never `null` (`list_contract_test.go`) — and a detail endpoint
   returns its documented resource or detail envelope. Clients must not accept
   undocumented legacy response unions.
 - A `POST` that creates one or more resources returns `201`, including action
@@ -26,3 +36,6 @@ must follow these rules so standalone and federated routing expose the same API.
 - Renaming or reshaping a published endpoint requires an explicit compatibility
   window in the OpenAPI contract and tests. Do not leave silent aliases or
   frontend-only compatibility branches behind.
+- `openapi_routes_test.go` fails when a registered JSON route is missing from
+  `docs/openapi.yaml` or the spec documents a route the server no longer
+  registers — update both in the same change.

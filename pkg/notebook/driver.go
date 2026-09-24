@@ -24,6 +24,13 @@ type Driver interface {
 	// Process/Docker: stops the runtime instance. K8s: scales the StatefulSet down.
 	Stop(ctx context.Context, nb *NotebookServer) error
 
+	// Remove deletes every runtime object the notebook server owns (never its
+	// volume). Called after Stop when the notebook record is deleted, so a
+	// deleted notebook leaves nothing behind in the runtime.
+	// Process/Docker: Stop already removes the process/container.
+	// K8s: deletes the StatefulSet (Service is owned by it and GC'd).
+	Remove(ctx context.Context, nb *NotebookServer) error
+
 	// DeprovisionVolume permanently removes the backing storage.
 	// Bare-metal: removes the host work directory. K8s: deletes the PVC.
 	DeprovisionVolume(ctx context.Context, vol *NotebookVolume) error

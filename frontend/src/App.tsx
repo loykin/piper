@@ -35,8 +35,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuCheckboxItem } from '@/components/ui/dropdown-menu'
 import { BellRing, CalendarClock, History, Server, BookOpen, HardDrive, Database, GitBranch, FlaskConical, LogOut, ChevronsUpDown, Moon, Sun, ShieldCheck, ChevronRight, KeyRound, UserRoundCog, UsersRound, ListChecks, Plug, Activity } from 'lucide-react'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
-import { ProjectSelector } from '@/components/ProjectSelector'
-import { ProjectProvider, useProjectContext } from '@/lib/projectContext'
+import { ProjectSelector } from '@/features/projects/components/ProjectSelector'
+import { ProjectProvider, useProjectContext } from '@/features/projects/context'
 import { AuthProvider, useAuth } from '@/features/auth/context'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -55,11 +55,13 @@ const RunDetailPage          = lazyRouteComponent(() => import('@/pages/pipeline
 const WorkflowsPage          = lazyRouteComponent(() => import('@/pages/schedules/WorkflowsPage'))
 const WorkflowCreatePage     = lazyRouteComponent(() => import('@/pages/schedules/WorkflowCreatePage'))
 const ScheduleDetailPage     = lazyRouteComponent(() => import('@/pages/schedules/ScheduleDetailPage'))
+const ScheduleDeployPage     = lazyRouteComponent(() => import('@/pages/schedules/ScheduleDeployPage'))
 const ServingPage            = lazyRouteComponent(() => import('@/pages/serving/ServingPage'))
 const ServingCreatePage      = lazyRouteComponent(() => import('@/pages/serving/ServingCreatePage'))
 const ServingHistoryPage     = lazyRouteComponent(() => import('@/pages/serving/ServingHistoryPage'))
 const CredentialsPage        = lazyRouteComponent(() => import('@/pages/credentials/CredentialsPage'))
 const CredentialCreatePage   = lazyRouteComponent(() => import('@/pages/credentials/CredentialCreatePage'))
+const CredentialRotatePage   = lazyRouteComponent(() => import('@/pages/credentials/CredentialRotatePage'))
 const AlertRulesPage         = lazyRouteComponent(() => import('@/pages/alerting/AlertRulesPage'))
 const AlertRuleCreatePage    = lazyRouteComponent(() => import('@/pages/alerting/AlertRuleCreatePage'))
 const StoragePage            = lazyRouteComponent(() => import('@/pages/system/StoragePage'))
@@ -89,6 +91,8 @@ type NavItem = {
   exact?: boolean
   /** System-level route — enabled even without a selected project. */
   system?: boolean
+  /** Server capability the page's API needs; hidden when the server lacks it. */
+  capability?: 'user_directory' | 'project_member_management'
   /** Nested sub-items rendered with SidebarMenuSub. */
   children?: NavSubItem[]
 }
@@ -129,8 +133,8 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
         { id: 'credentials', label: 'Credentials', icon: KeyRound, to: `${base}/credentials` },
         { id: 'integrations', label: 'Integrations', icon: Plug, to: `${base}/integrations/mlflow` },
         { id: 'alert-rules', label: 'Alert Rules', icon: BellRing, to: `${base}/alert-rules` },
-        { id: 'members', label: 'Members', icon: UsersRound, to: `${base}/members` },
-        { id: 'users', label: 'Users', icon: UserRoundCog, to: `/users`, system: true },
+        { id: 'members', label: 'Members', icon: UsersRound, to: `${base}/members`, capability: 'project_member_management' },
+        { id: 'users', label: 'Users', icon: UserRoundCog, to: `/users`, system: true, capability: 'user_directory' },
       ],
     },
   ]
@@ -161,7 +165,12 @@ function AppSidebar() {
   const navigate = useNavigate()
   const { projectId } = useProjectContext()
   const { user, capabilities, logout } = useAuth()
-  const groups = navItems(projectId)
+  // Trusted-mode servers don't register the user/member APIs at all, so a
+  // menu entry for them would only lead to a 404 page.
+  const groups = navItems(projectId).map(group => ({
+    ...group,
+    items: group.items.filter(item => !item.capability || capabilities?.[item.capability]),
+  }))
 
   const { isDark, toggleDark } = useAppTheme()
   const router = useRouter()
@@ -460,6 +469,15 @@ function LegacyProjectRedirect({ to }: { to: string }) {
   return <RedirectTo to={projectId ? `/projects/${projectId}/${to}` : '/'} />
 }
 
+// Keeps old `…/create` links working after the routes were renamed to the
+// `…/new` convention every other create page uses. Preserves the query string
+// (e.g. notebooks/create?volume=…).
+function RenamedRouteRedirect({ to }: { to: string }) {
+  const { projectId } = useProjectContext()
+  const location = useLocation()
+  return <RedirectTo to={`/projects/${projectId}/${to}${location.searchStr ?? ''}`} />
+}
+
 function AppNotFoundFallback() {
   const { projectId } = useProjectContext()
   return <NotFoundPage homeTo={projectId ? `/projects/${projectId}/schedules` : '/'} />
@@ -496,23 +514,27 @@ const projectRoute = createRoute({
 
 const projectRoutes = [
   createRoute({ getParentRoute: () => projectRoute, path: 'schedules', component: WorkflowsPage }),
-  createRoute({ getParentRoute: () => projectRoute, path: 'schedules/create', component: WorkflowCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'schedules/new', component: WorkflowCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'schedules/create', component: () => <RenamedRouteRedirect to="schedules/new" /> }),
   createRoute({ getParentRoute: () => projectRoute, path: 'schedules/$id', component: ScheduleDetailPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'pipelines', component: PipelinesListPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'pipelines/editor', component: PipelineEditorPage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'pipelines/$id/deploy', component: ScheduleDeployPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'history', component: HistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'runs/$id', component: RunDetailPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'experiments', component: ExperimentsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'experiments/new', component: ExperimentCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'credentials', component: CredentialsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'credentials/new', component: CredentialCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'credentials/$name/rotate', component: CredentialRotatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'alert-rules', component: AlertRulesPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'alert-rules/new', component: AlertRuleCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'serving', component: ServingPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'serving/new', component: ServingCreatePage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'serving/history', component: ServingHistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks', component: NotebooksPage }),
-  createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/create', component: NotebookCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/new', component: NotebookCreatePage }),
+  createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/create', component: () => <RenamedRouteRedirect to="notebooks/new" /> }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebooks/history', component: NotebookHistoryPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-executions', component: NotebookExecutionsPage }),
   createRoute({ getParentRoute: () => projectRoute, path: 'notebook-volumes', component: NotebookVolumesPage }),

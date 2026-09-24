@@ -89,6 +89,7 @@ func (r *stubTemplateRepo) Delete(context.Context, string, string) error { retur
 
 type stubScheduleRepo struct {
 	created *schedule.Schedule
+	list    []*schedule.Schedule
 }
 
 func (r *stubScheduleRepo) Create(_ context.Context, sc *schedule.Schedule) error {
@@ -102,7 +103,7 @@ func (r *stubScheduleRepo) Get(context.Context, string, string) (*schedule.Sched
 }
 
 func (r *stubScheduleRepo) List(context.Context, string, int, int) ([]*schedule.Schedule, error) {
-	return nil, nil
+	return r.list, nil
 }
 
 func (r *stubScheduleRepo) Count(context.Context, string) (int, error) {
@@ -171,7 +172,7 @@ func TestDeployComputesCronNextRunAt(t *testing.T) {
 	}))
 
 	body := strings.NewReader(`{"cron":"0 2 * * *","enabled":true}`)
-	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/pipelines/tpl-1/deploy", body)
+	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/pipeline-templates/tpl-1/deploy", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -187,5 +188,36 @@ func TestDeployComputesCronNextRunAt(t *testing.T) {
 	}
 	if schedules.created.ScheduleType != "cron" || schedules.created.CronExpr != "0 2 * * *" {
 		t.Fatalf("schedule cron fields = type %q expr %q", schedules.created.ScheduleType, schedules.created.CronExpr)
+	}
+}
+
+func TestDeleteRefusesVersionReferencedBySchedule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tpl := &Template{ProjectID: "proj-1", ID: "tpl-1", Name: "daily", Version: 1, SnapshotID: "snap-1"}
+	cases := map[string]*schedule.Schedule{
+		// POST /pipeline-templates/:id/deploy records the version id.
+		"deployed": {Name: "via-deploy", VersionID: "tpl-1"},
+		// POST /schedules from free YAML only carries the snapshot prefix.
+		"free yaml": {Name: "via-yaml", PipelineYAML: "spec:\n  steps:\n    - run:\n        snapshot_prefix: snapshots/snap-1/\n"},
+	}
+	for name, sc := range cases {
+		t.Run(name, func(t *testing.T) {
+			handler := NewHandler(HandlerDeps{
+				Templates: &stubTemplateRepo{templates: map[string]*Template{"tpl-1": tpl}},
+				Schedules: &stubScheduleRepo{list: []*schedule.Schedule{sc}},
+				Parse:     pipeline.Parse,
+			})
+			router := gin.New()
+			handler.RegisterRoutes(router.Group("/projects/:project_id", func(c *gin.Context) {
+				ctx := project.WithContext(c.Request.Context(), project.Context{ID: "proj-1", Role: security.ProjectRoleAdmin})
+				c.Request = c.Request.WithContext(ctx)
+				c.Next()
+			}))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/projects/proj-1/pipeline-templates/tpl-1", nil))
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), sc.Name) {
+				t.Fatalf("status = %d, body = %s; want 409 naming %q", rec.Code, rec.Body.String(), sc.Name)
+			}
+		})
 	}
 }

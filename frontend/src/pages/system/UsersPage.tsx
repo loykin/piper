@@ -1,19 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Plus, Search } from 'lucide-react'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { userColumns } from '@/features/access/columns'
 import { UserDetailPanel } from '@/features/access/components/UserDetailPanel'
@@ -22,6 +12,9 @@ import type { User } from '@/features/access/types'
 import { useNavigate } from '@/lib/router'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
 
@@ -36,12 +29,7 @@ function UsersPageInner() {
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
-  const filteredUsers = useMemo(() => {
-    const list = usersQuery.data?.users ?? []
-    if (!nameFilter.trim()) return list
-    const q = nameFilter.trim().toLowerCase()
-    return list.filter(u => u.username.toLowerCase().includes(q))
-  }, [usersQuery.data, nameFilter])
+  const filteredUsers = useTextFilter(usersQuery.data?.items, nameFilter, u => u.username)
 
   function confirmDelete() {
     return confirmDeleteTarget(t => deleteUser.mutateAsync(t.id))
@@ -49,7 +37,7 @@ function UsersPageInner() {
 
   return (
     <>
-      <DataBodyTemplate
+      <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['System', 'Users']} />} />}
         title="Users"
         description="System accounts and administrator access."
       >
@@ -113,26 +101,15 @@ function UsersPageInner() {
         </DataBodyTemplate.Body>
       </DataBodyTemplate>
 
-      <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this user?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteTarget?.username} will lose access immediately. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={deleteUser.isPending}
-              onClick={() => void confirmDelete()}
-            >
-              {deleteUser.isPending ? 'Deleting…' : 'Delete user'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        onCancel={cancelDelete}
+        title="Delete this user?"
+        description={<>{deleteTarget?.username} will lose access immediately. This action cannot be undone.</>}
+        confirmLabel={deleteUser.isPending ? 'Deleting…' : 'Delete user'}
+        pending={deleteUser.isPending}
+        onConfirm={() => void confirmDelete()}
+      />
     </>
   )
 }

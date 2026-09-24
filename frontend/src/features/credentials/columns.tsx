@@ -1,13 +1,8 @@
 import type { DataGridColumnDef } from '@loykin/gridkit'
 import { Badge } from '@/components/ui/badge'
 import type { Credential } from './types'
+import { fmtDate } from '@/lib/format'
 
-function fmtDate(value?: string): string {
-  if (!value || value.startsWith('0001-01-01')) return '-'
-  const ts = new Date(value)
-  if (Number.isNaN(ts.getTime())) return '-'
-  return ts.toLocaleString()
-}
 
 export const credentialColumns: DataGridColumnDef<Credential>[] = [
   {

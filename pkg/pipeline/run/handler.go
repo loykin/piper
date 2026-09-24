@@ -113,7 +113,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	// Member routes
 	member := rg.Group("", project.RequireRole(security.ProjectRoleMember))
 	member.POST("/runs", h.createRun)
-	member.POST("/runs/sweep", h.createSweep)
+	member.POST("/experiments", h.createSweep)
 	member.POST("/runs/:id/cancel", h.cancelRun)
 	member.POST("/runs/:id/rerun", h.rerunRun)
 	member.POST("/runs/:id/steps/:step/retry", h.retryStep)
@@ -176,6 +176,9 @@ func (h *Handler) listRuns(c *gin.Context) {
 	req.ScheduleID = c.Query("schedule_id")
 	if pipelineName := c.Query("pipeline_name"); pipelineName != "" {
 		if req.PipelineName != "" && req.PipelineName != pipelineName {
+			if limit, err := strconv.Atoi(c.Query("limit")); err == nil && limit > 0 {
+				c.Header("X-Total-Count", "0")
+			}
 			c.JSON(http.StatusOK, []any{})
 			return
 		}
@@ -252,7 +255,7 @@ func (h *Handler) createRun(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"run_id": resp.RunID})
 }
 
-// POST /runs/sweep
+// POST /experiments — submit a sweep: one run per trial under a shared experiment name
 func (h *Handler) createSweep(c *gin.Context) {
 	var body SweepRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -367,6 +370,9 @@ func (h *Handler) listSteps(c *gin.Context) {
 	if err != nil {
 		writeMemberError(c, err, http.StatusInternalServerError, "")
 		return
+	}
+	if steps == nil {
+		steps = []memberclient.StepSummary{}
 	}
 	c.JSON(http.StatusOK, steps)
 }

@@ -1,15 +1,17 @@
 import { useState } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import { zodResolver } from '@hookform/resolvers/zod'
 import { DataBodyTemplate, FormActions, FormField, PageTopBar, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
-import { Plus, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { IconButton } from '@/components/ui/icon-button'
+import { Controller, useForm, useWatch } from 'react-hook-form'
+import { z } from 'zod'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { useSearchParams } from '@/lib/router'
-import { useProjectId } from '@/lib/projectContext'
+import { useSearchParams, useNavigate } from '@/lib/router'
+import { useProjectId } from '@/features/projects/context'
+import { SecretEntriesField } from '@/features/credentials/components/SecretEntriesField'
 import { useCreateCredential } from '@/features/credentials/hooks'
+import { secretEntriesPayload, secretEntrySchema, type SecretEntry } from '@/features/credentials/secretEntries'
 import type { CredentialKind } from '@/features/credentials/types'
+import { errorMessage } from '@/lib/format'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
 
 const CREDENTIAL_KINDS: CredentialKind[] = ['generic', 'git', 's3', 'gcs', 'azure', 'slack', 'webhook', 'mlflow']
 
@@ -18,7 +20,7 @@ function initialKindFromSearch(searchParams: URLSearchParams): CredentialKind {
   return (CREDENTIAL_KINDS as string[]).includes(requested ?? '') ? (requested as CredentialKind) : 'generic'
 }
 
-type DataEntry = { key: string; value: string }
+type DataEntry = SecretEntry
 const emptyEntry = (): DataEntry => ({ key: '', value: '' })
 
 const GENERIC_FIELDS: DataEntry[] = [emptyEntry()]
@@ -42,62 +44,63 @@ function fieldsForKind(kind: CredentialKind): DataEntry[] {
   return GENERIC_FIELDS.map(e => ({ ...e }))
 }
 
+const createCredentialSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required.'),
+  kind: z.enum(['generic', 'git', 's3', 'gcs', 'azure', 'slack', 'webhook', 'mlflow']),
+  endpoint: z.string(),
+  entries: z.array(secretEntrySchema),
+}).superRefine((values, ctx) => {
+  if (Object.keys(secretEntriesPayload(values.kind, values.entries)).length === 0) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['entries'],
+      message: values.kind === 'generic' ? 'Enter at least one key.' : 'Enter at least one key with a value.',
+    })
+  }
+})
+
+type CreateCredentialValues = z.infer<typeof createCredentialSchema>
+
 export default function CredentialCreatePage() {
   const projectId = useProjectId()
   const navigate = useNavigate()
   const createCredential = useCreateCredential()
   const [searchParams] = useSearchParams()
+  const [submitError, setSubmitError] = useState('')
+  const listPath = `/projects/${projectId}/credentials`
 
-  const [name, setName] = useState('')
-  const [kind, setKind] = useState<CredentialKind>(() => initialKindFromSearch(searchParams))
-  const [endpoint, setEndpoint] = useState('')
-  const [entries, setEntries] = useState<DataEntry[]>(() => fieldsForKind(initialKindFromSearch(searchParams)))
-  const [error, setError] = useState('')
+  const initialKind = initialKindFromSearch(searchParams)
+  const { control, register, handleSubmit, reset, getValues, formState: { errors } } = useForm<CreateCredentialValues>({
+    resolver: zodResolver(createCredentialSchema),
+    defaultValues: { name: '', kind: initialKind, endpoint: '', entries: fieldsForKind(initialKind) },
+  })
+  const kind = useWatch({ control, name: 'kind' })
 
   function handleKindChange(next: CredentialKind) {
-    setKind(next)
-    setEndpoint('')
-    setEntries(fieldsForKind(next))
+    // Each kind has its own expected keys; keep only the name typed so far.
+    reset({ name: getValues('name'), kind: next, endpoint: '', entries: fieldsForKind(next) })
   }
 
-  function updateEntry(idx: number, field: keyof DataEntry, value: string) {
-    setEntries(prev => prev.map((e, i) => i === idx ? { ...e, [field]: value } : e))
-  }
-
-  function addEntry() {
-    setEntries(prev => [...prev, emptyEntry()])
-  }
-
-  function removeEntry(idx: number) {
-    setEntries(prev => {
-      const next = prev.filter((_, i) => i !== idx)
-      return next.length ? next : [emptyEntry()]
-    })
-  }
-
-  async function submit() {
-    setError('')
-    const data = Object.fromEntries(
-      entries.filter(e => e.key.trim() && (kind === 'generic' || e.value.trim())).map(e => [e.key.trim(), e.value])
-    )
+  async function submit(values: CreateCredentialValues) {
+    setSubmitError('')
     try {
       await createCredential.mutateAsync({
-        name: name.trim(),
-        kind,
-        endpoint: kind === 'git' ? endpoint.trim() : undefined,
-        data,
+        name: values.name.trim(),
+        kind: values.kind,
+        endpoint: values.kind === 'git' ? values.endpoint.trim() : undefined,
+        data: secretEntriesPayload(values.kind, values.entries),
       })
-      void navigate({ to: `/projects/${projectId}/credentials` })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      void navigate(listPath)
+    } catch (cause) {
+      setSubmitError(errorMessage(cause))
     }
   }
 
-  const canSubmit = name.trim() && entries.some(e => e.key.trim() && (kind === 'generic' || e.value.trim()))
+  const entriesError = errors.entries?.root?.message ?? errors.entries?.message
 
   return (
     <DataBodyTemplate
-      topBar={<PageTopBar left="Credentials / New Credential" />}
+      topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', { label: 'Credentials', to: listPath }, 'New Credential']} />} />}
       title="New Credential"
       description="Create a write-only credential. Stored values are never returned by the API."
     >
@@ -106,46 +109,46 @@ export default function CredentialCreatePage() {
         title="Credential"
         description="Stored values are write-only — the API never returns them again."
       >
-        <form
-          className="space-y-3"
-          onSubmit={e => {
-            e.preventDefault()
-            void submit()
-          }}
-        >
-          <FormField label="Name" htmlFor="credential-name">
+        <form className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
+          <FormField label="Name" htmlFor="credential-name" error={errors.name?.message}>
             <Input
               id="credential-name"
-              value={name}
-              onChange={e => setName(e.target.value)}
               placeholder={kind === 'git' ? 'github-acme' : 'wandb'}
               className="h-8 font-mono text-sm"
+              aria-invalid={!!errors.name}
+              {...register('name')}
             />
           </FormField>
 
           <FormField label="Kind" htmlFor="credential-kind">
-            <Select
-              items={[
-                { value: 'generic', label: 'Generic' },
-                { value: 'git', label: 'Git' },
-                { value: 'slack', label: 'Slack' },
-                { value: 'webhook', label: 'Webhook' },
-                { value: 'mlflow', label: 'MLflow' },
-              ]}
-              value={kind}
-              onValueChange={value => handleKindChange((value ?? 'generic') as CredentialKind)}
-            >
-              <SelectTrigger id="credential-kind" className="h-8 w-44 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="generic">Generic</SelectItem>
-                <SelectItem value="git">Git</SelectItem>
-                <SelectItem value="slack">Slack</SelectItem>
-                <SelectItem value="webhook">Webhook</SelectItem>
-                <SelectItem value="mlflow">MLflow</SelectItem>
-              </SelectContent>
-            </Select>
+            <Controller
+              name="kind"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  items={[
+                    { value: 'generic', label: 'Generic' },
+                    { value: 'git', label: 'Git' },
+                    { value: 'slack', label: 'Slack' },
+                    { value: 'webhook', label: 'Webhook' },
+                    { value: 'mlflow', label: 'MLflow' },
+                  ]}
+                  value={field.value}
+                  onValueChange={value => handleKindChange((value ?? 'generic') as CredentialKind)}
+                >
+                  <SelectTrigger id="credential-kind" className="h-8 w-44 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="generic">Generic</SelectItem>
+                    <SelectItem value="git">Git</SelectItem>
+                    <SelectItem value="slack">Slack</SelectItem>
+                    <SelectItem value="webhook">Webhook</SelectItem>
+                    <SelectItem value="mlflow">MLflow</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
           </FormField>
 
           {kind === 'git' && (
@@ -155,55 +158,26 @@ export default function CredentialCreatePage() {
             >
               <Input
                 id="credential-endpoint"
-                value={endpoint}
-                onChange={e => setEndpoint(e.target.value)}
                 placeholder="https://github.com/myorg/"
                 className="h-8 font-mono text-sm"
+                {...register('endpoint')}
               />
             </FormField>
           )}
 
-          <div className="space-y-1.5">
-            <Label className="text-xs">{kind === 'generic' ? 'Data' : kind === 'git' || kind === 'mlflow' ? 'Credentials' : 'Notification endpoint'}</Label>
-            <div className="grid grid-cols-[1fr_1fr_auto] gap-x-2 pb-1">
-              <span className="text-xs text-muted-foreground">Key</span>
-              <span className="text-xs text-muted-foreground">Value</span>
-              <span />
-            </div>
-            {entries.map((entry, idx) => (
-              <div key={idx} className="grid grid-cols-[1fr_1fr_auto] items-center gap-x-2">
-                <Input
-                  value={entry.key}
-                  onChange={e => updateEntry(idx, 'key', e.target.value)}
-                  placeholder={kind === 'git' || kind === 'mlflow' ? 'token' : kind === 'slack' ? 'webhook_url' : kind === 'webhook' ? 'url' : 'api_key'}
-                  className="h-8 font-mono text-sm"
-                />
-                <Input
-                  type="password"
-                  value={entry.value}
-                  onChange={e => updateEntry(idx, 'value', e.target.value)}
-                  placeholder="secret value"
-                  className="h-8 font-mono text-sm"
-                />
-                <IconButton
-                  icon={<Trash2 />}
-                  label="Remove"
-                  onClick={() => removeEntry(idx)}
-                  className="text-muted-foreground hover:text-destructive"
-                />
-              </div>
-            ))}
-            <Button type="button" variant="ghost" size="sm" onClick={addEntry} className="text-muted-foreground">
-              <Plus className="mr-1.5 size-3.5" />
-              Add field
-            </Button>
-          </div>
+          <SecretEntriesField
+            control={control}
+            register={register}
+            label={kind === 'generic' ? 'Data' : kind === 'git' || kind === 'mlflow' ? 'Credentials' : 'Notification endpoint'}
+            keyPlaceholder={kind === 'git' || kind === 'mlflow' ? 'token' : kind === 'slack' ? 'webhook_url' : kind === 'webhook' ? 'url' : 'api_key'}
+            error={entriesError}
+          />
 
           <FormActions
-            status={error || undefined}
+            status={submitError || undefined}
             submitLabel={createCredential.isPending ? 'Creating…' : 'Create Credential'}
-            submitDisabled={!canSubmit || createCredential.isPending}
-            onCancel={() => void navigate({ to: `/projects/${projectId}/credentials` })}
+            submitDisabled={createCredential.isPending}
+            onCancel={() => void navigate(listPath)}
           />
         </form>
       </DataBodyTemplate.Group>

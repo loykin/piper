@@ -1,21 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from '@/lib/router'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import { Power, Plus, Search, Trash2 } from 'lucide-react'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { scheduleColumns } from '@/features/schedules/columns'
@@ -27,6 +17,9 @@ import type { DataGridColumnDef } from '@loykin/gridkit'
 import type { Schedule } from '@/features/schedules/api'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
 
@@ -44,12 +37,7 @@ function WorkflowsPageInner() {
   const [nameFilter, setNameFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
-  const filteredSchedules = useMemo(() => {
-    const list = schedulesQuery.data?.schedules ?? []
-    if (!nameFilter.trim()) return list
-    const q = nameFilter.trim().toLowerCase()
-    return list.filter(s => s.name.toLowerCase().includes(q))
-  }, [schedulesQuery.data, nameFilter])
+  const filteredSchedules = useTextFilter(schedulesQuery.data?.items, nameFilter, s => s.name)
 
   const pipelineByVersionId = useMemo(
     () => new Map(pipelines.map(p => [p.id, p])),
@@ -107,7 +95,7 @@ function WorkflowsPageInner() {
 
   return (
     <>
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Pipelines', 'Schedules']} />} />}
       title="Schedules"
       description="Manage cron and one-time pipeline schedules."
     >
@@ -128,7 +116,7 @@ function WorkflowsPageInner() {
             </div>
           }
           toolbarRight={
-            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/create`)}>
+            <Button size="sm" onClick={() => navigate(`/projects/${projectId}/schedules/new`)}>
               <Plus size={14} className="mr-1.5" /> Create
             </Button>
           }
@@ -161,26 +149,15 @@ function WorkflowsPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={deleteOpen} onOpenChange={open => { if (!open) cancelDelete() }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
-          <AlertDialogDescription>
-            "{deleteTarget?.name}" will be permanently deleted.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={deleting}
-            onClick={() => void confirmDeleteTarget(t => deleteScheduleAsync(t.id))}
-          >
-            {deleting ? 'Deleting…' : 'Delete schedule'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={deleteOpen}
+      onCancel={cancelDelete}
+      title="Delete this schedule?"
+      description={<>"{deleteTarget?.name}" will be permanently deleted.</>}
+      confirmLabel={deleting ? 'Deleting…' : 'Delete schedule'}
+      pending={deleting}
+      onConfirm={() => void confirmDeleteTarget(t => deleteScheduleAsync(t.id))}
+    />
     </>
   )
 }

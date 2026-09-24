@@ -66,10 +66,6 @@ func (f *fakeMember) RerunRun(ctx context.Context, auth memberclient.AuthContext
 	return "", nil
 }
 
-func (f *fakeMember) DeleteRun(context.Context, memberclient.AuthContext, project.ProjectRef, string) error {
-	return nil
-}
-
 func (f *fakeMember) ListSteps(context.Context, memberclient.AuthContext, project.ProjectRef, string) ([]memberclient.StepSummary, error) {
 	return nil, nil
 }

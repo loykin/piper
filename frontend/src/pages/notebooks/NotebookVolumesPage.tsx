@@ -2,31 +2,26 @@ import { useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
 import { useNavigate } from '@/lib/router'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
-import { DataBodyTemplate } from '@loykin/designkit'
+import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { SidePanelProvider, useSidePanel } from '@loykin/side-panel'
 import { FilterInput } from '@loykin/filter-input'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { getNotebookVolumeColumns } from '@/features/notebooks/columns'
 import { useNotebookVolumesPaged, usePurgeVolume } from '@/features/notebooks/hooks'
 import type { NotebookVolume } from '@/features/notebooks/api'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import { NotebookVolumeDetailPanel } from '@/features/notebooks/components/NotebookVolumeDetailPanel'
 import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import { PageCrumbs } from '@/shared/components/PageCrumbs'
+import { useProjectId } from '@/features/projects/context'
+import { useTextFilter } from '@/shared/hooks/useTextFilter'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const PAGE_SIZE = 20
 
 function NotebookVolumesPageInner() {
   const { open } = useSidePanel()
   const navigate = useNavigate()
+  const projectId = useProjectId()
   const [pageIndex, setPageIndex] = useState(0)
   const volumesQuery = useNotebookVolumesPaged(PAGE_SIZE, pageIndex * PAGE_SIZE)
   const total = volumesQuery.data?.total ?? 0
@@ -35,18 +30,13 @@ function NotebookVolumesPageInner() {
   const [labelFilter, setLabelFilter] = useState('')
   // Filters only the current page — not server-side yet, same accepted
   // trade-off as CredentialsPage's kind filter.
-  const filteredVolumes = useMemo(() => {
-    const list = volumesQuery.data?.volumes ?? []
-    if (!labelFilter.trim()) return list
-    const q = labelFilter.trim().toLowerCase()
-    return list.filter(v => v.label.toLowerCase().includes(q))
-  }, [volumesQuery.data, labelFilter])
+  const filteredVolumes = useTextFilter(volumesQuery.data?.items, labelFilter, v => v.label)
 
   const busy = purging ? (purgingId ?? null) : null
 
   const handlePurge = (vol: NotebookVolume) => requestPurge(vol)
 
-  const handleAttach = (volId: string) => navigate(`/notebooks/create?volume=${volId}`)
+  const handleAttach = (volId: string) => navigate(`/projects/${projectId}/notebooks/new?volume=${encodeURIComponent(volId)}`)
 
   const columns = useMemo(
     () => getNotebookVolumeColumns(busy, handleAttach, handlePurge),
@@ -55,7 +45,7 @@ function NotebookVolumesPageInner() {
 
   return (
     <>
-    <DataBodyTemplate
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Development', 'Volumes']} />} />}
       title="Notebook Volumes"
       description="Persistent storage for notebook servers. Volumes survive server deletion."
     >
@@ -119,26 +109,15 @@ function NotebookVolumesPageInner() {
       </DataBodyTemplate.Body>
     </DataBodyTemplate>
 
-    <AlertDialog open={purgeOpen} onOpenChange={open => { if (!open) cancelPurge() }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Purge this volume?</AlertDialogTitle>
-          <AlertDialogDescription>
-            "{purgeTarget?.label}" will permanently delete {purgeTarget?.work_dir} and all its files. This cannot be undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={purging}
-            onClick={() => void confirmPurge(v => purgeVolumeAsync(v.id))}
-          >
-            {purging ? 'Purging…' : 'Purge volume'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={purgeOpen}
+      onCancel={cancelPurge}
+      title="Purge this volume?"
+      description={<>"{purgeTarget?.label}" will permanently delete {purgeTarget?.work_dir} and all its files. This cannot be undone.</>}
+      confirmLabel={purging ? 'Purging…' : 'Purge volume'}
+      pending={purging}
+      onConfirm={() => void confirmPurge(v => purgeVolumeAsync(v.id))}
+    />
     </>
   )
 }

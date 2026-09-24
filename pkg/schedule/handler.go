@@ -320,5 +320,8 @@ func (h *Handler) listScheduleRuns(c *gin.Context) {
 		r.PipelineYAML = redact.String(r.PipelineYAML)
 		r.ParamsJSON = redact.String(r.ParamsJSON)
 	}
+	if runs == nil {
+		runs = []*run.Run{}
+	}
 	c.JSON(http.StatusOK, runs)
 }

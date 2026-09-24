@@ -182,7 +182,7 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 		}
 		c.Next()
 	})
-	projectStorageMember.POST("/object", func(c *gin.Context) {
+	projectStorageMember.POST("/objects", func(c *gin.Context) {
 		file, header, err := c.Request.FormFile("file")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing file"})
@@ -217,8 +217,8 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 		httpx.SetTotalCountHeader(c, limit, total)
 		c.JSON(http.StatusOK, objects)
 	})
-	projectStorage.GET("/object", func(c *gin.Context) {
-		key := strings.TrimSpace(c.Query("key"))
+	projectStorage.GET("/objects/*key", func(c *gin.Context) {
+		key := objectKeyParam(c)
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
 			return
@@ -239,8 +239,8 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 		c.Status(http.StatusOK)
 		_, _ = io.Copy(c.Writer, rc)
 	})
-	projectStorageMember.DELETE("/object", func(c *gin.Context) {
-		key := strings.TrimSpace(c.Query("key"))
+	projectStorageMember.DELETE("/objects/*key", func(c *gin.Context) {
+		key := objectKeyParam(c)
 		if key == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
 			return
@@ -255,4 +255,10 @@ func (p *Piper) registerMemberStorageRoutes(projectAPI *gin.RouterGroup) {
 		}
 		c.Status(http.StatusNoContent)
 	})
+}
+
+// objectKeyParam reads an object key from the `/storage/objects/*key`
+// catch-all, which keeps its slashes (keys are folder-like paths).
+func objectKeyParam(c *gin.Context) string {
+	return strings.TrimSpace(strings.TrimPrefix(c.Param("key"), "/"))
 }

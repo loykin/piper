@@ -181,8 +181,7 @@ func (l *Launcher) CreateJob(ctx context.Context, task *proto.Task, runtimeKey, 
 		return "", fmt.Errorf("create job %s: %w", job.Name, err)
 	}
 	if err := l.attachTaskSecretOwner(ctx, taskSecret.Name, created); err != nil {
-		_ = l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, created.Name, metav1.DeleteOptions{})
-		_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecret.Name, metav1.DeleteOptions{})
+		_ = l.deleteJobAndDependents(ctx, created.Name)
 		return "", fmt.Errorf("attach task secret owner reference for job %s: %w", created.Name, err)
 	}
 	l.watchJob(job.Name, task)
@@ -194,25 +193,33 @@ func (l *Launcher) DeleteJob(ctx context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("job name is required")
 	}
-	err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, name, metav1.DeleteOptions{})
-	if err != nil {
+	if err := l.deleteJobAndDependents(ctx, name); err != nil {
+		return err
+	}
+	l.unwatchJob(name)
+	return nil
+}
+
+// jobDeleteOptions must be used for every Job delete. The API server's
+// default GC policy for batch/v1 Jobs is OrphanDependents (kept for
+// backwards compatibility), so a delete with an empty DeleteOptions leaves
+// the Job's Pods running and strips their ownerReferences — which is exactly
+// the "Running Pod with no ownerReferences" a live QA pass found after
+// Cancel run. kubectl hides this because it sends --cascade=background.
+func jobDeleteOptions() metav1.DeleteOptions {
+	policy := metav1.DeletePropagationBackground
+	return metav1.DeleteOptions{PropagationPolicy: &policy}
+}
+
+// deleteJobAndDependents deletes a Job with background propagation (its Pods
+// go with it) and its task Secret. The Secret is normally GC'd through its
+// Job ownerReference; deleting it here covers CreateJob's rollback, where
+// attaching that ownerReference is what failed.
+func (l *Launcher) deleteJobAndDependents(ctx context.Context, name string) error {
+	if err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, name, jobDeleteOptions()); err != nil {
 		return err
 	}
 	_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecretName(name), metav1.DeleteOptions{})
-	l.unwatchJob(name)
-	// Defense-in-depth: standard Job GC deletes the Job's Pods by following
-	// their ownerReferences, which the Job controller is supposed to set —
-	// but a live QA pass found a Pod whose ownerReferences were completely
-	// empty despite its event log showing the standard Job-controller
-	// creation path, leaving it running 60s+ after the Job itself was gone.
-	// Don't depend solely on that: also look up and delete Pods by the same
-	// job-name label streamJobLogs uses to find them, best-effort, so a
-	// cluster with broken GC/ownerReferences doesn't leak Pods indefinitely.
-	if pods, listErr := l.clientset.CoreV1().Pods(l.cfg.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + name}); listErr == nil {
-		for _, pod := range pods.Items {
-			_ = l.clientset.CoreV1().Pods(l.cfg.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
-		}
-	}
 	return nil
 }
 
@@ -475,11 +482,9 @@ func (l *Launcher) CancelRun(ctx context.Context, runID string) error {
 	}
 	var errs []error
 	for _, job := range jobs.Items {
-		if err := l.clientset.BatchV1().Jobs(l.cfg.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{}); err != nil {
+		if err := l.deleteJobAndDependents(ctx, job.Name); err != nil {
 			errs = append(errs, fmt.Errorf("delete job %s: %w", job.Name, err))
-			continue
 		}
-		_ = l.clientset.CoreV1().Secrets(l.cfg.Namespace).Delete(ctx, taskSecretName(job.Name), metav1.DeleteOptions{})
 	}
 	return errors.Join(errs...)
 }

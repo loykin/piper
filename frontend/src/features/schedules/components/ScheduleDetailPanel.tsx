@@ -1,27 +1,20 @@
-import { useState } from 'react'
 import { Link, useNavigate } from '@/lib/router'
 import { Power, Trash2, X } from 'lucide-react'
 import { DataGrid, DataGridPaginationCompact, type DataGridColumnDef } from '@loykin/gridkit'
 import { PanelTemplate } from '@loykin/designkit'
 import { useSidePanel } from '@loykin/side-panel'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import StatusBadge from '@/shared/components/StatusBadge'
 import { useSchedule, useScheduleRuns, useDeleteSchedule, useToggleSchedule } from '@/features/schedules/hooks'
 import { usePipeline } from '@/features/pipelines/hooks'
-import { useProjectId } from '@/lib/projectContext'
+import { useProjectId } from '@/features/projects/context'
 import type { Run } from '@/features/runs/api'
+import { fmtDate } from '@/lib/format'
+import { useDeleteTarget } from '@/shared/hooks/useDeleteTarget'
+import type { Schedule } from '../types'
+import { ConfirmDialog } from '@/shared/components/ConfirmDialog'
 
 const TYPE_LABEL: Record<string, string> = {
   immediate: 'Immediate',
@@ -50,7 +43,7 @@ const runColumns: DataGridColumnDef<Run>[] = [
     meta: { minWidth: 140 },
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">
-        {new Date(row.original.started_at).toLocaleString()}
+        {fmtDate(row.original.started_at)}
       </span>
     ),
   },
@@ -63,9 +56,9 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
   const { data: schedule, isLoading: scheduleLoading } = useSchedule(id)
   const { data: runs = [], isLoading: runsLoading } = useScheduleRuns(id)
   const { data: templateVersion } = usePipeline(schedule?.template_version_id ?? '')
-  const { mutate: deleteSchedule, isPending: deleting } = useDeleteSchedule()
+  const { mutateAsync: deleteSchedule, isPending: deleting } = useDeleteSchedule()
   const { mutate: toggleSchedule } = useToggleSchedule()
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const deleteTarget = useDeleteTarget<Schedule>()
 
   const closeBtn = (
     <Button variant="ghost" size="icon-sm" onClick={() => void close()}>
@@ -111,7 +104,7 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
             {TYPE_LABEL[schedule.schedule_type] ?? schedule.schedule_type}
           </Badge>
           <IconButton icon={<Trash2 />} label="Delete"
-            onClick={() => setConfirmDelete(true)}
+            onClick={() => schedule && deleteTarget.requestDelete(schedule)}
             className="text-destructive hover:bg-destructive/10" />
           {closeBtn}
         </div>
@@ -123,18 +116,18 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
             <PanelTemplate.Row label="Cron Expression">{schedule.cron_expr || '—'}</PanelTemplate.Row>
           )}
           {schedule.schedule_type === 'once' && (
-            <PanelTemplate.Row label="Scheduled At">{new Date(schedule.next_run_at).toLocaleString()}</PanelTemplate.Row>
+            <PanelTemplate.Row label="Scheduled At">{fmtDate(schedule.next_run_at)}</PanelTemplate.Row>
           )}
           <PanelTemplate.Row label="Status">
             {schedule.enabled ? (isCron ? 'Active' : 'Waiting') : (schedule.schedule_type === 'cron' ? 'Disabled' : 'Done')}
           </PanelTemplate.Row>
           <PanelTemplate.Row label="Last Run">
-            {schedule.last_run_at ? new Date(schedule.last_run_at).toLocaleString() : '—'}
+            {schedule.last_run_at ? fmtDate(schedule.last_run_at) : '—'}
           </PanelTemplate.Row>
           <PanelTemplate.Row label="Retention">
             {schedule.max_runs > 0 ? `Keep ${schedule.max_runs} completed runs` : 'Keep all runs'}
           </PanelTemplate.Row>
-          <PanelTemplate.Row label="Created">{new Date(schedule.created_at).toLocaleString()}</PanelTemplate.Row>
+          <PanelTemplate.Row label="Created">{fmtDate(schedule.created_at)}</PanelTemplate.Row>
           <PanelTemplate.Row label="Total Runs">{runs.length}</PanelTemplate.Row>
           {templateVersion && (
             <PanelTemplate.Row label="Pipeline Version">v{templateVersion.version}</PanelTemplate.Row>
@@ -197,26 +190,16 @@ export function ScheduleDetailPanel({ id }: { id: string }) {
       </PanelTemplate.Section>
     </PanelTemplate>
 
-    <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this schedule?</AlertDialogTitle>
-          <AlertDialogDescription>
-            "{schedule.name}" will be permanently deleted.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={deleting}
-            onClick={() => deleteSchedule(schedule.id, { onSuccess: () => void close() })}
-          >
-            {deleting ? 'Deleting…' : 'Delete schedule'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={deleteTarget.open}
+      onCancel={deleteTarget.cancel}
+      title="Delete this schedule?"
+      description={<>"{deleteTarget.target?.name}" will be permanently deleted.</>}
+      error={deleteTarget.error}
+      confirmLabel={deleting ? 'Deleting…' : 'Delete schedule'}
+      pending={deleting}
+      onConfirm={() => void deleteTarget.confirm(async target => { await deleteSchedule(target.id); void close() })}
+    />
     </>
   )
 }

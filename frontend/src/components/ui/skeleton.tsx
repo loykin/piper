@@ -1,13 +1,4 @@
-import { cn } from "@/lib/utils"
-
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="skeleton"
-      className={cn("animate-pulse rounded-md bg-muted", className)}
-      {...props}
-    />
-  )
-}
-
-export { Skeleton }
+// Re-export of @loykin/designkit's skeleton so the app has one copy of each
+// primitive (a local fork drifted from DesignKit). Import from here or from
+// '@loykin/designkit' directly — both are the same component.
+export { Skeleton } from '@loykin/designkit'

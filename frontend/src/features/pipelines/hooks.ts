@@ -1,8 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from './api'
-import type { CreatePipelineRequest, TriggerRunRequest, DeployRequest } from './types'
-import { useProjectId } from '@/lib/projectContext'
-import { scheduleKeys } from '@/features/schedules/hooks'
+import type { CreatePipelineRequest, TriggerRunRequest } from './types'
+import { useProjectId } from '@/features/projects/context'
 
 export const pipelineKeys = {
   all: (projectId: string) => ['pipelines', projectId] as const,
@@ -69,12 +68,3 @@ export function useRunPipeline() {
   })
 }
 
-export function useDeployPipeline() {
-  const projectId = useProjectId()
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, req }: { id: string; req: DeployRequest }) =>
-      api.deployPipeline(projectId, id, req),
-    onSuccess: () => qc.invalidateQueries({ queryKey: scheduleKeys.all(projectId) }),
-  })
-}

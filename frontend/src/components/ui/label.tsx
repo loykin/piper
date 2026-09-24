@@ -1,11 +1,4 @@
-import { type ComponentProps } from 'react'
-import { cn } from '@/lib/utils'
-
-export function Label({ className, ...props }: ComponentProps<'label'>) {
-  return (
-    <label
-      className={cn('text-sm font-medium leading-none', className)}
-      {...props}
-    />
-  )
-}
+// Re-export of @loykin/designkit's label so the app has one copy of each
+// primitive (a local fork drifted from DesignKit). Import from here or from
+// '@loykin/designkit' directly — both are the same component.
+export { Label } from '@loykin/designkit'

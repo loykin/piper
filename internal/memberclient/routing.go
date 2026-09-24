@@ -117,13 +117,6 @@ func (c *RoutingClient) RerunRun(ctx context.Context, auth AuthContext, ref proj
 	}
 	return m.RerunRun(ctx, auth, ref, runID, failedOnly)
 }
-func (c *RoutingClient) DeleteRun(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) error {
-	m, err := c.resolve(ref)
-	if err != nil {
-		return err
-	}
-	return m.DeleteRun(ctx, auth, ref, runID)
-}
 func (c *RoutingClient) ListSteps(ctx context.Context, auth AuthContext, ref project.ProjectRef, runID string) ([]StepSummary, error) {
 	m, err := c.resolve(ref)
 	if err != nil {

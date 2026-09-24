@@ -370,7 +370,7 @@ func (h *Handler) purgeVolume(c *gin.Context) {
 	id := c.Param("id")
 	// Verify volume belongs to current project before purging.
 	vol, err := h.deps.Volumes.Get(c.Request.Context(), id)
-	if httpx.LookupFailed(c, err, vol != nil && vol.ProjectID == currentProjectID(c), ErrNotFound, "volume not found") {
+	if httpx.LookupFailed(c, err, vol != nil && vol.ProjectID == currentProjectID(c), "volume not found") {
 		return
 	}
 	if h.deps.PurgeVolume == nil {
@@ -395,7 +395,7 @@ func (h *Handler) proxyNotebook(c *gin.Context) {
 	projectID := currentProjectID(c)
 	name := c.Param("name")
 	nb, err := h.deps.Notebooks.Get(c.Request.Context(), projectID, name)
-	if httpx.LookupFailed(c, err, nb != nil, ErrNotFound, "notebook not found") {
+	if httpx.LookupFailed(c, err, nb != nil, "notebook not found") {
 		return
 	}
 	if nb.Status != StatusRunning || nb.Endpoint == "" {

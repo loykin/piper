@@ -91,7 +91,7 @@ func (h *Handler) listViewers(c *gin.Context) {
 
 func (h *Handler) getViewer(c *gin.Context) {
 	v, err := h.repo.Get(c.Request.Context(), c.Param("id"))
-	if httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c), ErrNotFound, "viewer not found") {
+	if httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c), "viewer not found") {
 		return
 	}
 	type response struct {
@@ -104,7 +104,7 @@ func (h *Handler) getViewer(c *gin.Context) {
 func (h *Handler) stopViewer(c *gin.Context) {
 	// Viewers are looked up by id alone; scope them to the URL's project so
 	// one project can't read, stop, or proxy another project's viewer.
-	if v, err := h.repo.Get(c.Request.Context(), c.Param("id")); httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c), ErrNotFound, "viewer not found") {
+	if v, err := h.repo.Get(c.Request.Context(), c.Param("id")); httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c), "viewer not found") {
 		return
 	}
 	if err := h.mgr.Stop(c.Request.Context(), c.Param("id")); err != nil {
@@ -116,7 +116,7 @@ func (h *Handler) stopViewer(c *gin.Context) {
 
 func (h *Handler) proxyViewer(c *gin.Context) {
 	v, err := h.repo.Get(c.Request.Context(), c.Param("id"))
-	if httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c) && v.Status == StatusRunning, ErrNotFound, "viewer not found or not running") {
+	if httpx.LookupFailed(c, err, v != nil && v.ProjectID == pid(c) && v.Status == StatusRunning, "viewer not found or not running") {
 		return
 	}
 

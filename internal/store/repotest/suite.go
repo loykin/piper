@@ -321,11 +321,10 @@ func RunRepoSuite(t *testing.T, repo run.Repository, projectID string) {
 	})
 
 	t.Run("Get_missing_returns_not_found", func(t *testing.T) {
-		// Get for a missing ID should either return (nil, nil) or (nil, sql.ErrNoRows).
-		// Both are acceptable; the caller must check both cases.
-		got, _ := repo.Get(ctx, projectID, "nonexistent-id")
-		if got != nil {
-			t.Errorf("expected nil record for missing run, got %+v", got)
+		// Repository convention: a missing row is (nil, nil).
+		got, err := repo.Get(ctx, projectID, "nonexistent-id")
+		if got != nil || err != nil {
+			t.Errorf("Get(missing) = %+v, %v; want nil, nil", got, err)
 		}
 	})
 
@@ -1279,12 +1278,12 @@ func TemplateRepoSuite(t *testing.T, repo template.Repository, projectID string)
 		}
 	})
 
-	// Handlers answer 404 only for template.ErrNotFound; any other lookup
-	// error is a 500, so both backends must report a missing row this way.
-	t.Run("Get_missing_returns_ErrNotFound", func(t *testing.T) {
-		_, err := repo.Get(context.Background(), projectID, "no-such-template")
-		if !errors.Is(err, template.ErrNotFound) {
-			t.Fatalf("Get(missing) err = %v, want template.ErrNotFound", err)
+	// Repository convention: a missing row is (nil, nil); an error is a real
+	// failure. Handlers answer 404 for nil and 500 for an error.
+	t.Run("Get_missing_returns_nil_nil", func(t *testing.T) {
+		got, err := repo.Get(context.Background(), projectID, "no-such-template")
+		if got != nil || err != nil {
+			t.Fatalf("Get(missing) = %v, %v; want nil, nil", got, err)
 		}
 	})
 

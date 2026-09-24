@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"testing"
 	"time"
 
@@ -71,8 +69,9 @@ func TestSQLiteForeignKeyCascadeOnDelete(t *testing.T) {
 			t.Fatalf("delete user: %v", err)
 		}
 
-		if got, err := members.Get(ctx, proj.ID, user.ID); !errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("project membership survived user deletion: got=%#v err=%v, want %v", got, err, sql.ErrNoRows)
+		// A missing row is (nil, nil) by repository convention.
+		if got, err := members.Get(ctx, proj.ID, user.ID); got != nil || err != nil {
+			t.Fatalf("project membership survived user deletion: got=%#v err=%v, want nil, nil", got, err)
 		}
 	})
 }

@@ -78,7 +78,7 @@ func (r *stubTemplateRepo) Create(context.Context, *Template) error             
 func (r *stubTemplateRepo) Get(_ context.Context, projectID, id string) (*Template, error) {
 	t := r.templates[id]
 	if t == nil || t.ProjectID != projectID {
-		return nil, ErrNotFound
+		return nil, nil
 	}
 	return t, nil
 }

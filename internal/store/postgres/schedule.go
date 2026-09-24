@@ -39,7 +39,7 @@ func (r *scheduleRepo) Get(ctx context.Context, projectID, id string) (*schedule
 		return db.GetContext(ctx, &sc, q, projectID, id)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, schedule.ErrNotFound
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err

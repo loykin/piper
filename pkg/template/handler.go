@@ -79,7 +79,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) get(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, c.Param("id"))
-	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template version not found") {
+	if httpx.LookupFailed(c, err, t != nil, "pipeline template version not found") {
 		return
 	}
 	c.JSON(http.StatusOK, t)
@@ -130,7 +130,7 @@ func (h *Handler) submit(c *gin.Context) {
 		vol, err := h.deps.Volumes.Get(c.Request.Context(), req.VolumeID)
 		// Volumes are looked up by id alone; another project's volume must
 		// read as missing, or its files would be snapshotted into this one.
-		if httpx.LookupFailed(c, err, vol != nil && vol.ProjectID == projectContext.ID, nil, "volume not found") {
+		if httpx.LookupFailed(c, err, vol != nil && vol.ProjectID == projectContext.ID, "volume not found") {
 			return
 		}
 
@@ -233,7 +233,7 @@ func (h *Handler) delete(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
-	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template not found") {
+	if httpx.LookupFailed(c, err, t != nil, "pipeline template not found") {
 		return
 	}
 
@@ -292,7 +292,7 @@ func (h *Handler) triggerRun(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
-	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template not found") {
+	if httpx.LookupFailed(c, err, t != nil, "pipeline template not found") {
 		return
 	}
 
@@ -326,7 +326,7 @@ func (h *Handler) deploy(c *gin.Context) {
 	projectContext, _ := project.FromContext(c.Request.Context())
 
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
-	if httpx.LookupFailed(c, err, t != nil, ErrNotFound, "pipeline template not found") {
+	if httpx.LookupFailed(c, err, t != nil, "pipeline template not found") {
 		return
 	}
 

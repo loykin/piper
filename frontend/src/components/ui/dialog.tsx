@@ -52,7 +52,8 @@ function DialogContent({
         // @loykin/side-panel only recognizes Radix's data-state="open" when
         // deciding a click inside a dialog isn't an outside click; Base UI
         // sets data-open instead. Without this, clicking a dialog opened from
-        // a side panel closes the panel and swallows the click.
+        // a side panel closes the panel and swallows the click. Remove once
+        // fixed upstream: basekit packages/side-panel/ISSUES.md.
         data-state="open"
         data-slot="dialog-content"
         className={cn(

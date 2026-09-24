@@ -9,7 +9,8 @@ export { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogDescripti
 // @loykin/side-panel only recognizes Radix's data-state="open" when deciding
 // a click inside a dialog isn't an outside click; Base UI sets data-open
 // instead. Without this, confirming a dialog opened from a side panel closes
-// the panel first and the action never runs.
+// the panel first and the action never runs. Remove once fixed upstream:
+// basekit packages/side-panel/ISSUES.md.
 export function AlertDialogContent(props: ComponentProps<typeof DesignKitAlertDialogContent>) {
   return <DesignKitAlertDialogContent data-state="open" {...props} />
 }

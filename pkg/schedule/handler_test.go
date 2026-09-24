@@ -37,7 +37,7 @@ func (r *stubScheduleRepo) Create(_ context.Context, sc *Schedule) error {
 func (r *stubScheduleRepo) Get(_ context.Context, _, id string) (*Schedule, error) {
 	sc, ok := r.schedules[id]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, nil
 	}
 	return sc, nil
 }

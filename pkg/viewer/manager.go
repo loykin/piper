@@ -158,8 +158,8 @@ func (m *Manager) Open(ctx context.Context, projectID, runID, stepName, artifact
 // Stop kills the viewer process and cleans up resources.
 func (m *Manager) Stop(ctx context.Context, id string) error {
 	v, err := m.repo.Get(ctx, id)
-	if err != nil {
-		return err
+	if err != nil || v == nil {
+		return err // already gone: nothing to stop
 	}
 	if d, ok := m.drivers[v.Type]; ok {
 		if err := d.Stop(ctx, v); err != nil {

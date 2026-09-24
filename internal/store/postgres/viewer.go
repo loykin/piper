@@ -42,7 +42,7 @@ func (r *viewerRepo) Get(ctx context.Context, id string) (*viewer.Viewer, error)
 		return db.GetContext(ctx, &v, q, id)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, viewer.ErrNotFound
+		return nil, nil
 	}
 	return &v, err
 }

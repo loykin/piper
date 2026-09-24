@@ -11,9 +11,6 @@ import (
 // already exists. Callers should map this to HTTP 409 Conflict.
 var ErrVersionExists = errors.New("pipeline template version already exists")
 
-// ErrNotFound is returned by Repository.Get for an unknown template version.
-var ErrNotFound = errors.New("pipeline template version not found")
-
 // Template is a versioned pipeline definition.
 // (project_id, name, version) is the natural unique key.
 // id is a UUID kept for stable external references (schedule.template_version_id).

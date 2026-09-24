@@ -74,7 +74,7 @@ func (r *pipelineRepo) Get(ctx context.Context, projectID, id string) (*template
 		return db.GetContext(ctx, &t, q, projectID, id)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, template.ErrNotFound
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err

@@ -153,7 +153,7 @@ func (h *MemberHandler) update(c *gin.Context) {
 		return
 	}
 	member, err := h.members.GetMember(c.Request.Context(), projectContext.ID, userID)
-	if httpx.LookupFailed(c, err, member != nil, nil, "member not found") {
+	if httpx.LookupFailed(c, err, member != nil, "member not found") {
 		return
 	}
 	member.Role = req.Role

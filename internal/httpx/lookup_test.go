@@ -10,7 +10,6 @@ import (
 )
 
 func TestLookupFailed(t *testing.T) {
-	errMissing := errors.New("missing")
 	for _, tc := range []struct {
 		name      string
 		err       error
@@ -19,15 +18,13 @@ func TestLookupFailed(t *testing.T) {
 		wantCode  int
 	}{
 		{"found", nil, true, false, 0},
-		{"nil result", nil, false, true, http.StatusNotFound},
-		{"not-found sentinel", errMissing, false, true, http.StatusNotFound},
-		{"wrapped sentinel", errors.Join(errors.New("ctx"), errMissing), false, true, http.StatusNotFound},
+		{"missing: nil result", nil, false, true, http.StatusNotFound},
 		{"database error", errors.New("connection refused"), false, true, http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
-			if wrote := LookupFailed(c, tc.err, tc.found, errMissing, "thing not found"); wrote != tc.wantWrote {
+			if wrote := LookupFailed(c, tc.err, tc.found, "thing not found"); wrote != tc.wantWrote {
 				t.Fatalf("wrote = %v, want %v", wrote, tc.wantWrote)
 			}
 			if tc.wantWrote && rec.Code != tc.wantCode {

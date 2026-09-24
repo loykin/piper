@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -35,6 +37,9 @@ func (r *userRepo) GetByID(ctx context.Context, id string) (*auth.User, error) {
 		return db.GetContext(ctx, &u,
 			`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE id=?`, id)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -47,6 +52,9 @@ func (r *userRepo) GetByUsername(ctx context.Context, username string) (*auth.Us
 		return db.GetContext(ctx, &u,
 			`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE username=?`, username)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +127,9 @@ func (r *memberRepo) Get(ctx context.Context, projectID, userID string) (*securi
 			`SELECT project_id, user_id, role, created_at, updated_at FROM project_members WHERE project_id=? AND user_id=?`,
 			projectID, userID)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -197,6 +208,9 @@ func (r *sessionRepo) GetByTokenHash(ctx context.Context, hash string) (*auth.Se
 		return db.GetContext(ctx, &s,
 			`SELECT id, user_id, refresh_token_hash, expires_at, revoked_at, created_at, last_used_at FROM auth_sessions WHERE refresh_token_hash=?`, hash)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

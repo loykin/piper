@@ -203,7 +203,7 @@ func (h *Handler) createSchedule(c *gin.Context) {
 func (h *Handler) getSchedule(c *gin.Context) {
 	id := c.Param("id")
 	sc, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id)
-	if httpx.LookupFailed(c, err, sc != nil, ErrNotFound, "schedule not found") {
+	if httpx.LookupFailed(c, err, sc != nil, "schedule not found") {
 		return
 	}
 	c.JSON(http.StatusOK, sc.Redact())
@@ -229,7 +229,7 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 	}
 	projectID := currentProjectID(c)
 	sc, err := h.deps.Schedules.Get(c.Request.Context(), projectID, id)
-	if httpx.LookupFailed(c, err, sc != nil, ErrNotFound, "schedule not found") {
+	if httpx.LookupFailed(c, err, sc != nil, "schedule not found") {
 		return
 	}
 	if req.MaxRuns != nil {
@@ -257,8 +257,7 @@ func (h *Handler) patchSchedule(c *gin.Context) {
 // DELETE /schedules/:id
 func (h *Handler) deleteSchedule(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+	if sc, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id); httpx.LookupFailed(c, err, sc != nil, "schedule not found") {
 		return
 	}
 	if err := h.deps.Schedules.Delete(c.Request.Context(), currentProjectID(c), id); err != nil {
@@ -272,8 +271,7 @@ func (h *Handler) deleteSchedule(c *gin.Context) {
 // POST /schedules/:id/backfill
 func (h *Handler) backfillSchedule(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+	if sc, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id); httpx.LookupFailed(c, err, sc != nil, "schedule not found") {
 		return
 	}
 	var req struct {
@@ -302,8 +300,7 @@ func (h *Handler) backfillSchedule(c *gin.Context) {
 // GET /schedules/:id/runs
 func (h *Handler) listScheduleRuns(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "schedule not found"})
+	if sc, err := h.deps.Schedules.Get(c.Request.Context(), currentProjectID(c), id); httpx.LookupFailed(c, err, sc != nil, "schedule not found") {
 		return
 	}
 	projectContext, _ := project.FromContext(c.Request.Context())

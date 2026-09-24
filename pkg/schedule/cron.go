@@ -10,8 +10,6 @@ var (
 	ErrCronRequired    = errors.New("cron is required for type=cron")
 	ErrNextTimeMissing = errors.New("NextTime not configured")
 	ErrInvalidCronExpr = errors.New("invalid cron expression")
-	// ErrNotFound is returned by Repository.Get for an unknown schedule.
-	ErrNotFound = errors.New("schedule not found")
 )
 
 func ApplyCron(sc *Schedule, cron string, now time.Time, nextTime func(string, time.Time) (time.Time, error)) error {

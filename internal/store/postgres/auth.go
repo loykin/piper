@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -33,6 +35,9 @@ func (r *userRepo) GetByID(ctx context.Context, id string) (*auth.User, error) {
 		q := db.Rebind(`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE id=?`)
 		return db.GetContext(ctx, &u, q, id)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -45,6 +50,9 @@ func (r *userRepo) GetByUsername(ctx context.Context, username string) (*auth.Us
 		q := db.Rebind(`SELECT id, username, password_hash, system_admin, disabled, created_at, updated_at FROM users WHERE username=?`)
 		return db.GetContext(ctx, &u, q, username)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +123,9 @@ func (r *memberRepo) Get(ctx context.Context, projectID, userID string) (*securi
 		q := db.Rebind(`SELECT project_id, user_id, role, created_at, updated_at FROM project_members WHERE project_id=? AND user_id=?`)
 		return db.GetContext(ctx, &m, q, projectID, userID)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +203,9 @@ func (r *sessionRepo) GetByTokenHash(ctx context.Context, hash string) (*auth.Se
 		q := db.Rebind(`SELECT id, user_id, refresh_token_hash, expires_at, revoked_at, created_at, last_used_at FROM auth_sessions WHERE refresh_token_hash=?`)
 		return db.GetContext(ctx, &s, q, hash)
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

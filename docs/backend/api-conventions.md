@@ -38,12 +38,14 @@ must follow these rules so standalone and federated routing expose the same API.
   frontend-only compatibility branches behind.
 - A lookup of an unknown id answers `404` — never `500`, and never `200` with
   an empty list for a sub-collection of a missing parent (`/runs/{id}/steps`).
-  Only a genuine not-found is a 404: a repository `Get` returns its domain
-  `ErrNotFound` for a missing row, and handlers use `httpx.LookupFailed`,
-  which maps that to 404 and any other error to 500. The UI shows "Not Found"
-  only for a 404, so mapping a database error to 404 tells the user the
-  resource was deleted. `missing_resource_contract_test.go` walks every
-  parameterized route with unknown ids.
+  Repository convention: a `Get`/`Find` for a missing row returns `(nil, nil)`
+  — no row is not an error — and any returned error is a real failure (the
+  shared repository suites check this on both SQLite and Postgres). Handlers
+  use `httpx.LookupFailed(c, err, found, msg)`: an error is a 500, a nil (or
+  out-of-scope) result is a 404. The UI shows "Not Found" only for a 404, so
+  mapping a database error to 404 tells the user the resource was deleted.
+  `missing_resource_contract_test.go` walks every parameterized route with
+  unknown ids.
 - A resource looked up by id alone (viewers, notebook volumes) must be checked
   against the URL's project; another project's resource answers 404.
 - An unexpected failure answers through `httpx.InternalError(c, err, msg)`: the

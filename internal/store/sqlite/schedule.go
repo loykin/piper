@@ -80,7 +80,7 @@ func (r *scheduleRepo) Get(ctx context.Context, projectID, id string) (*schedule
 			`SELECT `+scheduleSelectCols+` FROM schedules WHERE project_id=? AND id=?`, projectID, id)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, schedule.ErrNotFound
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err

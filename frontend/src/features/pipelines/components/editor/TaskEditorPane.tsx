@@ -138,7 +138,7 @@ export function TaskEditorPane({
                 value={task.command.join('\n')}
                 onChange={e => updateTask(index, { command: e.target.value.split('\n') })}
                 minHeight="6rem"
-                placeholder={task.type === 'python' ? 'python\nscript.py' : 'echo\nhello'}
+                placeholder={task.type === 'python' ? 'sh\n-c\npython3 "$PIPER_SCRIPT_PATH"' : 'echo\nhello'}
               />
             </div>
           )}

@@ -33,7 +33,8 @@ export function SubmitTemplateDialog({
         <FormField
           label="Notebook Volume"
           htmlFor="submit-template-volume"
-          helperText="Optional — required for local source steps."
+          className="min-w-0"
+          helperText="Required when a task runs a script or notebook from the workspace; command-only pipelines can leave it empty."
           error={error}
         >
           <Select
@@ -41,7 +42,7 @@ export function SubmitTemplateDialog({
             value={volumeId || '__none__'}
             onValueChange={v => onVolumeChange(!v || v === '__none__' ? '' : v)}
           >
-            <SelectTrigger id="submit-template-volume"><SelectValue placeholder="— none —" /></SelectTrigger>
+            <SelectTrigger id="submit-template-volume" className="w-full"><SelectValue placeholder="— none —" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">— none —</SelectItem>
               {volumes.map(v => (

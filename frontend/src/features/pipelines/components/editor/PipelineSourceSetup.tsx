@@ -14,19 +14,16 @@ import { FormSubmitBar } from '@/shared/components/FormSubmitBar'
 
 const setupSchema = z.object({
   name: z.string(),
-  sourceKind: z.enum(['notebook-volume', 'git', 'local', 'object-store']),
+  sourceKind: z.enum(['notebook-volume', 'git', 'none']),
   volumeId: z.string(),
   credential: z.string(),
   repo: z.string(),
   branch: z.string(),
-  root: z.string(),
 }).superRefine((v, ctx) => {
   if (v.sourceKind === 'notebook-volume' && !v.volumeId) {
     ctx.addIssue({ code: 'custom', path: ['volumeId'], message: 'Select a notebook volume.' })
   } else if (v.sourceKind === 'git' && !v.repo.trim()) {
     ctx.addIssue({ code: 'custom', path: ['repo'], message: 'Repository URL is required.' })
-  } else if ((v.sourceKind === 'local' || v.sourceKind === 'object-store') && !v.root.trim()) {
-    ctx.addIssue({ code: 'custom', path: ['root'], message: 'Source root is required.' })
   }
 })
 
@@ -73,7 +70,7 @@ export function PipelineSourceSetup({
       if (v.credential.trim()) params.credential = v.credential.trim()
       params.repo = v.repo.trim()
       if (v.branch.trim()) params.branch = v.branch.trim()
-    } else params.root = v.root
+    }
     onStart(params, name)
   }
 
@@ -82,7 +79,11 @@ export function PipelineSourceSetup({
       <FormField label="Pipeline Name" htmlFor="pipeline-name">
         <Input id="pipeline-name" {...register('name')} />
       </FormField>
-      <FormField label="Source Type" htmlFor="pipeline-source-type">
+      <FormField
+        label="Source Type"
+        htmlFor="pipeline-source-type"
+        helperText={sourceKind === 'none' ? 'Command tasks only — Python and notebook tasks need a volume or repository to run from.' : undefined}
+      >
         <Controller
           name="sourceKind"
           control={control}
@@ -91,8 +92,7 @@ export function PipelineSourceSetup({
               items={[
                 { value: 'notebook-volume', label: 'Notebook Volume' },
                 { value: 'git', label: 'Git Repository' },
-                { value: 'local', label: 'Local Directory' },
-                { value: 'object-store', label: 'Object Store Prefix' },
+                { value: 'none', label: 'None (commands only)' },
               ]}
               value={field.value}
               onValueChange={v => field.onChange(v as SourceKind)}
@@ -101,8 +101,7 @@ export function PipelineSourceSetup({
               <SelectContent>
                 <SelectItem value="notebook-volume">Notebook Volume</SelectItem>
                 <SelectItem value="git">Git Repository</SelectItem>
-                <SelectItem value="local">Local Directory</SelectItem>
-                <SelectItem value="object-store">Object Store Prefix</SelectItem>
+                <SelectItem value="none">None (commands only)</SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -121,7 +120,7 @@ export function PipelineSourceSetup({
                 value={field.value}
                 onValueChange={v => field.onChange(v ?? '')}
               >
-                <SelectTrigger id="pipeline-volume"><SelectValue placeholder="— select a volume —" /></SelectTrigger>
+                <SelectTrigger id="pipeline-volume" className="w-full" aria-invalid={!!errors.volumeId}><SelectValue placeholder="— select a volume —" /></SelectTrigger>
                 <SelectContent>
                   {volumes.length === 0 ? (
                     <SelectItem value="__none__" disabled>No released volumes</SelectItem>
@@ -169,7 +168,7 @@ export function PipelineSourceSetup({
                     if (picked?.endpoint && !getValues('repo').trim()) setValue('repo', picked.endpoint)
                   }}
                 >
-                  <SelectTrigger id="pipeline-git-credential"><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
+                  <SelectTrigger id="pipeline-git-credential" className="w-full"><SelectValue placeholder="Auto-match by repository URL" /></SelectTrigger>
                   <SelectContent>
                     {gitCredentials.length === 0 ? (
                       <SelectItem value="__none__" disabled>No active git credentials</SelectItem>
@@ -188,11 +187,7 @@ export function PipelineSourceSetup({
             <Input id="pipeline-git-branch" placeholder="main" {...register('branch')} />
           </FormField>
         </div>
-      ) : (
-        <FormField label="Source Root" htmlFor="pipeline-source-root" error={errors.root?.message}>
-          <Input id="pipeline-source-root" placeholder="/workspaces/project" aria-invalid={!!errors.root} {...register('root')} />
-        </FormField>
-      )}
+      ) : null}
       <FormSubmitBar verb="Start" noun="Editing" pending={false} onCancel={onCancel} />
     </form>
   )

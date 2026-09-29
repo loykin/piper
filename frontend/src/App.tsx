@@ -412,7 +412,10 @@ function AppLayout() {
             <AppSidebar />
             <SidebarRail />
           </Sidebar>
-          <SidebarInset>
+          {/* min-w-0: as a flex item the inset otherwise grows to its widest
+              unbreakable content (a long volume path in a Select, the editor's
+              fixed-width panes) and pushes page actions off-screen. */}
+          <SidebarInset className="min-w-0">
             <div className="flex flex-col flex-1 min-h-0">
               <div className="flex items-center border-b px-3 py-2 md:hidden">
                 <SidebarTrigger />

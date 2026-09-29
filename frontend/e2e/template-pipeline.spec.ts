@@ -133,7 +133,7 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
 })
 
 test('never discards YAML-only fields during tab changes or submit', async ({ page }) => {
-  await page.goto(`${uiBase}/pipelines/editor?source=local&root=/tmp&name=yaml-lossless`)
+  await page.goto(`${uiBase}/pipelines/editor?source=none&name=yaml-lossless`)
   await expect(page.getByRole('heading', { name: 'New Template' })).toBeVisible()
   await page.getByRole('tab', { name: 'YAML' }).click()
 
@@ -216,8 +216,28 @@ spec:
   expect(templates[0].yaml).toContain('timeout: 15')
 
   await page.goto(
-    `${uiBase}/pipelines/editor?source=local&root=/tmp&name=yaml-lossless&from_version=${templates[0].id}`,
+    `${uiBase}/pipelines/editor?name=yaml-lossless&from_version=${templates[0].id}`,
   )
   await expect(page.getByRole('tab', { name: 'YAML' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.cm-content')).toContainText('timeout: 15')
+})
+
+// "Local Directory" and "Object Store Prefix" asked for a root path that
+// nothing ever used; commands-only pipelines now say so. Changing the Source
+// Type and then failing validation is also the path that once crashed submit
+// (a field named `root`, which react-hook-form reserves).
+test('source setup offers only real source types', async ({ page }) => {
+  await page.goto(`${uiBase}/pipelines/editor`)
+  await page.locator('#pipeline-source-type').click()
+  await expect(page.getByRole('option')).toHaveText(['Notebook Volume', 'Git Repository', 'None (commands only)'])
+  await page.getByRole('option', { name: 'Git Repository' }).click()
+  await page.getByRole('button', { name: 'Start Editing', exact: true }).click()
+  await expect(page.getByText('Repository URL is required.')).toBeVisible()
+  expect(new URL(page.url()).search).toBe('')
+
+  await page.locator('#pipeline-source-type').click()
+  await page.getByRole('option', { name: 'None (commands only)' }).click()
+  await page.getByRole('button', { name: 'Start Editing', exact: true }).click()
+  await expect(page).toHaveURL(/source=none/)
+  await expect(page.getByText('None — commands only')).toBeVisible()
 })

@@ -11,8 +11,8 @@ import { DialogSubmitFooter } from '@/shared/components/DialogSubmitFooter'
 // ── Upload Object ───────────────────────────────────────────────────────────
 // A narrowly-scoped value-collection action (file + optional key), not an
 // entity worth its own page — matches the Modal destination in the
-// form-workflow contract, and mirrors credentials' TestCredentialDialog/
-// RotateCredentialDialog. Triggered from Uploaded Objects' own toolbar since
+// form-workflow contract, and mirrors credentials' TestCredentialDialog.
+// Triggered from Uploaded Objects' own toolbar since
 // it's that list's create action, not a permanent fixture above the list.
 
 // Mirrors serve.go's maxBlobRequestBodyBytes — the built-in store's blob

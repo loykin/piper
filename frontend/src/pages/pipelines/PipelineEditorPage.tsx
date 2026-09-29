@@ -42,18 +42,19 @@ export default function PipelineEditorPage() {
 
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // URL is the source of truth for setup choices
+  // URL is the source of truth for setup choices. A commands-only pipeline
+  // (`none`) and a new version of a template without a volume need no source
+  // workspace; the latter's steps come from the seeded YAML.
   const setupDone = useMemo(() => {
     const s = searchParams.get('source')
-    if (!s) return false
     if (s === 'notebook-volume') return !!searchParams.get('volume')
     if (s === 'git') return !!searchParams.get('repo')
-    return !!searchParams.get('root')
+    return s === 'none' || !!searchParams.get('from_version')
   }, [searchParams])
 
-  const editorSourceKind = (searchParams.get('source') as SourceKind) ?? 'notebook-volume'
+  const sourceParam = searchParams.get('source')
+  const editorSourceKind: SourceKind = sourceParam === 'git' || sourceParam === 'none' ? sourceParam : 'notebook-volume'
   const editorVolumeId  = searchParams.get('volume') ?? ''
-  const editorRoot      = searchParams.get('root')   ?? ''
   const editorCredential = searchParams.get('credential') ?? ''
   const editorRepo      = searchParams.get('repo') ?? ''
   const editorBranch    = searchParams.get('branch') ?? ''
@@ -169,7 +170,7 @@ export default function PipelineEditorPage() {
   const editingIndex = useMemo(() => tasks.findIndex(t => t.id === editingId), [tasks, editingId])
   const editingTask = editingIndex >= 0 ? tasks[editingIndex] : null
   const selectedVolume = useMemo(() => volumes.find(v => v.id === editorVolumeId) ?? null, [editorVolumeId, volumes])
-  const canBrowse = editorSourceKind === 'notebook-volume'
+  const canBrowse = editorSourceKind === 'notebook-volume' && !!editorVolumeId
   const yamlStatus = useMemo(() => {
     try {
       const parsed = parsePipelineDraftYaml(yamlText)
@@ -352,7 +353,7 @@ export default function PipelineEditorPage() {
           <PipelineSourceSetup
             initial={{
               name: editorName, sourceKind: editorSourceKind, volumeId: editorVolumeId, credential: editorCredential,
-              repo: editorRepo, branch: editorBranch, root: editorRoot,
+              repo: editorRepo, branch: editorBranch,
             }}
             volumes={volumes}
             onStart={(params, name) => {
@@ -475,7 +476,9 @@ export default function PipelineEditorPage() {
                     {editorBranch && <span className="ml-2 font-mono text-xs text-muted-foreground">{editorBranch}</span>}
                   </>
                 ) : (
-                  <span className="font-mono text-xs">{editorRoot || editorSourceKind}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {editorSourceKind === 'none' ? 'None — commands only' : 'None — steps use the sources in the template YAML'}
+                  </span>
                 )}
               </div>
               {canBrowse && volumeFilesStatus === 'transitioning' && (

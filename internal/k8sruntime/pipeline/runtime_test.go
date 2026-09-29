@@ -3,9 +3,12 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -82,5 +85,68 @@ func TestPipelineCancelDeletesJobs(t *testing.T) {
 	}
 	if len(jobs.Items) != 0 {
 		t.Fatalf("jobs = %d, want 0", len(jobs.Items))
+	}
+}
+
+type recordingSink struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (s *recordingSink) Append(_, _, _, line string, _ time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines = append(s.lines, line)
+}
+
+func (s *recordingSink) Stop() {}
+
+func (s *recordingSink) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.lines)
+}
+
+// A follow stream opened on a just-created pod can succeed with an empty body
+// and end at once; streamJobLogs must wait for a started container instead of
+// returning with nothing, which lost every log line of a short Job.
+func TestStreamJobLogsWaitsForStartedContainer(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "job-a-pod", Namespace: "runs", Labels: map[string]string{"job-name": "job-a"},
+	}}
+	client := fake.NewSimpleClientset(pod)
+	sink := &recordingSink{}
+	task := &proto.Task{RunID: "run-1", StepName: "step"}
+	done := make(chan struct{})
+	go func() {
+		streamJobLogs(context.Background(), client, "runs", "job-a", task, sink)
+		close(done)
+	}()
+
+	time.Sleep(700 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("streamJobLogs returned before the container started")
+	default:
+	}
+	for _, action := range client.Actions() {
+		if action.GetSubresource() == "log" {
+			t.Fatal("opened a log stream before the container started")
+		}
+	}
+
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name: "step", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
+	}}
+	if _, err := client.CoreV1().Pods("runs").UpdateStatus(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("streamJobLogs did not finish after the container terminated")
+	}
+	if sink.count() == 0 {
+		t.Fatal("no log lines were streamed after the container started")
 	}
 }

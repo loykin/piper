@@ -304,7 +304,7 @@ function VolumeField({ volumeId, releasedVolumes, onChange }: { volumeId: string
         value={volumeId}
         onValueChange={v => onChange(v ?? '')}
       >
-        <SelectTrigger id="notebook-volume" size="sm" className="h-8 text-sm"><SelectValue placeholder="— new volume —" /></SelectTrigger>
+        <SelectTrigger id="notebook-volume" size="sm" className="h-8 w-full text-sm"><SelectValue placeholder="— new volume —" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="">new volume</SelectItem>
           {releasedVolumes.map(v => (

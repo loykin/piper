@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Controller, useForm, useWatch } from 'react-hook-form'
+import { parseDocument } from 'yaml'
 import { z } from 'zod'
 import { CronInput, toCronExpression, validateCronExpression, type CronValue } from '@loykin/cron-input'
 import { createShadcnAdapter } from '@loykin/cron-input/adapters/shadcn'
@@ -43,12 +44,19 @@ spec:
         command: [echo, "world!"]
 `
 
-function applyPipelineName(yaml: string, name: string): string {
-  const safe = name.trim() || 'my-pipeline'
-  if (/^\s*name:/m.test(yaml)) {
-    return yaml.replace(/^(\s*name:)\s*.*$/m, (_, prefix) => `${prefix} ${JSON.stringify(safe)}`)
-  }
-  return yaml
+// metadata.name read and written through the YAML document, not a regex: the
+// old `^name:` replace rewrote whichever `name:` line came first (a step's, in
+// a pipeline without metadata) and ignored flow-style YAML.
+function yamlPipelineName(yaml: string): string {
+  const name = parseDocument(yaml).getIn(['metadata', 'name'])
+  return typeof name === 'string' ? name.trim() : ''
+}
+
+function withPipelineName(yaml: string, name: string): string {
+  const doc = parseDocument(yaml)
+  if (doc.errors.length > 0) return yaml // the server reports the parse error
+  doc.setIn(['metadata', 'name'], name)
+  return doc.toString()
 }
 
 const TYPE_OPTIONS: { type: ScheduleType; label: string; desc: string }[] = [
@@ -58,13 +66,16 @@ const TYPE_OPTIONS: { type: ScheduleType; label: string; desc: string }[] = [
 ]
 
 const scheduleSchema = z.object({
-  name: z.string().trim().min(1, 'Pipeline name is required.'),
+  name: z.string().trim(),
   yaml: z.string().trim().min(1, 'Pipeline YAML is required.'),
   type: z.enum(['immediate', 'once', 'cron']),
   runAt: z.string(),
   cron: z.custom<CronValue>(),
   maxRuns: maxRunsField,
 }).superRefine((values, ctx) => {
+  if (!values.name && !yamlPipelineName(values.yaml)) {
+    ctx.addIssue({ code: 'custom', path: ['name'], message: 'Enter a pipeline name or set metadata.name in the YAML.' })
+  }
   if (values.type === 'once' && !toISO(values.runAt)) {
     ctx.addIssue({ code: 'custom', path: ['runAt'], message: 'Run time is required for a one-time schedule.' })
   }
@@ -93,7 +104,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
   const { control, register, handleSubmit, formState: { errors } } = useForm<ScheduleValues>({
     resolver: zodResolver(scheduleSchema),
     defaultValues: {
-      name: initialYaml?.match(/^\s*name:\s*(.+)$/m)?.[1]?.trim() ?? 'my-pipeline',
+      name: '',
       yaml: initialYaml ?? EXAMPLE_YAML,
       type: 'immediate',
       runAt: '',
@@ -102,13 +113,14 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
     },
   })
   const scheduleType = useWatch({ control, name: 'type' })
+  const yamlName = yamlPipelineName(useWatch({ control, name: 'yaml' }))
 
   async function submit(values: ScheduleValues) {
     setSubmitError('')
     try {
       const result = await createSchedule({
-        name: values.name,
-        yaml: applyPipelineName(values.yaml, values.name),
+        name: values.name || yamlPipelineName(values.yaml),
+        yaml: values.name ? withPipelineName(values.yaml, values.name) : values.yaml,
         type: values.type,
         cron: values.type === 'cron' ? toCronExpression(values.cron) : undefined,
         run_at: values.type === 'once' ? toISO(values.runAt) : undefined,
@@ -122,8 +134,8 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
 
   return (
     <form className="space-y-3" noValidate onSubmit={handleSubmit(submit)}>
-      <FormField label="Pipeline Name" htmlFor="schedule-pipeline-name" error={errors.name?.message} helperText="Defaults to my-pipeline.">
-        <Input id="schedule-pipeline-name" className="h-8 text-sm" aria-invalid={!!errors.name} {...register('name')} />
+      <FormField label="Pipeline Name" htmlFor="schedule-pipeline-name" error={errors.name?.message} helperText="Leave empty to use metadata.name from the YAML below.">
+        <Input id="schedule-pipeline-name" className="h-8 text-sm" placeholder={yamlName} aria-invalid={!!errors.name} {...register('name')} />
       </FormField>
 
       <Controller

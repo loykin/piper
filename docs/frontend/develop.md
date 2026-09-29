@@ -398,6 +398,11 @@ nested inside `Body`, `Group`, or another layout mode. Reference:
 
 - Validated create/edit forms with multiple fields use React Hook Form with a
   Zod schema and `zodResolver`.
+- Never name a form field `root` (lint error). React Hook Form reserves
+  `errors.root` for form-level errors and clears it before deciding a submit
+  is valid, so a failed check on a `root` field submits empty values — the
+  pipeline source setup crashed this way. Use a descriptive name
+  (`sourceRoot`).
 - Render controls from `@/components/ui/` or public DesignKit exports.
 - The form lives on a routed page composed with `DataBodyTemplate`.
 - Follow the DesignKit playground's **Form Stacked** composition: render a

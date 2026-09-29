@@ -6,7 +6,9 @@ import {
   type PipelineKeyValueDraft, type PipelineStepDraft, type PipelineTaskType,
 } from './editor'
 
-export type SourceKind = 'notebook-volume' | 'git' | 'local' | 'object-store'
+// 'none' is a commands-only pipeline: no workspace to snapshot, so Python and
+// notebook tasks (which run a file from the source) can't be submitted.
+export type SourceKind = 'notebook-volume' | 'git' | 'none'
 export type ActiveTab = 'design' | 'yaml'
 
 export function designLossMessage(path: string): string {
@@ -107,7 +109,10 @@ export function autoMatchGitCredential<T extends { endpoint?: string }>(credenti
 export function defaultTask(type: PipelineTaskType, index = 0): PipelineStepDraft {
   const draft = defaultPipelineStep(index, type)
   draft.dependsOn = []
-  if (type === 'python') draft.command = ['python', 'task.py']
+  // Run the task's own Script File: the agent exports it as $PIPER_SCRIPT_PATH
+  // once the source is fetched. A literal file name here silently ran a
+  // different script than the one the form asked for.
+  if (type === 'python') draft.command = ['sh', '-c', 'python3 "$PIPER_SCRIPT_PATH"']
   else if (type === 'notebook') draft.command = []
   return draft
 }

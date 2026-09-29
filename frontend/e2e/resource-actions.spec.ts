@@ -166,3 +166,41 @@ test('alert rule panel toggles enable/disable repeatedly and stays current', asy
   await expect(panel.getByText('Enabled', { exact: true })).toBeVisible()
   await expect.poll(enabledOnServer).toBe(true)
 })
+
+// The schedule name used to default to "my-pipeline" and was regex-written
+// over the first `name:` line, ignoring the YAML's own metadata.name.
+test('a new schedule takes its name from the YAML unless one is typed', async ({ page, request }) => {
+  const yamlName = `sched-yaml-${Date.now()}`
+  await page.goto(`${uiBase}/schedules/new`)
+  await expect(page.locator('#schedule-pipeline-name')).toHaveValue('')
+  await page.getByRole('button', { name: /^Cron/ }).click()
+  const editor = page.locator('.cm-content')
+  await editor.click()
+  await page.keyboard.press('ControlOrMeta+A')
+  await page.keyboard.insertText(`apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: ${yamlName}
+spec:
+  steps:
+    - name: hello
+      run:
+        command: [echo, hi]
+`)
+  await expect(page.locator('#schedule-pipeline-name')).toHaveAttribute('placeholder', yamlName)
+  await page.getByRole('button', { name: 'Create Schedule', exact: true }).click()
+  await expect(page.getByRole('heading', { name: yamlName })).toBeVisible()
+
+  const typedName = `sched-typed-${Date.now()}`
+  await page.goto(`${uiBase}/schedules/new`)
+  await page.locator('#schedule-pipeline-name').fill(typedName)
+  await page.getByRole('button', { name: /^Cron/ }).click()
+  await page.getByRole('button', { name: 'Create Schedule', exact: true }).click()
+  await expect(page.getByRole('heading', { name: typedName })).toBeVisible()
+
+  const list = await request.get(`${backend}/api/projects/${projectID}/schedules?limit=100&offset=0`)
+  const schedules = await list.json() as Array<{ name: string; pipeline_yaml: string }>
+  const typed = schedules.find(s => s.name === typedName)
+  expect(typed?.pipeline_yaml).toContain(`name: ${typedName}`)
+  expect(typed?.pipeline_yaml).toContain('name: hello') // step names untouched
+})

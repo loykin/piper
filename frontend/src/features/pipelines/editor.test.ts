@@ -67,3 +67,17 @@ describe('autoMatchGitCredential', () => {
     expect(autoMatchGitCredential(creds, '')).toBeUndefined()
   })
 })
+
+describe('defaultTask', () => {
+  // The default used to be `python task.py`, which ran a file named task.py
+  // regardless of the Script File the form set.
+  it('runs the python task\'s own script file', () => {
+    const task = defaultTask('python', 0)
+    task.sourcePath = 'hello.py'
+    const yaml = buildPipelineDraftYaml({ ...defaultPipelineDraft(), name: 'p', steps: [task] })
+    const step = parsePipelineDraftYaml(yaml).steps[0]
+    expect(step.sourcePath).toBe('hello.py')
+    expect(step.command.join(' ')).toContain('$PIPER_SCRIPT_PATH')
+    expect(yaml).not.toContain('task.py')
+  })
+})

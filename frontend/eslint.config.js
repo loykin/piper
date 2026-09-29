@@ -80,6 +80,15 @@ export default defineConfig([
           selector: 'CatchClause > BlockStatement[body.length=0]',
           message: 'Do not swallow errors — show them (dialog `error`, notice) or handle them explicitly.',
         },
+        // react-hook-form reserves `errors.root` and clears it before deciding
+        // a submit is valid, so a form field named `root` submits with {} when
+        // it is the only invalid field (the pipeline source setup crash).
+        ...[
+          "CallExpression[callee.object.name='z'][callee.property.name='object'] > ObjectExpression > Property[key.name='root']",
+          "CallExpression[callee.name='register'] > Literal:first-child[value='root']",
+          "JSXOpeningElement[name.name='Controller'] > JSXAttribute[name.name='name'] > Literal[value='root']",
+          "Property[key.name='path'] > ArrayExpression > Literal:first-child[value='root']",
+        ].map(selector => ({ selector, message: 'Do not name a form field `root` — react-hook-form reserves errors.root (see docs/frontend/develop.md Form Convention).' })),
       ],
     },
   },

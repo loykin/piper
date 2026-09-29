@@ -52,6 +52,10 @@ which federates *management* across separate Piper installations — see
 - Docker step containers must override the image `ENTRYPOINT` (as the K8s
   launcher does with `Command`); otherwise an image with its own entrypoint
   receives the agent path as an argument and exits.
+- Open a K8s pod log stream only once a container is running or terminated
+  (`streamJobLogs` checks `containerStarted`). A follow stream opened on a
+  just-created pod can succeed with an empty body and end at once, which
+  silently dropped every log line of short Jobs.
 - `notebook.Manager.Delete` stops every notebook that isn't already
   `stopped` — a `failed` or `starting` K8s notebook still has a StatefulSet
   whose Pod crash-loops and pins its PVC until scaled down — then calls

@@ -255,7 +255,10 @@ func streamJobLogs(ctx context.Context, client kubernetes.Interface, namespace, 
 	var podName string
 	for attempt := 0; podName == ""; attempt++ {
 		pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + jobName})
-		if err == nil && len(pods.Items) > 0 {
+		// Wait for a started container: a follow stream opened on a pod that
+		// was just created (not yet scheduled) can succeed with an empty body
+		// and end at once, which lost every line of a short Job.
+		if err == nil && len(pods.Items) > 0 && containerStarted(&pods.Items[0]) {
 			podName = pods.Items[0].Name
 			break
 		}
@@ -294,6 +297,17 @@ func streamJobLogs(ctx context.Context, client kubernetes.Interface, namespace, 
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// containerStarted reports whether any of the pod's (non-init) containers is
+// running or has finished, i.e. has logs to follow.
+func containerStarted(pod *corev1.Pod) bool {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Running != nil || status.State.Terminated != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Runtime) cancelPipelineRun(ctx context.Context, req pipelineCancelRunRequest) error {

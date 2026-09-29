@@ -86,13 +86,11 @@ function PipelinesListPageInner() {
   }
 
   function openNewVersionFrom(t: PipelineTemplate) {
-    const params = new URLSearchParams({
-      from_version: t.id,
-      name: t.name,
-      source: t.volume_id ? 'notebook-volume' : 'local',
-    })
-    if (t.volume_id) params.set('volume', t.volume_id)
-    else params.set('root', '.')
+    const params = new URLSearchParams({ from_version: t.id, name: t.name })
+    if (t.volume_id) {
+      params.set('source', 'notebook-volume')
+      params.set('volume', t.volume_id)
+    }
     navigate(`/projects/${projectId}/pipelines/editor?${params.toString()}`)
   }
 

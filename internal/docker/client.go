@@ -19,6 +19,7 @@ type API interface {
 	ContainerRemove(context.Context, string, dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error)
 	ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error)
 	ContainerWait(context.Context, string, dockerclient.ContainerWaitOptions) dockerclient.ContainerWaitResult
+	ImageAPI
 }
 
 // NewClient returns a Docker client using DOCKER_HOST when set. Otherwise it

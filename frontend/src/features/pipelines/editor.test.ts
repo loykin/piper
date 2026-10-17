@@ -4,8 +4,9 @@ import {
   defaultPipelineDraft,
   findPipelineDraftYamlDifference,
   parsePipelineDraftYaml,
+  stripMetadataVersion,
 } from './editor'
-import { autoMatchGitCredential, defaultTask, draftProblems } from './editorModel'
+import { applyPreparePreset, autoMatchGitCredential, defaultTask, draftProblems, environmentDefaults, preparePresetLines } from './editorModel'
 
 function sampleDraft() {
   const draft = defaultPipelineDraft()
@@ -79,5 +80,103 @@ describe('defaultTask', () => {
     expect(step.sourcePath).toBe('hello.py')
     expect(step.command.join(' ')).toContain('$PIPER_SCRIPT_PATH')
     expect(yaml).not.toContain('task.py')
+  })
+})
+
+describe('task templates', () => {
+  for (const runtime of ['baremetal', 'docker', 'k8s']) {
+    it(`notebook template round-trips without Design loss (${runtime})`, () => {
+      const task = defaultTask('notebook', 0, runtime)
+      task.sourcePath = 'train.ipynb'
+      const yaml = buildPipelineDraftYaml({ ...defaultPipelineDraft(), name: 'p', steps: [task] })
+      expect(yaml).not.toMatch(/^\s+(type|notebook):/m)
+      expect(yaml).toContain('$PIPER_PARAMS_FILE')
+      const draft = parsePipelineDraftYaml(yaml)
+      expect(draft.steps[0].type).toBe('notebook')
+      expect(findPipelineDraftYamlDifference(yaml, draft)).toBeNull()
+    })
+  }
+
+  // Only the environment differs by runtime: baremetal builds a venv and its
+  // own kernel; containers use the image's python.
+  it('differs by runtime only in the environment', () => {
+    const bare = defaultTask('notebook', 0, 'baremetal')
+    const docker = defaultTask('notebook', 0, 'docker')
+    expect(bare.prepare[0]).toBe('python3 -m venv .venv')
+    expect(bare.command.join(' ')).toContain('-k piper-step')
+    expect(docker.prepare.join('\n')).not.toContain('.venv')
+    expect(bare.outputs).toEqual(docker.outputs)
+  })
+})
+
+describe('params', () => {
+  // The step reads params from $PIPER_PARAMS_FILE with their YAML types, so a
+  // number typed in the form must stay a number.
+  it('writes typed scalars and round-trips without Design loss', () => {
+    const task = defaultTask('notebook', 0, 'docker')
+    task.sourcePath = 'train.ipynb'
+    task.params = [{ key: 'n_estimators', value: '120' }, { key: 'lr', value: '0.5' }, { key: 'name', value: 'iris' }, { key: 'flag', value: 'true' }]
+    const yaml = buildPipelineDraftYaml({ ...defaultPipelineDraft(), name: 'p', steps: [task] })
+    expect(yaml).toContain('n_estimators: 120\n')
+    expect(yaml).toContain('lr: 0.5\n')
+    expect(yaml).toContain('name: "iris"\n')
+    expect(yaml).toContain('flag: true\n')
+    expect(findPipelineDraftYamlDifference(yaml, parsePipelineDraftYaml(yaml))).toBeNull()
+  })
+})
+
+describe('stripMetadataVersion', () => {
+  it('drops only metadata.version and keeps the rest of the text', () => {
+    const stored = 'apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: "train" # keep\n  version: 3\nspec:\n  steps: []\n'
+    expect(stripMetadataVersion(stored)).toBe('apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: "train" # keep\nspec:\n  steps: []\n')
+  })
+})
+
+describe('New Version of a template the editor made', () => {
+  // The server stores the submitted text plus metadata.version; New Version
+  // strips that and must reopen in Design with nothing to lose.
+  it('reopens without a Design-loss warning', () => {
+    const task = defaultTask('notebook', 0, 'baremetal')
+    task.sourcePath = 'train.ipynb'
+    task.prepare.push('.venv/bin/python -m pip install -q scikit-learn')
+    task.params = [{ key: 'n_estimators', value: '120' }]
+    const submitted = buildPipelineDraftYaml({ ...defaultPipelineDraft(), name: 'iris', steps: [task] })
+    const stored = submitted.replace('  name: "iris"\n', '  name: "iris"\n  version: 1\n')
+    const reopened = stripMetadataVersion(stored)
+    expect(findPipelineDraftYamlDifference(reopened, parsePipelineDraftYaml(reopened))).toBeNull()
+  })
+})
+
+describe('prepare presets', () => {
+  it('install into the same environment the template sets up', () => {
+    expect(preparePresetLines('pip', 'baremetal')).toEqual(['.venv/bin/python -m pip install -q -r requirements.txt'])
+    expect(preparePresetLines('pip', 'k8s')).toEqual(['python3 -m pip install -q -r requirements.txt'])
+    expect(preparePresetLines('uv', 'baremetal')[1]).toBe('.venv/bin/python -m uv pip install --python .venv/bin/python -r pyproject.toml')
+    expect(preparePresetLines('uv', 'docker')[1]).toBe('python3 -m uv pip install --system -r pyproject.toml')
+  })
+})
+
+describe('environmentDefaults', () => {
+  const empty = defaultPipelineDraft().defaults
+  it('fills the source notebook image and the first allowed k8s namespace', () => {
+    const k8s = environmentDefaults(empty, 'k8s', 'jupyter/minimal-notebook:latest', ['piper', 'team-a'])
+    expect([k8s.k8sImage, k8s.k8sNamespace]).toEqual(['jupyter/minimal-notebook:latest', 'piper'])
+    expect(environmentDefaults(empty, 'docker', 'img:1', []).dockerImage).toBe('img:1')
+    expect(environmentDefaults(empty, 'baremetal', 'img:1', [])).toEqual({ ...empty, placementRuntime: 'baremetal' })
+  })
+  it('keeps values already set', () => {
+    const set = { ...empty, placementRuntime: 'k8s', k8sImage: 'mine:2', k8sNamespace: 'team-a' }
+    expect(environmentDefaults(set, 'k8s', 'img:1', ['piper'])).toEqual(set)
+  })
+})
+
+describe('applyPreparePreset', () => {
+  // The snapshot holds only the entry file and deps, so the file a preset
+  // installs from has to be added to deps or the line fails at run time.
+  it('adds the preset file to deps once', () => {
+    const once = applyPreparePreset({ prepare: [], deps: [] }, 'pip', 'docker')
+    expect(once.deps).toEqual(['requirements.txt'])
+    expect(applyPreparePreset(once, 'pip', 'docker').deps).toEqual(['requirements.txt'])
+    expect(applyPreparePreset({ prepare: [], deps: [] }, 'uv', 'k8s').deps).toEqual(['pyproject.toml'])
   })
 })

@@ -98,6 +98,9 @@ func (r *Driver) Start(ctx context.Context, req notebookdriver.StartRequest) (*n
 			return nil, fmt.Errorf("remove existing notebook container %s: %w", id, err)
 		}
 	}
+	if err := dockerinfra.EnsureImage(ctx, r.client, options.Config.Image); err != nil {
+		return nil, err
+	}
 	created, err := r.client.ContainerCreate(ctx, options)
 	if err != nil {
 		return nil, fmt.Errorf("create notebook container: %w", err)

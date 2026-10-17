@@ -62,7 +62,7 @@ func (r *fakeRuntime) lastRequest() notebookdriver.StartRequest {
 type statusReport struct {
 	projectID, name, status, endpoint, workDir, token string
 	pid                                               int
-	env                                               string
+	env, reason                                       string
 }
 
 func newTestDriver(t *testing.T, rt notebookdriver.Driver) (*Driver, chan statusReport) {
@@ -74,8 +74,8 @@ func newTestDriver(t *testing.T, rt notebookdriver.Driver) (*Driver, chan status
 			NotebooksRoot:    t.TempDir(),
 			PortRange:        "18888-18899",
 			PlacementRuntime: "baremetal",
-			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				reports <- statusReport{projectID, name, status, endpoint, workDir, token, pid, env}
+			ReportStatus: func(projectID, name string, r notebook.StatusReport) error {
+				reports <- statusReport{projectID, name, r.Status, r.Endpoint, r.WorkDir, r.Token, r.PID, r.Env, r.Reason}
 				return nil
 			},
 		},
@@ -217,6 +217,9 @@ func TestStartFailureReportsFailed(t *testing.T) {
 	r := awaitReport(t, reports)
 	if r.status != notebook.StatusFailed {
 		t.Fatalf("status = %q, want failed", r.status)
+	}
+	if r.reason != os.ErrPermission.Error() {
+		t.Fatalf("reason = %q, want the driver's start error", r.reason)
 	}
 }
 

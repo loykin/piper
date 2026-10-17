@@ -18,7 +18,8 @@ export const DEFAULT_K8S: K8sFormState = {
   name: '',
   env: [],
 	image: 'jupyter/minimal-notebook:latest',
-	namespace: 'notebooks',
+  // The launch form fills this from the server's runtime.namespaces.
+  namespace: '',
   cpu: '',
   memory: '',
   gpu: '',

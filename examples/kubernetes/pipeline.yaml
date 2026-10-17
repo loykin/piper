@@ -27,7 +27,6 @@ spec:
         image: python:3.12-slim  # This step runs with the Python image
         namespace: piper
     run:
-      type: command
       command:
         - python3
         - -c
@@ -48,7 +47,6 @@ spec:
         image: alpine:3.20       # This step runs with Alpine
         namespace: piper
     run:
-      type: command
       command:
         - sh
         - -c

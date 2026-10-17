@@ -256,6 +256,10 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 		return pipelinedriver.Handle{}, err
 	}
 
+	if err := dockerinfra.EnsureImage(ctx, d.client, image); err != nil {
+		_ = os.Remove(hostTaskPath)
+		return pipelinedriver.Handle{}, err
+	}
 	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: image,

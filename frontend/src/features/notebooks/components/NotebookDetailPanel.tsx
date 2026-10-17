@@ -65,6 +65,11 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
           <MutationErrors of={[stopMutation, startMutation]} />
         </PanelTemplate.Section>
       )}
+      {notebook.reason && (
+        <PanelTemplate.Section title="Failure Reason">
+          <p className="whitespace-pre-wrap break-all rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 font-mono text-[11px] text-muted-foreground">{notebook.reason}</p>
+        </PanelTemplate.Section>
+      )}
       <PanelTemplate.Section title="Details">
         <dl className="space-y-2">
           <PanelTemplate.Row label="Environment">{notebook.env || notebook.image || '—'}</PanelTemplate.Row>

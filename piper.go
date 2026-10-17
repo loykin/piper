@@ -1160,9 +1160,10 @@ func (p *Piper) ParseFile(path string) (*pipeline.Pipeline, error) {
 
 func (p *Piper) sourceConfig() srcfetch.Config {
 	return srcfetch.Config{
-		GitUser:    p.cfg.Git.User,
-		GitToken:   p.cfg.Git.Token,
-		StorageURL: p.storageURL,
+		GitUser:      p.cfg.Git.User,
+		GitToken:     p.cfg.Git.Token,
+		StorageURL:   p.storageURL,
+		StorageToken: p.cfg.Storage.Token,
 	}
 }
 

@@ -50,7 +50,7 @@ func newTestFixture(t *testing.T) *testFixture {
 	srv := &notebook.NotebookServer{
 		ProjectID: "proj-1", Name: "nb1", Status: notebook.StatusRunning,
 		Env: "python3.11", Endpoint: endpointFixture, PID: pidFixture, WorkDir: workdirFixture,
-		Token: tokenFixture, RuntimeID: "rt-1", VolumeID: "vol-1", Image: "jupyter/base",
+		Token: tokenFixture, RuntimeID: "rt-1", VolumeID: "vol-1",
 		CreatedBy: "user-1", CreatedAt: now, UpdatedAt: now,
 	}
 	notebooks.put(srv)

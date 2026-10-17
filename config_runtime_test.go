@@ -3,6 +3,7 @@ package piper
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -70,9 +71,17 @@ func TestPiperPreventsDeletingMLflowCredentialInUse(t *testing.T) {
 }
 
 func TestSettingsExposeServerOwnedRuntime(t *testing.T) {
-	p := &Piper{cfg: Config{Runtime: RuntimeConfig{Type: RuntimeK8s}, Storage: StorageConfig{Disabled: true}}}
-	if got := p.Settings().Runtime.Type; got != RuntimeK8s {
-		t.Fatalf("Settings().Runtime.Type = %q, want %q", got, RuntimeK8s)
+	p := &Piper{cfg: Config{
+		Runtime: RuntimeConfig{Type: RuntimeK8s, K8s: K8sRuntimeConfig{Namespaces: []string{"piper", "team-a"}}},
+		Storage: StorageConfig{Disabled: true},
+	}}
+	got := p.Settings().Runtime
+	if got.Type != RuntimeK8s {
+		t.Fatalf("Settings().Runtime.Type = %q, want %q", got.Type, RuntimeK8s)
+	}
+	// The k8s notebook form defaults its namespace to the first allowed one.
+	if !slices.Equal(got.Namespaces, []string{"piper", "team-a"}) {
+		t.Fatalf("Settings().Runtime.Namespaces = %v, want runtime.namespaces", got.Namespaces)
 	}
 }
 
@@ -132,7 +141,6 @@ spec:
           image: alpine:3.20
           namespace: runs
       run:
-        type: command
         command: [sh, -c, echo ok]
 `
 	if _, err := p.runs.StartRunFromAPI(ctx, yaml, nil, BuiltinVars{}, ""); err != nil {
@@ -190,7 +198,6 @@ spec:
           image: alpine:3.20
           namespace: runs
       run:
-        type: command
         command: [sh, -c, echo ok]
 `
 	ctx := project.WithContext(context.Background(), project.Context{ID: project.DefaultID})

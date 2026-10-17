@@ -13,7 +13,6 @@ spec:
   steps:
     - name: hello
       run:
-        type: command
         command: ["sh", "-c", "echo route-check"]
 `
 

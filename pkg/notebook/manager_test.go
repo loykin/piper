@@ -56,7 +56,7 @@ func (r *fakeRepo) Update(_ context.Context, nb *NotebookServer) error {
 	return nil
 }
 
-func (r *fakeRepo) SetStatus(_ context.Context, _, name, status string) error {
+func (r *fakeRepo) SetStatus(_ context.Context, _, name, status, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	nb, ok := r.servers[name]
@@ -64,6 +64,7 @@ func (r *fakeRepo) SetStatus(_ context.Context, _, name, status string) error {
 		return errors.New("not found")
 	}
 	nb.Status = status
+	nb.Reason = reason
 	return nil
 }
 
@@ -253,6 +254,7 @@ func requireVolume(t *testing.T, vols *fakeVols, id string) *NotebookVolume {
 // ─── fake Driver ──────────────────────────────────────────────────────────────
 
 type fakeDriver struct {
+	validateErr   error
 	provisionErr  error
 	provisionWork func(*NotebookVolume) // optional side-effect (e.g. set WorkDir)
 	startErr      error
@@ -354,6 +356,29 @@ func TestManagerCreateRejectsRuntimeMismatchBeforePersistence(t *testing.T) {
 	}
 	if got, _ := repo.Get(context.Background(), "project-a", "wrong-runtime"); got != nil {
 		t.Fatal("runtime mismatch created a notebook record")
+	}
+}
+
+// A spec the runtime rejects (k8s: namespace outside runtime.namespaces) is
+// refused before any record or volume exists, so the API returns 400 rather
+// than leaving a failed notebook behind.
+func TestManagerCreateRejectsDriverInvalidSpecBeforePersistence(t *testing.T) {
+	repo := newFakeRepo()
+	vols := newFakeVols()
+	drv := newFakeDriver()
+	drv.validateErr = errors.New(`namespace "notebooks" is not allowed`)
+	m := New(repo, vols, drv)
+	spec := Notebook{}
+	spec.Metadata.Name = "nb-bad-ns"
+
+	if _, err := m.Create(context.Background(), "project-a", spec, ""); err == nil {
+		t.Fatal("Create accepted a spec the driver rejects")
+	}
+	if repo.get("nb-bad-ns") != nil {
+		t.Fatal("Create persisted a notebook record for a rejected spec")
+	}
+	if len(vols.vols) != 0 {
+		t.Fatalf("Create persisted %d volume(s) for a rejected spec", len(vols.vols))
 	}
 }
 
@@ -470,9 +495,9 @@ func TestManager_Create_ProvisionFails(t *testing.T) {
 	drv.waitProvision(t)
 	time.Sleep(50 * time.Millisecond)
 
-	stored := repo.get(nb.Name)
-	if stored != nil && stored.Status != StatusFailed {
-		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
+	stored := requireNotebook(t, repo, nb.Name)
+	if stored.Status != StatusFailed || stored.Reason != "disk full" {
+		t.Errorf("status/reason = %q/%q, want %q/%q", stored.Status, stored.Reason, StatusFailed, "disk full")
 	}
 	// Volume should be cleaned up.
 	if vols.get(nb.VolumeID) != nil {
@@ -500,9 +525,9 @@ func TestManager_Create_StartFails(t *testing.T) {
 	drv.waitStart(t)
 	time.Sleep(50 * time.Millisecond)
 
-	stored := repo.get(nb.Name)
-	if stored != nil && stored.Status != StatusFailed {
-		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
+	stored := requireNotebook(t, repo, nb.Name)
+	if stored.Status != StatusFailed || stored.Reason != "no worker available" {
+		t.Errorf("status/reason = %q/%q, want %q/%q", stored.Status, stored.Reason, StatusFailed, "no worker available")
 	}
 	// Volume should be cleaned up on start failure.
 	if vols.get(nb.VolumeID) != nil {
@@ -958,7 +983,7 @@ func TestManager_UpdateStatus_FullUpdate(t *testing.T) {
 	_ = vols.Create(ctx, vol)
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-us", Status: StatusStarting, VolumeID: "vol-us"})
 
-	err := m.UpdateStatus(ctx, "project-a", "", "nb-us", StatusRunning, "http://worker:8888", "/new/workdir", "new-token", 42, "base")
+	err := m.UpdateStatus(ctx, "project-a", "", "nb-us", StatusReport{Status: StatusRunning, Endpoint: "http://worker:8888", WorkDir: "/new/workdir", Token: "new-token", PID: 42, Env: "base"})
 	if err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
@@ -989,7 +1014,7 @@ func TestManager_UpdateStatus_FullUpdate(t *testing.T) {
 
 func TestManager_UpdateStatus_NotFound(t *testing.T) {
 	m := New(newFakeRepo(), newFakeVols(), newFakeDriver())
-	if err := m.UpdateStatus(context.Background(), "project-a", "", "ghost", StatusRunning, "", "", "", 0, ""); err == nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "", "ghost", StatusReport{Status: StatusRunning}); err == nil {
 		t.Fatal("UpdateStatus() on missing server expected error")
 	}
 }
@@ -1000,7 +1025,7 @@ func TestManagerUpdateStatusRejectsDifferentWorker(t *testing.T) {
 	ctx := context.Background()
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-owned", RuntimeID: "worker-a", Status: StatusRunning})
 
-	err := m.UpdateStatus(ctx, "project-a", "worker-b", "nb-owned", StatusStopped, "", "", "", 0, "")
+	err := m.UpdateStatus(ctx, "project-a", "worker-b", "nb-owned", StatusReport{Status: StatusStopped})
 	if err == nil {
 		t.Fatal("UpdateStatus() accepted update from non-owner")
 	}
@@ -1025,7 +1050,7 @@ func TestManagerUpdateStatusClearsRuntimeFieldsWhenStopped(t *testing.T) {
 		Token:    "secret",
 	})
 
-	if err := m.UpdateStatus(ctx, "project-a", "", "nb-stale-runtime", StatusStopped, "", "", "", 0, ""); err != nil {
+	if err := m.UpdateStatus(ctx, "project-a", "", "nb-stale-runtime", StatusReport{Status: StatusStopped}); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 	nb := repo.get("nb-stale-runtime")
@@ -1037,6 +1062,29 @@ func TestManagerUpdateStatusClearsRuntimeFieldsWhenStopped(t *testing.T) {
 	}
 }
 
+// The driver-reported failure reason is kept on the record with its status and
+// replaced by the next status report, so a restarted notebook does not show
+// its old failure.
+func TestManager_UpdateStatus_ReasonTravelsWithStatus(t *testing.T) {
+	repo := newFakeRepo()
+	m := New(repo, newFakeVols(), newFakeDriver())
+	ctx := context.Background()
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-reason", Status: StatusStarting})
+
+	if err := m.UpdateStatus(ctx, "project-a", "", "nb-reason", StatusReport{Status: StatusFailed, Reason: "No such image: jupyter/x"}); err != nil {
+		t.Fatal(err)
+	}
+	if nb := requireNotebook(t, repo, "nb-reason"); nb.Reason != "No such image: jupyter/x" {
+		t.Fatalf("Reason = %q after failure", nb.Reason)
+	}
+	if err := m.UpdateStatus(ctx, "project-a", "", "nb-reason", StatusReport{Status: StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if nb := requireNotebook(t, repo, "nb-reason"); nb.Reason != "" {
+		t.Fatalf("Reason = %q after running, want empty", nb.Reason)
+	}
+}
+
 func TestManager_UpdateStatus_PartialUpdate(t *testing.T) {
 	repo := newFakeRepo()
 	m := New(repo, newFakeVols(), newFakeDriver())
@@ -1044,7 +1092,7 @@ func TestManager_UpdateStatus_PartialUpdate(t *testing.T) {
 	_ = repo.Create(ctx, &NotebookServer{Name: "nb-partial", Status: StatusStarting, Token: "keep-me", PID: 0})
 
 	// Only update status; other fields should be preserved.
-	if err := m.UpdateStatus(ctx, "project-a", "", "nb-partial", StatusRunning, "", "", "", 0, ""); err != nil {
+	if err := m.UpdateStatus(ctx, "project-a", "", "nb-partial", StatusReport{Status: StatusRunning}); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 
@@ -1063,3 +1111,5 @@ func (r *fakeRepo) Count(ctx context.Context, projectID string) (int, error) {
 }
 
 func (d *fakeDriver) Remove(context.Context, *NotebookServer) error { return nil }
+
+func (d *fakeDriver) ValidateSpec(Notebook) error { return d.validateErr }

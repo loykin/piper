@@ -6,5 +6,7 @@ export interface SystemSettings {
   }
   runtime: {
     type: '' | 'baremetal' | 'docker' | 'k8s'
+    /** k8s only: runtime.namespaces, the namespaces workloads may use. */
+    namespaces?: string[]
   }
 }

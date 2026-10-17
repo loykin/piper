@@ -17,7 +17,6 @@ spec:
   steps:
     - name: trial
       run:
-        type: command
         command: [sh, -c, "echo trial"]
 `
   const created = await page.request.post(`${backend}${projectBase}/pipeline-templates`, { data: { yaml } })

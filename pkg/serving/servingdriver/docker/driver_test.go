@@ -9,6 +9,7 @@ import (
 	dockerclient "github.com/moby/moby/client"
 
 	dockerinfra "github.com/loykin/piper/internal/docker"
+	"github.com/loykin/piper/internal/docker/dockertest"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/serving"
 	servingdriver "github.com/loykin/piper/pkg/serving/servingdriver"
@@ -84,6 +85,25 @@ func TestRecoverReportsTerminalContainer(t *testing.T) {
 	}
 	if terminal.RuntimeName != "project-a__demo" || status != serving.StatusStopped {
 		t.Fatalf("terminal = %#v, status = %q", terminal, status)
+	}
+}
+
+// A serving image the daemon has never seen is pulled before the container is
+// created, as kubelet does for the k8s runtime.
+func TestDeployPullsMissingImage(t *testing.T) {
+	cli := &deployClient{images: dockertest.Images{Missing: map[string]bool{"model:test": true}}}
+	d, err := NewWithClient(Config{RuntimeID: "worker-1"}, cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Deploy(context.Background(), servingdriver.DeployRequest{
+		ProjectID: "project-a", Name: "demo", RuntimeName: "project-a__demo",
+		Image: "model:test", Command: []string{"serve"}, Port: 18080,
+	}); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if got := cli.images.PulledImages(); len(got) != 1 || got[0] != "model:test" {
+		t.Fatalf("pulled = %v, want [model:test]", got)
 	}
 }
 
@@ -180,6 +200,7 @@ func TestDeployMountsModelDirectoryReadOnly(t *testing.T) {
 
 type deployClient struct {
 	dockerinfra.API
+	images dockertest.Images
 	create dockerclient.ContainerCreateOptions
 }
 
@@ -188,6 +209,9 @@ func (c *deployClient) ContainerList(context.Context, dockerclient.ContainerList
 }
 
 func (c *deployClient) ContainerCreate(_ context.Context, opts dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
+	if err := c.images.CheckCreate(opts.Config.Image); err != nil {
+		return dockerclient.ContainerCreateResult{}, err
+	}
 	c.create = opts
 	return dockerclient.ContainerCreateResult{ID: "container-123456789"}, nil
 }
@@ -201,4 +225,12 @@ func (c *deployClient) ContainerWait(context.Context, string, dockerclient.Conta
 		Result: make(chan container.WaitResponse),
 		Error:  make(chan error),
 	}
+}
+
+func (c *deployClient) ImageInspect(ctx context.Context, image string, opts ...dockerclient.ImageInspectOption) (dockerclient.ImageInspectResult, error) {
+	return c.images.ImageInspect(ctx, image, opts...)
+}
+
+func (c *deployClient) ImagePull(ctx context.Context, image string, opts dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error) {
+	return c.images.ImagePull(ctx, image, opts)
 }

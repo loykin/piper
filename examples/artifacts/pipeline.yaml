@@ -20,7 +20,6 @@ spec:
   steps:
   - name: generate
     run:
-      type: command
       command:
         - sh
         - -c
@@ -35,7 +34,6 @@ spec:
 
   - name: process
     run:
-      type: command
       command:
         - sh
         - -c
@@ -56,7 +54,6 @@ spec:
 
   - name: report
     run:
-      type: command
       command:
         - sh
         - -c

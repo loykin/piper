@@ -58,7 +58,7 @@ type Config struct {
 	// ReportStatus delivers an async status update once a backgrounded
 	// Start actually completes or fails, called in-process instead of over a
 	// tunnel. Required.
-	ReportStatus func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error
+	ReportStatus func(projectID, name string, r notebook.StatusReport) error
 }
 
 type activeNotebook struct {
@@ -134,6 +134,10 @@ func (d *Driver) volumeDir(volumeID string) string {
 	abs, _ := filepath.Abs(d.notebooksRoot())
 	return filepath.Join(abs, volumeID)
 }
+
+// ValidateSpec implements notebook.Driver; docker and baremetal have no
+// runtime-specific limits beyond placement, which Manager already checks.
+func (d *Driver) ValidateSpec(notebook.Notebook) error { return nil }
 
 // ProvisionVolume creates the host work directory backing vol.
 //
@@ -252,7 +256,7 @@ func (d *Driver) Start(_ context.Context, spec notebook.Notebook, vol *notebook.
 func (d *Driver) startAsync(spec notebook.Notebook, projectID, name, key string, gen uint64, workDir string, port int, token, baseURL, endpoint, _ string) {
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		slog.Error("localdriver: cannot create work dir", "name", name, "err", err)
-		d.failStart(key, gen, port, projectID, name, workDir)
+		d.failStart(key, gen, port, projectID, name, workDir, err)
 		return
 	}
 
@@ -261,7 +265,7 @@ func (d *Driver) startAsync(spec notebook.Notebook, projectID, name, key string,
 		resolved, err := d.cfg.EnvResolver(context.Background(), projectID, spec.Spec.Options.Env)
 		if err != nil {
 			slog.Error("localdriver: env resolution failed", "name", name, "err", err)
-			d.failStart(key, gen, port, projectID, name, workDir)
+			d.failStart(key, gen, port, projectID, name, workDir, err)
 			return
 		}
 		extraEnv = buildNotebookEnv(spec.Spec.Options.Env, resolved)
@@ -296,7 +300,7 @@ func (d *Driver) startAsync(spec notebook.Notebook, projectID, name, key string,
 			d.mu.Unlock()
 			d.releasePort(port)
 			if current {
-				d.report(projectID, name, status, "", "", "", 0, "")
+				d.report(projectID, name, exitReport(status))
 			}
 		},
 	})
@@ -305,7 +309,7 @@ func (d *Driver) startAsync(spec notebook.Notebook, projectID, name, key string,
 			nbSink.Stop()
 		}
 		slog.Error("localdriver: start failed", "name", name, "err", err)
-		d.failStart(key, gen, port, projectID, name, workDir)
+		d.failStart(key, gen, port, projectID, name, workDir, err)
 		return
 	}
 
@@ -322,10 +326,13 @@ func (d *Driver) startAsync(spec notebook.Notebook, projectID, name, key string,
 	if statusToken == "" {
 		statusToken = token
 	}
-	d.report(projectID, name, notebook.StatusRunning, endpoint, workDir, statusToken, started.PID, started.EnvPath)
+	d.report(projectID, name, notebook.StatusReport{
+		Status: notebook.StatusRunning, Endpoint: endpoint, WorkDir: workDir,
+		Token: statusToken, PID: started.PID, Env: started.EnvPath,
+	})
 }
 
-func (d *Driver) failStart(key string, gen uint64, port int, projectID, name, workDir string) {
+func (d *Driver) failStart(key string, gen uint64, port int, projectID, name, workDir string, cause error) {
 	d.mu.Lock()
 	current := d.notebooks[key] != nil && d.notebooks[key].gen == gen
 	if current {
@@ -335,13 +342,23 @@ func (d *Driver) failStart(key string, gen uint64, port int, projectID, name, wo
 	d.mu.Unlock()
 	d.releasePort(port)
 	if current {
-		d.report(projectID, name, notebook.StatusFailed, "", workDir, "", 0, "")
+		d.report(projectID, name, notebook.StatusReport{Status: notebook.StatusFailed, Reason: cause.Error(), WorkDir: workDir})
 	}
 }
 
-func (d *Driver) report(projectID, name, status, endpoint, workDir, token string, pid int, env string) {
-	if err := d.cfg.ReportStatus(projectID, name, status, endpoint, workDir, token, pid, env); err != nil {
-		slog.Warn("localdriver: report status failed", "name", name, "status", status, "err", err)
+// exitReport describes a notebook server that exited on its own. The driver
+// only knows the exit status; the cause is in the notebook's logs.
+func exitReport(status string) notebook.StatusReport {
+	r := notebook.StatusReport{Status: status}
+	if status == notebook.StatusFailed {
+		r.Reason = "notebook server exited with an error; see its logs"
+	}
+	return r
+}
+
+func (d *Driver) report(projectID, name string, r notebook.StatusReport) {
+	if err := d.cfg.ReportStatus(projectID, name, r); err != nil {
+		slog.Warn("localdriver: report status failed", "name", name, "status", r.Status, "err", err)
 	}
 }
 
@@ -407,7 +424,7 @@ func (d *Driver) Recover(ctx context.Context) error {
 			d.mu.Unlock()
 			d.releasePort(rec.Port)
 			if current {
-				d.report(rec.ProjectID, rec.Name, status, "", "", "", 0, "")
+				d.report(rec.ProjectID, rec.Name, notebook.StatusReport{Status: status})
 			}
 		}
 	}
@@ -420,7 +437,7 @@ func (d *Driver) Recover(ctx context.Context) error {
 		}
 		d.mu.Unlock()
 		if !active {
-			d.report(rec.ProjectID, rec.Name, status, "", "", "", 0, "")
+			d.report(rec.ProjectID, rec.Name, notebook.StatusReport{Status: status})
 		}
 	}
 	return recoverable.Recover(ctx, onRecovered, onTerminal)

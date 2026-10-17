@@ -79,9 +79,9 @@ export function useTaskDraft(initialSteps: PipelineStepDraft[]) {
     ))
   }
 
-  function addTask(type: PipelineTaskType = 'command', position?: { x: number; y: number }) {
+  function addTask(type: PipelineTaskType = 'command', position?: { x: number; y: number }, runtime = '') {
     setTasks(current => {
-      const next = [...current, defaultTask(type, current.length)]
+      const next = [...current, defaultTask(type, current.length, runtime)]
       const created = next[next.length - 1]
       setSelectedId(created.id)
       if (position) setPositions(pos => ({ ...pos, [created.id]: position }))

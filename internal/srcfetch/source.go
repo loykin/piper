@@ -38,4 +38,7 @@ type Config struct {
 	// StorageURL selects the artifact/source storage backend (e.g. s3://bucket?...).
 	// Used by S3Fetcher.
 	StorageURL string
+	// StorageToken is the bearer token for HTTP-based stores — the built-in
+	// /store endpoint requires it whenever server.workload_token is set.
+	StorageToken string
 }

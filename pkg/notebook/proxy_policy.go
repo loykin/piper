@@ -10,7 +10,7 @@ func init() {
 	tunnelproxy.RegisterPolicy("notebook", func(ctx tunnelproxy.PolicyContext) tunnelproxy.Policy {
 		return tunnelproxy.PolicyFunc{
 			OnRequest: func(req *http.Request) error {
-				req.URL.RawQuery = tunnelproxy.InjectQueryParamUnlessCookie(req, "token", ctx.Token, "username-")
+				req.URL.RawQuery = tunnelproxy.InjectQueryParam(req, "token", ctx.Token)
 				tunnelproxy.SetForwardedHeaders(req, ctx.Host, ctx.Scheme)
 				return nil
 			},

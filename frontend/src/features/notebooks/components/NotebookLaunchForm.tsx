@@ -25,6 +25,8 @@ export type NotebookRuntime = 'k8s' | 'docker' | 'baremetal'
 
 interface NotebookLaunchFormProps {
   runtime: NotebookRuntime
+  /** k8s: the server's runtime.namespaces; the form defaults to the first. */
+  namespaces: string[]
   releasedVolumes: NotebookVolume[]
   preselectedVolume?: string
   onSubmit: (yaml: string, volumeId?: string) => void
@@ -69,9 +71,12 @@ const k8sSchema = z.object({
   env: z.array(envVarSchema),
 }) satisfies z.ZodType<K8sFormState>
 
-function K8sLaunchForm({ releasedVolumes, preselectedVolume = '', onSubmit, submitting, error, onCancel }: NotebookLaunchFormProps) {
+function K8sLaunchForm({ namespaces, releasedVolumes, preselectedVolume = '', onSubmit, submitting, error, onCancel }: NotebookLaunchFormProps) {
   const [volumeId, setVolumeId] = useState(preselectedVolume)
-  const form = useForm<K8sFormState>({ resolver: zodResolver(k8sSchema), defaultValues: DEFAULT_K8S })
+  const form = useForm<K8sFormState>({
+    resolver: zodResolver(k8sSchema),
+    defaultValues: { ...DEFAULT_K8S, namespace: namespaces[0] ?? '' },
+  })
   const { register, control, formState: { errors } } = form
   const env = useEnvVarFields(control, 'env')
 
@@ -88,7 +93,7 @@ function K8sLaunchForm({ releasedVolumes, preselectedVolume = '', onSubmit, subm
         <TextField id="k8s-name" label="Server Name" field="name" register={register} errors={errors} placeholder="my-notebook" autoFocus />
         <VolumeField volumeId={volumeId} releasedVolumes={releasedVolumes} onChange={setVolumeId} />
         <TextField id="k8s-image" label="Image" field="image" register={register} errors={errors} helperText="Required container image for the notebook server." />
-        <TextField id="k8s-namespace" label="Namespace" field="namespace" register={register} errors={errors} helperText="Required. Kubernetes namespace where the notebook and its volume will be created. Defaults to notebooks." />
+        <NamespaceField control={control} namespaces={namespaces} error={errors.namespace?.message} />
         <TextField id="k8s-storage-size" label="Storage Size" field="storageSize" register={register} errors={errors} helperText="Required PVC size. Defaults to 10Gi." />
         <PrepareField id="k8s-prepare" control={control} placeholder={'pip install -r requirements.txt\npython /work/preflight.py'} />
         <EnvVarEditor items={env.items} onAdd={env.add} onRemove={env.remove} onUpdate={env.update} />
@@ -283,6 +288,31 @@ function useEnvVarFields<T extends FormValues>(control: Control<T>, name: 'env' 
       update(index, { ...current, ...patch } as never)
     },
   }
+}
+
+/** Namespace picker limited to the server's runtime.namespaces. */
+function NamespaceField({ control, namespaces, error }: { control: Control<K8sFormState>; namespaces: string[]; error?: string }) {
+  return (
+    <FormField
+      label="Namespace"
+      htmlFor="k8s-namespace"
+      error={error}
+      helperText="Kubernetes namespace for the notebook and its volume. Only the namespaces in this server's runtime.namespaces are allowed."
+    >
+      <Controller
+        name="namespace"
+        control={control}
+        render={({ field }) => (
+          <Select items={namespaces.map(ns => ({ value: ns, label: ns }))} value={field.value} onValueChange={v => field.onChange(v ?? '')}>
+            <SelectTrigger id="k8s-namespace" size="sm" className="h-8 w-full text-sm" aria-invalid={!!error}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {namespaces.map(ns => <SelectItem key={ns} value={ns}>{ns}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
+      />
+    </FormField>
+  )
 }
 
 function VolumeField({ volumeId, releasedVolumes, onChange }: { volumeId: string; releasedVolumes: NotebookVolume[]; onChange: (id: string) => void }) {

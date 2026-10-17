@@ -45,11 +45,12 @@ func (r *fakeNotebookRepo) Update(_ context.Context, nb *notebook.NotebookServer
 	r.put(nb)
 	return nil
 }
-func (r *fakeNotebookRepo) SetStatus(_ context.Context, projectID, name, status string) error {
+func (r *fakeNotebookRepo) SetStatus(_ context.Context, projectID, name, status, reason string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if nb, ok := r.servers[key(projectID, name)]; ok {
 		nb.Status = status
+		nb.Reason = reason
 	}
 	return nil
 }

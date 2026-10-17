@@ -3,6 +3,7 @@ package k8sdriver
 import (
 	"context"
 	k8stesting "k8s.io/client-go/testing"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ import (
 )
 
 type statusReport struct {
-	projectID, name, status, endpoint string
+	projectID, name, status, endpoint, reason string
 }
 
 func newTestDriver(t *testing.T, client kubernetes.Interface, observeInterval time.Duration) (*Driver, chan statusReport) {
@@ -29,8 +30,8 @@ func newTestDriver(t *testing.T, client kubernetes.Interface, observeInterval ti
 		Namespaces:      []string{"nb-ns"},
 		Client:          client,
 		ObserveInterval: observeInterval,
-		ReportStatus: func(projectID, name, status, endpoint, _, _ string, _ int, _ string) error {
-			reports <- statusReport{projectID, name, status, endpoint}
+		ReportStatus: func(projectID, name string, r notebook.StatusReport) error {
+			reports <- statusReport{projectID, name, r.Status, r.Endpoint, r.Reason}
 			return nil
 		},
 	})
@@ -105,7 +106,7 @@ func TestNewRejectsMissingConfig(t *testing.T) {
 		RuntimeID:    "w",
 		Namespaces:   []string{"ns"},
 		Client:       fake.NewSimpleClientset(),
-		ReportStatus: func(string, string, string, string, string, string, int, string) error { return nil },
+		ReportStatus: func(string, string, notebook.StatusReport) error { return nil },
 	}
 	cases := []struct {
 		name string
@@ -156,6 +157,19 @@ func TestProvisionVolumeRejectsDisallowedNamespace(t *testing.T) {
 	vol := &notebook.NotebookVolume{ID: "vol-1"}
 	if err := d.ProvisionVolume(context.Background(), vol, spec); err == nil {
 		t.Fatal("expected error for disallowed namespace")
+	}
+}
+
+func TestValidateSpecChecksNamespaceAllowList(t *testing.T) {
+	d, _ := newTestDriver(t, fake.NewSimpleClientset(), time.Second)
+	spec := testSpec("proj", "nb")
+	if err := d.ValidateSpec(spec); err != nil {
+		t.Fatalf("allowed namespace rejected: %v", err)
+	}
+	spec.Spec.Driver.K8s.Namespace = "notebooks"
+	err := d.ValidateSpec(spec)
+	if err == nil || !strings.Contains(err.Error(), `"notebooks" is not allowed`) || !strings.Contains(err.Error(), "nb-ns") {
+		t.Fatalf("err = %v, want a rejection naming the allowed namespaces", err)
 	}
 }
 
@@ -341,7 +355,7 @@ func TestObserveReportsRunningOnceReady(t *testing.T) {
 	expectNoReport(t, reports, 150*time.Millisecond)
 }
 
-func TestObserveReportsFailedOnCrashLoopBackOff(t *testing.T) {
+func TestObserveReportsFailedOnImagePullBackOff(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	d, reports := newTestDriver(t, client, 30*time.Millisecond)
 
@@ -365,9 +379,10 @@ func TestObserveReportsFailedOnCrashLoopBackOff(t *testing.T) {
 		t.Fatalf("status = %q, want starting", r.status)
 	}
 
-	// Simulate the pod being stuck in CrashLoopBackOff — ReadyReplicas never
+	// Simulate the pod being stuck pulling its image — ReadyReplicas never
 	// moves, so observedStatefulSetStatus alone would report "starting"
-	// forever; podsCrashLooping must catch this and report "failed" instead.
+	// forever; podFailureReason must catch this and report "failed" with
+	// kubelet's message as the reason.
 	name := notebookWorkloadName("proj", "nb")
 	sts, err := client.AppsV1().StatefulSets("nb-ns").Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
@@ -377,8 +392,10 @@ func TestObserveReportsFailedOnCrashLoopBackOff(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: name + "-0", Namespace: "nb-ns", Labels: sts.Labels},
 		Status: corev1.PodStatus{
 			ContainerStatuses: []corev1.ContainerStatus{{
-				Name:  "notebook",
-				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				Name: "notebook",
+				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{
+					Reason: "ImagePullBackOff", Message: `Back-off pulling image "jupyter/missing:latest"`,
+				}},
 			}},
 		},
 	}
@@ -389,6 +406,9 @@ func TestObserveReportsFailedOnCrashLoopBackOff(t *testing.T) {
 	r = awaitReport(t, reports)
 	if r.status != notebook.StatusFailed {
 		t.Fatalf("status = %q, want failed", r.status)
+	}
+	if want := `ImagePullBackOff: Back-off pulling image "jupyter/missing:latest"`; r.reason != want {
+		t.Fatalf("reason = %q, want %q", r.reason, want)
 	}
 }
 
@@ -443,7 +463,7 @@ func TestObserveQuarantinesMissingDBNotebook(t *testing.T) {
 		Spec: appsv1.StatefulSetSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "orphan"}}},
 	})
 	calls := 0
-	d, err := New(Config{RuntimeID: "runtime", Namespaces: []string{"nb-ns"}, Client: client, ReportStatus: func(string, string, string, string, string, string, int, string) error {
+	d, err := New(Config{RuntimeID: "runtime", Namespaces: []string{"nb-ns"}, Client: client, ReportStatus: func(string, string, notebook.StatusReport) error {
 		calls++
 		return notebook.ErrNotFound
 	}})

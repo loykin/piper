@@ -32,6 +32,31 @@ which federates *management* across separate Piper installations — see
 
 ## Server-Owned Pipeline Runtime (k8s / docker / baremetal)
 
+- `make test-golden-e2e` runs the user's flow (notebook → editor template →
+  run) on each runtime against a server configured as shipped (auth, built-in
+  store, `workload_token`, non-root jupyter image). Run it when touching the
+  agent, executor, snapshot/template handling, or a runtime driver; the
+  narrower e2e suites use trusted mode and root images and miss those paths.
+- A stored pipeline is the text the user submitted. When the server must add
+  a field (template `metadata.version`, run-time `snapshot_prefix`), edit the
+  YAML node tree with `pipeline.EditYAML` — never re-marshal the parsed
+  struct for storage, which rewrites the whole document.
+- Every local (docker/baremetal) driver that implements `Recover` must have
+  it called once right after construction (`runtime_composition.go`); it is
+  what k8s's `Observe` does for k8s. Without it a restart leaves records
+  `running` for workloads that died meanwhile.
+
+- The three runtimes differ only in **providing the environment** (a container
+  from the step image, or the baremetal host). Step execution is the same
+  agent code everywhere: fetch source → `run.prepare` → `run.command` →
+  collect outputs, with the `PIPER_SCRIPT_PATH` / `PIPER_INPUT_DIR` /
+  `PIPER_OUTPUT_DIR` / `PIPER_PARAMS_FILE` / `PIPER_PARAM_<name>` contract.
+  The executor knows nothing about Python, venvs, papermill, pip, or uv —
+  notebook and script steps are editor templates that expand into visible
+  `prepare`/`command` text (`docs/pipeline-execution-templates.md`). Don't add
+  tool-specific branches or auto-install steps to the agent; add or change a
+  template instead.
+
 - `runtime.type: k8s|docker|baremetal` moves **pipeline** Job/container/process
   lifecycle ownership into the Piper server.
 - Direct runtime results still enter through `Queue.Complete`; the runtime must
@@ -49,6 +74,10 @@ which federates *management* across separate Piper installations — see
   Jobs is `OrphanDependents`: an empty `DeleteOptions` leaves the Pods running
   and strips their ownerReferences. `kubectl delete job` hides this because it
   sends `--cascade=background`, so reproduce with the client, not kubectl.
+- Every docker driver (pipeline, notebook, serving) calls
+  `internal/docker.EnsureImage` before `ContainerCreate`: a missing image is
+  pulled, as kubelet does for k8s. Without it a fresh install fails with
+  "No such image" on the default notebook image.
 - Docker step containers must override the image `ENTRYPOINT` (as the K8s
   launcher does with `Command`); otherwise an image with its own entrypoint
   receives the agent path as an argument and exits.
@@ -93,9 +122,21 @@ which federates *management* across separate Piper installations — see
   `cfg.Runtime.Type` switch used for pipeline dispatch. `notebook.Manager`
   never trusts `Driver.Start`'s returned status — it only persists status
   changes reported later through a callback (`localdriver.Config.ReportStatus`
-  → `Manager.UpdateStatus`), so `localdriver.Driver.Start` must return fast
+  → `Manager.UpdateStatus`, carrying a `notebook.StatusReport`), so `localdriver.Driver.Start` must return fast
   with placeholder connection info and report the real outcome asynchronously
   from a background goroutine.
+- Notebook runtimes differ only in providing the environment. Every driver
+  launches Jupyter with a per-start token that Piper's proxy injects
+  (baremetal included — its port is reachable from the host). A status write
+  always carries its reason (`Repository.SetStatus(…, status, reason)`,
+  `StatusReport.Reason`): the driver's failure message is stored on the
+  record and replaced by the next status, and the UI only displays it. The
+  container image is read from the stored manifest (`notebook.ManifestImage`),
+  never stored separately. Runtime limits that can reject a spec (k8s
+  `runtime.namespaces`) are checked through `Driver.ValidateSpec` before
+  Manager creates any record, so the API answers 400 instead of leaving a
+  failed notebook; the settings API exposes `runtime.namespaces` so forms
+  default to the server's value.
 - Serving has the same `docker`/`baremetal` direct-runtime treatment:
   `pkg/serving/dispatch/localdriver.Driver` implements `serving.Driver`
   directly against `pkg/serving/servingdriver`'s docker/process backends,

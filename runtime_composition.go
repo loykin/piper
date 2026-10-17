@@ -56,6 +56,11 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 		if err != nil {
 			return result, fmt.Errorf("create serving local driver: %w", err)
 		}
+		// Same as the notebook local driver: reattach or report what changed
+		// while the server was down.
+		if err := local.Recover(context.Background()); err != nil {
+			return result, fmt.Errorf("recover serving local driver: %w", err)
+		}
 		driver = local
 	case RuntimeK8s:
 		k8s, err := servingk8sdriver.New(servingk8sdriver.Config{
@@ -113,12 +118,17 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 			PortRange:        cfg.Notebook.PortRange,
 			LogClient:        localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			EnvResolver:      credentials.ResolveEnv,
-			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return statusSink.Update(context.Background(), projectID, notebookLocalRuntimeID, name, status, endpoint, workDir, token, pid, env)
+			ReportStatus: func(projectID, name string, r notebook.StatusReport) error {
+				return statusSink.Update(context.Background(), projectID, notebookLocalRuntimeID, name, r)
 			},
 		})
 		if err != nil {
 			return result, fmt.Errorf("create notebook local driver: %w", err)
+		}
+		// Reattach to notebooks that outlived the previous server process and
+		// report the ones that died meanwhile; k8s gets the same from Observe.
+		if err := local.Recover(context.Background()); err != nil {
+			return result, fmt.Errorf("recover notebook local driver: %w", err)
 		}
 		driver = local
 		result.workspace = notebook.LocalWorkspaceReader{}
@@ -129,8 +139,8 @@ func composeNotebookRuntime(cfg Config, repos *storemod.Repos, credentials *cred
 		k8s, err := notebookk8sdriver.New(notebookk8sdriver.Config{
 			RuntimeID: notebookK8sLocalRuntimeID, Namespaces: cfg.Runtime.K8s.Namespaces,
 			Client: cfg.Runtime.K8s.Client, LogClient: localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			ReportStatus: func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error {
-				return statusSink.Update(context.Background(), projectID, notebookK8sLocalRuntimeID, name, status, endpoint, workDir, token, pid, env)
+			ReportStatus: func(projectID, name string, r notebook.StatusReport) error {
+				return statusSink.Update(context.Background(), projectID, notebookK8sLocalRuntimeID, name, r)
 			},
 		})
 		if err != nil {

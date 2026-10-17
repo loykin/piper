@@ -19,7 +19,8 @@ const allowHiddenArg = "--ContentsManager.allow_hidden=True"
 
 // JupyterStartArgs returns the canonical notebook server flags for container
 // runtimes that use start-notebook.py as the entrypoint command.
-// Pass an empty token to disable token auth (master proxy is the security boundary).
+// token is the per-start secret Piper's notebook proxy injects; every driver
+// passes one, so the Jupyter port is never reachable without it.
 func JupyterStartArgs(baseURL, token, rootDir string, port int) []string {
 	return []string{
 		"start-notebook.py",
@@ -38,7 +39,6 @@ func JupyterStartArgs(baseURL, token, rootDir string, port int) []string {
 
 // JupyterLabArgs returns the same canonical notebook server flags without the
 // container entrypoint command, for direct host-process invocation.
-// Pass an empty token to disable token auth (master proxy is the security boundary).
 func JupyterLabArgs(baseURL, token, rootDir string, port int) []string {
 	return []string{
 		"--ServerApp.base_url=" + baseURL,

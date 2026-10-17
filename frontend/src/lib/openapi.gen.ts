@@ -4917,6 +4917,8 @@ export interface components {
             runtime?: {
                 /** @enum {string} */
                 type?: "baremetal" | "docker" | "k8s";
+                /** @description k8s only — runtime.namespaces, the namespaces workloads may use. Forms default to the first. */
+                namespaces?: string[];
             };
         };
         StorageConfig: {
@@ -4952,7 +4954,9 @@ export interface components {
             work_dir?: string;
             runtime_id?: string;
             volume_id?: string;
+            /** @description Read from yaml; not stored. */
             image?: string;
+            reason?: string;
             yaml?: string;
             created_by?: string;
             /** Format: date-time */
@@ -5270,7 +5274,10 @@ export interface components {
             /** @enum {string} */
             status?: "provisioning" | "starting" | "running" | "stopping" | "stopped" | "failed";
             env?: string;
+            /** @description Read from yaml (the container image the manifest names); empty for baremetal. */
             image?: string;
+            /** @description Why the notebook reached its current status, as reported by the runtime driver (set when failed). */
+            reason?: string;
             endpoint?: string;
             work_dir?: string;
             runtime_id?: string;

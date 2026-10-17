@@ -8,29 +8,24 @@ spec:
   steps:
   - name: prepare
     run:
-      type: command
       command: ["echo", "preparing data"]
 
   - name: process-a
     run:
-      type: command
       command: ["sh", "-c", "echo process-a && sleep 1"]
     depends_on: [prepare]
 
   - name: process-b
     run:
-      type: command
       command: ["sh", "-c", "echo process-b && sleep 1"]
     depends_on: [prepare]
 
   - name: process-c
     run:
-      type: command
       command: ["sh", "-c", "echo process-c && sleep 1"]
     depends_on: [prepare]
 
   - name: merge
     run:
-      type: command
       command: ["echo", "merging results"]
     depends_on: [process-a, process-b, process-c]

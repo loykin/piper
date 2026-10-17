@@ -6,8 +6,8 @@ import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { ShellMirror } from '@/components/ui/shell-mirror'
 import { EnvVarEditor } from '@/features/credentials/components/EnvVarEditor'
-import type { PipelineStepDraft, PipelineTaskType } from '../../editor'
-import { RUNTIME_ITEMS, SOURCE_LABELS } from '../../editorModel'
+import type { PipelineStepDraft } from '../../editor'
+import { applyPreparePreset, RUNTIME_ITEMS, SOURCE_LABELS } from '../../editorModel'
 import type { TaskDraft } from '../../useTaskDraft'
 import { ArtifactSection } from './ArtifactSection'
 import { DepBrowseDropdown, FileBrowseDropdown } from './BrowseDropdowns'
@@ -15,9 +15,11 @@ import { PairSection } from './PairSection'
 
 /** The editor's right pane: every field of the step being edited. */
 export function TaskEditorPane({
-  task, index, taskCount, draft, canBrowse, volumeFiles, onClose,
+  task, index, taskCount, draft, canBrowse, volumeFiles, runtime, onClose,
 }: {
   task: PipelineStepDraft
+  /** The installation's runtime; prepare presets follow its environment. */
+  runtime: string
   index: number
   taskCount: number
   draft: TaskDraft
@@ -63,30 +65,9 @@ export function TaskEditorPane({
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Name</label>
-              <Input value={task.name} onChange={e => updateTask(index, { name: e.target.value })} />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Type</label>
-              <Select
-                items={[
-                  { value: 'command', label: 'Command' },
-                  { value: 'python', label: 'Python' },
-                  { value: 'notebook', label: 'Notebook' },
-                ]}
-                value={task.type}
-                onValueChange={value => updateTask(index, { type: value as PipelineTaskType })}
-              >
-                <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="command">Command</SelectItem>
-                  <SelectItem value="python">Python</SelectItem>
-                  <SelectItem value="notebook">Notebook</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Task Name</label>
+            <Input value={task.name} onChange={e => updateTask(index, { name: e.target.value })} />
           </div>
 
           {(task.type === 'notebook' || task.type === 'python' || task.type === 'command') && (
@@ -131,17 +112,40 @@ export function TaskEditorPane({
             </div>
           )}
 
-          {task.type !== 'notebook' && (
-            <div>
-              <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Command</label>
-              <ShellMirror
-                value={task.command.join('\n')}
-                onChange={e => updateTask(index, { command: e.target.value.split('\n') })}
-                minHeight="6rem"
-                placeholder={task.type === 'python' ? 'sh\n-c\npython3 "$PIPER_SCRIPT_PATH"' : 'echo\nhello'}
-              />
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="block text-[11px] uppercase tracking-wider text-muted-foreground">Prepare</label>
+              {(task.type === 'notebook' || task.type === 'python') && (
+                <div className="flex gap-1.5">
+                  <Button variant="outline" size="sm" onClick={() => updateTask(index, applyPreparePreset(task, 'pip', runtime))}>
+                    <Plus size={14} className="mr-1.5" /> pip
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => updateTask(index, applyPreparePreset(task, 'uv', runtime))}>
+                    <Plus size={14} className="mr-1.5" /> uv
+                  </Button>
+                </div>
+              )}
             </div>
-          )}
+            <p className="mb-1 text-xs text-muted-foreground">
+              One shell command per line, run in the task&apos;s work dir before Command — install dependencies here.
+            </p>
+            <ShellMirror
+              value={task.prepare.join('\n')}
+              onChange={e => updateTask(index, { prepare: e.target.value.split('\n') })}
+              minHeight="4rem"
+              placeholder={'python3 -m pip install -r requirements.txt'}
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted-foreground">Command</label>
+            <ShellMirror
+              value={task.command.join('\n')}
+              onChange={e => updateTask(index, { command: e.target.value.split('\n') })}
+              minHeight="6rem"
+              placeholder={'echo\nhello'}
+            />
+          </div>
 
           {(task.type === 'notebook' || task.type === 'python') && (
             <div>

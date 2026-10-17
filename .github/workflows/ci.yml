@@ -159,15 +159,9 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Install pipeline notebook environment
-        run: |
-          python -m venv /tmp/piper-pipeline-template-e2e
-          /tmp/piper-pipeline-template-e2e/bin/pip install --quiet papermill ipykernel setuptools
-
+      # The notebook-template example's own prepare builds its venv.
       - name: Run examples e2e (library, bare-metal, YAML parsing)
-        run: |
-          PIPER_PIPELINE_TEMPLATE_E2E_ENV=/tmp/piper-pipeline-template-e2e \
-            go test -tags=example_e2e -v -timeout=5m ./examples/
+        run: go test -tags=example_e2e -v -timeout=5m ./examples/
 
   frontend-e2e:
     name: Frontend E2E
@@ -204,15 +198,9 @@ jobs:
         working-directory: frontend
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Install pipeline notebook environment
-        run: |
-          python -m venv /tmp/piper-pipeline-template-e2e
-          /tmp/piper-pipeline-template-e2e/bin/pip install --quiet papermill ipykernel setuptools
-
+      # Notebook steps build their own venv in prepare (editor templates).
       - name: Run frontend E2E
         working-directory: frontend
-        env:
-          PIPER_PIPELINE_TEMPLATE_E2E_ENV: /tmp/piper-pipeline-template-e2e
         run: pnpm test:e2e
 
   ui-embed:
@@ -248,6 +236,27 @@ jobs:
 
       - name: Build the server binary with the UI embedded
         run: go build -tags builtinassets -o bin/piper ./cmd/piper
+
+  golden-e2e:
+    name: Golden Path E2E (baremetal, docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download dependencies
+        run: go mod download
+
+      # Containers reach the server through the bridge gateway on a Linux daemon.
+      - name: Run golden path e2e
+        run: PIPER_GOLDEN_DOCKER_HOST=172.17.0.1 make test-golden-e2e
 
   k8s-e2e:
     name: K8s E2E
@@ -308,6 +317,12 @@ jobs:
           PIPER_K8S_E2E_IMAGE=piper/piper:e2e \
           PIPER_K8S_E2E_NOTEBOOK_IMAGE=jupyter/minimal-notebook:latest \
             go test -tags=k8s_e2e -v -timeout=60m -run 'TestK8sE2E' .
+
+      # deploy/k8s as shipped (auth, built-in store, workload_token) with a
+      # non-root jupyter step image — the conditions the k8s_e2e suite above
+      # does not cover.
+      - name: Run k8s golden path e2e
+        run: PIPER_GOLDEN_K8S_IMAGE=piper/piper:e2e go test -tags=golden_e2e -run '^TestGoldenPath_K8s$' -v -count=1 -timeout=30m .
 
   build:
     name: Build

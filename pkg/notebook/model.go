@@ -1,6 +1,10 @@
 package notebook
 
-import "time"
+import (
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
 
 const (
 	StatusProvisioning = "provisioning" // volume being allocated
@@ -14,17 +18,19 @@ const (
 // NotebookServer represents a running (or stopped) Jupyter notebook server.
 // Each server is backed by a NotebookVolume that persists independently.
 type NotebookServer struct {
-	ProjectID string    `json:"project_id" db:"project_id"`
-	Name      string    `json:"name"       db:"name"`
-	Status    string    `json:"status"     db:"status"`
-	Env       string    `json:"env"        db:"env"`
-	Endpoint  string    `json:"endpoint"   db:"endpoint"`
-	PID       int       `json:"pid"        db:"pid"`
-	WorkDir   string    `json:"work_dir"   db:"work_dir"`
-	Token     string    `json:"token"      db:"token"`
-	RuntimeID string    `json:"runtime_id" db:"runtime_id"`
-	VolumeID  string    `json:"volume_id"  db:"volume_id"`
-	Image     string    `json:"image"      db:"image"`
+	ProjectID string `json:"project_id" db:"project_id"`
+	Name      string `json:"name"       db:"name"`
+	Status    string `json:"status"     db:"status"`
+	Env       string `json:"env"        db:"env"`
+	Endpoint  string `json:"endpoint"   db:"endpoint"`
+	PID       int    `json:"pid"        db:"pid"`
+	WorkDir   string `json:"work_dir"   db:"work_dir"`
+	Token     string `json:"token"      db:"token"`
+	RuntimeID string `json:"runtime_id" db:"runtime_id"`
+	VolumeID  string `json:"volume_id"  db:"volume_id"`
+	// Reason is the driver-reported cause of the current status (set when it
+	// failed); every status write replaces it, so it never outlives its status.
+	Reason    string    `json:"reason"     db:"reason"`
 	YAML      string    `json:"yaml"       db:"yaml"`
 	CreatedBy string    `json:"created_by,omitempty" db:"created_by"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
@@ -55,14 +61,16 @@ type NotebookServer struct {
 // MUST map through NewNotebookServerResponse / NewNotebookServerResponses
 // rather than serializing *NotebookServer directly — see pkg/notebook/handler.go.
 type NotebookServerResponse struct {
-	ProjectID string    `json:"project_id"`
-	Name      string    `json:"name"`
-	Status    string    `json:"status"`
-	Env       string    `json:"env"`
-	Endpoint  string    `json:"endpoint"`
-	WorkDir   string    `json:"work_dir"`
-	RuntimeID string    `json:"runtime_id"`
-	VolumeID  string    `json:"volume_id"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Env       string `json:"env"`
+	Endpoint  string `json:"endpoint"`
+	WorkDir   string `json:"work_dir"`
+	RuntimeID string `json:"runtime_id"`
+	VolumeID  string `json:"volume_id"`
+	Reason    string `json:"reason"`
+	// Image is read from YAML, the one place it is stored.
 	Image     string    `json:"image"`
 	YAML      string    `json:"yaml"`
 	CreatedBy string    `json:"created_by,omitempty"`
@@ -87,7 +95,8 @@ func NewNotebookServerResponse(nb *NotebookServer) *NotebookServerResponse {
 		WorkDir:   nb.WorkDir,
 		RuntimeID: nb.RuntimeID,
 		VolumeID:  nb.VolumeID,
-		Image:     nb.Image,
+		Reason:    nb.Reason,
+		Image:     ManifestImage(nb.YAML),
 		YAML:      nb.YAML,
 		CreatedBy: nb.CreatedBy,
 		CreatedAt: nb.CreatedAt,
@@ -111,19 +120,38 @@ func NewNotebookServerResponses(nbs []*NotebookServer) []*NotebookServerResponse
 // (a prior run before a restart, or the final state before delete). Token is
 // deliberately omitted — it is a live connection secret, not history.
 type NotebookHistory struct {
-	ID         int       `json:"id"          db:"id"`
-	ProjectID  string    `json:"project_id"  db:"project_id"`
-	Name       string    `json:"name"        db:"name"`
-	Status     string    `json:"status"      db:"status"`
-	Env        string    `json:"env"         db:"env"`
-	Endpoint   string    `json:"endpoint"    db:"endpoint"`
-	PID        int       `json:"pid"         db:"pid"`
-	WorkDir    string    `json:"work_dir"    db:"work_dir"`
-	RuntimeID  string    `json:"runtime_id"  db:"runtime_id"`
-	VolumeID   string    `json:"volume_id"   db:"volume_id"`
-	Image      string    `json:"image"       db:"image"`
+	ID        int    `json:"id"          db:"id"`
+	ProjectID string `json:"project_id"  db:"project_id"`
+	Name      string `json:"name"        db:"name"`
+	Status    string `json:"status"      db:"status"`
+	Env       string `json:"env"         db:"env"`
+	Endpoint  string `json:"endpoint"    db:"endpoint"`
+	PID       int    `json:"pid"         db:"pid"`
+	WorkDir   string `json:"work_dir"    db:"work_dir"`
+	RuntimeID string `json:"runtime_id"  db:"runtime_id"`
+	VolumeID  string `json:"volume_id"   db:"volume_id"`
+	Reason    string `json:"reason" db:"reason"`
+	// Image is read from YAML by the history handler; it is not stored.
+	Image      string    `json:"image"       db:"-"`
 	YAML       string    `json:"yaml"        db:"yaml"`
 	CreatedBy  string    `json:"created_by,omitempty" db:"created_by"`
 	DeployedAt time.Time `json:"deployed_at" db:"deployed_at"`
 	StoppedAt  time.Time `json:"stopped_at"  db:"stopped_at"`
+}
+
+// ManifestImage returns the container image a stored Notebook manifest names
+// (empty for baremetal or an unreadable manifest). Responses derive the image
+// from the manifest instead of keeping a second copy on the record.
+func ManifestImage(yamlStr string) string {
+	var spec Notebook
+	if err := yaml.Unmarshal([]byte(yamlStr), &spec); err != nil {
+		return ""
+	}
+	if d := spec.Spec.Driver.Docker; d != nil && d.Image != "" {
+		return d.Image
+	}
+	if k := spec.Spec.Driver.K8s; k != nil {
+		return k.Image
+	}
+	return ""
 }

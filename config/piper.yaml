@@ -105,6 +105,8 @@ runtime:
 #     network: bridge
 #     concurrency: 4
 #     # Required with the built-in file store; containers use this private URL.
+#     # host.docker.internal resolves on Docker Desktop; on a Linux Docker host
+#     # use the bridge gateway instead, e.g. http://172.17.0.1:8080.
 #     workload_url: http://host.docker.internal:8080
 
 # Kubernetes alternative — Pipeline runs as Jobs, Notebook as

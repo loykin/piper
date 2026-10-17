@@ -153,6 +153,12 @@ func (d *Driver) Deploy(ctx context.Context, req servingdriver.DeployRequest) (e
 		})
 	}
 
+	if err := dockerinfra.EnsureImage(ctx, d.client, image); err != nil {
+		if req.LogSink != nil {
+			req.LogSink.Stop()
+		}
+		return "", err
+	}
 	created, createErr := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
 		Name: containerName(req.RuntimeName),
 		Config: &container.Config{

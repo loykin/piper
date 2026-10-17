@@ -29,18 +29,16 @@ spec:
   steps:
     - name: prepare
       run:
-        type: command
         command: ["echo", "ready"]
     - name: train
       run:
-        type: python
         source: local
         path: scripts/train.py
         command: ["python3", "$PIPER_SCRIPT_PATH"]
     - name: evaluate
       run:
-        type: notebook
-        notebook: notebooks/evaluate.ipynb
+        path: notebooks/evaluate.ipynb
+        command: [sh, -c, 'papermill "$PIPER_SCRIPT_PATH" out.ipynb -f "$PIPER_PARAMS_FILE"']
 `
 
 	rewritten := rewriteLocalSources(input, "snapshot-1", "template-name")
@@ -154,7 +152,7 @@ func TestDeployComputesCronNextRunAt(t *testing.T) {
 				ID:        "tpl-1",
 				Name:      "daily",
 				Version:   1,
-				YAML:      "metadata:\n  name: daily\n  version: 1\nspec:\n  steps: []\n",
+				YAML:      "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: daily\n  version: 1\nspec:\n  steps:\n    - name: s\n      run:\n        command: [\"true\"]\n",
 			},
 		}},
 		Schedules: schedules,
@@ -260,7 +258,7 @@ func TestSubmitRejectsAnotherProjectsVolume(t *testing.T) {
 		c.Next()
 	}))
 
-	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: steal\nspec:\n  steps:\n    - name: s\n      run:\n        type: python\n        source: local\n        path: secret.py\n"
+	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: steal\nspec:\n  steps:\n    - name: s\n      run:\n        source: local\n        path: secret.py\n        command: [python3, secret.py]\n"
 	body, _ := json.Marshal(map[string]string{"yaml": yaml, "volume_id": "vol-b"})
 	req := httptest.NewRequest(http.MethodPost, "/projects/proj-a/pipeline-templates", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -268,5 +266,87 @@ func TestSubmitRejectsAnotherProjectsVolume(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A template stored before a spec field was removed must answer with a 400
+// that says why, not an opaque internal error.
+func TestRunRejectsStoredYAMLThatNoLongerParses(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tpl := &Template{ProjectID: "proj-1", ID: "tpl-1", Name: "old", Version: 2,
+		YAML: "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: old\nspec:\n  steps:\n    - name: s\n      run:\n        type: notebook\n        command: [\"true\"]\n"}
+	handler := NewHandler(HandlerDeps{
+		Templates: &stubTemplateRepo{templates: map[string]*Template{"tpl-1": tpl}},
+		Parse:     pipeline.Parse,
+	})
+	router := gin.New()
+	handler.RegisterRoutes(router.Group("/projects/:project_id", func(c *gin.Context) {
+		ctx := project.WithContext(c.Request.Context(), project.Context{ID: "proj-1", Role: security.ProjectRoleAdmin})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}))
+	for _, path := range []string{"run", "deploy"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/pipeline-templates/tpl-1/"+path, strings.NewReader(`{"cron":"0 2 * * *"}`))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "field type not found") {
+			t.Fatalf("%s: status = %d, body = %s; want 400 naming the field", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+type capturingTemplateRepo struct {
+	stubTemplateRepo
+	created *Template
+}
+
+func (r *capturingTemplateRepo) Create(_ context.Context, t *Template) error {
+	r.created = t
+	return nil
+}
+
+// The stored template is the submitted text plus metadata.version — not a
+// re-marshalled struct with empty fields the editor would then flag as
+// Design loss on New Version.
+func TestSubmitStoresSubmittedYAMLWithVersion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &capturingTemplateRepo{stubTemplateRepo: stubTemplateRepo{templates: map[string]*Template{}}}
+	handler := NewHandler(HandlerDeps{Templates: repo, Parse: pipeline.Parse})
+	router := gin.New()
+	handler.RegisterRoutes(router.Group("/projects/:project_id", func(c *gin.Context) {
+		ctx := project.WithContext(c.Request.Context(), project.Context{ID: "proj-1", Role: security.ProjectRoleAdmin})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}))
+
+	submitted := `apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: "train"
+spec:
+  steps:
+    - name: "task-1"
+      run:
+        prepare:
+          - ["sh", "-c", "pip install x"]
+        command:
+          - "echo"
+          - "hi"
+      outputs:
+        - name: "model"
+          path: "model.pkl"
+`
+	body, _ := json.Marshal(map[string]string{"yaml": submitted})
+	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/pipeline-templates", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	want := strings.Replace(submitted, "  name: \"train\"\n", "  name: \"train\"\n  version: 1\n", 1)
+	if repo.created.YAML != want {
+		t.Fatalf("stored yaml:\n%s\nwant:\n%s", repo.created.YAML, want)
 	}
 }

@@ -65,13 +65,11 @@ type Config struct {
 	// ObserveInterval controls how often Observe polls StatefulSet status.
 	// Zero means 2s.
 	ObserveInterval time.Duration
-	// ReportStatus mirors pkg/notebook/dispatch/localdriver.Config.ReportStatus's
-	// signature exactly so piper.go can wire the same nbMgr.UpdateStatus
-	// closure shape for every runtime.type. K8s has no PID concept (always
-	// 0) and only sets workDir/token once, at Start — later Observe-driven
-	// status changes pass empty strings, which Manager.UpdateStatus already
-	// treats as "leave unchanged".
-	ReportStatus func(projectID, name, status, endpoint, workDir, token string, pid int, env string) error
+	// ReportStatus mirrors pkg/notebook/dispatch/localdriver.Config.ReportStatus
+	// so piper.go wires the same status sink for every runtime.type.
+	// Observe-driven reports carry only Status and Reason; the other fields
+	// are set once, at Start, and empty means "leave unchanged".
+	ReportStatus func(projectID, name string, r notebook.StatusReport) error
 }
 
 // Driver implements notebook.Driver directly against a Kubernetes cluster.
@@ -119,17 +117,32 @@ func New(cfg Config) (*Driver, error) {
 	}, nil
 }
 
+// ValidateSpec implements notebook.Driver.
+func (d *Driver) ValidateSpec(spec notebook.Notebook) error {
+	_, err := d.namespace(spec)
+	return err
+}
+
+// namespace returns the spec's namespace if runtime.namespaces allows it.
+func (d *Driver) namespace(spec notebook.Notebook) (string, error) {
+	ns := spec.K8sNamespace()
+	if ns == "" {
+		return "", fmt.Errorf("k8sdriver: driver.k8s.namespace is required")
+	}
+	if !slices.Contains(d.cfg.Namespaces, ns) {
+		return "", fmt.Errorf("k8sdriver: namespace %q is not allowed (runtime.namespaces: %s)", ns, strings.Join(d.cfg.Namespaces, ", "))
+	}
+	return ns, nil
+}
+
 // ProvisionVolume creates the PVC backing vol.
 func (d *Driver) ProvisionVolume(ctx context.Context, vol *notebook.NotebookVolume, spec notebook.Notebook) error {
 	if vol.ID == "" {
 		return fmt.Errorf("k8sdriver: volume id is required")
 	}
-	ns := spec.K8sNamespace()
-	if ns == "" {
-		return fmt.Errorf("k8sdriver: driver.k8s.namespace is required")
-	}
-	if !slices.Contains(d.cfg.Namespaces, ns) {
-		return fmt.Errorf("k8sdriver: namespace %q is not allowed", ns)
+	ns, err := d.namespace(spec)
+	if err != nil {
+		return err
 	}
 	size := spec.StorageSize()
 	if size == "" {
@@ -200,12 +213,9 @@ func (d *Driver) Start(ctx context.Context, spec notebook.Notebook, vol *noteboo
 	if err := notebook.ValidateDirectPlacement(spec, "k8s"); err != nil {
 		return nil, fmt.Errorf("k8sdriver: %w", err)
 	}
-	ns := spec.K8sNamespace()
-	if ns == "" {
-		return nil, fmt.Errorf("k8sdriver: driver.k8s.namespace is required")
-	}
-	if !slices.Contains(d.cfg.Namespaces, ns) {
-		return nil, fmt.Errorf("k8sdriver: namespace %q is not allowed", ns)
+	ns, err := d.namespace(spec)
+	if err != nil {
+		return nil, err
 	}
 
 	resourceName := notebookWorkloadName(projectID, name)
@@ -474,14 +484,16 @@ func (d *Driver) observeNamespace(ctx context.Context, ns string) {
 		if d.isOrphaned(key) {
 			continue
 		}
-		status := observedStatefulSetStatus(sts)
-		if status == notebook.StatusStarting && d.podsCrashLooping(ctx, sts) {
-			status = notebook.StatusFailed
+		status, reason := observedStatefulSetStatus(sts), ""
+		if status == notebook.StatusStarting {
+			if reason = d.podFailureReason(ctx, sts); reason != "" {
+				status = notebook.StatusFailed
+			}
 		}
 		if status == "" || !d.statusChanged(key, status) {
 			continue
 		}
-		if err := d.cfg.ReportStatus(projectID, name, status, "", "", "", 0, ""); err != nil {
+		if err := d.cfg.ReportStatus(projectID, name, notebook.StatusReport{Status: status, Reason: reason}); err != nil {
 			if errors.Is(err, notebook.ErrNotFound) {
 				d.markOrphaned(key)
 				slog.Warn("k8sdriver: orphan notebook workload ignored", "project_id", projectID, "name", name, "namespace", ns, "statefulset", sts.Name)
@@ -554,29 +566,33 @@ func (d *Driver) ensureNotebookLogStream(ctx context.Context, projectID, name st
 	}()
 }
 
-// podsCrashLooping reports whether any pod backing sts is stuck
-// restart-looping (CrashLoopBackOff) or failing to pull its image
-// (ImagePullBackOff/ErrImagePull) — signals ReadyReplicas/Conditions never
+// podFailureReason reports why a pod backing sts is stuck restart-looping
+// (CrashLoopBackOff) or failing to pull its image (ImagePullBackOff/
+// ErrImagePull), or "" when none is — signals ReadyReplicas/Conditions never
 // surface, since ReadyReplicas simply stays below desired indefinitely in
 // both cases and observedStatefulSetStatus falls back to StatusStarting.
-func (d *Driver) podsCrashLooping(ctx context.Context, sts *appsv1.StatefulSet) bool {
+func (d *Driver) podFailureReason(ctx context.Context, sts *appsv1.StatefulSet) string {
 	selector := metav1.FormatLabelSelector(sts.Spec.Selector)
 	pods, err := d.cfg.Client.CoreV1().Pods(sts.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return false
+		return ""
 	}
 	for _, pod := range pods.Items {
 		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.State.Waiting == nil {
+			w := cs.State.Waiting
+			if w == nil {
 				continue
 			}
-			switch cs.State.Waiting.Reason {
+			switch w.Reason {
 			case "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull":
-				return true
+				if w.Message == "" {
+					return w.Reason
+				}
+				return w.Reason + ": " + w.Message
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 func observedStatefulSetStatus(sts *appsv1.StatefulSet) string {

@@ -1,3 +1,4 @@
+import { parseStepsFromYaml, type StepDef } from '../dag'
 import { useMemo, useCallback, useEffect } from 'react'
 import {
   ReactFlow,
@@ -17,44 +18,6 @@ import { statusTone, toneFill, toneOutline } from '@/shared/status'
 import { useIsDarkTheme } from '@/shared/hooks/useIsDarkTheme'
 
 // ── YAML parser (minimal — no external dep) ──────────────────────────────────
-
-interface StepDef {
-  name: string
-  depends_on: string[]
-}
-
-function parseStepsFromYaml(yaml?: string | null): StepDef[] {
-  if (!yaml) return []
-  const steps: StepDef[] = []
-  // Split on "- name:" blocks
-  const blocks = yaml.split(/\n(?=\s*-\s+name:)/)
-  for (const block of blocks) {
-    const nameMatch = block.match(/^\s*-\s+name:\s*(.+)/)
-    if (!nameMatch) continue
-    const name = nameMatch[1].trim()
-
-    // depends_on: [a, b] or multi-line list
-    let depends_on: string[] = []
-    const inlineMatch = block.match(/depends_on:\s*\[([^\]]*)]/)
-    if (inlineMatch) {
-      depends_on = inlineMatch[1]
-        .split(',')
-        .map(s => s.trim().replace(/['"]/g, ''))
-        .filter(Boolean)
-    } else {
-      const multilineMatch = block.match(/depends_on:([\s\S]*?)(?=\n\s+\w|\n\s*-\s+name:|$)/)
-      if (multilineMatch) {
-        const items = multilineMatch[1].matchAll(/^\s*-\s+(.+)$/gm)
-        for (const m of items) {
-          depends_on.push(m[1].trim().replace(/['"]/g, ''))
-        }
-      }
-    }
-
-    steps.push({ name, depends_on })
-  }
-  return steps
-}
 
 // ── Layout (simple topological left-to-right) ────────────────────────────────
 

@@ -9,6 +9,11 @@ import (
 // calls this interface, while the direct-runtime driver implements process,
 // Docker, or Kubernetes details for the installation's configured runtime.
 type Driver interface {
+	// ValidateSpec rejects a spec this runtime cannot run, before Manager
+	// creates any record, so the caller gets a 400 instead of a failed
+	// notebook. K8s: the namespace must be in runtime.namespaces.
+	ValidateSpec(spec Notebook) error
+
 	// ProvisionVolume allocates backing storage for vol.
 	// Bare-metal: creates a host work directory and sets vol.WorkDir.
 	// K8s: creates a PersistentVolumeClaim and reports the notebook container work dir.

@@ -16,23 +16,19 @@ import (
 )
 
 type ExecConfig struct {
-	WorkDir        string
-	SourceDir      string // source fetch root (defaults to WorkDir/_source)
-	InputDir       string
-	OutputDir      string
-	RunID          string
-	StepName       string
-	GPUs           string   // CUDA_VISIBLE_DEVICES value, e.g. "0,1" (bare-metal only)
-	PythonBin      string   // python executable for isolated task environments
-	PapermillBin   string   // papermill executable for notebook steps
-	JupyterDataDir string   // Jupyter data directory for isolated notebook kernels
-	EnvPathPrepend []string // directories prepended to PATH for child processes
-	Params         map[string]any
-	SourceCfg      srcfetch.Config
-	Stdout         io.Writer         // if nil, defaults to os.Stdout
-	Stderr         io.Writer         // if nil, defaults to os.Stderr
-	Vars           proto.BuiltinVars // system-injected builtin variables
-	ResolvedEnv    []string          // master-resolved env entries, may contain secrets
+	WorkDir     string
+	SourceDir   string // source fetch root (defaults to WorkDir/_source)
+	InputDir    string
+	OutputDir   string
+	RunID       string
+	StepName    string
+	GPUs        string // CUDA_VISIBLE_DEVICES value, e.g. "0,1" (bare-metal only)
+	Params      map[string]any
+	SourceCfg   srcfetch.Config
+	Stdout      io.Writer         // if nil, defaults to os.Stdout
+	Stderr      io.Writer         // if nil, defaults to os.Stderr
+	Vars        proto.BuiltinVars // system-injected builtin variables
+	ResolvedEnv []string          // master-resolved env entries, may contain secrets
 }
 
 // fetchDir returns the directory into which this step's source will be fetched.
@@ -71,16 +67,6 @@ func (c ExecConfig) Env() []string {
 	if c.GPUs != "" {
 		env = append(env, "CUDA_VISIBLE_DEVICES="+c.GPUs)
 	}
-	if c.PythonBin != "" {
-		env = append(env, "PIPER_PYTHON_BIN="+c.PythonBin)
-	}
-	if c.JupyterDataDir != "" {
-		env = append(env,
-			"JUPYTER_DATA_DIR="+c.JupyterDataDir,
-			"JUPYTER_CONFIG_DIR="+filepath.Join(filepath.Dir(c.JupyterDataDir), "jupyter-config"),
-			"JUPYTER_RUNTIME_DIR="+filepath.Join(filepath.Dir(c.JupyterDataDir), "jupyter-runtime"),
-		)
-	}
 	return env
 }
 
@@ -91,27 +77,7 @@ func (c ExecConfig) Environ(stepVars []manifest.EnvVar) []string {
 	for _, entry := range entries {
 		env = setEnv(env, entry)
 	}
-	if len(c.EnvPathPrepend) > 0 {
-		path := getEnv(env, "PATH")
-		prefix := strings.Join(c.EnvPathPrepend, string(os.PathListSeparator))
-		if path != "" {
-			path = prefix + string(os.PathListSeparator) + path
-		} else {
-			path = prefix
-		}
-		env = setEnv(env, "PATH="+path)
-	}
 	return env
-}
-
-func (c ExecConfig) PapermillCommand() string {
-	if c.PapermillBin != "" {
-		return c.PapermillBin
-	}
-	if v := os.Getenv("PIPER_PAPERMILL"); v != "" {
-		return v
-	}
-	return "papermill"
 }
 
 func setEnv(env []string, entry string) []string {
@@ -127,16 +93,6 @@ func setEnv(env []string, entry string) []string {
 		}
 	}
 	return append(env, entry)
-}
-
-func getEnv(env []string, name string) string {
-	prefix := name + "="
-	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			return strings.TrimPrefix(entry, prefix)
-		}
-	}
-	return ""
 }
 
 func stepEnv(env []manifest.EnvVar) []string {
@@ -165,11 +121,9 @@ type Executor interface {
 	Execute(ctx context.Context, step *pipeline.Step, cfg ExecConfig) (string, error)
 }
 
+// New returns the step executor. Every runtime and every kind of step runs
+// the same way — prepare, then command — so there is only one; notebook and
+// script conveniences are editor templates that expand into that command.
 func New(step *pipeline.Step) Executor {
-	switch step.Run.Type {
-	case "notebook":
-		return &NotebookExecutor{}
-	default:
-		return &CommandExecutor{}
-	}
+	return &CommandExecutor{}
 }

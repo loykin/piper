@@ -18,12 +18,10 @@ spec:
   steps:
     - name: step-a
       run:
-        type: command
         command: [echo, hello]
     - name: step-b
       depends_on: [step-a]
       run:
-        type: command
         command: [echo, world]
 `
 
@@ -67,7 +65,6 @@ spec:
         placement: {runtime: k8s}
         k8s: {image: alpine}
       run:
-        type: command
         command: [echo, ok]
 `))
 	if err == nil {
@@ -142,7 +139,6 @@ spec:
   steps:
     - name: a
       run:
-        type: command
         command: [echo]
 `
 	_, err := Parse([]byte(yaml))
@@ -176,10 +172,8 @@ spec:
   steps:
     - name: a
       run:
-        type: command
     - name: a
       run:
-        type: command
 `
 	_, err := Parse([]byte(yaml))
 	if err == nil {
@@ -198,7 +192,6 @@ spec:
     - name: a
       depends_on: [no-such-step]
       run:
-        type: command
 `
 	_, err := Parse([]byte(yaml))
 	if err == nil {
@@ -216,7 +209,6 @@ spec:
   steps:
     - name: train
       run:
-        type: command
         prepare:
           - []
         command: [echo, train]
@@ -237,7 +229,6 @@ spec:
   steps:
     - name: ""
       run:
-        type: command
 `
 	_, err := Parse([]byte(yaml))
 	if err == nil {

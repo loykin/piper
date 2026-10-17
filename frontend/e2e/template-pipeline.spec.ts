@@ -13,7 +13,6 @@ spec:
   steps:
     - name: prepare-data
       run:
-        type: command
         command:
           - sh
           - -c
@@ -24,10 +23,19 @@ spec:
     - name: build-features
       depends_on: [prepare-data]
       run:
-        type: notebook
-        notebook: notebooks/build_features.ipynb
+        path: notebooks/build_features.ipynb
         deps:
           - support
+        # The editor's Notebook template for a baremetal installation: the
+        # step builds its own venv and kernel (taskTemplate in editorModel.ts).
+        prepare:
+          - ["sh", "-c", "python3 -m venv .venv"]
+          - ["sh", "-c", ".venv/bin/python -m pip install -q papermill ipykernel"]
+          - ["sh", "-c", ".venv/bin/python -m ipykernel install --prefix .venv --name piper-step"]
+        command:
+          - sh
+          - -c
+          - '.venv/bin/papermill -k piper-step --log-output "$PIPER_SCRIPT_PATH" "$PIPER_OUTPUT_DIR/executed.ipynb" -f "$PIPER_PARAMS_FILE"'
       inputs:
         - name: seed
           from: prepare-data/seed
@@ -37,7 +45,6 @@ spec:
     - name: summarize
       depends_on: [build-features]
       run:
-        type: python
         path: scripts/summarize.py
         deps:
           - support
@@ -71,7 +78,8 @@ test('submits and runs a mixed template with dependency files in S3', async ({ p
 
   await page.getByRole('tab', { name: 'YAML' }).click()
   await expect(page.locator('.cm-content')).toContainText('notebooks/build_features.ipynb')
-  await expect(page.locator('.cm-content')).toContainText('scripts/summarize.py')
+  // CodeMirror renders only the lines in view; summarize.py is checked below
+  // through the snapshot keys instead.
   await expect(page.locator('.cm-content')).toContainText('support')
 
   await page.getByRole('button', { name: 'Submit' }).click()
@@ -145,7 +153,6 @@ spec:
   steps:
     - name: task-1
       run:
-        type: command
         command: [echo, roundtrip]
 `
   await replaceYaml(page, supportedYAML)
@@ -168,7 +175,6 @@ spec:
   steps:
     - name: task-1
       run:
-        type: command
         command: [echo, ok]
 `
   await replaceYaml(page, workerYAML)
@@ -197,7 +203,6 @@ spec:
       options:
         timeout: 15
       run:
-        type: command
         command: [echo, ok]
 `
   await replaceYaml(page, timeoutYAML)

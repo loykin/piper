@@ -547,6 +547,13 @@ func TestCreateJobUsesPreparedExecutionContract(t *testing.T) {
 	if hasArg(stepContainer.Args, "--") || hasArg(stepContainer.Args, "echo") || hasArg(stepContainer.Args, "train") {
 		t.Fatalf("launcher must not append command override args: %v", stepContainer.Args)
 	}
+	// Non-root step images (jupyter/* runs as UID 1000) must be able to read
+	// the root-owned task file.
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Name == "piper-task" && (v.Secret == nil || v.Secret.DefaultMode == nil || *v.Secret.DefaultMode&0o004 == 0) {
+			t.Fatalf("piper-task secret volume must be world-readable, got %+v", v.Secret)
+		}
+	}
 
 	if job.Spec.Template.Spec.RestartPolicy != "Never" {
 		t.Fatalf("restart policy = %q, want Never", job.Spec.Template.Spec.RestartPolicy)

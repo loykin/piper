@@ -596,4 +596,10 @@ Without `notifyOnChangeProps`, each poll fires two re-renders (`isFetching` true
   `piper server` with built-in authentication on a fresh SQLite database
   (:18081, preview on :4174). The spec creates the admin account through the
   bootstrap screen, then covers Users and Project Members.
-  `PIPER_PIPELINE_TEMPLATE_E2E_ENV` points at a Python venv for the agent.
+  Notebook steps need only `python3` and network access: like the editor's
+  baremetal Notebook template, they build their own venv in `prepare`.
+- Golden-path fixtures: `testdata/golden/notebook-template.<runtime>.yaml` is
+  the YAML the editor emits for "Notebook Task + pip preset + a numeric
+  param"; `test/golden-templates.test.ts` keeps it equal to the editor's
+  output and `make test-golden-e2e` submits and runs it on each runtime. After
+  an intended template change, regenerate with `GOLDEN_UPDATE=1 pnpm test`.

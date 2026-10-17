@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -161,9 +162,13 @@ func (h *Handler) submit(c *gin.Context) {
 		}
 	}
 
-	// Embed the assigned version into the YAML so stored YAML is self-contained.
-	pl.Metadata.Version = version
-	versionedYAML, err := yaml.Marshal(pl)
+	// Store the submitted text as-is, with only the assigned version added so
+	// the record is self-contained. Re-marshalling the parsed struct rewrote
+	// the whole document (empty fields everywhere), which the editor then
+	// could not reopen without a Design-loss warning.
+	versionedYAML, err := pipeline.EditYAML(req.YAML, func(root *yaml.Node) {
+		pipeline.YAMLSet(pipeline.YAMLMapping(root, "metadata"), "version", strconv.Itoa(version), "!!int")
+	})
 	if err != nil {
 		httpx.InternalError(c, err)
 		return
@@ -296,6 +301,10 @@ func (h *Handler) triggerRun(c *gin.Context) {
 		return
 	}
 
+	if storedYAMLInvalid(c, t) {
+		return
+	}
+
 	var req struct {
 		Params map[string]any `json:"params,omitempty"`
 	}
@@ -320,6 +329,17 @@ func (h *Handler) triggerRun(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": runID})
 }
 
+// storedYAMLInvalid answers 400 when a stored template no longer parses
+// under the current pipeline spec (e.g. it was submitted before a field was
+// removed). That is fixable by submitting a new version, not a server fault.
+func storedYAMLInvalid(c *gin.Context, t *Template) bool {
+	if _, err := pipeline.Parse([]byte(t.YAML)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("template %s v%d is not valid under the current pipeline spec; submit a new version: %v", t.Name, t.Version, err)})
+		return true
+	}
+	return false
+}
+
 // POST /pipeline-templates/:id/deploy — deploy a template as a schedule
 func (h *Handler) deploy(c *gin.Context) {
 	id := c.Param("id")
@@ -327,6 +347,9 @@ func (h *Handler) deploy(c *gin.Context) {
 
 	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, id)
 	if httpx.LookupFailed(c, err, t != nil, "pipeline template not found") {
+		return
+	}
+	if storedYAMLInvalid(c, t) {
 		return
 	}
 
@@ -416,11 +439,7 @@ func extractLocalPaths(pl *pipeline.Pipeline) []string {
 		if src != "" && src != "local" {
 			continue
 		}
-		if step.Run.Notebook != "" {
-			add(step.Run.Notebook)
-		} else {
-			add(step.Run.Path)
-		}
+		add(step.Run.Path)
 		for _, dep := range step.Run.Deps {
 			add(dep)
 		}
@@ -481,31 +500,33 @@ func (h *Handler) uploadSnapshotFile(ctx context.Context, vol *notebook.Notebook
 // It also sets metadata.name = templateName so that runs triggered from a template record
 // pipeline_name = template.name, not the YAML metadata.
 func rewriteLocalSources(yamlText, snapshotID, templateName string) string {
-	pl, err := pipeline.Parse([]byte(yamlText))
+	out, err := pipeline.EditYAML(yamlText, func(root *yaml.Node) {
+		pipeline.YAMLSet(pipeline.YAMLMapping(root, "metadata"), "name", templateName, "!!str")
+		// version is already in the YAML (set at submit time); preserve it.
+		steps := pipeline.YAMLGet(pipeline.YAMLGet(root, "spec"), "steps")
+		if steps == nil {
+			return
+		}
+		for _, step := range steps.Content {
+			run := pipeline.YAMLGet(step, "run")
+			if run == nil {
+				continue
+			}
+			if src := pipeline.YAMLGet(run, "source"); src != nil && src.Value != "" && src.Value != "local" {
+				continue
+			}
+			if path := pipeline.YAMLGet(run, "path"); path == nil || path.Value == "" {
+				continue
+			}
+			// path stays relative; the worker resolves it within the downloaded snapshot dir.
+			pipeline.YAMLSet(run, "source", "s3", "!!str")
+			pipeline.YAMLSet(run, "snapshot_prefix", "snapshots/"+snapshotID+"/", "!!str")
+		}
+	})
 	if err != nil {
 		return yamlText
 	}
-
-	pl.Metadata.Name = templateName
-	// version is already in the YAML (set at submit time); preserve it.
-
-	for i, step := range pl.Spec.Steps {
-		if step.Run.Source != "" && step.Run.Source != "local" {
-			continue
-		}
-		if step.Run.Path == "" && step.Run.Notebook == "" {
-			continue
-		}
-		pl.Spec.Steps[i].Run.Source = "s3"
-		pl.Spec.Steps[i].Run.SnapshotPrefix = "snapshots/" + snapshotID + "/"
-		// path and notebook stay relative; worker resolves them within the downloaded snapshot dir
-	}
-
-	b, err := yaml.Marshal(pl)
-	if err != nil {
-		return yamlText
-	}
-	return string(b)
+	return out
 }
 
 // storageBackendMismatch reports whether t's snapshot (if the rewritten

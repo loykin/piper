@@ -58,7 +58,7 @@ func NewNotebookServerPublic(nb *notebook.NotebookServer) *NotebookServerPublic 
 		Env:       nb.Env,
 		RuntimeID: nb.RuntimeID,
 		VolumeID:  nb.VolumeID,
-		Image:     nb.Image,
+		Image:     notebook.ManifestImage(nb.YAML),
 		CreatedBy: nb.CreatedBy,
 		CreatedAt: nb.CreatedAt,
 		UpdatedAt: nb.UpdatedAt,

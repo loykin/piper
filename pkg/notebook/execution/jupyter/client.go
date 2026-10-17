@@ -107,12 +107,10 @@ func (c *Client) WithHTTPClient(h *http.Client) *Client {
 // RestartKernel, PutContents — with 403 "'_xsrf' argument missing" unless
 // the caller first obtains the _xsrf cookie Jupyter sets on an HTML page
 // response and echoes its value back as the X-XSRFToken header on the
-// state-changing request. This applies even when Jupyter's own token auth
-// is disabled (Piper's baremetal/docker drivers always launch Jupyter with
-// --ServerApp.token=, since Piper's reverse proxy is the actual access
-// boundary — see pkg/notebook/dispatch/localdriver) — XSRF protection is a
-// separate, unconditional Tornado default (verified live against a real
-// jupyter_server: a bare `GET /api/status` does NOT set the cookie, since
+// state-changing request. Every runtime (baremetal, docker, k8s) launches
+// Jupyter with a per-start token, which this client sends as an
+// Authorization header; XSRF protection is a separate Tornado default
+// (verified live against a real jupyter_server: a bare `GET /api/status` does NOT set the cookie, since
 // pure JSON API handlers don't render the template that triggers it, but
 // `GET /lab` — the page Piper's own driver always has available, since it
 // launches Jupyter via `jupyter lab` — does).

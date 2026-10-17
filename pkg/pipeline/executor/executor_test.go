@@ -30,36 +30,11 @@ func cfg(t *testing.T) ExecConfig {
 
 // ─── New ─────────────────────────────────────────────────────────────────────
 
-func TestNew_command(t *testing.T) {
-	step := &pipeline.Step{Run: pipeline.Run{Type: "command"}}
-	ex := New(step)
-	if _, ok := ex.(*CommandExecutor); !ok {
-		t.Errorf("want *CommandExecutor, got %T", ex)
-	}
-}
-
-func TestNew_notebook(t *testing.T) {
-	step := &pipeline.Step{Run: pipeline.Run{Type: "notebook"}}
-	ex := New(step)
-	if _, ok := ex.(*NotebookExecutor); !ok {
-		t.Errorf("want *NotebookExecutor, got %T", ex)
-	}
-}
-
-func TestNew_defaultIsCommand(t *testing.T) {
-	step := &pipeline.Step{Run: pipeline.Run{Type: ""}}
-	ex := New(step)
-	if _, ok := ex.(*CommandExecutor); !ok {
-		t.Errorf("unknown type should default to CommandExecutor, got %T", ex)
-	}
-}
-
-// python has no dedicated type — handled as command
-func TestNew_pythonIsCommand(t *testing.T) {
-	step := &pipeline.Step{Run: pipeline.Run{Type: "python"}}
-	ex := New(step)
-	if _, ok := ex.(*CommandExecutor); !ok {
-		t.Errorf("type=python should map to CommandExecutor, got %T", ex)
+// Every step kind runs through the one command executor; notebook and script
+// conveniences are editor templates, not executor types.
+func TestNew_alwaysCommand(t *testing.T) {
+	if _, ok := New(&pipeline.Step{}).(*CommandExecutor); !ok {
+		t.Errorf("want *CommandExecutor, got %T", New(&pipeline.Step{}))
 	}
 }
 
@@ -544,28 +519,56 @@ func TestEnv_adHocRun_noScheduledVars(t *testing.T) {
 	}
 }
 
-// ─── NotebookExecutor ─────────────────────────────────────────────────────────
+// ─── Template contract: params file and shared env ──────────────────────────
 
-func TestNotebookExecutor_unknownSource(t *testing.T) {
+func TestCommandExecutor_paramsFilePreservesTypes(t *testing.T) {
+	var buf bytes.Buffer
 	step := &pipeline.Step{
-		Name: "nb",
-		Run:  pipeline.Run{Type: "notebook", Source: "ftp"},
+		Name: "p",
+		Run:  pipeline.Run{Command: []string{"sh", "-c", `cat "$PIPER_PARAMS_FILE"`}},
 	}
-	ex := &NotebookExecutor{}
-	_, err := ex.Execute(context.Background(), step, cfg(t))
-	if err == nil {
-		t.Fatal("expected error for unknown source")
+	c := cfg(t)
+	c.Stdout = &buf
+	c.Params = map[string]any{"n_estimators": 120, "lr": 0.5, "name": "iris"}
+	if _, err := (&CommandExecutor{}).Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"n_estimators: 120", "lr: 0.5", "name: iris"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("params file missing %q:\n%s", want, out)
+		}
 	}
 }
 
-func TestNotebookExecutor_emptyPath(t *testing.T) {
-	step := &pipeline.Step{
-		Name: "nb",
-		Run:  pipeline.Run{Type: "notebook", Source: "local", Path: ""},
+// A template's prepare (e.g. installing deps next to the script) sees the
+// same PIPER_* contract as its command.
+func TestCommandExecutor_prepareSharesCommandEnv(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "train.py"), []byte(""), 0644); err != nil {
+		t.Fatal(err)
 	}
-	ex := &NotebookExecutor{}
-	_, err := ex.Execute(context.Background(), step, cfg(t))
-	if err == nil {
-		t.Fatal("expected error for empty path")
+	step := &pipeline.Step{
+		Name: "p",
+		Run: pipeline.Run{
+			Path: "train.py",
+			Prepare: [][]string{{"sh", "-c",
+				`printf '%s|%s|%s' "$PIPER_SCRIPT_PATH" "$PIPER_PARAMS_FILE" "$PIPER_PARAM_k" > seen.txt`}},
+			Command: []string{"true"},
+		},
+	}
+	c := cfg(t)
+	c.WorkDir = workDir
+	c.Params = map[string]any{"k": "v"}
+	if _, err := (&CommandExecutor{}).Execute(context.Background(), step, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(workDir, "seen.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(got), "|")
+	if len(parts) != 3 || parts[0] != filepath.Join(workDir, "train.py") || parts[1] == "" || parts[2] != "v" {
+		t.Fatalf("prepare env = %q", got)
 	}
 }

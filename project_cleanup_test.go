@@ -88,7 +88,7 @@ func (r *cleanupTestNotebookRepo) Update(_ context.Context, nb *notebook.Noteboo
 	r.servers[r.key(nb.ProjectID, nb.Name)] = nb
 	return nil
 }
-func (r *cleanupTestNotebookRepo) SetStatus(_ context.Context, projectID, name, status string) error {
+func (r *cleanupTestNotebookRepo) SetStatus(_ context.Context, projectID, name, status, _ string) error {
 	if nb, ok := r.servers[r.key(projectID, name)]; ok {
 		nb.Status = status
 	}
@@ -398,3 +398,5 @@ func (r *cleanupTestNotebookRepo) Count(ctx context.Context, projectID string) (
 func (d *cleanupTestNotebookDriver) Remove(context.Context, *notebook.NotebookServer) error {
 	return nil
 }
+
+func (d *cleanupTestNotebookDriver) ValidateSpec(notebook.Notebook) error { return nil }

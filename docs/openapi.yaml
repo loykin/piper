@@ -2086,6 +2086,10 @@ components:
           type: object
           properties:
             type: { type: string, enum: [baremetal, docker, k8s] }
+            namespaces:
+              type: array
+              items: { type: string }
+              description: k8s only — runtime.namespaces, the namespaces workloads may use. Forms default to the first.
     StorageConfig:
       type: object
       properties:
@@ -2123,7 +2127,8 @@ components:
         work_dir: { type: string }
         runtime_id: { type: string }
         volume_id: { type: string }
-        image: { type: string }
+        image: { type: string, description: "Read from yaml; not stored." }
+        reason: { type: string }
         yaml: { type: string }
         created_by: { type: string }
         deployed_at: { type: string, format: date-time }
@@ -2401,7 +2406,8 @@ components:
         name: { type: string }
         status: { type: string, enum: [provisioning, starting, running, stopping, stopped, failed] }
         env: { type: string }
-        image: { type: string }
+        image: { type: string, description: "Read from yaml (the container image the manifest names); empty for baremetal." }
+        reason: { type: string, description: "Why the notebook reached its current status, as reported by the runtime driver (set when failed)." }
         endpoint: { type: string }
         work_dir: { type: string }
         runtime_id: { type: string }

@@ -10,6 +10,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	dockerclient "github.com/moby/moby/client"
 
+	"github.com/loykin/piper/internal/docker/dockertest"
 	"github.com/loykin/piper/internal/proto"
 	pipelinedriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
 	"github.com/loykin/piper/pkg/pipeline/pipelinedriver/drivertest"
@@ -57,6 +58,7 @@ func TestDockerDriverCancelDuringStartStopsJustCreatedContainer(t *testing.T) {
 // happens to have already finished) unblocks Wait.
 type blockingDockerClient struct {
 	dockerclient.APIClient
+	images    dockertest.Images
 	stoppedID string
 	removedID string
 }
@@ -131,4 +133,12 @@ func TestDockerDriverCancelWhileRunningUnblocksWaitAndRemovesContainer(t *testin
 	if _, err := os.Stat(handle.TaskPath); !os.IsNotExist(err) {
 		t.Fatalf("task file still exists after Stop: %v", err)
 	}
+}
+
+func (c *blockingDockerClient) ImageInspect(ctx context.Context, image string, opts ...dockerclient.ImageInspectOption) (dockerclient.ImageInspectResult, error) {
+	return c.images.ImageInspect(ctx, image, opts...)
+}
+
+func (c *blockingDockerClient) ImagePull(ctx context.Context, image string, opts dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error) {
+	return c.images.ImagePull(ctx, image, opts)
 }

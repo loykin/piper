@@ -1,4 +1,4 @@
-import { parse as parseYAML } from 'yaml'
+import { parse as parseYAML, parseDocument, stringify as stringifyYAML } from 'yaml'
 import {
   appendEnvOptionsYaml,
   envVarDraftFromYamlEntry,
@@ -43,8 +43,12 @@ export interface PipelineDefaultsDraft extends PipelineDriverDraft {
 export interface PipelineStepDraft {
   id: string
   name: string
+  // Editor-only: which palette template the task came from. Not written to
+  // YAML — reopening derives it from the path extension (taskTypeFromPath).
   type: PipelineTaskType
   sourcePath: string
+  // One shell command per line; each line is written as [sh, -c, line].
+  prepare: string[]
   deps: string[]
   dependsOn: string[]
   command: string[]
@@ -125,6 +129,7 @@ export function defaultPipelineStep(index = 0, type: PipelineTaskType = 'command
     name,
     type,
     sourcePath: '',
+    prepare: [],
     deps: [],
     dependsOn: index > 0 ? [nextStepName(index - 1)] : [],
     command: type === 'command' ? [...DEFAULT_STEP_COMMAND, name] : [],
@@ -174,6 +179,20 @@ function parseDriver(value: unknown): PipelineDefaultsDraft {
   }
 }
 
+/** The palette kind a task's entry file implies; only the editor uses it. */
+export function taskTypeFromPath(path: string): PipelineTaskType {
+  if (path.endsWith('.ipynb')) return 'notebook'
+  if (path.endsWith('.py')) return 'python'
+  return 'command'
+}
+
+// [sh, -c, line] is how the editor writes a prepare line; any other argv is
+// shown space-joined, and the Design-loss check flags it if that changes it.
+function prepareLineFromYaml(value: unknown): string {
+  const argv = Array.isArray(value) ? value.map(String) : [String(value ?? '')]
+  return argv.length === 3 && argv[0] === 'sh' && argv[1] === '-c' ? argv[2] : argv.join(' ')
+}
+
 export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
   const document = parseYAML(yaml || '') as {
     metadata?: { name?: unknown }
@@ -183,8 +202,7 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
   const steps = rawSteps.map((value, index) => {
     const step = value as Record<string, unknown>
     const run = (step.run ?? {}) as Record<string, unknown>
-    const rawType = String(run.type ?? (run.notebook ? 'notebook' : 'command'))
-    const type: PipelineTaskType = rawType === 'python' || rawType === 'notebook' ? rawType : 'command'
+    const type = taskTypeFromPath(String(run.path ?? ''))
     const stepLabel = String(step.name ?? nextStepName(index))
     const artifacts = (key: 'inputs' | 'outputs'): PipelineArtifactDraft[] => {
       const values = Array.isArray(step[key]) ? step[key] : []
@@ -210,12 +228,11 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
       id: nextStepId(),
       name: String(step.name ?? nextStepName(index)),
       type,
-      sourcePath: String(type === 'notebook' ? (run.notebook ?? run.path ?? '') : (run.path ?? '')),
+      sourcePath: String(run.path ?? ''),
+      prepare: Array.isArray(run.prepare) ? run.prepare.map(prepareLineFromYaml) : [],
       deps: Array.isArray(run.deps) ? run.deps.map(String) : [],
       dependsOn: Array.isArray(step.depends_on) ? step.depends_on.map(String) : [],
-      command: Array.isArray(run.command)
-        ? run.command.map(String)
-        : (type === 'command' ? [...DEFAULT_STEP_COMMAND] : []),
+      command: Array.isArray(run.command) ? run.command.map(String) : [],
       inputs: artifacts('inputs'),
       outputs: artifacts('outputs'),
       params: Object.entries(paramsObject).map(([key, value]) => ({ key, value: String(value) })),
@@ -246,37 +263,17 @@ export function parsePipelineDraftYaml(yaml: string): PipelineDraft {
 }
 
 /**
- * Removes a top-level `metadata.version` scalar line from stored template
- * YAML, without touching any other formatting/comments. The server stamps
- * this field into every stored template's YAML so the record is
- * self-contained (see pkg/template/handler.go); reusing that same text as
- * the starting point for a *new* submission would carry the old version
- * number along and collide with the version that already exists server-side
- * (ErrVersionExists → a "New Version" submit can never succeed). Stripping
- * it here restores the same auto-assign-next-version behavior "New
- * Template" already has.
+ * Removes `metadata.version` from stored template YAML. The server stamps it
+ * into every stored template (pkg/template/handler.go); resubmitting it
+ * unchanged would collide with the existing version, so "New Version" drops
+ * it and the server assigns the next one. Everything else — comments,
+ * quoting, order — is left as stored.
  */
 export function stripMetadataVersion(yaml: string): string {
-  const lines = yaml.split('\n')
-  let inMetadata = false
-  let metadataIndent = -1
-  const result: string[] = []
-  for (const line of lines) {
-    const indent = line.length - line.trimStart().length
-    if (!inMetadata && /^metadata:\s*$/.test(line.trim()) && /^\S/.test(line)) {
-      inMetadata = true
-      result.push(line)
-      continue
-    }
-    if (inMetadata) {
-      if (metadataIndent < 0 && line.trim() !== '') metadataIndent = indent
-      const stillInMetadata = line.trim() === '' || indent > 0
-      if (!stillInMetadata) inMetadata = false
-      else if (/^version:\s*\d+\s*$/.test(line.trim())) continue
-    }
-    result.push(line)
-  }
-  return result.join('\n')
+  const doc = parseDocument(yaml)
+  if (doc.errors.length > 0 || !doc.hasIn(['metadata', 'version'])) return yaml
+  doc.deleteIn(['metadata', 'version'])
+  return doc.toString()
 }
 
 function firstYamlDifference(source: unknown, generated: unknown, path = '$'): string | null {
@@ -340,15 +337,22 @@ function formatArtifactBlock(key: 'inputs' | 'outputs', items: PipelineArtifactD
   return lines
 }
 
-function formatMapBlock(key: 'params' | 'env' | 'resources', items: Record<string, string>): string[] {
+// A parameter value is written as the YAML scalar the user typed: `120` is a
+// number and `iris` a string, by YAML's own rules. Quoting everything turned
+// every number into a string in the step's params file.
+function paramScalar(value: string): string {
+  const doc = parseDocument(value)
+  const parsed = doc.errors.length === 0 ? doc.toJS() as unknown : undefined
+  if (typeof parsed === 'number' || typeof parsed === 'boolean') {
+    return stringifyYAML(parsed).trim()
+  }
+  return JSON.stringify(value)
+}
+
+function formatParamsBlock(items: Record<string, string>): string[] {
   const keys = Object.keys(items).filter(k => k.trim())
   if (keys.length === 0) return []
-  const lines = [`      ${key}:`]
-  for (const itemKey of keys.sort()) {
-    const value = items[itemKey]
-    lines.push(`        ${itemKey}: ${JSON.stringify(value)}`)
-  }
-  return lines
+  return ['      params:', ...keys.sort().map(key => `        ${key}: ${paramScalar(items[key])}`)]
 }
 
 function appendDriverYaml(
@@ -451,7 +455,6 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
       lines.push(`      depends_on: [${dependsOn.map(d => JSON.stringify(d)).join(', ')}]`)
     }
     lines.push('      run:')
-    lines.push(`        type: ${step.type}`)
     if (draft.source?.type === 'git') {
       lines.push(`        source: git`)
       lines.push(`        repo: ${JSON.stringify(draft.source.repo)}`)
@@ -459,15 +462,18 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
       if (draft.source.credentialRef.trim()) lines.push(`        credentialRef: ${JSON.stringify(draft.source.credentialRef.trim())}`)
     }
     const deps = step.deps.map(d => d.trim()).filter(Boolean)
-    if (step.type === 'notebook') {
-      if (step.sourcePath.trim()) lines.push(`        notebook: ${JSON.stringify(step.sourcePath.trim())}`)
-    } else {
-      if (step.sourcePath.trim()) lines.push(`        path: ${JSON.stringify(step.sourcePath.trim())}`)
-      if (command.length > 0) {
-        lines.push('        command:')
-        for (const arg of command) {
-          lines.push(`          - ${JSON.stringify(arg)}`)
-        }
+    const prepare = step.prepare.map(line => line.trim()).filter(Boolean)
+    if (step.sourcePath.trim()) lines.push(`        path: ${JSON.stringify(step.sourcePath.trim())}`)
+    if (prepare.length > 0) {
+      lines.push('        prepare:')
+      for (const line of prepare) {
+        lines.push(`          - ["sh", "-c", ${JSON.stringify(line)}]`)
+      }
+    }
+    if (command.length > 0) {
+      lines.push('        command:')
+      for (const arg of command) {
+        lines.push(`          - ${JSON.stringify(arg)}`)
       }
     }
     if (deps.length > 0) {
@@ -476,7 +482,7 @@ export function buildPipelineDraftYaml(draft: PipelineDraft): string {
         lines.push(`          - ${JSON.stringify(dep)}`)
       }
     }
-    lines.push(...formatMapBlock('params', params))
+    lines.push(...formatParamsBlock(params))
     appendEnvOptionsYaml(lines, '      ', step.env)
     lines.push(...formatArtifactBlock('inputs', step.inputs))
     lines.push(...formatArtifactBlock('outputs', step.outputs))
@@ -504,7 +510,7 @@ export function validatePipelineDraft(draft: PipelineDraft): string[] {
     if ((step.type === 'notebook' || step.type === 'python') && !step.sourcePath.trim()) {
       messages.push(`Task "${step.name}" needs a source file.`)
     }
-    if (step.type === 'command' && step.command.length === 0) {
+    if (step.command.every(arg => !arg.trim())) {
       messages.push(`Task "${step.name}" needs a command.`)
     }
   }

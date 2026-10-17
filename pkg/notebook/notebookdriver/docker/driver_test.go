@@ -14,6 +14,7 @@ import (
 	dockerclient "github.com/moby/moby/client"
 
 	dockerinfra "github.com/loykin/piper/internal/docker"
+	"github.com/loykin/piper/internal/docker/dockertest"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/notebook/notebookdriver"
@@ -329,15 +330,39 @@ func TestDockerRecoverOnlyUsesCurrentWorkerContainers(t *testing.T) {
 	}
 }
 
+// A fresh docker installation has none of the images a notebook names; the
+// driver pulls a missing image, as kubelet does for the k8s runtime.
+func TestDockerStartPullsMissingImage(t *testing.T) {
+	const image = "quay.io/jupyter/minimal-notebook:latest"
+	cli := &fakeDockerClient{Images: dockertest.Images{Missing: map[string]bool{image: true}}}
+	d, err := NewWithClient(Config{}, "worker-test", cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := notebook.Notebook{}
+	spec.Spec.Driver.Docker = &manifest.DriverDockerSpec{Image: image}
+	if _, err := d.Start(context.Background(), notebookdriver.StartRequest{
+		RuntimeName: "p__nb", ProjectID: "p", Name: "nb", Spec: spec, WorkDir: t.TempDir(), Port: 18999,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := cli.PulledImages(); len(got) != 1 || got[0] != image {
+		t.Fatalf("pulled = %v, want [%s]", got, image)
+	}
+}
+
 func TestDockerRuntimeRequiresRuntimeID(t *testing.T) {
 	if _, err := NewWithClient(Config{}, "", &fakeDockerClient{}); err == nil {
 		t.Fatal("expected empty worker ID to be rejected")
 	}
 }
 
-type fakeDockerClient struct{}
+type fakeDockerClient struct{ dockertest.Images }
 
-func (f *fakeDockerClient) ContainerCreate(context.Context, dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
+func (f *fakeDockerClient) ContainerCreate(_ context.Context, opts dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
+	if err := f.CheckCreate(opts.Config.Image); err != nil {
+		return dockerclient.ContainerCreateResult{}, err
+	}
 	return dockerclient.ContainerCreateResult{ID: "container-id"}, nil
 }
 
@@ -373,6 +398,7 @@ func (f *fakeDockerClient) ContainerWait(context.Context, string, dockerclient.C
 }
 
 type recoveryDockerClient struct {
+	dockertest.Images
 	mu      sync.Mutex
 	items   []container.Summary
 	removed []string

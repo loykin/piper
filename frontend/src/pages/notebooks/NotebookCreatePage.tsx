@@ -41,6 +41,7 @@ export default function NotebookCreatePage() {
     >
       <NotebookLaunchForm
         runtime={runtime}
+        namespaces={systemSettings?.runtime?.namespaces ?? []}
         releasedVolumes={releasedVolumes}
         preselectedVolume={preselectedVolume}
         onSubmit={(yaml, volumeId) => void handleSubmit(yaml, volumeId).catch(() => undefined)}

@@ -11,6 +11,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	dockerclient "github.com/moby/moby/client"
 
+	"github.com/loykin/piper/internal/docker/dockertest"
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/manifest"
 	"github.com/loykin/piper/pkg/pipeline"
@@ -145,8 +146,24 @@ func TestDockerDriverWaitErrorCleansRuntimeState(t *testing.T) {
 	}
 }
 
+// A step image the daemon has never seen is pulled before the container is
+// created, as kubelet does for the k8s runtime.
+func TestDockerDriverStartPullsMissingImage(t *testing.T) {
+	cli := &captureDockerClient{images: dockertest.Images{Missing: map[string]bool{"python:3.11": true}}}
+	d := NewWithClient(Config{RuntimeID: "worker-1", ResultDir: t.TempDir()}, cli)
+	if _, err := d.Start(context.Background(), &proto.Task{
+		ID: "run-1:train", RunID: "run-1", StepName: "train", Attempt: 1,
+	}, pipelinedriver.ExecSpec{RuntimeKey: "worker-1-run-1-train-a1", Image: "python:3.11", OutputDir: t.TempDir()}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := cli.images.PulledImages(); len(got) != 1 || got[0] != "python:3.11" {
+		t.Fatalf("pulled = %v, want [python:3.11]", got)
+	}
+}
+
 type captureDockerClient struct {
 	dockerclient.APIClient
+	images    dockertest.Images
 	create    dockerclient.ContainerCreateOptions
 	waitErr   error
 	removedID string
@@ -154,6 +171,9 @@ type captureDockerClient struct {
 }
 
 func (c *captureDockerClient) ContainerCreate(_ context.Context, opts dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
+	if err := c.images.CheckCreate(opts.Config.Image); err != nil {
+		return dockerclient.ContainerCreateResult{}, err
+	}
 	c.create = opts
 	return dockerclient.ContainerCreateResult{ID: "container-123456789"}, nil
 }
@@ -231,4 +251,12 @@ func TestDockerDriverStartWaitSucceedsAndCleansUpContainer(t *testing.T) {
 	if active {
 		t.Fatalf("runtime key %q remained active", handle.RuntimeKey)
 	}
+}
+
+func (c *captureDockerClient) ImageInspect(ctx context.Context, image string, opts ...dockerclient.ImageInspectOption) (dockerclient.ImageInspectResult, error) {
+	return c.images.ImageInspect(ctx, image, opts...)
+}
+
+func (c *captureDockerClient) ImagePull(ctx context.Context, image string, opts dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error) {
+	return c.images.ImagePull(ctx, image, opts)
 }

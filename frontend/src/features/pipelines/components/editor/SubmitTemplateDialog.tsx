@@ -1,20 +1,18 @@
 import { Upload } from 'lucide-react'
-import { FormField, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@loykin/designkit'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { NotebookVolume } from '@/features/notebooks/types'
 import { DialogSubmitFooter } from '@/shared/components/DialogSubmitFooter'
 
 /**
- * Final confirmation before a pipeline template version is snapshotted.
- * The only input is which notebook volume (if any) supplies local sources.
+ * Final confirmation before a pipeline template version is snapshotted. The
+ * source workspace was chosen once, before editing; this only shows it.
  */
 export function SubmitTemplateDialog({
-  open, volumes, volumeId, onVolumeChange, error, submitting, onClose, onConfirm,
+  open, workspace, error, submitting, onClose, onConfirm,
 }: {
   open: boolean
-  volumes: NotebookVolume[]
-  volumeId: string
-  onVolumeChange: (id: string) => void
+  /** The editor's locked source volume, or null for git / commands-only. */
+  workspace: NotebookVolume | null
   error?: string
   submitting: boolean
   onClose: () => void
@@ -30,27 +28,14 @@ export function SubmitTemplateDialog({
             Each submission gets its own UUID — previous snapshots are untouched.
           </DialogDescription>
         </DialogHeader>
-        <FormField
-          label="Notebook Volume"
-          htmlFor="submit-template-volume"
-          className="min-w-0"
-          helperText="Required when a task runs a script or notebook from the workspace; command-only pipelines can leave it empty."
-          error={error}
-        >
-          <Select
-            items={[{ value: '__none__', label: '— none —' }, ...volumes.map(v => ({ value: v.id, label: `${v.label} · ${v.work_dir}` }))]}
-            value={volumeId || '__none__'}
-            onValueChange={v => onVolumeChange(!v || v === '__none__' ? '' : v)}
-          >
-            <SelectTrigger id="submit-template-volume" className="w-full"><SelectValue placeholder="— none —" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">— none —</SelectItem>
-              {volumes.map(v => (
-                <SelectItem key={v.id} value={v.id}>{v.label} · {v.work_dir}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FormField>
+        <div className="space-y-3">
+          {workspace && (
+            <p className="min-w-0 break-all text-sm text-muted-foreground">
+              Snapshot from <span className="font-medium text-foreground">{workspace.label}</span> · {workspace.work_dir}
+            </p>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
         <DialogSubmitFooter verb="Submit" noun="Template" icon={<Upload />} pending={submitting} onCancel={onClose} onSubmit={onConfirm} />
       </DialogContent>
     </Dialog>

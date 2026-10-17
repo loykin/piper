@@ -23,6 +23,11 @@ export function NotebookHistoryDetailPanel({ entry }: { entry: NotebookHistory }
         <PanelCloseButton />
       }
     >
+      {entry.reason && (
+        <PanelTemplate.Section title="Failure Reason">
+          <p className="whitespace-pre-wrap break-all rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 font-mono text-[11px] text-muted-foreground">{entry.reason}</p>
+        </PanelTemplate.Section>
+      )}
       <PanelTemplate.Section title="Details">
         <dl className="space-y-2">
           <PanelTemplate.Row label="Image">

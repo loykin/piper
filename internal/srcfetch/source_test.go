@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -380,4 +381,33 @@ func serveGitHTTPBackend(t *testing.T, w http.ResponseWriter, r *http.Request, p
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(payload)
+}
+
+// ─── S3Fetcher snapshot auth ─────────────────────────────────────────────────
+
+// A token-protected HTTP store (the built-in /store with server.workload_token
+// set) must receive the configured storage token on snapshot list and get.
+func TestS3Fetcher_snapshotSendsStorageToken(t *testing.T) {
+	const token = "workload-secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("list") == "1" {
+			_, _ = io.WriteString(w, `[{"key":"snapshots/s1/nb.ipynb","size":2}]`)
+			return
+		}
+		_, _ = io.WriteString(w, "{}")
+	}))
+	defer srv.Close()
+
+	f := &S3Fetcher{cfg: Config{StorageURL: srv.URL, StorageToken: token}}
+	got, err := f.Fetch(context.Background(), pipeline.Run{Path: "nb.ipynb", SnapshotPrefix: "snapshots/s1/"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if filepath.Base(got) != "nb.ipynb" {
+		t.Fatalf("entry = %q, want nb.ipynb", got)
+	}
 }

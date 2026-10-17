@@ -177,7 +177,7 @@ func TestTemplateRunUsesConfiguredMemberRouting(t *testing.T) {
 	}
 	tpl := &template.Template{
 		ID: "template-1", ProjectID: projectID, Name: "federated-template", Version: 1,
-		YAML:      "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: federated-template\nspec:\n  steps:\n  - name: proof\n    run:\n      type: command\n      command: [\"echo\", \"remote\"]\n",
+		YAML:      "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: federated-template\nspec:\n  steps:\n  - name: proof\n    run:\n      command: [\"echo\", \"remote\"]\n",
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	if err := p.repos.PipelineTemplate.Create(context.Background(), tpl); err != nil {
@@ -207,7 +207,7 @@ func TestLocalMemberSubmitRunIsDurablyIdempotent(t *testing.T) {
 	p := newTestPiper(t, Config{OutputDir: t.TempDir(), Storage: StorageConfig{Disabled: true}, Runtime: RuntimeConfig{Type: RuntimeBaremetal}})
 	member := NewLocalMemberClient(p)
 	scheduledAt := time.Now().UTC().Add(time.Hour)
-	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: idempotent\nspec:\n  steps:\n  - name: proof\n    run:\n      type: command\n      command: [\"echo\", \"ok\"]\n"
+	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: idempotent\nspec:\n  steps:\n  - name: proof\n    run:\n      command: [\"echo\", \"ok\"]\n"
 	req := memberclient.SubmitRunRequest{
 		IdempotencyKey: "request-a", YAML: yaml, Vars: BuiltinVars{ScheduledAt: &scheduledAt},
 	}
@@ -1351,7 +1351,7 @@ func TestRecoverInterruptedRunsFixesOrphanedFinalizeWrite(t *testing.T) {
 	projectID := project.DefaultID
 
 	const runID = "run-orphaned-finalize"
-	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: orphan-pipeline\nspec:\n  steps:\n  - name: only\n    run:\n      type: command\n      command: [\"true\"]\n"
+	yaml := "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: orphan-pipeline\nspec:\n  steps:\n  - name: only\n    run:\n      command: [\"true\"]\n"
 	if err := p.repos.Run.Create(ctx, &run.Run{
 		ProjectID:    projectID,
 		ID:           runID,

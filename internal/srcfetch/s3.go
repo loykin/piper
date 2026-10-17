@@ -32,7 +32,7 @@ func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string)
 	if run.Path == "" {
 		return "", fmt.Errorf("s3 source: path is required")
 	}
-	st, err := storage.Open(f.cfg.StorageURL, "")
+	st, err := storage.Open(f.cfg.StorageURL, f.cfg.StorageToken)
 	if err != nil {
 		return "", fmt.Errorf("s3 source: open store: %w", err)
 	}
@@ -67,14 +67,11 @@ func (f *S3Fetcher) Fetch(ctx context.Context, run pipeline.Run, destDir string)
 // then returns the absolute path of the entry point file within destDir.
 func (f *S3Fetcher) fetchSnapshot(ctx context.Context, run pipeline.Run, destDir string) (string, error) {
 	entry := run.Path
-	if run.Notebook != "" {
-		entry = run.Notebook
-	}
 	if entry == "" {
-		return "", fmt.Errorf("s3 source: path or notebook is required")
+		return "", fmt.Errorf("s3 source: path is required")
 	}
 
-	st, err := storage.Open(f.cfg.StorageURL, "")
+	st, err := storage.Open(f.cfg.StorageURL, f.cfg.StorageToken)
 	if err != nil {
 		return "", fmt.Errorf("s3 source: open store: %w", err)
 	}

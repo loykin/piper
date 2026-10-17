@@ -94,6 +94,9 @@ type SystemSettings struct {
 // Piper server owns for pipeline, notebook, and serving workloads.
 type RuntimeSettings struct {
 	Type string `json:"type"`
+	// Namespaces is runtime.namespaces for k8s: the only namespaces
+	// workloads may use; forms default to the first.
+	Namespaces []string `json:"namespaces,omitempty"`
 }
 
 // ArtifactStoreSettings describes whether artifact storage is usable.
@@ -110,6 +113,9 @@ func (p *Piper) Settings() SystemSettings {
 		return out
 	}
 	out.Runtime.Type = p.cfg.Runtime.Type
+	if p.cfg.Runtime.Type == RuntimeK8s {
+		out.Runtime.Namespaces = p.cfg.Runtime.K8s.Namespaces
+	}
 	if p.cfg.Storage.Disabled {
 		out.ArtifactStore.Status = "disabled"
 		out.ArtifactStore.Backend = storageScheme(p.cfg.Storage.URL)

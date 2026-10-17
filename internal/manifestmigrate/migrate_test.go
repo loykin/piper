@@ -112,7 +112,9 @@ func (r *fakeNotebookRepo) Update(_ context.Context, nb *notebook.NotebookServer
 	}
 	return nil
 }
-func (r *fakeNotebookRepo) SetStatus(context.Context, string, string, string) error { return nil }
+func (r *fakeNotebookRepo) SetStatus(context.Context, string, string, string, string) error {
+	return nil
+}
 func (r *fakeNotebookRepo) List(_ context.Context, projectID string, _, _ int) ([]*notebook.NotebookServer, error) {
 	return r.byProject[projectID], nil
 }

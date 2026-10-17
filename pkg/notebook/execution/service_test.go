@@ -262,7 +262,7 @@ func (r *fakeNotebookRepo) Update(_ context.Context, nb *notebook.NotebookServer
 	r.put(nb)
 	return nil
 }
-func (r *fakeNotebookRepo) SetStatus(_ context.Context, projectID, name, status string) error {
+func (r *fakeNotebookRepo) SetStatus(_ context.Context, projectID, name, status, _ string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if s, ok := r.servers[nbKey(projectID, name)]; ok {

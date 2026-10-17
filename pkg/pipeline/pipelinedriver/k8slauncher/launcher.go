@@ -528,9 +528,13 @@ func (l *Launcher) attachTaskSecretOwner(ctx context.Context, secretName string,
 func addTaskSecretVolume(tpl *corev1.PodTemplateSpec, secretName string) {
 	tpl.Spec.Volumes = append(tpl.Spec.Volumes, corev1.Volume{
 		Name: "piper-task",
+		// 0444: the agent runs as whatever user the step image declares
+		// (jupyter images are UID 1000), and secret files are root-owned. The
+		// Secret is mounted only into this pod's step container, so world-read
+		// does not widen who can see it.
 		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 			SecretName:  secretName,
-			DefaultMode: ptrInt32(0400),
+			DefaultMode: ptrInt32(0444),
 		}},
 	})
 	if len(tpl.Spec.Containers) == 0 {

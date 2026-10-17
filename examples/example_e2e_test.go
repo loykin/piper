@@ -225,7 +225,6 @@ spec:
   steps:
   - name: hello
     run:
-      type: command
       command: ["echo", "bare-metal e2e ok"]
 `
 	runID := submitPipeline(t, baseURL, yaml)
@@ -340,12 +339,10 @@ func TestExampleArtifacts(t *testing.T) {
 // Python DAG and verifies dependency installation, parallel fan-out, join, and
 // artifact handoff.
 func TestExampleNotebookPipelineTemplate(t *testing.T) {
-	pythonEnv := os.Getenv("PIPER_PIPELINE_TEMPLATE_E2E_ENV")
-	if pythonEnv != "" {
-		t.Setenv("PATH", filepath.Join(pythonEnv, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	}
-	if out, err := exec.Command("papermill", "--version").CombinedOutput(); err != nil {
-		t.Skipf("papermill is required; set PIPER_PIPELINE_TEMPLATE_E2E_ENV to a prepared venv: %v (%s)", err, out)
+	// The pipeline's own prepare builds a venv and installs papermill, so the
+	// host only needs python3 (and network access for pip).
+	if out, err := exec.Command("python3", "-m", "venv", "--help").CombinedOutput(); err != nil {
+		t.Skipf("python3 with venv is required: %v (%s)", err, out)
 	}
 
 	root := moduleRoot(t)

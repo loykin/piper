@@ -61,6 +61,9 @@ func (m *Manager) Create(ctx context.Context, projectID string, spec Notebook, y
 	if err := ValidateDirectPlacement(spec, m.runtime); err != nil {
 		return nil, fmt.Errorf("notebook: %w", err)
 	}
+	if err := m.driver.ValidateSpec(spec); err != nil {
+		return nil, fmt.Errorf("notebook: %w", err)
+	}
 	if err := spec.Spec.Prepare.Validate(); err != nil {
 		return nil, fmt.Errorf("notebook: invalid prepare spec: %w", err)
 	}
@@ -114,7 +117,7 @@ func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *
 	// Phase 1: provision storage
 	if err := m.driver.ProvisionVolume(ctx, vol, spec); err != nil {
 		slog.Error("notebook: provision volume failed", "name", name, "err", err)
-		_ = m.repo.SetStatus(ctx, projectID, name, StatusFailed)
+		_ = m.repo.SetStatus(ctx, projectID, name, StatusFailed, err.Error())
 		_ = m.vols.Delete(ctx, vol.ID)
 		m.emit(projectID, "notebook.failed", map[string]any{"name": name, "error": err.Error()})
 		return
@@ -122,14 +125,14 @@ func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *
 	if err := m.vols.Update(ctx, vol); err != nil {
 		slog.Warn("notebook: update volume after provision failed", "name", name, "err", err)
 	}
-	_ = m.repo.SetStatus(ctx, projectID, name, StatusStarting)
+	_ = m.repo.SetStatus(ctx, projectID, name, StatusStarting, "")
 
 	// Phase 2: start the server process/pod (driver.Start returns quickly; actual
 	// startup is async on the worker, which will call back with status=running).
 	fresh, err := m.driver.Start(ctx, spec, vol, yamlStr)
 	if err != nil {
 		slog.Error("notebook: start failed", "name", name, "err", err)
-		_ = m.repo.SetStatus(ctx, projectID, name, StatusFailed)
+		_ = m.repo.SetStatus(ctx, projectID, name, StatusFailed, err.Error())
 		_ = m.driver.DeprovisionVolume(ctx, vol)
 		_ = m.vols.Delete(ctx, vol.ID)
 		m.emit(projectID, "notebook.failed", map[string]any{"name": name, "error": err.Error()})
@@ -155,9 +158,6 @@ func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *
 		if fresh.Endpoint != "" {
 			nb.Endpoint = fresh.Endpoint
 		}
-		if fresh.Image != "" {
-			nb.Image = fresh.Image
-		}
 		// Keep status=starting; worker status push will set it to running/failed.
 		_ = m.repo.Update(ctx, nb)
 	}
@@ -178,6 +178,9 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 		return nil, fmt.Errorf("notebook: %w", err)
 	}
 	if err := ValidateDirectPlacement(spec, m.runtime); err != nil {
+		return nil, fmt.Errorf("notebook: %w", err)
+	}
+	if err := m.driver.ValidateSpec(spec); err != nil {
 		return nil, fmt.Errorf("notebook: %w", err)
 	}
 	if err := spec.Spec.Prepare.Validate(); err != nil {
@@ -230,7 +233,7 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, yamlStr)
 		if err != nil {
 			slog.Error("notebook: start with volume failed", "name", name, "err", err)
-			_ = m.repo.SetStatus(bgCtx, projectID, name, StatusFailed)
+			_ = m.repo.SetStatus(bgCtx, projectID, name, StatusFailed, err.Error())
 			_ = m.vols.SetStatus(bgCtx, vol.ID, VolumeStatusReleased)
 			m.emit(projectID, "notebook.failed", map[string]any{"name": name, "error": err.Error()})
 			return
@@ -249,9 +252,6 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 			}
 			if fresh.Endpoint != "" {
 				nb.Endpoint = fresh.Endpoint
-			}
-			if fresh.Image != "" {
-				nb.Image = fresh.Image
 			}
 			_ = m.repo.Update(bgCtx, nb)
 			_ = m.vols.Update(bgCtx, &volCopy)
@@ -278,13 +278,13 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	if nb.Status == StatusStopped || nb.Status == StatusStopping {
 		return nil
 	}
-	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopping); err != nil {
+	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopping, ""); err != nil {
 		return fmt.Errorf("notebook: set status stopping: %w", err)
 	}
 	if err := m.driver.Stop(ctx, nb); err != nil {
 		// A transport failure says nothing about workload state. Restore the last
 		// observed status and let the caller retry when the worker is reachable.
-		if restoreErr := m.repo.SetStatus(ctx, projectID, name, nb.Status); restoreErr != nil {
+		if restoreErr := m.repo.SetStatus(ctx, projectID, name, nb.Status, nb.Reason); restoreErr != nil {
 			return fmt.Errorf("notebook: stop failed: %v; restore status: %w", err, restoreErr)
 		}
 		return fmt.Errorf("notebook: stop: %w", err)
@@ -334,6 +334,9 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 	if err := ValidateDirectPlacement(spec, m.runtime); err != nil {
 		return fmt.Errorf("notebook: %w", err)
 	}
+	if err := m.driver.ValidateSpec(spec); err != nil {
+		return fmt.Errorf("notebook: %w", err)
+	}
 	if err := spec.Spec.Prepare.Validate(); err != nil {
 		return fmt.Errorf("notebook: invalid prepare spec: %w", err)
 	}
@@ -346,7 +349,7 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 		return fmt.Errorf("notebook: archive previous state: %w", err)
 	}
 
-	if err := m.repo.SetStatus(ctx, projectID, name, StatusStarting); err != nil {
+	if err := m.repo.SetStatus(ctx, projectID, name, StatusStarting, ""); err != nil {
 		return fmt.Errorf("notebook: set status starting: %w", err)
 	}
 
@@ -357,7 +360,7 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, restartYAML)
 		if err != nil {
 			slog.Error("notebook: restart failed", "name", name, "err", err)
-			_ = m.repo.SetStatus(bgCtx, projectID, name, StatusFailed)
+			_ = m.repo.SetStatus(bgCtx, projectID, name, StatusFailed, err.Error())
 			return
 		}
 		if nb, err := m.repo.Get(bgCtx, projectID, name); err == nil && nb != nil {
@@ -414,7 +417,7 @@ func (m *Manager) Delete(ctx context.Context, projectID, name string) error {
 		// Status" in the history UI actively misleading. A failure stays
 		// recorded as failed.
 		if nb.Status != StatusFailed {
-			if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped); err != nil {
+			if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped, ""); err != nil {
 				return fmt.Errorf("notebook: mark stopped before delete: %w", err)
 			}
 		}
@@ -474,8 +477,8 @@ func (m *Manager) PurgeVolume(ctx context.Context, projectID, volumeID string) e
 }
 
 // UpdateStatus applies runtime-observed state through the shared status sink.
-func (m *Manager) UpdateStatus(ctx context.Context, projectID, runtimeID, name, status, endpoint, workDir, token string, pid int, env string) error {
-	return m.status.Update(ctx, projectID, runtimeID, name, status, endpoint, workDir, token, pid, env)
+func (m *Manager) UpdateStatus(ctx context.Context, projectID, runtimeID, name string, r StatusReport) error {
+	return m.status.Update(ctx, projectID, runtimeID, name, r)
 }
 
 func (m *Manager) emit(projectID, eventType string, fields map[string]any) {

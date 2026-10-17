@@ -8,7 +8,10 @@ export interface NotebookServer {
   name: string
   status: 'provisioning' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed'
   env: string
+  /** Read by the server from `yaml`; empty for baremetal. */
   image: string
+  /** Why the notebook reached its status (the driver's failure message). */
+  reason: string
   endpoint: string
   work_dir: string
   runtime_id?: string
@@ -29,6 +32,7 @@ export interface NotebookHistory {
   runtime_id?: string
   volume_id: string
   image: string
+  reason: string
   yaml: string
   deployed_at: string
   stopped_at: string

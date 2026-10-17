@@ -27,7 +27,20 @@ func (s *StatusSink) SetEventPublisher(p event.Publisher) {
 	s.mu.Unlock()
 }
 
-func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name, status, endpoint, workDir, token string, pid int, env string) error {
+// StatusReport is what a runtime driver observed about a notebook. Empty
+// fields leave the record unchanged, except Reason: it always travels with a
+// non-empty Status, so a recovered notebook doesn't keep an old failure.
+type StatusReport struct {
+	Status   string
+	Reason   string
+	Endpoint string
+	WorkDir  string
+	Token    string
+	PID      int
+	Env      string
+}
+
+func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name string, r StatusReport) error {
 	if projectID == "" {
 		return fmt.Errorf("notebook: project ID is required")
 	}
@@ -42,44 +55,45 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name, sta
 		return fmt.Errorf("notebook %q owned by runtime %q, update from %q rejected", name, nb.RuntimeID, runtimeID)
 	}
 	previousStatus := nb.Status
-	if status != "" {
-		nb.Status = status
+	if r.Status != "" {
+		nb.Status = r.Status
+		nb.Reason = r.Reason
 	}
-	if endpoint != "" {
-		nb.Endpoint = endpoint
+	if r.Endpoint != "" {
+		nb.Endpoint = r.Endpoint
 	}
-	if workDir != "" {
-		nb.WorkDir = workDir
+	if r.WorkDir != "" {
+		nb.WorkDir = r.WorkDir
 	}
-	if token != "" {
-		nb.Token = token
+	if r.Token != "" {
+		nb.Token = r.Token
 	}
-	if pid != 0 {
-		nb.PID = pid
+	if r.PID != 0 {
+		nb.PID = r.PID
 	}
-	if env != "" {
-		nb.Env = env
+	if r.Env != "" {
+		nb.Env = r.Env
 	}
-	if status == StatusStopped || status == StatusFailed {
+	if r.Status == StatusStopped || r.Status == StatusFailed {
 		nb.Endpoint = ""
 		nb.PID = 0
 		nb.Token = ""
 	}
-	if workDir != "" && nb.VolumeID != "" {
-		if vol, err := s.vols.Get(ctx, nb.VolumeID); err == nil && vol != nil && vol.WorkDir != workDir {
-			vol.WorkDir = workDir
+	if r.WorkDir != "" && nb.VolumeID != "" {
+		if vol, err := s.vols.Get(ctx, nb.VolumeID); err == nil && vol != nil && vol.WorkDir != r.WorkDir {
+			vol.WorkDir = r.WorkDir
 			_ = s.vols.Update(ctx, vol)
 		}
 	}
 	if err := s.repo.Update(ctx, nb); err != nil {
 		return fmt.Errorf("notebook: update: %w", err)
 	}
-	if status == "" || status == previousStatus {
+	if r.Status == "" || r.Status == previousStatus {
 		return nil
 	}
 	eventType := "notebook.status"
-	fields := map[string]any{"name": name, "status": status}
-	switch status {
+	fields := map[string]any{"name": name, "status": r.Status}
+	switch r.Status {
 	case StatusRunning:
 		eventType = "notebook.running"
 		fields = map[string]any{"name": name}
@@ -88,7 +102,7 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name, sta
 		fields = map[string]any{"name": name}
 	case StatusFailed:
 		eventType = "notebook.failed"
-		fields = map[string]any{"name": name}
+		fields = map[string]any{"name": name, "error": r.Reason}
 	}
 	s.mu.RLock()
 	publisher := s.events

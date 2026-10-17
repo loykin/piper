@@ -14,7 +14,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -224,143 +223,17 @@ func (r *Runner) execute(
 		ResolvedEnv: append([]string(nil), task.Env...),
 		GPUs:        stepGPUs(step),
 		SourceCfg: srcfetch.Config{
-			GitToken:   r.cfg.GitToken,
-			GitUser:    r.cfg.GitUser,
-			StorageURL: r.cfg.StorageURL,
+			GitToken:     r.cfg.GitToken,
+			GitUser:      r.cfg.GitUser,
+			StorageURL:   r.cfg.StorageURL,
+			StorageToken: r.cfg.StorageToken,
 		},
-	}
-
-	if needsIsolatedPython(step) {
-		pyEnv, cleanup, err := prepareIsolatedPython(ctx, step, outputDir, stdoutW, stderrW)
-		if cleanup != nil {
-			defer cleanup()
-		}
-		if err != nil {
-			stdoutW.Close()
-			stderrW.Close()
-			return "", err
-		}
-		cfg.PythonBin = pyEnv.python
-		cfg.PapermillBin = pyEnv.papermill
-		cfg.JupyterDataDir = pyEnv.jupyterDataDir
-		cfg.EnvPathPrepend = []string{pyEnv.binDir}
 	}
 
 	execDir, err := executor.New(step).Execute(ctx, step, cfg)
 	stdoutW.Close()
 	stderrW.Close()
 	return execDir, err
-}
-
-type isolatedPythonEnv struct {
-	dir            string
-	binDir         string
-	python         string
-	pip            string
-	papermill      string
-	jupyterDataDir string
-}
-
-func prepareIsolatedPython(ctx context.Context, step *pipeline.Step, outputDir string, stdout, stderr io.Writer) (*isolatedPythonEnv, func(), error) {
-	absOutputDir, err := filepath.Abs(outputDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolve task output dir: %w", err)
-	}
-	env := &isolatedPythonEnv{
-		dir: filepath.Join(absOutputDir, ".task-venv"),
-	}
-	cleanup := func() {
-		if err := os.RemoveAll(env.dir); err != nil {
-			slog.Warn("remove task python env failed", "path", env.dir, "err", err)
-		}
-	}
-	if err := os.RemoveAll(env.dir); err != nil {
-		return nil, cleanup, fmt.Errorf("reset task python env: %w", err)
-	}
-
-	python := os.Getenv("PIPER_PYTHON_BIN")
-	if python == "" {
-		python = "python3"
-	}
-	if err := runSetupCommand(ctx, outputDir, stdout, stderr, python, "-m", "venv", env.dir); err != nil {
-		return nil, cleanup, fmt.Errorf("create task python env: %w", err)
-	}
-
-	env.binDir = filepath.Join(env.dir, "bin")
-	env.python = filepath.Join(env.binDir, "python")
-	env.pip = filepath.Join(env.binDir, "pip")
-	env.papermill = filepath.Join(env.binDir, "papermill")
-	env.jupyterDataDir = filepath.Join(env.dir, "share", "jupyter")
-
-	// Python 3.12+ venvs no longer include setuptools; install it unconditionally
-	// so that prepare commands using --no-build-isolation can find setuptools.build_meta.
-	if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "--quiet", "setuptools"); err != nil {
-		return nil, cleanup, fmt.Errorf("install setuptools in task python env: %w", err)
-	}
-
-	if needsPapermill(step) {
-		if !fileExists(env.papermill) || !hasPythonModule(ctx, env.python, "ipykernel") {
-			if err := runSetupCommand(ctx, outputDir, stdout, stderr, env.pip, "install", "papermill", "ipykernel"); err != nil {
-				return nil, cleanup, fmt.Errorf("install notebook dependencies in task python env: %w", err)
-			}
-		}
-		if err := writeVenvKernelSpec(env.dir, env.python); err != nil {
-			return nil, cleanup, fmt.Errorf("write notebook kernel spec in task python env: %w", err)
-		}
-	}
-
-	return env, cleanup, nil
-}
-
-func needsPapermill(step *pipeline.Step) bool {
-	return step.Run.Type == "notebook" || step.Run.Notebook != ""
-}
-
-func needsIsolatedPython(step *pipeline.Step) bool {
-	return needsPapermill(step) ||
-		step.Run.Type == "python" ||
-		len(step.Run.Prepare) > 0
-}
-
-func runSetupCommand(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	return cmd.Run()
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func hasPythonModule(ctx context.Context, python, module string) bool {
-	cmd := exec.CommandContext(ctx, python, "-c", "import "+module)
-	return cmd.Run() == nil
-}
-
-func writeVenvKernelSpec(venvDir, python string) error {
-	kernelDir := filepath.Join(venvDir, "share", "jupyter", "kernels", "python3")
-	if err := os.MkdirAll(kernelDir, 0755); err != nil {
-		return err
-	}
-	spec := map[string]any{
-		"argv": []string{
-			python,
-			"-m",
-			"ipykernel_launcher",
-			"-f",
-			"{connection_file}",
-		},
-		"display_name": "Python 3",
-		"language":     "python",
-	}
-	data, err := json.MarshalIndent(spec, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(kernelDir, "kernel.json"), data, 0644)
 }
 
 // lineWriter writes complete lines locally while teeing stdout/stderr to the

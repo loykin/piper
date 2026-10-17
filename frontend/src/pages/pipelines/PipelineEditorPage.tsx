@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { YamlMirror } from '@/components/ui/yaml-mirror'
 import PipelineCanvas from '@/features/pipelines/components/PipelineCanvas'
-import { useNotebookVolumes, useVolumeFiles } from '@/features/notebooks/hooks'
+import { useNotebooks, useNotebookVolumes, useVolumeFiles } from '@/features/notebooks/hooks'
 import { useCreatePipeline, usePipeline } from '@/features/pipelines/hooks'
 import { useSystemSettings } from '@/features/system/hooks'
 import { useProjectId } from '@/features/projects/context'
@@ -23,7 +23,7 @@ import { errorMessage } from '@/lib/format'
 import { PageCrumbs } from '@/shared/components/PageCrumbs'
 import {
   RUNTIME_ITEMS, TASK_LABELS,
-  buildPositions, designLossMessage, draftProblems,
+  buildPositions, designLossMessage, draftProblems, environmentDefaults,
   type ActiveTab, type SourceKind,
 } from '@/features/pipelines/editorModel'
 import { TaskIcon } from '@/features/pipelines/components/editor/TaskIcon'
@@ -69,20 +69,22 @@ export default function PipelineEditorPage() {
   const volumeFilesStatus = volumeFilesQuery.isError ? 'unavailable' : volumeFilesQuery.data?.state ?? null
   const [defaults, setDefaults] = useState<PipelineDefaultsDraft>(initialDraft.defaults)
 
-  // This Piper installation owns exactly one runtime (baremetal, docker, or
-  // k8s) for direct in-process execution — prefill it once as the pipeline
-  // default so placement.runtime always matches what the server can run.
+  // Fill the pipeline's environment defaults once, visibly: placement.runtime
+  // is the one runtime this installation owns, and environmentDefaults adds
+  // the source notebook's image and the k8s namespace (editorModel.ts).
   const { data: systemSettings, isLoading: systemSettingsLoading } = useSystemSettings()
   const serverRuntime = systemSettings?.runtime?.type ?? ''
-  const runtimeAutofilledRef = useRef(false)
+  const { data: notebooks = [], isLoading: notebooksLoading } = useNotebooks()
+  const environmentAutofilledRef = useRef(false)
   useEffect(() => {
-    if (runtimeAutofilledRef.current) return
-    if (systemSettingsLoading || !serverRuntime) return
-    runtimeAutofilledRef.current = true
-    if (!defaults.placementRuntime) {
-      setDefaults(prev => (prev.placementRuntime ? prev : { ...prev, placementRuntime: serverRuntime }))
-    }
-  }, [defaults.placementRuntime, serverRuntime, systemSettingsLoading])
+    if (environmentAutofilledRef.current) return
+    if (systemSettingsLoading || notebooksLoading || !serverRuntime) return
+    environmentAutofilledRef.current = true
+    const sourceImage = editorSourceKind === 'notebook-volume'
+      ? notebooks.find(nb => nb.volume_id === editorVolumeId)?.image ?? ''
+      : ''
+    setDefaults(prev => environmentDefaults(prev, serverRuntime, sourceImage, systemSettings?.runtime?.namespaces ?? []))
+  }, [editorSourceKind, editorVolumeId, notebooks, notebooksLoading, serverRuntime, systemSettings, systemSettingsLoading])
   const draft = useTaskDraft(initialDraft.steps)
   const {
     tasks, positions, setPositions, selectedId, setSelectedId, editingId, setEditingId, replaceSteps,
@@ -96,7 +98,6 @@ export default function PipelineEditorPage() {
   // confirmation action sends the same lossless document the user reviewed,
   // even if other editor state changes while the modal is open.
   const pendingSubmitRef = useRef<{ name: string; yaml: string } | null>(null)
-  const [submitVolumeId, setSubmitVolumeId] = useState('')
   const [resetKey, setResetKey] = useState(0)
   const draggingTaskTypeRef = useRef<PipelineTaskType | null>(null)
   const dragDropHandledRef = useRef(false)
@@ -273,7 +274,6 @@ export default function PipelineEditorPage() {
     setError('')
     pendingSubmitRef.current = payload
     setSubmitModalOpen(true)
-    setSubmitVolumeId(editorSourceKind === 'notebook-volume' ? editorVolumeId : '')
   }
 
   async function confirmSubmit() {
@@ -286,7 +286,7 @@ export default function PipelineEditorPage() {
     try {
       await createPipeline({
         yaml: pending.yaml,
-        volume_id: submitVolumeId || undefined,
+        volume_id: editorSourceKind === 'notebook-volume' ? editorVolumeId || undefined : undefined,
       })
       setSubmitModalOpen(false)
       navigate(`/projects/${projectId}/pipelines?name=${encodeURIComponent(pending.name)}`)
@@ -329,7 +329,7 @@ export default function PipelineEditorPage() {
   function handlePaletteDragEnd() {
     const type = draggingTaskTypeRef.current
     draggingTaskTypeRef.current = null
-    if (!dragDropHandledRef.current && type) addTask(type)
+    if (!dragDropHandledRef.current && type) addTask(type, undefined, serverRuntime)
     dragDropHandledRef.current = false
   }
 
@@ -446,7 +446,7 @@ export default function PipelineEditorPage() {
                       draggable
                       onDragStart={e => handlePaletteDragStart(e, type)}
                       onDragEnd={handlePaletteDragEnd}
-                      onClick={() => addTask(type)}
+                      onClick={() => addTask(type, undefined, serverRuntime)}
                       className="h-auto w-full justify-between border-dashed py-3"
                     >
                       <div className="text-sm font-medium">{TASK_LABELS[type]}</div>
@@ -509,7 +509,7 @@ export default function PipelineEditorPage() {
                   resetKey={resetKey}
                   onSelectStep={setSelectedId}
                   onDoubleClickStep={openTaskEditor}
-                  onAddStep={(type, position) => { dragDropHandledRef.current = true; addTask(type, position) }}
+                  onAddStep={(type, position) => { dragDropHandledRef.current = true; addTask(type, position, serverRuntime) }}
                   onMoveStep={(id, position) => setPositions(pos => ({ ...pos, [id]: position }))}
                   onConnectSteps={connectTasks}
                   onDisconnectSteps={disconnectTasks}
@@ -559,6 +559,7 @@ export default function PipelineEditorPage() {
             draft={draft}
             canBrowse={canBrowse}
             volumeFiles={volumeFiles}
+            runtime={serverRuntime}
             onClose={() => setEditingId(null)}
           />
         ) : undefined}
@@ -566,9 +567,7 @@ export default function PipelineEditorPage() {
 
       <SubmitTemplateDialog
         open={submitModalOpen}
-        volumes={volumes}
-        volumeId={submitVolumeId}
-        onVolumeChange={setSubmitVolumeId}
+        workspace={editorSourceKind === 'notebook-volume' ? selectedVolume : null}
         error={submitModalOpen ? error : undefined}
         submitting={submitting}
         onClose={closeSubmitModal}

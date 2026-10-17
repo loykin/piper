@@ -26,7 +26,6 @@ spec:
   steps:
   - name: extract
     run:
-      type: command
       command: ["sh", "-c", "echo 'extracting data...' && echo 'row1,row2,row3' > $PIPER_OUTPUT_DIR/data.csv"]
     outputs:
       - name: data
@@ -34,7 +33,6 @@ spec:
 
   - name: transform
     run:
-      type: command
       command: ["sh", "-c", "echo 'transforming...' && tr ',' '\\n' < $PIPER_INPUT_DIR/data/data.csv > $PIPER_OUTPUT_DIR/rows.txt"]
     depends_on: [extract]
     inputs:
@@ -46,7 +44,6 @@ spec:
 
   - name: load
     run:
-      type: command
       command: ["sh", "-c", "echo 'loading...' && wc -l $PIPER_INPUT_DIR/rows/rows.txt"]
     depends_on: [transform]
     inputs:

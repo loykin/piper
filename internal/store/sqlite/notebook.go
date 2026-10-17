@@ -20,7 +20,7 @@ func NewNotebookRepo(exec *dbstore.Executor[*sqlx.DB], source string) notebook.R
 	return &notebookRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
-const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, image, yaml, created_by, created_at, updated_at`
+const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, reason, yaml, created_by, created_at, updated_at`
 
 func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) error {
 	now := time.Now()
@@ -28,9 +28,9 @@ func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) 
 	nb.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, image, yaml, created_by, created_at, updated_at)
+			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, reason, yaml, created_by, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML,
+			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.RuntimeID, nb.VolumeID, nb.Reason, nb.YAML,
 			nb.CreatedBy, nb.CreatedAt, nb.UpdatedAt)
 		return err
 	})
@@ -55,16 +55,16 @@ func (r *notebookRepo) Update(ctx context.Context, nb *notebook.NotebookServer) 
 	nb.UpdatedAt = time.Now()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, runtime_id=?, volume_id=?, image=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`,
-			nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML, nb.UpdatedAt, nb.ProjectID, nb.Name)
+			`UPDATE notebook_servers SET status=?, env=?, endpoint=?, pid=?, work_dir=?, token=?, runtime_id=?, volume_id=?, reason=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`,
+			nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.RuntimeID, nb.VolumeID, nb.Reason, nb.YAML, nb.UpdatedAt, nb.ProjectID, nb.Name)
 		return err
 	})
 }
 
-func (r *notebookRepo) SetStatus(ctx context.Context, projectID, name, status string) error {
+func (r *notebookRepo) SetStatus(ctx context.Context, projectID, name, status, reason string) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`UPDATE notebook_servers SET status=?, updated_at=? WHERE project_id=? AND name=?`, status, time.Now(), projectID, name)
+			`UPDATE notebook_servers SET status=?, reason=?, updated_at=? WHERE project_id=? AND name=?`, status, reason, time.Now(), projectID, name)
 		return err
 	})
 }
@@ -139,9 +139,9 @@ func (r *notebookRepo) Delete(ctx context.Context, projectID, name string) error
 // Delete (inside Delete's transaction) so both go through identical SQL.
 func appendNotebookHistory(ctx context.Context, execer sqlx.ExecerContext, nb *notebook.NotebookServer) error {
 	_, err := execer.ExecContext(ctx,
-		`INSERT INTO notebook_history (project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, image, yaml, created_by, deployed_at, stopped_at)
+		`INSERT INTO notebook_history (project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, reason, yaml, created_by, deployed_at, stopped_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.RuntimeID, nb.VolumeID, nb.Image, nb.YAML, nb.CreatedBy, nb.CreatedAt, time.Now())
+		nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.RuntimeID, nb.VolumeID, nb.Reason, nb.YAML, nb.CreatedBy, nb.CreatedAt, time.Now())
 	return err
 }
 
@@ -152,7 +152,7 @@ func (r *notebookRepo) AppendHistory(ctx context.Context, nb *notebook.NotebookS
 }
 
 func (r *notebookRepo) ListHistory(ctx context.Context, projectID string, limit, offset int) ([]*notebook.NotebookHistory, error) {
-	query := `SELECT id, project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, image, yaml, created_by, deployed_at, stopped_at
+	query := `SELECT id, project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, reason, yaml, created_by, deployed_at, stopped_at
 		 FROM notebook_history WHERE project_id=? ORDER BY stopped_at DESC`
 	args := []any{projectID}
 	if limit > 0 {

@@ -8,7 +8,6 @@ spec:
   steps:
     - name: prepare-data
       run:
-        type: command
         command:
           - sh
           - -c
@@ -21,14 +20,23 @@ spec:
     - name: build-features
       depends_on: [prepare-data]
       run:
-        type: notebook
         source: local
-        notebook: notebooks/build_features.ipynb
+        path: notebooks/build_features.ipynb
         deps:
           - support
           - vendor/tinyrecord
+        # Notebook template, baremetal variant: the step owns its environment
+        # (a venv) and registers its own kernel so papermill never picks up a
+        # host-level "python3" kernelspec.
         prepare:
-          - [python3, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
+          - [python3, -m, venv, .venv]
+          - [.venv/bin/python, -m, pip, install, --quiet, papermill, ipykernel, setuptools]
+          - [.venv/bin/python, -m, ipykernel, install, --prefix, .venv, --name, piper-step]
+          - [.venv/bin/python, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
+        command:
+          - sh
+          - -c
+          - .venv/bin/papermill -k piper-step --log-output "$PIPER_SCRIPT_PATH" "$PIPER_OUTPUT_DIR/executed.ipynb" -f "$PIPER_PARAMS_FILE"
       options:
         env:
           - name: PYTHONPATH
@@ -47,7 +55,6 @@ spec:
     - name: audit-seed
       depends_on: [prepare-data]
       run:
-        type: command
         command:
           - sh
           - -c
@@ -63,15 +70,16 @@ spec:
     - name: summarize
       depends_on: [build-features, audit-seed]
       run:
-        type: python
         source: local
         path: scripts/summarize.py
         deps:
           - support
           - vendor/tinyrecord
         prepare:
-          - [python3, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
-        command: [sh, -c, 'python3 "$PIPER_SCRIPT_PATH"']
+          - [python3, -m, venv, .venv]
+          - [.venv/bin/python, -m, pip, install, --quiet, setuptools]
+          - [.venv/bin/python, -m, pip, install, --quiet, --no-deps, --no-build-isolation, --target, .deps, ./vendor/tinyrecord]
+        command: [sh, -c, '.venv/bin/python "$PIPER_SCRIPT_PATH"']
       options:
         env:
           - name: PYTHONPATH

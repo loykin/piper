@@ -166,6 +166,9 @@ func (h *Handler) listNotebookHistory(c *gin.Context) {
 		}
 		httpx.SetTotalCountHeader(c, limit, total)
 	}
+	for _, entry := range history {
+		entry.Image = ManifestImage(entry.YAML)
+	}
 	c.JSON(http.StatusOK, history)
 }
 

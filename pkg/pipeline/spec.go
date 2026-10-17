@@ -46,13 +46,16 @@ func (p *Pipeline) Validate() error {
 				return fmt.Errorf("step %q depends on unknown step %q", s.Name, dep)
 			}
 		}
+		if len(s.Run.Command) == 0 {
+			return fmt.Errorf("step %q: run.command is required", s.Name)
+		}
 		for i, command := range s.Run.Prepare {
 			if len(command) == 0 {
 				return fmt.Errorf("step %q prepare[%d] command is empty", s.Name, i)
 			}
 		}
 		for field, value := range map[string]string{
-			"run.path": s.Run.Path, "run.notebook": s.Run.Notebook, "run.dir": s.Run.Dir,
+			"run.path": s.Run.Path, "run.dir": s.Run.Dir,
 		} {
 			if err := validateRelativePath(fmt.Sprintf("step %q %s", s.Name, field), value, true); err != nil {
 				return err
@@ -207,26 +210,24 @@ type Step struct {
 }
 
 type Run struct {
-	Type   string `yaml:"type" json:"type,omitempty"`     // notebook | python | command
-	Source string `yaml:"source" json:"source,omitempty"` // git | s3 | http | local
-	Repo   string `yaml:"repo" json:"repo,omitempty"`
-	Branch string `yaml:"branch" json:"branch,omitempty"`
-	Path   string `yaml:"path" json:"path,omitempty"`
+	Source string `yaml:"source,omitempty" json:"source,omitempty"` // git | s3 | http | local
+	Repo   string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Branch string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	Path   string `yaml:"path,omitempty" json:"path,omitempty"`
 	// CredentialRef names a git credential to use for git auth.
 	CredentialRef  string     `yaml:"credentialRef,omitempty" json:"credentialRef,omitempty"`
-	Notebook       string     `yaml:"notebook,omitempty" json:"notebook,omitempty"` // shorthand: type=notebook, source=local, path=<value>
-	Deps           []string   `yaml:"deps,omitempty" json:"deps,omitempty"`         // extra files/dirs to snapshot alongside the entry point
-	Prepare        [][]string `yaml:"prepare,omitempty" json:"prepare,omitempty"`   // commands run before the entry point
-	Dir            string     `yaml:"dir" json:"dir,omitempty"`                     // sub-directory name for the source checkout
-	URL            string     `yaml:"url" json:"url,omitempty"`                     // http/https URL (source: http)
-	Command        []string   `yaml:"command" json:"command,omitempty"`
+	Deps           []string   `yaml:"deps,omitempty" json:"deps,omitempty"`       // extra files/dirs to snapshot alongside the entry point
+	Prepare        [][]string `yaml:"prepare,omitempty" json:"prepare,omitempty"` // commands run before the entry point
+	Dir            string     `yaml:"dir,omitempty" json:"dir,omitempty"`         // sub-directory name for the source checkout
+	URL            string     `yaml:"url,omitempty" json:"url,omitempty"`         // http/https URL (source: http)
+	Command        []string   `yaml:"command,omitempty" json:"command,omitempty"`
 	SnapshotPrefix string     `yaml:"snapshot_prefix,omitempty" json:"snapshot_prefix,omitempty"` // set at runtime after submit
 }
 
 type Artifact struct {
 	Name string `yaml:"name"`
 	Path string `yaml:"path"`
-	From string `yaml:"from"`           // "stepName/outputName"
+	From string `yaml:"from,omitempty"` // "stepName/outputName"
 	Type string `yaml:"type,omitempty"` // viewer hint: tensorboard, html, table, image
 }
 

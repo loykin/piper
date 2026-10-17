@@ -84,26 +84,9 @@ func (r *Driver) Start(_ context.Context, req notebookdriver.StartRequest) (*not
 		return nil, err
 	}
 
-	var command []string
-	if strings.HasPrefix(envPath, "conda:") {
-		condaName := strings.TrimPrefix(envPath, "conda:")
-		if condaName == "" {
-			return nil, fmt.Errorf("conda env name is empty in %q", envPath)
-		}
-		baseCommand := append([]string{"jupyter", "lab"}, notebook.JupyterLabArgs(req.BaseURL, "", req.WorkDir, req.Port)...)
-		script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, req.WorkDir)
-		if err != nil {
-			return nil, err
-		}
-		command = []string{bin, "run", "--no-capture-output", "-n", condaName, "sh", "-lc", script}
-	} else {
-		baseCommand := append([]string{bin}, extraArgs...)
-		baseCommand = append(baseCommand, notebook.JupyterLabArgs(req.BaseURL, "", req.WorkDir, req.Port)...)
-		script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, req.WorkDir)
-		if err != nil {
-			return nil, err
-		}
-		command = []string{"sh", "-lc", script}
+	command, err := launchCommand(req, bin, extraArgs, envPath, prepSteps)
+	if err != nil {
+		return nil, err
 	}
 
 	// Write meta file for crash recovery before starting the process.
@@ -213,6 +196,30 @@ func (r *Driver) Start(_ context.Context, req notebookdriver.StartRequest) (*not
 	}
 
 	return &notebookdriver.StartedHandle{Endpoint: endpoint, PID: pid, Token: req.Token, EnvPath: envPath}, nil
+}
+
+// launchCommand builds the shell command that runs prepare steps and then
+// JupyterLab. Jupyter gets the per-start token like the docker and k8s
+// drivers: Piper's proxy injects it, so a direct request to the local port
+// without the token is rejected.
+func launchCommand(req notebookdriver.StartRequest, bin string, extraArgs []string, envPath string, prepSteps []notebook.NotebookPrepareStep) ([]string, error) {
+	jupyterArgs := notebook.JupyterLabArgs(req.BaseURL, req.Token, req.WorkDir, req.Port)
+	if condaName, ok := strings.CutPrefix(envPath, "conda:"); ok {
+		if condaName == "" {
+			return nil, fmt.Errorf("conda env name is empty in %q", envPath)
+		}
+		script, err := notebook.BuildLaunchScript(nil, prepSteps, append([]string{"jupyter", "lab"}, jupyterArgs...), req.WorkDir)
+		if err != nil {
+			return nil, err
+		}
+		return []string{bin, "run", "--no-capture-output", "-n", condaName, "sh", "-lc", script}, nil
+	}
+	baseCommand := append(append([]string{bin}, extraArgs...), jupyterArgs...)
+	script, err := notebook.BuildLaunchScript(nil, prepSteps, baseCommand, req.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"sh", "-lc", script}, nil
 }
 
 // Recover scans the PID metadata directory for notebooks left from a previous

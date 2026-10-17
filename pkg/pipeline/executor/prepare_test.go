@@ -19,7 +19,7 @@ func TestRunPrepareRunsSequentiallyInStepWorkDir(t *testing.T) {
 		}},
 	}
 
-	if err := runPrepare(context.Background(), step, ExecConfig{}, workDir, nil, nil); err != nil {
+	if err := runPrepare(context.Background(), step, nil, workDir, nil, nil); err != nil {
 		t.Fatalf("runPrepare() error: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(workDir, "order.txt"))
@@ -41,7 +41,7 @@ func TestRunPrepareStopsBeforeLaterCommands(t *testing.T) {
 		}},
 	}
 
-	if err := runPrepare(context.Background(), step, ExecConfig{}, workDir, nil, nil); err == nil {
+	if err := runPrepare(context.Background(), step, nil, workDir, nil, nil); err == nil {
 		t.Fatal("runPrepare() expected error")
 	}
 	if _, err := os.Stat(filepath.Join(workDir, "should-not-exist")); !os.IsNotExist(err) {

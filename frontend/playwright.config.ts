@@ -4,7 +4,6 @@ import path from 'node:path'
 
 const frontendDir = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(frontendDir, '..')
-const pythonEnv = process.env.PIPER_PIPELINE_TEMPLATE_E2E_ENV ?? '/tmp/piper-pipeline-template-e2e'
 const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH
 
 export default defineConfig({
@@ -22,7 +21,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `PATH=${pythonEnv}/bin:$PATH go run ./examples/frontend-e2e --addr=127.0.0.1:18080`,
+      command: 'go run ./examples/frontend-e2e --addr=127.0.0.1:18080',
       cwd: repoRoot,
       url: 'http://127.0.0.1:18080/e2e/ready',
       timeout: 120_000,

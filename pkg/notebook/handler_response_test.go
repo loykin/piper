@@ -41,7 +41,7 @@ func (r *stubNotebookRepo) Update(_ context.Context, nb *NotebookServer) error {
 	r.servers[nb.Name] = nb
 	return nil
 }
-func (r *stubNotebookRepo) SetStatus(_ context.Context, _, name, status string) error {
+func (r *stubNotebookRepo) SetStatus(_ context.Context, _, name, status, _ string) error {
 	if nb, ok := r.servers[name]; ok {
 		nb.Status = status
 	}
@@ -100,7 +100,6 @@ func secretNotebookServer(name string) *NotebookServer {
 		Token:     "super-secret-jupyter-token",
 		RuntimeID: "rt-1",
 		VolumeID:  "vol-1",
-		Image:     "jupyter/base-notebook",
 		YAML:      "apiVersion: piper/v1\nkind: Notebook\n",
 		CreatedBy: "alice",
 		CreatedAt: time.Now(),
@@ -231,7 +230,7 @@ func TestNotebookServerResponseFieldSet(t *testing.T) {
 		"project_id": true, "name": true, "status": true, "env": true,
 		"endpoint": true, "work_dir": true, "runtime_id": true,
 		"volume_id": true, "image": true, "yaml": true, "created_by": true,
-		"created_at": true, "updated_at": true,
+		"reason": true, "created_at": true, "updated_at": true,
 	}
 	for k := range m {
 		if !want[k] {
@@ -247,6 +246,19 @@ func TestNotebookServerResponseFieldSet(t *testing.T) {
 	}
 	if _, ok := m["pid"]; ok {
 		t.Error("pid key must never appear")
+	}
+}
+
+// The image lives only in the stored manifest; the response reads it there.
+func TestNotebookServerResponseImageComesFromYAML(t *testing.T) {
+	nb := secretNotebookServer("nb-img")
+	nb.YAML = "apiVersion: piper/v1\nkind: Notebook\nmetadata:\n  name: nb-img\nspec:\n  driver:\n    docker:\n      image: quay.io/jupyter/minimal-notebook:latest\n"
+	if got := NewNotebookServerResponse(nb).Image; got != "quay.io/jupyter/minimal-notebook:latest" {
+		t.Fatalf("Image = %q", got)
+	}
+	nb.YAML = "apiVersion: piper/v1\nkind: Notebook\nmetadata:\n  name: nb-img\n"
+	if got := NewNotebookServerResponse(nb).Image; got != "" {
+		t.Fatalf("baremetal Image = %q, want empty", got)
 	}
 }
 

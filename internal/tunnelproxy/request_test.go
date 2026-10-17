@@ -26,20 +26,16 @@ func TestSetForwardedHeaders(t *testing.T) {
 	}
 }
 
-func TestInjectQueryParamUnlessCookie(t *testing.T) {
+// A "username-*" cookie may come from another Jupyter on the same host; the
+// token must still be injected.
+func TestInjectQueryParamIgnoresForeignJupyterCookies(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "http://example.com/?foo=bar", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := InjectQueryParamUnlessCookie(req, "token", "tok-123", "username-")
-	if got != "foo=bar&token=tok-123" {
+	req.AddCookie(&http.Cookie{Name: "username-localhost-18081", Value: "1"})
+	if got := InjectQueryParam(req, "token", "tok-123"); got != "foo=bar&token=tok-123" {
 		t.Fatalf("query = %q", got)
-	}
-
-	req.AddCookie(&http.Cookie{Name: "username-abc", Value: "1"})
-	got = InjectQueryParamUnlessCookie(req, "token", "tok-123", "username-")
-	if got != "foo=bar" {
-		t.Fatalf("query with cookie = %q, want %q", got, "foo=bar")
 	}
 }
 

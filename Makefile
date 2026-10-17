@@ -1,4 +1,4 @@
-.PHONY: build ui docker build-linux build-linux-arm64 build-linux-native test test-ui test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-pipeline-e2e test-docker-notebook-e2e test-docker-serving-e2e test-k8s-e2e test-integration demo clean proto check-deps
+.PHONY: test-golden-e2e build ui docker build-linux build-linux-arm64 build-linux-native test test-ui test-notebook-conformance test-e2e test-frontend-e2e test-process-notebook-e2e test-docker-pipeline-e2e test-docker-notebook-e2e test-docker-serving-e2e test-k8s-e2e test-integration demo clean proto check-deps
 
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 IMAGE ?= piper/piper:latest
@@ -92,6 +92,13 @@ test-docker-notebook-e2e:
 test-docker-serving-e2e:
 	PIPER_SERVING_DOCKER_E2E_IMAGE=python:3.12-slim \
 	go test ./pkg/serving/servingdriver/docker -run '^TestServingDockerE2E_' -v -count=1 -timeout=6m
+
+# Golden path: notebook -> template (editor output) -> run, on each runtime,
+# configured as shipped (auth, built-in store, workload_token). Baremetal and
+# docker always run; k8s runs when PIPER_GOLDEN_K8S_IMAGE names an image
+# already loaded into the current cluster.
+test-golden-e2e:
+	go test -tags=golden_e2e -run '^TestGoldenPath_' -v -count=1 -timeout=40m .
 
 # K8s smoke E2E (requires kubectl + a cluster with $(IMAGE) available)
 test-k8s-e2e:

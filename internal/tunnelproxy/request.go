@@ -17,22 +17,18 @@ func SetForwardedHeaders(req *http.Request, host, scheme string) {
 	req.Header.Del("Origin")
 }
 
-// InjectQueryParamUnlessCookie appends a query parameter unless a cookie with
-// the given prefix is already present. It returns the updated query string.
-func InjectQueryParamUnlessCookie(req *http.Request, key, value, cookiePrefix string) string {
+// InjectQueryParam sets a query parameter on every upstream request and
+// returns the updated query string. It used to skip the parameter whenever any
+// "username-*" cookie was present, but that cookie can belong to another
+// Jupyter on the same host (the name carries host and port, the check only a
+// prefix), and skipping left the user on Jupyter's own login page.
+func InjectQueryParam(req *http.Request, key, value string) string {
 	if req == nil {
 		return ""
 	}
 	rawQuery := req.URL.RawQuery
 	if value == "" {
 		return rawQuery
-	}
-	if cookiePrefix != "" {
-		for _, c := range req.Cookies() {
-			if strings.HasPrefix(c.Name, cookiePrefix) {
-				return rawQuery
-			}
-		}
 	}
 	values, _ := url.ParseQuery(rawQuery)
 	if values == nil {

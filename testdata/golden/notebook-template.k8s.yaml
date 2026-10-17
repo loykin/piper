@@ -1,0 +1,30 @@
+apiVersion: piper/v1
+kind: Pipeline
+metadata:
+  name: "iris"
+spec:
+  defaults:
+    driver:
+      placement:
+        runtime: "k8s"
+      k8s:
+        image: "jupyter/minimal-notebook:latest"
+        namespace: "piper-golden"
+  steps:
+    - name: "task-1"
+      run:
+        path: "train_iris.ipynb"
+        prepare:
+          - ["sh", "-c", "python3 -m pip install -q papermill ipykernel"]
+          - ["sh", "-c", "python3 -m pip install -q -r requirements.txt"]
+        command:
+          - "sh"
+          - "-c"
+          - "papermill --log-output \"$PIPER_SCRIPT_PATH\" \"$PIPER_OUTPUT_DIR/executed.ipynb\" -f \"$PIPER_PARAMS_FILE\""
+        deps:
+          - "requirements.txt"
+      params:
+        n_estimators: 120
+      outputs:
+        - name: "executed-notebook"
+          path: "executed.ipynb"

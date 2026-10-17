@@ -12,8 +12,16 @@ spec:
     #   POST /runs  {"yaml": "...", "params": {"n_estimators": 200}}
     - name: train
       run:
-        type: notebook
-        notebook: examples/notebook/iris_train.ipynb
+        path: examples/notebook/iris_train.ipynb
+        # Notebook template, baremetal variant (see docs/pipeline-execution-templates.md).
+        prepare:
+          - [python3, -m, venv, .venv]
+          - [.venv/bin/python, -m, pip, install, --quiet, papermill, ipykernel, scikit-learn]
+          - [.venv/bin/python, -m, ipykernel, install, --prefix, .venv, --name, piper-step]
+        command:
+          - sh
+          - -c
+          - .venv/bin/papermill -k piper-step --log-output "$PIPER_SCRIPT_PATH" "$PIPER_OUTPUT_DIR/executed.ipynb" -f "$PIPER_PARAMS_FILE"
       params:
         n_estimators: 100
         test_size: 0.2

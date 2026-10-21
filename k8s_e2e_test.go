@@ -68,7 +68,7 @@ func TestK8sE2E_SingleStepJobReportsSuccess(t *testing.T) {
 	applyK8sE2EServerManifests(t, ns, image)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
-	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+	waitK8sE2ES3Setup(t, ns)
 
 	localPort := freeK8sE2EPort(t)
 	pfCtx, pfCancel := context.WithCancel(ctx)
@@ -153,7 +153,7 @@ func TestK8sE2E_ServerRestartDoesNotDuplicateMetrics(t *testing.T) {
 	applyK8sE2EServerManifests(t, ns, image)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
-	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+	waitK8sE2ES3Setup(t, ns)
 
 	localPort := freeK8sE2EPort(t)
 	pfCtx, pfCancel := context.WithCancel(ctx)
@@ -349,7 +349,7 @@ func TestK8sE2E_ExamplePipelines(t *testing.T) {
 			applyK8sE2EServerManifests(t, ns, image)
 			waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 			kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
-			kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+			waitK8sE2ES3Setup(t, ns)
 
 			localPort := freeK8sE2EPort(t)
 			pfCtx, pfCancel := context.WithCancel(ctx)
@@ -409,7 +409,7 @@ func TestK8sE2E_MultiDomainWorkloads(t *testing.T) {
 	applyK8sE2EServerManifests(t, ns, piperImage)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
-	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+	waitK8sE2ES3Setup(t, ns)
 
 	localPort := freeK8sE2EPort(t)
 	pfCtx, pfCancel := context.WithCancel(ctx)
@@ -772,6 +772,8 @@ spec:
       containers:
         - name: seaweedfs
           image: chrislusf/seaweedfs:latest
+          # Loaded into kind by CI; :latest would otherwise pull every time.
+          imagePullPolicy: IfNotPresent
           args: ["server", "-dir=/data", "-s3", "-s3.port=9000"]
           ports:
             - containerPort: 9000
@@ -800,14 +802,18 @@ spec:
       restartPolicy: OnFailure
       containers:
         # SeaweedFS without an s3 config accepts anonymous requests, so a
-        # plain PUT creates the bucket; its own image already has curl.
+        # plain PUT creates the bucket; its own image already has curl. 409
+        # means an earlier attempt already created it.
         - name: create-bucket
           image: chrislusf/seaweedfs:latest
+          imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -c
             - |
-              until curl -sf -X PUT http://seaweedfs:9000/piper-artifacts; do
+              until code=$(curl -s -o /dev/null -w '%%{http_code}' --max-time 10 -X PUT http://seaweedfs:9000/piper-artifacts) &&
+                { [ "$code" = 200 ] || [ "$code" = 409 ]; }; do
+                echo "create bucket: HTTP $code, retrying"
                 sleep 2
               done
 `, ns, piperImage)
@@ -991,6 +997,26 @@ func waitK8sE2ERunStatus(t *testing.T, serverURL, runID, want string, timeout ti
 	return false
 }
 
+// waitK8sE2ES3Setup waits for the bucket Job and, if it doesn't finish,
+// dumps its pod state and logs before failing (an image pull or a stuck
+// request is otherwise invisible).
+func waitK8sE2ES3Setup(t *testing.T, ns string) {
+	t.Helper()
+	out, err := kubectlContext(context.Background(), nil, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+	if err == nil {
+		return
+	}
+	for _, args := range [][]string{
+		{"-n", ns, "get", "pods,jobs", "-o", "wide"},
+		{"-n", ns, "describe", "pods", "-l", "job-name=s3-setup"},
+		{"-n", ns, "logs", "job/s3-setup", "--all-containers=true", "--tail=50"},
+	} {
+		dump, _ := kubectlContext(context.Background(), nil, args...)
+		t.Logf("kubectl %s\n%s", strings.Join(args, " "), dump)
+	}
+	t.Fatalf("job/s3-setup did not complete: %v\n%s", err, out)
+}
+
 func dumpK8sE2EDebug(t *testing.T, ns string) {
 	t.Helper()
 	for _, args := range [][]string{
@@ -1069,7 +1095,7 @@ func TestK8sE2E_NotebookLifecycle(t *testing.T) {
 	applyK8sE2EServerManifests(t, ns, piperImage)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
-	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+	waitK8sE2ES3Setup(t, ns)
 
 	localPort := freeK8sE2EPort(t)
 	pfCtx, pfCancel := context.WithCancel(ctx)
@@ -1222,7 +1248,7 @@ func TestK8sE2E_NotebookVolumeReuse(t *testing.T) {
 	applyK8sE2EServerManifests(t, ns, piperImage)
 	waitK8sE2EDeployment(t, ns, "piper-server", 90*time.Second)
 	kubectl(t, "-n", ns, "rollout", "status", "deployment/seaweedfs", "--timeout=60s")
-	kubectl(t, "-n", ns, "wait", "job/s3-setup", "--for=condition=complete", "--timeout=90s")
+	waitK8sE2ES3Setup(t, ns)
 
 	localPort := freeK8sE2EPort(t)
 	pfCtx, pfCancel := context.WithCancel(ctx)

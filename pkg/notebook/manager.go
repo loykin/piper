@@ -263,7 +263,7 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 }
 
 // Stop halts the server process but keeps the DB record and volume.
-// Status transitions: running -> stopping -> stopped via worker observation.
+// Status transitions: running -> stopping -> stopped via driver status reports.
 func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	if projectID == "" {
 		return fmt.Errorf("notebook: project ID is required")
@@ -283,18 +283,18 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	}
 	if err := m.driver.Stop(ctx, nb); err != nil {
 		// A transport failure says nothing about workload state. Restore the last
-		// observed status and let the caller retry when the worker is reachable.
+		// observed status and let the caller retry when the runtime is reachable.
 		if restoreErr := m.repo.SetStatus(ctx, projectID, name, nb.Status, nb.Reason); restoreErr != nil {
 			return fmt.Errorf("notebook: stop failed: %v; restore status: %w", err, restoreErr)
 		}
 		return fmt.Errorf("notebook: stop: %w", err)
 	}
-	// Stop RPC delivered: worker will push StatusStopped when the process exits.
+	// The driver reports StatusStopped after stopping or observing the workload.
 	return nil
 }
 
-// Restart relaunches a stopped notebook on the same worker that holds its volume.
-// Returns immediately with status=starting; worker status push sets status to running/failed.
+// Restart relaunches a stopped notebook using its existing volume.
+// Returns immediately with status=starting; driver status reports set status to running/failed.
 func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 	if projectID == "" {
 		return fmt.Errorf("notebook: project ID is required")

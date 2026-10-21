@@ -77,6 +77,9 @@ export default function PipelineEditorPage() {
   const { data: notebooks = [], isLoading: notebooksLoading } = useNotebooks()
   const environmentAutofilledRef = useRef(false)
   useEffect(() => {
+    // Source selection mounts this page before a notebook volume is chosen.
+    // Wait for setup so the one-time defaults include that notebook's image.
+    if (!setupDone) return
     if (environmentAutofilledRef.current) return
     if (systemSettingsLoading || notebooksLoading || !serverRuntime) return
     environmentAutofilledRef.current = true
@@ -84,7 +87,7 @@ export default function PipelineEditorPage() {
       ? notebooks.find(nb => nb.volume_id === editorVolumeId)?.image ?? ''
       : ''
     setDefaults(prev => environmentDefaults(prev, serverRuntime, sourceImage, systemSettings?.runtime?.namespaces ?? []))
-  }, [editorSourceKind, editorVolumeId, notebooks, notebooksLoading, serverRuntime, systemSettings, systemSettingsLoading])
+  }, [setupDone, editorSourceKind, editorVolumeId, notebooks, notebooksLoading, serverRuntime, systemSettings, systemSettingsLoading])
   const draft = useTaskDraft(initialDraft.steps)
   const {
     tasks, positions, setPositions, selectedId, setSelectedId, editingId, setEditingId, replaceSteps,

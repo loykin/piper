@@ -2,6 +2,7 @@ package localdriver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -281,9 +282,11 @@ func TestStaleOnExitCallbackIgnoredAfterRedeploy(t *testing.T) {
 	awaitReport(t, reports) // running report for gen 1
 	firstReq := rt.lastRequest()
 
-	// Redeploy replaces gen 1 with gen 2 in d.services (mirrors Manager.Stop
-	// then Manager.Deploy on redeploy — the key is reused).
-	d.removeService(serviceKey("proj", "svc"), 1)
+	// Stop must release the slot even when the runtime's exit callback is
+	// delayed until after the replacement starts (the real Restart flow).
+	if err := d.Stop(context.Background(), &serving.Service{ProjectID: "proj", Name: "svc"}); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
 	if _, err := d.Deploy(context.Background(), testSpec("proj", "svc", 8080), artifactResolved(), ""); err != nil {
 		t.Fatalf("second Deploy: %v", err)
 	}
@@ -298,6 +301,26 @@ func TestStaleOnExitCallbackIgnoredAfterRedeploy(t *testing.T) {
 	d.mu.Unlock()
 	if !stillActive {
 		t.Fatal("gen-2 service was removed by a stale gen-1 OnExit callback")
+	}
+}
+
+func TestStopFailureKeepsServiceActive(t *testing.T) {
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer healthy.Close()
+	rt := &fakeRuntime{endpoint: healthy.URL, stopErr: errors.New("stop failed")}
+	d, reports := newTestDriver(t, rt, time.Second)
+	spec := testSpec("proj", "svc", 8080)
+	if _, err := d.Deploy(context.Background(), spec, artifactResolved(), ""); err != nil {
+		t.Fatal(err)
+	}
+	awaitReport(t, reports)
+	if err := d.Stop(context.Background(), &serving.Service{ProjectID: "proj", Name: "svc"}); err == nil {
+		t.Fatal("expected stop failure")
+	}
+	if _, err := d.Deploy(context.Background(), spec, artifactResolved(), ""); err == nil {
+		t.Fatal("failed Stop must not allow a duplicate deployment")
 	}
 }
 

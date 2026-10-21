@@ -37,8 +37,13 @@ func NewProxy(repo Repository) *Proxy {
 // ServeHTTP handles POST /services/predict/{name}[/...].
 // It looks up the service endpoint and reverse-proxies the request.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Extract service name from path: /services/predict/{name}[/extra...]
-	rest := strings.TrimPrefix(r.URL.Path, "/services/predict/")
+	// Gin preserves the mounted project's prefix in URL.Path. Keep it for
+	// redirects and extract the service name after the serving route.
+	basePath, rest, found := strings.Cut(r.URL.Path, "/services/predict/")
+	if !found {
+		http.Error(w, "service route required", http.StatusBadRequest)
+		return
+	}
 	parts := strings.SplitN(rest, "/", 2)
 	name := parts[0]
 	if name == "" {
@@ -77,7 +82,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Name:        name,
 		Host:        r.Host,
 		Scheme:      tunnelproxy.RequestScheme(r),
-		ProxyPrefix: "/services/predict/" + name,
+		ProxyPrefix: basePath + "/services/predict/" + url.PathEscape(name),
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -271,11 +271,21 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 	}, nil
 }
 
-// Stop terminates the runtime instance. The final "stopped" status is
-// reported asynchronously by the runtime's OnExit callback, not here —
-// matching Manager.Stop's contract (it only persists StatusStopping itself).
-func (d *Driver) Stop(_ context.Context, svc *serving.Service) error {
-	return d.driver.Stop(context.Background(), runtimeName(svc.ProjectID, svc.Name))
+// Stop releases the active slot before returning so Manager can immediately
+// redeploy. Manager persists the stopped status; a late OnExit from this
+// generation must not affect the replacement.
+func (d *Driver) Stop(ctx context.Context, svc *serving.Service) error {
+	key := serviceKey(svc.ProjectID, svc.Name)
+	d.mu.Lock()
+	active := d.services[key]
+	d.mu.Unlock()
+	if err := d.driver.Stop(ctx, runtimeName(svc.ProjectID, svc.Name)); err != nil {
+		return err
+	}
+	if active != nil {
+		d.removeService(key, active.gen)
+	}
+	return nil
 }
 
 // Recover reattaches to services that survived a process restart. Call once

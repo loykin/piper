@@ -357,6 +357,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const { data: allRuns = [] } = useRuns({ status: 'success' })
   const { data: systemSettings, isLoading: systemSettingsLoading } = useSystemSettings()
   const serverRuntime = systemSettings?.runtime?.type ?? ''
+  const serverNamespace = systemSettings?.runtime?.namespaces?.[0] ?? DEFAULT_FORM.k8sNamespace
   const { mutateAsync: deploy, isPending: deploying } = useCreateService()
 
   const [tab, setTab] = useState<'form' | 'yaml'>('form')
@@ -366,6 +367,7 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   const {
     control,
     setValue,
+    getValues,
     handleSubmit,
     formState: { errors },
   } = useForm<FormState>({
@@ -407,8 +409,9 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
     modeAutofilledRef.current = true
     const nextMode = serverRuntime === 'k8s' ? 'k8s' : 'local'
     if (form.runtimeMode !== nextMode) setField('runtimeMode', nextMode)
+    if (nextMode === 'k8s') setField('k8sNamespace', serverNamespace)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverRuntime, systemSettingsLoading])
+  }, [serverRuntime, serverNamespace, systemSettingsLoading])
 
   useEffect(() => {
     let canceled = false
@@ -442,15 +445,17 @@ export function DeployForm({ onClose, onDeployed }: DeployFormProps) {
   )
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
-    const next = { ...form, [key]: value }
-    if (key === 'pipeline') { next.run = 'latest'; next.step = ''; next.artifact = '' }
-    if (key === 'run') { next.step = ''; next.artifact = '' }
-    if (key === 'step') { next.artifact = '' }
-    if (key === 'command' || key === 'port' || key === 'healthPath') next.templateKey = 'custom'
-    for (const [field, fieldValue] of Object.entries(next) as [keyof FormState, FormState[keyof FormState]][]) {
+    // Effects can select the sole pipeline and initialize the runtime in the
+    // same render. Write only changed fields, never replay a stale form copy.
+    const changes: Partial<FormState> = { [key]: value }
+    if (key === 'pipeline') { changes.run = 'latest'; changes.step = ''; changes.artifact = '' }
+    if (key === 'run') { changes.step = ''; changes.artifact = '' }
+    if (key === 'step') { changes.artifact = '' }
+    if (key === 'command' || key === 'port' || key === 'healthPath') changes.templateKey = 'custom'
+    for (const [field, fieldValue] of Object.entries(changes) as [keyof FormState, FormState[keyof FormState]][]) {
       setValue(field, fieldValue, { shouldDirty: true, shouldValidate: false })
     }
-    setYaml(buildYAML(next))
+    setYaml(buildYAML(getValues()))
   }
 
   function addEnv() {

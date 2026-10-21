@@ -242,6 +242,9 @@ func TestStopReleasesPortForReuse(t *testing.T) {
 	if err := d.Stop(context.Background(), srv); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+	if r := awaitReport(t, reports); r.status != notebook.StatusStopped {
+		t.Fatalf("Stop report = %q, want stopped", r.status)
+	}
 
 	d.mu.Lock()
 	_, stillReserved := d.reservedPorts[port]
@@ -255,6 +258,7 @@ func TestStaleOnExitCallbackIgnoredAfterRestart(t *testing.T) {
 	rt := &fakeRuntime{}
 	d, reports := newTestDriver(t, rt)
 	vol := &notebook.NotebookVolume{ID: "vol-1", WorkDir: t.TempDir()}
+	d.cfg.PortRange = "18888-18888" // Force the replacement to reuse the old port.
 
 	if _, err := d.Start(context.Background(), testSpec("proj", "nb"), vol, ""); err != nil {
 		t.Fatalf("first Start: %v", err)
@@ -268,6 +272,7 @@ func TestStaleOnExitCallbackIgnoredAfterRestart(t *testing.T) {
 	if err := d.Stop(context.Background(), &notebook.NotebookServer{ProjectID: "proj", Name: "nb"}); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+	awaitReport(t, reports) // stopped, even if the runtime's OnExit is delayed
 	if _, err := d.Start(context.Background(), testSpec("proj", "nb"), vol, ""); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
@@ -284,9 +289,16 @@ func TestStaleOnExitCallbackIgnoredAfterRestart(t *testing.T) {
 
 	d.mu.Lock()
 	_, stillActive := d.notebooks[notebookKey("proj", "nb")]
+	_, stillReserved := d.reservedPorts[req.Port]
 	d.mu.Unlock()
 	if !stillActive {
 		t.Fatal("gen-2 notebook was removed by a stale gen-1 OnExit callback")
+	}
+	if !stillReserved {
+		t.Fatal("replacement port reservation was released by stale OnExit")
+	}
+	if _, err := d.allocatePort(); err == nil {
+		t.Fatal("replacement port was allocated a second time")
 	}
 }
 
@@ -338,3 +350,29 @@ func (nonRecoverableRuntime) Start(context.Context, notebookdriver.StartRequest)
 func (nonRecoverableRuntime) Stop(context.Context, string) error    { return nil }
 func (nonRecoverableRuntime) KillAll(context.Context) error         { return nil }
 func (nonRecoverableRuntime) Status(context.Context, string) string { return notebook.StatusStopped }
+
+func TestRecoveredNotebookLateExitKeepsReplacementPort(t *testing.T) {
+	rt := &fakeRuntime{}
+	var lateExit func(string)
+	rt.recoverFn = func(_ context.Context, recovered func(notebookdriver.RecoveredHandle) func(string), _ func(notebookdriver.RecoveredHandle, string)) error {
+		lateExit = recovered(notebookdriver.RecoveredHandle{ProjectID: "proj", Name: "nb", Port: 18888})
+		return nil
+	}
+	d, reports := newTestDriver(t, rt)
+	d.cfg.PortRange = "18888-18888"
+	if err := d.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Stop(context.Background(), &notebook.NotebookServer{ProjectID: "proj", Name: "nb"}); err != nil {
+		t.Fatal(err)
+	}
+	awaitReport(t, reports)
+	if _, err := d.Start(context.Background(), testSpec("proj", "other"), &notebook.NotebookVolume{WorkDir: t.TempDir()}, ""); err != nil {
+		t.Fatal(err)
+	}
+	awaitReport(t, reports)
+	lateExit(notebook.StatusStopped)
+	if _, err := d.allocatePort(); err == nil {
+		t.Fatal("late recovered exit released another notebook's port")
+	}
+}

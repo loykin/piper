@@ -67,6 +67,11 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 		artifactLabel = svc.Spec.Model.FromURI
 	}
 
+	finish, err := m.status.beginDeploy(ctx, projectID, name)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	rec, err := m.driver.Deploy(ctx, svc, art, yamlStr)
 	if err != nil {
 		return err

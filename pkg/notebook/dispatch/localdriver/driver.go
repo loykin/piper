@@ -296,9 +296,9 @@ func (d *Driver) startAsync(spec notebook.Notebook, projectID, name, key string,
 			if current {
 				delete(d.notebooks, key)
 				d.terminal[key] = status
+				delete(d.reservedPorts, port)
 			}
 			d.mu.Unlock()
-			d.releasePort(port)
 			if current {
 				d.report(projectID, name, exitReport(status))
 			}
@@ -338,9 +338,9 @@ func (d *Driver) failStart(key string, gen uint64, port int, projectID, name, wo
 	if current {
 		delete(d.notebooks, key)
 		d.terminal[key] = notebook.StatusFailed
+		delete(d.reservedPorts, port)
 	}
 	d.mu.Unlock()
-	d.releasePort(port)
 	if current {
 		d.report(projectID, name, notebook.StatusReport{Status: notebook.StatusFailed, Reason: cause.Error(), WorkDir: workDir})
 	}
@@ -373,7 +373,10 @@ func (d *Driver) Stop(_ context.Context, nb *notebook.NotebookServer) error {
 	if !ok {
 		// Best-effort stop: it may be running but missing from our map
 		// after a recovery miss. If it's already stopped, Stop is a no-op.
-		_ = d.driver.Stop(context.Background(), runtimeName(nb.ProjectID, nb.Name))
+		if err := d.driver.Stop(context.Background(), runtimeName(nb.ProjectID, nb.Name)); err != nil {
+			return err
+		}
+		d.report(nb.ProjectID, nb.Name, notebook.StatusReport{Status: notebook.StatusStopped})
 		return nil
 	}
 
@@ -386,9 +389,12 @@ func (d *Driver) Stop(_ context.Context, nb *notebook.NotebookServer) error {
 	if current {
 		delete(d.notebooks, key)
 		d.terminal[key] = notebook.StatusStopped
+		delete(d.reservedPorts, active.port)
 	}
 	d.mu.Unlock()
-	d.releasePort(active.port)
+	if current {
+		d.report(active.projectID, active.name, notebook.StatusReport{Status: notebook.StatusStopped})
+	}
 	return nil
 }
 
@@ -420,9 +426,9 @@ func (d *Driver) Recover(ctx context.Context) error {
 			if current {
 				delete(d.notebooks, key)
 				d.terminal[key] = status
+				delete(d.reservedPorts, rec.Port)
 			}
 			d.mu.Unlock()
-			d.releasePort(rec.Port)
 			if current {
 				d.report(rec.ProjectID, rec.Name, notebook.StatusReport{Status: status})
 			}

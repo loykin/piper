@@ -292,8 +292,6 @@ jobs:
           kind load docker-image alpine:3.20
           docker pull chrislusf/seaweedfs:latest
           kind load docker-image chrislusf/seaweedfs:latest
-          docker pull public.ecr.aws/aws-cli/aws-cli:latest
-          kind load docker-image public.ecr.aws/aws-cli/aws-cli:latest
           docker pull python:3.12-slim
           kind load docker-image python:3.12-slim
           docker pull jupyter/minimal-notebook:latest

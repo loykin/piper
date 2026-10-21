@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -56,8 +55,6 @@ func NewDockerBackend(cfg DockerBackendConfig) (*DockerBackend, error) {
 	if driver == nil {
 		d, err := dockerdriver.New(dockerdriver.Config{
 			RuntimeID: localDockerRuntimeID,
-			ResultDir: filepath.Join(cfg.OutputDir, ".results"),
-			OutputDir: cfg.OutputDir,
 			Network:   cfg.Network,
 		})
 		if err != nil {

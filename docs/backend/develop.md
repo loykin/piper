@@ -81,6 +81,16 @@ which federates *management* across separate Piper installations — see
 - Docker step containers must override the image `ENTRYPOINT` (as the K8s
   launcher does with `Command`); otherwise an image with its own entrypoint
   receives the agent path as an argument and exits.
+- Docker step containers mount no host directory except the read-only piper
+  binary. The task file is copied in before start and the result file copied
+  out after exit (`CopyToContainer`/`CopyFromContainer`, `CopyUIDGID`), so a
+  step image running as a non-root user (jovyan, uid 1000) works on a Linux
+  daemon, where a bind mount keeps host ownership and a server-owned
+  directory is not writable by the image user — Docker Desktop hides this.
+  Outputs leave only through the artifact store, as with k8s's emptyDir;
+  with `storage.disabled` a docker step's outputs are not kept on the host.
+  The docker notebook driver, which must bind-mount the work dir, makes it
+  0777 instead; files the notebook creates there are owned by the image user.
 - Open a K8s pod log stream only once a container is running or terminated
   (`streamJobLogs` checks `containerStarted`). A follow stream opened on a
   just-created pod can succeed with an empty body and end at once, which
@@ -311,8 +321,8 @@ from `cleanupOrphanArtifacts`'s run-ID sweep — `Piper.cleanupOrphanArtifacts`
 computes the `LocalStore` exclusion dynamically via `filepath.Rel` (it isn't
 always literally named `store`; a custom `storage.url` can point anywhere
 under `OutputDir`), always excludes `artifactCacheDirName` and `.results`
-(the fixed bookkeeping dir the baremetal/docker drivers write task/result
-JSON to — see `pkg/pipeline/pipelinedriver/{baremetal,docker}.Start`), and
+(the fixed bookkeeping dir the baremetal driver writes task/result JSON to
+— see `pkg/pipeline/pipelinedriver/baremetal.Start`), and
 dynamically excludes `runtime.baremetal.meta_dir` when it's nested under
 `OutputDir`.
 
@@ -323,7 +333,8 @@ broke this in two ways: `filepath.Rel` against a relative base and
 `storage.NewLocal`'s always-absolute `Root()` errors out, which the
 exclusion logic silently swallowed and let the sweep delete the store
 itself; and Docker's bind-mount source must be absolute outright, so
-`runtime.type: docker` couldn't even start a container. Don't reintroduce a
+`runtime.type: docker` couldn't even start a container (docker steps no
+longer mount `OutputDir`, but the rule stands). Don't reintroduce a
 relative-`OutputDir` code path anywhere downstream — rely on the
 already-absolute `cfg.OutputDir` instead of re-deriving or re-validating it.
 

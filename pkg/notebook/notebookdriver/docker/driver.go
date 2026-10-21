@@ -89,6 +89,13 @@ func (r *Driver) Start(ctx context.Context, req notebookdriver.StartRequest) (*n
 	if err != nil {
 		return nil, err
 	}
+	// The container runs as its image's user (jovyan, uid 1000, for the
+	// jupyter images), not the server's uid; on a Linux daemon the bind mount
+	// keeps host ownership, so the work dir must be writable by any uid.
+	// Files the container creates are owned by that uid on the host.
+	if err := os.Chmod(req.WorkDir, 0777); err != nil {
+		return nil, fmt.Errorf("make notebook work dir writable: %w", err)
+	}
 	existing, err := r.findManagedContainer(ctx, req.RuntimeName)
 	if err != nil {
 		return nil, err
@@ -170,7 +177,10 @@ func (r *Driver) Stop(ctx context.Context, name string) error {
 		id = ids[0]
 	}
 	timeout := 10
-	if _, err := r.client.ContainerStop(ctx, id, dockerclient.ContainerStopOptions{Timeout: &timeout}); err != nil {
+	// The exit watcher started in Start removes the container once it stops,
+	// so a second Stop (Manager.Delete stops, then Remove stops again) can
+	// find it listed and lose the race to that removal: it is already gone.
+	if _, err := r.client.ContainerStop(ctx, id, dockerclient.ContainerStopOptions{Timeout: &timeout}); err != nil && !strings.Contains(err.Error(), "No such container") {
 		return fmt.Errorf("stop notebook container: %w", err)
 	}
 	return nil

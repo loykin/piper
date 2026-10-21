@@ -35,8 +35,6 @@ func TestDockerDriverRecoverReattachesRunningContainer(t *testing.T) {
 		labelRunID:      "run-1",
 		labelStepName:   "train",
 		labelAttempt:    "1",
-		labelResultPath: "/host/results/worker-1-run-1-train-a1.result.json",
-		labelTaskPath:   "/host/results/worker-1-run-1-train-a1.task.json",
 	}
 	cli := &recoverListDockerClient{items: []container.Summary{
 		{ID: "container-recovered", Labels: labels},
@@ -53,8 +51,7 @@ func TestDockerDriverRecoverReattachesRunningContainer(t *testing.T) {
 	got := handles[0]
 	if got.RuntimeKey != labels[labelRuntimeKey] || got.TaskID != labels[labelTaskID] ||
 		got.RunID != labels[labelRunID] || got.StepName != labels[labelStepName] ||
-		got.Attempt != 1 || got.ResultPath != labels[labelResultPath] ||
-		got.TaskPath != labels[labelTaskPath] {
+		got.Attempt != 1 {
 		t.Fatalf("recovered handle = %#v", got)
 	}
 	d.mu.Lock()

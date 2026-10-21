@@ -19,7 +19,8 @@ type Handle struct {
 	StepName   string
 	Attempt    int
 	// ResultPath is the HOST-side path to the AgentResult JSON.
-	// Empty for K8s (result is in the pod termination log, read via K8s API).
+	// Empty for K8s (result is in the pod termination log, read via K8s API)
+	// and Docker (result is copied out of the exited container).
 	ResultPath string
 	// TaskPath is the HOST-side path to the task JSON file, when a driver
 	// stages one for piper agent exec. It may contain resolved secrets.
@@ -31,7 +32,8 @@ type Handle struct {
 // result file and returned it directly in Result.
 type Exit struct {
 	// Result is set when the driver could parse the AgentResult itself
-	// (e.g. K8s reads the termination log via K8s API).
+	// (K8s reads the termination log via K8s API; Docker copies the result
+	// file out of the container).
 	// When set it is authoritative; ResultPath is ignored.
 	Result *proto.TaskResult
 
@@ -67,8 +69,9 @@ type ExecSpec struct {
 	StorageURL   string
 
 	// OutputDir is the output directory on the host filesystem.
-	// Baremetal uses it directly; Docker bind-mounts it into the container.
-	// K8s ignores it (uses emptyDir volumes managed by Kubernetes).
+	// Baremetal uses it directly. Docker and K8s ignore it: outputs stay
+	// inside the container (K8s: emptyDir) and reach the host only through
+	// the artifact store.
 	OutputDir string
 
 	// LogSink is owned by the parent worker and forwards runtime output through
@@ -80,7 +83,8 @@ type ExecSpec struct {
 // Implementations are responsible for:
 //   - Translating ExecSpec into runtime-specific configuration (paths, mounts, args)
 //   - Calling BuildAgentExec internally with the correct environment-side paths
-//   - Returning a Handle whose ResultPath points to the HOST-side result file
+//   - Returning the result through Exit: a HOST-side ResultPath, or a parsed
+//     Result when the result never lands on the host
 //
 // Implementations must be safe for concurrent use.
 type Driver interface {

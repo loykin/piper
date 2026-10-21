@@ -131,10 +131,8 @@ func New(cfg Config) (*Piper, error) {
 	if cfg.OutputDir == "" {
 		cfg.OutputDir = def.OutputDir
 	}
-	// OutputDir must be absolute: it backs Docker bind-mount sources (which
-	// reject relative host paths outright — see the docker driver's
-	// ".results" mount) and is compared against a LocalStore's always-absolute
-	// Root() during the orphan-artifact sweep. Resolving it once here, rather
+	// OutputDir must be absolute: it is compared against a LocalStore's
+	// always-absolute Root() during the orphan-artifact sweep. Resolving it once here, rather
 	// than expecting every downstream consumer to know to do it, is what a
 	// relative output_dir (the common case — see config/piper.yaml's default
 	// "./piper-data") requires to work with every runtime.type.
@@ -790,8 +788,8 @@ func validateStatsRetentionSupport(cfg StatsConfig, logs logstore.LogStore, metr
 //     wasn't overridden to point elsewhere — see modelDir().
 //   - artifact.CacheDirName, the local staging cache the artifact resolver
 //     uses for remote-store reads.
-//   - ".results", the fixed bookkeeping directory the baremetal and docker
-//     direct-runtime drivers create directly under OutputDir to hold each
+//   - ".results", the fixed bookkeeping directory the baremetal
+//     direct-runtime driver creates directly under OutputDir to hold each
 //     task's result/task JSON — not a run's workspace, and not swept even
 //     though its name never matches a run ID.
 //   - a LocalStore's own root, when one is configured and happens to live

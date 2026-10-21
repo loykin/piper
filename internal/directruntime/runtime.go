@@ -249,8 +249,9 @@ func (w *Runtime) observe(ctx context.Context, handle pdriver.Handle) {
 	}
 }
 
-// buildResult reads exit.ResultPath, unlike K8s which always parses the
-// result itself (see internal/k8sruntime/pipeline's buildResult).
+// buildResult uses exit.Result when the driver parsed it (docker) and
+// otherwise reads exit.ResultPath (baremetal), unlike K8s which always parses
+// the result itself (see internal/k8sruntime/pipeline's buildResult).
 func (w *Runtime) buildResult(handle pdriver.Handle, exit pdriver.Exit) proto.TaskResult {
 	if exit.Result != nil {
 		r := *exit.Result

@@ -799,23 +799,17 @@ spec:
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: awscli
-          image: public.ecr.aws/aws-cli/aws-cli:latest
+        # SeaweedFS without an s3 config accepts anonymous requests, so a
+        # plain PUT creates the bucket; its own image already has curl.
+        - name: create-bucket
+          image: chrislusf/seaweedfs:latest
           command:
             - /bin/sh
             - -c
             - |
-              until aws s3api create-bucket --bucket piper-artifacts \
-                --endpoint-url http://seaweedfs:9000 2>/dev/null; do
+              until curl -sf -X PUT http://seaweedfs:9000/piper-artifacts; do
                 sleep 2
               done
-          env:
-            - name: AWS_ACCESS_KEY_ID
-              value: anyadmin
-            - name: AWS_SECRET_ACCESS_KEY
-              value: anypassword
-            - name: AWS_DEFAULT_REGION
-              value: us-east-1
 `, ns, piperImage)
 	kubectlInput(t, manifest, "apply", "-f", "-")
 }

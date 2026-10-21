@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,12 +77,37 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 		t.Fatalf("endpoint = %q", started.Endpoint)
 	}
 	waitDockerNotebookStatus(t, started.Endpoint+"/notebooks/"+name+"/proxy/api/status?token="+token)
+	// Saving through the server proves the image user can write the bind-mounted
+	// work dir; a status check alone passes even when it can't (Linux daemon).
+	putDockerNotebookFile(t, started.Endpoint+"/notebooks/"+name+"/proxy/api/contents/e2e.txt?token="+token)
 
 	if err := rt.Stop(ctx, name); err != nil {
 		t.Fatalf("stop docker notebook: %v", err)
 	}
 	if _, err := os.Stat(workDir); err != nil {
 		t.Fatalf("work dir should remain after stop: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "e2e.txt")); err != nil {
+		t.Fatalf("file saved in the notebook should be in the work dir: %v", err)
+	}
+}
+
+func putDockerNotebookFile(t *testing.T, url string) {
+	t.Helper()
+	body := strings.NewReader(`{"type":"file","format":"text","content":"hello"}`)
+	req, err := http.NewRequest(http.MethodPut, url, body) //nolint:noctx
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("save file in notebook: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(resp.Body)
+		t.Fatalf("save file in notebook = %d: %s", resp.StatusCode, msg)
 	}
 }
 

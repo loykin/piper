@@ -3,15 +3,19 @@
 package dockerdriver
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"debug/elf"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,15 +39,11 @@ const (
 	labelRunID      = "piper.run-id"
 	labelStepName   = "piper.step-name"
 	labelAttempt    = "piper.attempt"
-	labelResultPath = "piper.result-path"
-	labelTaskPath   = "piper.task-path"
 )
 
 // Config configures the DockerDriver.
 type Config struct {
 	RuntimeID string
-	ResultDir string // host directory for result files
-	OutputDir string // host output root directory
 	// Network is the Docker network to attach containers to.
 	Network string
 }
@@ -67,10 +67,6 @@ func New(cfg Config) (*Driver, error) {
 	cli, err := dockerinfra.NewClient()
 	if err != nil {
 		return nil, fmt.Errorf("docker driver: create client: %w", err)
-	}
-	if err := os.MkdirAll(cfg.ResultDir, 0755); err != nil {
-		_ = cli.Close()
-		return nil, fmt.Errorf("docker driver: create result dir: %w", err)
 	}
 	return &Driver{
 		cfg:      cfg,
@@ -157,32 +153,19 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 		return pipelinedriver.Handle{}, fmt.Errorf("docker driver: spec.Image is required (resolve image before calling Start)")
 	}
 
-	// Docker uses container-side paths for agent exec; mounts host dirs at those paths.
-	resultDir := d.cfg.ResultDir
-	if resultDir == "" {
-		resultDir = filepath.Join(spec.OutputDir, ".results")
-	}
-	if err := os.MkdirAll(resultDir, 0755); err != nil {
-		return pipelinedriver.Handle{}, fmt.Errorf("create result dir: %w", err)
-	}
-	hostResultPath := filepath.Join(resultDir, spec.RuntimeKey+".result.json")
-	containerResultFile := pipelinedriver.ContainerResultDir + "/" + spec.RuntimeKey + ".result.json"
-	hostTaskPath := filepath.Join(resultDir, spec.RuntimeKey+".task.json")
-	containerTaskFile := pipelinedriver.ContainerResultDir + "/" + spec.RuntimeKey + ".task.json"
-	if err := agent.WriteTaskFile(hostTaskPath, task); err != nil {
-		return pipelinedriver.Handle{}, fmt.Errorf("write task file: %w", err)
-	}
-
+	// The task and result files live only inside the container: the task
+	// carries resolved secrets, and a host directory would have to be writable
+	// by whatever uid the step image runs as. Outputs go to the artifact store,
+	// so no host directory is mounted either (as k8s uses emptyDir).
 	agentArgs, err := agent.BuildAgentExec(task, agent.AgentExecConfig{
 		StorageToken: spec.StorageToken,
 		StorageURL:   spec.StorageURL,
 		OutputDir:    pipelinedriver.ContainerOutputDir,
 		InputDir:     pipelinedriver.ContainerInputDir,
-		TaskFile:     containerTaskFile,
-		ResultFile:   containerResultFile,
+		TaskFile:     containerTaskFile(spec.RuntimeKey),
+		ResultFile:   containerResultFile(spec.RuntimeKey),
 	})
 	if err != nil {
-		_ = os.Remove(hostTaskPath)
 		return pipelinedriver.Handle{}, fmt.Errorf("build agent args: %w", err)
 	}
 
@@ -193,15 +176,13 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 		RunID:      task.RunID,
 		StepName:   task.StepName,
 		Attempt:    task.Attempt,
-		ResultPath: hostResultPath,
-		TaskPath:   hostTaskPath,
 	}
 
 	// Container command: piper agent exec with container-side paths.
 	cmd := append([]string{pipelinedriver.ContainerPiperBin}, agentArgs...)
 
 	// Do not pass resolved task env here: Docker exposes container env through
-	// inspect. piper agent exec reads task env from the mounted task file.
+	// inspect. piper agent exec reads task env from the copied-in task file.
 	env := []string(nil)
 
 	mounts := []mount.Mount{
@@ -211,18 +192,6 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 			Source:   d.piperBin,
 			Target:   pipelinedriver.ContainerPiperBin,
 			ReadOnly: true,
-		},
-		// result directory
-		{
-			Type:   mount.TypeBind,
-			Source: resultDir,
-			Target: pipelinedriver.ContainerResultDir,
-		},
-		// output artifacts
-		{
-			Type:   mount.TypeBind,
-			Source: spec.OutputDir,
-			Target: pipelinedriver.ContainerOutputDir,
 		},
 	}
 
@@ -235,8 +204,6 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 		labelRunID:      task.RunID,
 		labelStepName:   task.StepName,
 		labelAttempt:    strconv.Itoa(task.Attempt),
-		labelResultPath: hostResultPath,
-		labelTaskPath:   hostTaskPath,
 	}
 
 	networkMode := container.NetworkMode("bridge")
@@ -246,18 +213,15 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 	var step pipeline.Step
 	if len(task.Step) > 0 {
 		if err := json.Unmarshal(task.Step, &step); err != nil {
-			_ = os.Remove(hostTaskPath)
 			return pipelinedriver.Handle{}, fmt.Errorf("parse step: %w", err)
 		}
 	}
 	resources, err := dockerinfra.ResourcesFromDriverDocker(step.Driver.Docker)
 	if err != nil {
-		_ = os.Remove(hostTaskPath)
 		return pipelinedriver.Handle{}, err
 	}
 
 	if err := dockerinfra.EnsureImage(ctx, d.client, image); err != nil {
-		_ = os.Remove(hostTaskPath)
 		return pipelinedriver.Handle{}, err
 	}
 	resp, err := d.client.ContainerCreate(ctx, dockerclient.ContainerCreateOptions{
@@ -281,13 +245,15 @@ func (d *Driver) Start(ctx context.Context, task *proto.Task, spec pipelinedrive
 		Name: spec.RuntimeKey,
 	})
 	if err != nil {
-		_ = os.Remove(hostTaskPath)
 		return pipelinedriver.Handle{}, fmt.Errorf("container create: %w", err)
 	}
 
+	if err := d.copyRuntimeFiles(ctx, resp.ID, spec.RuntimeKey, task); err != nil {
+		_, _ = d.client.ContainerRemove(ctx, resp.ID, dockerclient.ContainerRemoveOptions{Force: true})
+		return pipelinedriver.Handle{}, fmt.Errorf("copy task file into container: %w", err)
+	}
 	if _, err := d.client.ContainerStart(ctx, resp.ID, dockerclient.ContainerStartOptions{}); err != nil {
 		_, _ = d.client.ContainerRemove(ctx, resp.ID, dockerclient.ContainerRemoveOptions{Force: true})
-		_ = os.Remove(hostTaskPath)
 		return pipelinedriver.Handle{}, fmt.Errorf("container start: %w", err)
 	}
 	if spec.LogSink != nil {
@@ -322,13 +288,13 @@ func (d *Driver) Wait(ctx context.Context, handle pipelinedriver.Handle) (pipeli
 		d.cleanupContainer(containerID, handle)
 		return pipelinedriver.Exit{InfraFailure: fmt.Errorf("container wait: %w", err)}, nil
 	case body := <-waitResult.Result:
-		exit := pipelinedriver.Exit{ResultPath: handle.ResultPath}
+		var exit pipelinedriver.Exit
 		if body.Error != nil && body.Error.Message != "" {
 			exit.InfraFailure = fmt.Errorf("container exit: %s", body.Error.Message)
-		} else if body.StatusCode != 0 {
-			if _, err := os.Stat(handle.ResultPath); os.IsNotExist(err) {
-				exit.InfraFailure = fmt.Errorf("container exited %d without result file", body.StatusCode)
-			}
+		} else if result, err := d.readResult(ctx, containerID, handle.RuntimeKey); err != nil {
+			exit.InfraFailure = fmt.Errorf("container exited %d without result file: %w", body.StatusCode, err)
+		} else {
+			exit.Result = result
 		}
 		d.cleanupContainer(containerID, handle)
 		return exit, nil
@@ -342,7 +308,6 @@ func (d *Driver) cleanupContainer(containerID string, handle pipelinedriver.Hand
 	if containerID != "" {
 		_, _ = d.client.ContainerRemove(context.Background(), containerID, dockerclient.ContainerRemoveOptions{Force: true})
 	}
-	_ = os.Remove(handle.TaskPath)
 }
 
 // Stop stops and removes the container.
@@ -358,7 +323,6 @@ func (d *Driver) Stop(ctx context.Context, handle pipelinedriver.Handle, grace t
 	secs := int(grace.Seconds())
 	_, _ = d.client.ContainerStop(ctx, containerID, dockerclient.ContainerStopOptions{Timeout: &secs})
 	_, _ = d.client.ContainerRemove(ctx, containerID, dockerclient.ContainerRemoveOptions{Force: true})
-	_ = os.Remove(handle.TaskPath)
 	return nil
 }
 
@@ -389,8 +353,6 @@ func (d *Driver) Recover(ctx context.Context) ([]pipelinedriver.Handle, error) {
 			RunID:      c.Labels[labelRunID],
 			StepName:   c.Labels[labelStepName],
 			Attempt:    attempt,
-			ResultPath: c.Labels[labelResultPath],
-			TaskPath:   c.Labels[labelTaskPath],
 		}
 		d.mu.Lock()
 		d.active[runtimeKey] = c.ID
@@ -399,4 +361,76 @@ func (d *Driver) Recover(ctx context.Context) ([]pipelinedriver.Handle, error) {
 		slog.Info("docker: recovered container", "runtime_key", runtimeKey, "container_id", c.ID[:12])
 	}
 	return handles, nil
+}
+
+func containerTaskFile(runtimeKey string) string {
+	return pipelinedriver.ContainerResultDir + "/" + runtimeKey + ".task.json"
+}
+
+func containerResultFile(runtimeKey string) string {
+	return pipelinedriver.ContainerResultDir + "/" + runtimeKey + ".result.json"
+}
+
+// copyRuntimeFiles copies the task file into the created container, along
+// with the agent's runtime, output and input roots. CopyUIDGID chowns them to
+// the container's user, so a non-root image can read its 0600 task file and
+// create the roots it could not create under / itself.
+func (d *Driver) copyRuntimeFiles(ctx context.Context, containerID, runtimeKey string, task *proto.Task) error {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Errorf("marshal task: %w", err)
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	now := time.Now()
+	dirs := []struct {
+		path string
+		mode int64
+	}{
+		{pipelinedriver.ContainerResultDir, 0700},
+		{pipelinedriver.ContainerOutputDir, 0755},
+		{pipelinedriver.ContainerInputDir, 0755},
+	}
+	for _, dir := range dirs {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: strings.TrimPrefix(dir.path, "/") + "/", Mode: dir.mode, ModTime: now}); err != nil {
+			return err
+		}
+	}
+	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: strings.TrimPrefix(containerTaskFile(runtimeKey), "/"), Mode: 0600, Size: int64(len(data)), ModTime: now}); err != nil {
+		return err
+	}
+	if _, err := tw.Write(data); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	_, err = d.client.CopyToContainer(ctx, containerID, dockerclient.CopyToContainerOptions{
+		DestinationPath: "/",
+		Content:         &buf,
+		CopyUIDGID:      true,
+	})
+	return err
+}
+
+// readResult reads the agent's result file out of the exited container.
+func (d *Driver) readResult(ctx context.Context, containerID, runtimeKey string) (*proto.TaskResult, error) {
+	res, err := d.client.CopyFromContainer(ctx, containerID, dockerclient.CopyFromContainerOptions{SourcePath: containerResultFile(runtimeKey)})
+	if err != nil {
+		return nil, err
+	}
+	defer res.Content.Close()
+	tr := tar.NewReader(res.Content)
+	if _, err := tr.Next(); err != nil {
+		return nil, fmt.Errorf("read result archive: %w", err)
+	}
+	data, err := io.ReadAll(tr)
+	if err != nil {
+		return nil, fmt.Errorf("read result archive: %w", err)
+	}
+	result, err := agent.ReadAgentResult(data)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

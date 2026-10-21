@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -437,5 +438,27 @@ func (f *recoveryDockerClient) ContainerWait(context.Context, string, dockerclie
 	return dockerclient.ContainerWaitResult{
 		Result: make(chan container.WaitResponse),
 		Error:  make(chan error),
+	}
+}
+
+// goneContainerClient lists a container that its exit watcher removes before
+// Stop reaches it, as on Manager.Delete's second Stop.
+type goneContainerClient struct{ fakeDockerClient }
+
+func (f *goneContainerClient) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	return dockerclient.ContainerListResult{Items: []container.Summary{{ID: "gone-container"}}}, nil
+}
+
+func (f *goneContainerClient) ContainerStop(_ context.Context, id string, _ dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error) {
+	return dockerclient.ContainerStopResult{}, errors.New("Error response from daemon: No such container: " + id)
+}
+
+func TestDockerRuntimeStopTreatsRemovedContainerAsStopped(t *testing.T) {
+	rt, err := NewWithClient(Config{Network: "bridge"}, "worker-1", &goneContainerClient{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Stop(context.Background(), "p__nb"); err != nil {
+		t.Fatalf("Stop of an already removed container = %v, want nil", err)
 	}
 }

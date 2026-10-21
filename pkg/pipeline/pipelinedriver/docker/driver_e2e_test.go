@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/loykin/piper/internal/proto"
 	"github.com/loykin/piper/pkg/pipeline"
 	pipelinedriver "github.com/loykin/piper/pkg/pipeline/pipelinedriver"
-	"github.com/loykin/piper/pkg/pipeline/worker/agent"
 )
 
 func TestDockerRuntimeE2E_CommandCompletes(t *testing.T) {
@@ -20,8 +18,7 @@ func TestDockerRuntimeE2E_CommandCompletes(t *testing.T) {
 		t.Skip("set PIPER_PIPELINE_DOCKER_E2E_IMAGE to run Docker pipeline e2e")
 	}
 
-	outputDir := t.TempDir()
-	d, err := New(Config{RuntimeID: "docker-e2e", ResultDir: filepath.Join(outputDir, ".results")})
+	d, err := New(Config{RuntimeID: "docker-e2e"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +41,6 @@ func TestDockerRuntimeE2E_CommandCompletes(t *testing.T) {
 	handle, err := d.Start(context.Background(), task, pipelinedriver.ExecSpec{
 		RuntimeKey: "docker-e2e-run-proof-a1",
 		Image:      image,
-		OutputDir:  outputDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -56,22 +52,12 @@ func TestDockerRuntimeE2E_CommandCompletes(t *testing.T) {
 	if exit.InfraFailure != nil {
 		t.Fatalf("container infrastructure failure: %v", exit.InfraFailure)
 	}
-	data, err := os.ReadFile(exit.ResultPath)
-	if err != nil {
-		t.Fatal(err)
+	// The result is copied out of the container; no host directory is mounted,
+	// so the step's write to $PIPER_OUTPUT_DIR proves the copied-in root works.
+	if exit.Result == nil {
+		t.Fatal("Wait returned no result")
 	}
-	result, err := agent.ReadAgentResult(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != "done" {
-		t.Fatalf("task status = %q, error = %q", result.Status, result.Error)
-	}
-	proof, err := os.ReadFile(filepath.Join(outputDir, task.RunID, step.Name, "proof.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(proof) != "docker-e2e\n" {
-		t.Fatalf("proof output = %q", proof)
+	if exit.Result.Status != "done" {
+		t.Fatalf("task status = %q, error = %q", exit.Result.Status, exit.Result.Error)
 	}
 }

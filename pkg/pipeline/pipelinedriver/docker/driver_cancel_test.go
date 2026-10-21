@@ -3,7 +3,6 @@ package dockerdriver
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -21,7 +20,7 @@ import (
 // by Stop) and freezes fed.md 13.1's "cancel during start" behavior.
 func TestDockerDriverCancelDuringStartStopsJustCreatedContainer(t *testing.T) {
 	cli := &captureDockerClient{}
-	d := NewWithClient(Config{RuntimeID: "worker-1", ResultDir: t.TempDir()}, cli)
+	d := NewWithClient(Config{RuntimeID: "worker-1"}, cli)
 	handle, err := d.Start(context.Background(), &proto.Task{
 		ID: "run-1:train", RunID: "run-1", StepName: "train", Attempt: 1,
 	}, pipelinedriver.ExecSpec{
@@ -41,9 +40,6 @@ func TestDockerDriverCancelDuringStartStopsJustCreatedContainer(t *testing.T) {
 	}
 	if cli.removedID != "container-123456789" {
 		t.Fatalf("removedID = %q, want container-123456789", cli.removedID)
-	}
-	if _, err := os.Stat(handle.TaskPath); !os.IsNotExist(err) {
-		t.Fatalf("task file still exists after Stop: %v", err)
 	}
 	d.mu.Lock()
 	_, active := d.active[handle.RuntimeKey]
@@ -65,6 +61,10 @@ type blockingDockerClient struct {
 
 func (c *blockingDockerClient) ContainerCreate(_ context.Context, _ dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
 	return dockerclient.ContainerCreateResult{ID: "container-blocking"}, nil
+}
+
+func (c *blockingDockerClient) CopyToContainer(context.Context, string, dockerclient.CopyToContainerOptions) (dockerclient.CopyToContainerResult, error) {
+	return dockerclient.CopyToContainerResult{}, nil
 }
 
 func (c *blockingDockerClient) ContainerStart(context.Context, string, dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error) {
@@ -95,7 +95,7 @@ func (c *blockingDockerClient) ContainerRemove(_ context.Context, id string, _ d
 // alone does NOT clean up the container — only an explicit Stop does.
 func TestDockerDriverCancelWhileRunningUnblocksWaitAndRemovesContainer(t *testing.T) {
 	cli := &blockingDockerClient{}
-	d := NewWithClient(Config{RuntimeID: "worker-1", ResultDir: t.TempDir()}, cli)
+	d := NewWithClient(Config{RuntimeID: "worker-1"}, cli)
 	handle, err := d.Start(context.Background(), &proto.Task{
 		ID: "run-1:train", RunID: "run-1", StepName: "train", Attempt: 1,
 	}, pipelinedriver.ExecSpec{
@@ -120,18 +120,12 @@ func TestDockerDriverCancelWhileRunningUnblocksWaitAndRemovesContainer(t *testin
 	if !stillActive {
 		t.Fatal("runtime key was removed on ctx-cancel alone; docker's Wait must leave cleanup to a separate Stop call")
 	}
-	if _, err := os.Stat(handle.TaskPath); err != nil {
-		t.Fatalf("task file should still exist before an explicit Stop: %v", err)
-	}
 
 	if err := d.Stop(context.Background(), handle, time.Second); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	if cli.stoppedID != "container-blocking" || cli.removedID != "container-blocking" {
 		t.Fatalf("stoppedID=%q removedID=%q, want container-blocking for both", cli.stoppedID, cli.removedID)
-	}
-	if _, err := os.Stat(handle.TaskPath); !os.IsNotExist(err) {
-		t.Fatalf("task file still exists after Stop: %v", err)
 	}
 }
 

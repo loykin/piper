@@ -123,7 +123,11 @@ func TestDockerRuntimeContainerCreateOptions(t *testing.T) {
 	if !opts.HostConfig.Mounts[1].ReadOnly {
 		t.Fatal("datasets mount should be read-only")
 	}
-	wantArgs := notebook.JupyterStartArgs("/notebooks/analysis/proxy/", "", notebook.ContainerWorkDir, 8888)
+	wantArgs := append([]string{"/bin/sh", "-c", `umask 0000 && exec "$@"`, "sh"},
+		notebook.JupyterStartArgs("/notebooks/analysis/proxy/", "", notebook.ContainerWorkDir, 8888)...)
+	if len(opts.Config.Cmd) != len(wantArgs) {
+		t.Fatalf("cmd = %#v, want %#v", opts.Config.Cmd, wantArgs)
+	}
 	for i, want := range wantArgs {
 		if opts.Config.Cmd[i] != want {
 			t.Fatalf("cmd[%d] = %q, want %q", i, opts.Config.Cmd[i], want)
@@ -186,6 +190,9 @@ func TestDockerRuntimePrepWrapsLaunchCommand(t *testing.T) {
 	}
 	if len(opts.Config.Cmd) != 2 || opts.Config.Cmd[0] != "-lc" {
 		t.Fatalf("cmd = %#v", opts.Config.Cmd)
+	}
+	if !strings.Contains(opts.Config.Cmd[1], "umask 0000\n") {
+		t.Fatalf("wrapped script = %q, want umask 0000", opts.Config.Cmd[1])
 	}
 	if !strings.Contains(opts.Config.Cmd[1], "echo docker prep") {
 		t.Fatalf("wrapped script = %q", opts.Config.Cmd[1])

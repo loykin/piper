@@ -26,6 +26,7 @@ import (
 
 const (
 	dockerNotebookPort   = "8888/tcp"
+	dockerNotebookUmask  = "umask 0000"
 	dockerManagedLabel   = "piper.managed"
 	dockerNotebookLabel  = "piper.notebook"
 	dockerProjectLabel   = "piper.project-id"
@@ -369,15 +370,20 @@ func (r *Driver) containerCreateOptions(req notebookdriver.StartRequest) (docker
 	if err != nil {
 		return dockerclient.ContainerCreateOptions{}, err
 	}
+	// umask 0000: the work dir is bind-mounted 0777 (see Start) and what the
+	// image user creates in it must stay writable by the server's uid, which
+	// deletes the volume — Jupyter alone creates .ipynb_checkpoints on save.
 	cmd := notebook.JupyterStartArgs(req.BaseURL, req.Token, notebook.ContainerWorkDir, 8888)
 	entrypoint := []string(nil)
 	if len(prepSteps) > 0 {
-		script, err := notebook.BuildLaunchScript(nil, prepSteps, cmd, notebook.ContainerWorkDir)
+		script, err := notebook.BuildLaunchScript([]string{dockerNotebookUmask}, prepSteps, cmd, notebook.ContainerWorkDir)
 		if err != nil {
 			return dockerclient.ContainerCreateOptions{}, err
 		}
 		entrypoint = []string{"/bin/sh"}
 		cmd = []string{"-lc", script}
+	} else {
+		cmd = append([]string{"/bin/sh", "-c", dockerNotebookUmask + ` && exec "$@"`, "sh"}, cmd...)
 	}
 	port := network_.MustParsePort(dockerNotebookPort)
 	return dockerclient.ContainerCreateOptions{

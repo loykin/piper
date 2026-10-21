@@ -79,7 +79,12 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 	waitDockerNotebookStatus(t, started.Endpoint+"/notebooks/"+name+"/proxy/api/status?token="+token)
 	// Saving through the server proves the image user can write the bind-mounted
 	// work dir; a status check alone passes even when it can't (Linux daemon).
-	putDockerNotebookFile(t, started.Endpoint+"/notebooks/"+name+"/proxy/api/contents/e2e.txt?token="+token)
+	contents := started.Endpoint + "/notebooks/" + name + "/proxy/api/contents/"
+	putDockerNotebookFile(t, contents+"e2e.txt?token="+token, `{"type":"file","format":"text","content":"hello"}`)
+	// A directory the image user creates (Jupyter's .ipynb_checkpoints is one)
+	// must still be deletable by the server's uid when the volume is removed.
+	putDockerNotebookFile(t, contents+"e2e-dir?token="+token, `{"type":"directory"}`)
+	putDockerNotebookFile(t, contents+"e2e-dir/nested.txt?token="+token, `{"type":"file","format":"text","content":"hello"}`)
 
 	if err := rt.Stop(ctx, name); err != nil {
 		t.Fatalf("stop docker notebook: %v", err)
@@ -90,12 +95,14 @@ func TestDockerRuntimeE2E_StartStopNotebook(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workDir, "e2e.txt")); err != nil {
 		t.Fatalf("file saved in the notebook should be in the work dir: %v", err)
 	}
+	if err := os.RemoveAll(workDir); err != nil {
+		t.Fatalf("work dir written by the notebook should be deletable by the server: %v", err)
+	}
 }
 
-func putDockerNotebookFile(t *testing.T, url string) {
+func putDockerNotebookFile(t *testing.T, url, body string) {
 	t.Helper()
-	body := strings.NewReader(`{"type":"file","format":"text","content":"hello"}`)
-	req, err := http.NewRequest(http.MethodPut, url, body) //nolint:noctx
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body)) //nolint:noctx
 	if err != nil {
 		t.Fatal(err)
 	}

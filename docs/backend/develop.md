@@ -90,7 +90,11 @@ which federates *management* across separate Piper installations — see
   Outputs leave only through the artifact store, as with k8s's emptyDir;
   with `storage.disabled` a docker step's outputs are not kept on the host.
   The docker notebook driver, which must bind-mount the work dir, makes it
-  0777 instead; files the notebook creates there are owned by the image user.
+  0777 instead and starts the server under `umask 0000`: files the notebook
+  creates there are owned by the image user, and without the umask the
+  server's uid could not delete the volume (Jupyter creates
+  `.ipynb_checkpoints` on every save). Verify this on Linux with the tests
+  run as a non-root user, as on CI — run as root, they delete anything.
 - Open a K8s pod log stream only once a container is running or terminated
   (`streamJobLogs` checks `containerStarted`). A follow stream opened on a
   just-created pod can succeed with an empty body and end at once, which

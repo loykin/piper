@@ -117,7 +117,7 @@ func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *
 	// Phase 1: provision storage
 	if err := m.driver.ProvisionVolume(ctx, vol, spec); err != nil {
 		slog.Error("notebook: provision volume failed", "name", name, "err", err)
-		_ = m.repo.SetStatus(ctx, projectID, name, StatusFailed, err.Error())
+		_, _ = m.repo.FinishRun(ctx, projectID, name, StatusFailed, err.Error())
 		_ = m.vols.Delete(ctx, vol.ID)
 		m.emit(projectID, "notebook.failed", map[string]any{"name": name, "error": err.Error()})
 		return
@@ -132,7 +132,7 @@ func (m *Manager) provisionAndStart(ctx context.Context, projectID string, vol *
 	fresh, err := m.driver.Start(ctx, spec, vol, yamlStr)
 	if err != nil {
 		slog.Error("notebook: start failed", "name", name, "err", err)
-		_ = m.repo.SetStatus(ctx, projectID, name, StatusFailed, err.Error())
+		_, _ = m.repo.FinishRun(ctx, projectID, name, StatusFailed, err.Error())
 		_ = m.driver.DeprovisionVolume(ctx, vol)
 		_ = m.vols.Delete(ctx, vol.ID)
 		m.emit(projectID, "notebook.failed", map[string]any{"name": name, "error": err.Error()})
@@ -233,7 +233,7 @@ func (m *Manager) CreateWithVolume(ctx context.Context, projectID string, spec N
 		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, yamlStr)
 		if err != nil {
 			slog.Error("notebook: start with volume failed", "name", name, "err", err)
-			_ = m.repo.SetStatus(bgCtx, projectID, name, StatusFailed, err.Error())
+			_, _ = m.repo.FinishRun(bgCtx, projectID, name, StatusFailed, err.Error())
 			_ = m.vols.SetStatus(bgCtx, vol.ID, VolumeStatusReleased)
 			m.emit(projectID, "notebook.failed", map[string]any{"name": name, "error": err.Error()})
 			return
@@ -342,14 +342,9 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 	}
 	spec.Metadata.ProjectID = projectID
 
-	// Archive the pre-restart state before this restart cycle overwrites it —
-	// otherwise "start -> restart -> restart" leaves no trace that the
-	// earlier runs ever happened, only the eventual delete does.
-	if err := m.repo.AppendHistory(ctx, nb); err != nil {
-		return fmt.Errorf("notebook: archive previous state: %w", err)
-	}
-
-	if err := m.repo.SetStatus(ctx, projectID, name, StatusStarting, ""); err != nil {
+	// A new run begins; the previous one was recorded in history when it
+	// ended (FinishRun).
+	if err := m.repo.StartRun(ctx, projectID, name); err != nil {
 		return fmt.Errorf("notebook: set status starting: %w", err)
 	}
 
@@ -360,7 +355,7 @@ func (m *Manager) Restart(ctx context.Context, projectID, name string) error {
 		fresh, err := m.driver.Start(bgCtx, spec, &volCopy, restartYAML)
 		if err != nil {
 			slog.Error("notebook: restart failed", "name", name, "err", err)
-			_ = m.repo.SetStatus(bgCtx, projectID, name, StatusFailed, err.Error())
+			_, _ = m.repo.FinishRun(bgCtx, projectID, name, StatusFailed, err.Error())
 			return
 		}
 		if nb, err := m.repo.Get(bgCtx, projectID, name); err == nil && nb != nil {
@@ -411,15 +406,11 @@ func (m *Manager) Delete(ctx context.Context, projectID, name string) error {
 		if err := m.driver.Stop(ctx, nb); err != nil {
 			return fmt.Errorf("notebook: stop before delete: %w", err)
 		}
-		// Record the real outcome before it's archived below — repo.Delete
-		// re-reads the row itself, so without this the history entry it
-		// writes would carry the pre-stop status forever, making "Final
-		// Status" in the history UI actively misleading. A failure stays
-		// recorded as failed.
-		if nb.Status != StatusFailed {
-			if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped, ""); err != nil {
-				return fmt.Errorf("notebook: mark stopped before delete: %w", err)
-			}
+		// End the run here so it is recorded before the row goes away. The
+		// driver may report the same stop concurrently; FinishRun records it
+		// once, and a failed notebook's run was already recorded as failed.
+		if _, err := m.repo.FinishRun(ctx, projectID, name, StatusStopped, ""); err != nil {
+			return fmt.Errorf("notebook: mark stopped before delete: %w", err)
 		}
 	}
 

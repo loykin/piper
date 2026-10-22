@@ -16,7 +16,7 @@ export function NotebookHistoryDetailPanel({ entry }: { entry: NotebookHistory }
 
   return (
     <PanelTemplate
-      eyebrow="Notebook History"
+      eyebrow="Server History"
       title={entry.name}
       status={<StatusBadge status={entry.status} />}
       actions={

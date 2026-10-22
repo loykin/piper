@@ -11,9 +11,9 @@ must follow these rules so standalone and federated routing expose the same API.
   (`/notebook-execution-policy`). Use a nested `POST /{resource}/{id}/{action}`
   only when the operation is not ordinary CRUD.
 - Once created, a resource is addressed by its own id at its own collection
-  (`/notebook-executions/{id}`), even when it is created under a parent
-  (`POST /notebooks/{name}/executions`). Clients must not need the parent's
-  name to read or act on it. Keys that contain `/` use a catch-all path
+  (`/notebook-executions/{id}`), even when it belongs to a parent (an
+  execution's notebook). Clients must not need the parent's name to read or
+  act on it. Keys that contain `/` use a catch-all path
   segment (`/storage/objects/{key}`), never a `?key=` query.
 - `PATCH` changes some fields and leaves the rest; `PUT` replaces the whole
   resource or document. Pick by what the handler does, not by habit.

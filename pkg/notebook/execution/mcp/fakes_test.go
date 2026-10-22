@@ -71,7 +71,10 @@ func (r *fakeNotebookRepo) Delete(_ context.Context, projectID, name string) err
 	delete(r.servers, key(projectID, name))
 	return nil
 }
-func (r *fakeNotebookRepo) AppendHistory(context.Context, *notebook.NotebookServer) error { return nil }
+func (r *fakeNotebookRepo) StartRun(context.Context, string, string) error { return nil }
+func (r *fakeNotebookRepo) FinishRun(context.Context, string, string, string, string) (bool, error) {
+	return false, nil
+}
 func (r *fakeNotebookRepo) ListHistory(context.Context, string, int, int) ([]*notebook.NotebookHistory, error) {
 	return nil, nil
 }
@@ -154,7 +157,15 @@ func (r *fakeExecRepo) GetExecution(_ context.Context, projectID, id string) (*e
 	cp := *e
 	return &cp, nil
 }
-func (r *fakeExecRepo) FindExecutionByIdempotencyKey(context.Context, string, string, string, string) (*execution.NotebookExecution, error) {
+func (r *fakeExecRepo) FindExecutionByIdempotencyKey(_ context.Context, projectID, notebookName, requestedBy, key string) (*execution.NotebookExecution, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.execs {
+		if e.ProjectID == projectID && e.NotebookName == notebookName && e.RequestedBy == requestedBy && e.IdempotencyKey == key {
+			cp := *e
+			return &cp, nil
+		}
+	}
 	return nil, nil
 }
 func (r *fakeExecRepo) ListExecutions(_ context.Context, projectID, notebookName string, limit, offset int) ([]*execution.NotebookExecution, error) {

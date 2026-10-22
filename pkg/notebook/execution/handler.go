@@ -100,9 +100,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	// does not grant viewer any kernel-session visibility.
 	rg.GET("/notebooks/:name/contents", h.listContents)
 	rg.GET("/notebooks/:name/documents", h.getDocument)
-	// Executions are addressed by id alone; they are created under their
-	// notebook (POST /notebooks/:name/executions) and listed project-wide,
-	// optionally filtered with ?notebook=.
+	// Executions are created only by MCP tools (piper_execute_notebook /
+	// piper_execute_cell — the feature exists for AI agents), addressed by id
+	// alone, and listed project-wide, optionally filtered with ?notebook=.
+	// REST reviews and controls them: approve/deny/cancel below.
 	rg.GET("/notebook-executions", h.listProjectExecutions)
 	rg.GET("/notebook-executions/:id", h.getExecution)
 	rg.GET("/notebook-execution-policy", h.getPolicy)
@@ -115,7 +116,6 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	member.POST("/notebooks/:name/kernel-sessions/:id/interrupt", h.interruptKernelSession)
 	member.POST("/notebooks/:name/kernel-sessions/:id/restart", h.restartKernelSession)
 	member.DELETE("/notebooks/:name/kernel-sessions/:id", h.closeKernelSession)
-	member.POST("/notebooks/:name/executions", h.createExecution)
 	// Cancel's minimum route role is member — design doc §9.1 grants
 	// "자신의 실행 취소" to member and reserves cancelling *another actor's*
 	// execution for admin; that ownership distinction is enforced inside
@@ -280,46 +280,6 @@ func (h *Handler) closeKernelSession(c *gin.Context) {
 }
 
 // --- Executions ----------------------------------------------------------
-
-func (h *Handler) createExecution(c *gin.Context) {
-	var body struct {
-		Kind            string `json:"kind"`
-		Path            string `json:"path"`
-		KernelSessionID string `json:"kernel_session_id"`
-		Edit            *struct {
-			Mode   string `json:"mode"`
-			Code   string `json:"code"`
-			CellID string `json:"cell_id"`
-		} `json:"edit"`
-		CreateIfMissing bool `json:"create_if_missing"`
-		TimeoutSeconds  int  `json:"timeout_seconds"`
-	}
-	if !httpx.BindJSON(c, &body) {
-		return
-	}
-
-	req := CreateExecutionRequest{
-		Kind:            body.Kind,
-		Path:            body.Path,
-		KernelSessionID: body.KernelSessionID,
-		CreateIfMissing: body.CreateIfMissing,
-		TimeoutSeconds:  body.TimeoutSeconds,
-	}
-	if body.Edit != nil {
-		req.Edit = &CellEdit{Mode: body.Edit.Mode, Code: body.Edit.Code, CellID: body.Edit.CellID}
-	}
-
-	exec, replayed, err := h.svc.CreateExecution(c.Request.Context(), actorFrom(c), currentProjectID(c), c.Param("name"), req, c.GetHeader("Idempotency-Key"))
-	if err != nil {
-		writeExecutionError(c, err)
-		return
-	}
-	status := http.StatusCreated
-	if replayed {
-		status = http.StatusOK
-	}
-	c.JSON(status, NewNotebookExecutionResponse(exec))
-}
 
 func (h *Handler) listProjectExecutions(c *gin.Context) {
 	limit, offset := httpx.ParseLimitOffset(c)

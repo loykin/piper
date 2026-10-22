@@ -91,26 +91,48 @@ func (r *fakeRepo) List(_ context.Context, _ string, _, _ int) ([]*NotebookServe
 	return out, nil
 }
 
-// Delete mirrors the real store's read-current-row-then-archive-then-delete
-// behavior (internal/store/{sqlite,postgres}/notebook.go) so tests can
-// assert what Final Status ends up archived, same as production.
 func (r *fakeRepo) Delete(_ context.Context, _, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if nb, ok := r.servers[name]; ok {
-		cp := *nb
-		r.history = append(r.history, &cp)
-	}
 	delete(r.servers, name)
 	return nil
 }
 
-func (r *fakeRepo) AppendHistory(_ context.Context, nb *NotebookServer) error {
+func (r *fakeRepo) StartRun(_ context.Context, _, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cp := *nb
-	r.history = append(r.history, &cp)
+	nb, ok := r.servers[name]
+	if !ok {
+		return errors.New("not found")
+	}
+	nb.Status = StatusStarting
+	nb.Reason = ""
+	nb.StartedAt = time.Now()
 	return nil
+}
+
+// FinishRun mirrors the real store (internal/store/{sqlite,postgres}/
+// notebook.go): it ends the run only if the notebook was not already stopped
+// or failed, and keeps one history row per run (same StartedAt).
+func (r *fakeRepo) FinishRun(_ context.Context, _, name, status, reason string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	nb, ok := r.servers[name]
+	if !ok || nb.Status == StatusStopped || nb.Status == StatusFailed {
+		return false, nil
+	}
+	nb.Status = status
+	nb.Reason = reason
+	nb.Endpoint, nb.PID, nb.Token = "", 0, ""
+	cp := *nb
+	for i, h := range r.history {
+		if h.Name == name && h.StartedAt.Equal(nb.StartedAt) {
+			r.history[i] = &cp
+			return true, nil
+		}
+	}
+	r.history = append(r.history, &cp)
+	return true, nil
 }
 
 func (r *fakeRepo) ListHistory(_ context.Context, _ string, _, _ int) ([]*NotebookHistory, error) {
@@ -740,7 +762,9 @@ func TestManager_Restart_StoppedServer(t *testing.T) {
 	}
 }
 
-func TestManager_Restart_ArchivesPreviousStateToHistory(t *testing.T) {
+// A restart begins a new run: it records nothing (the previous run was
+// recorded when it ended) and stamps the new run's start time.
+func TestManager_Restart_StartsNewRunWithoutArchiving(t *testing.T) {
 	repo := newFakeRepo()
 	vols := newFakeVols()
 	drv := newFakeDriver()
@@ -751,18 +775,19 @@ func TestManager_Restart_ArchivesPreviousStateToHistory(t *testing.T) {
 
 	vol := &NotebookVolume{ID: "vol-rst", Label: "nb-rst", WorkDir: "/data/rst", Status: VolumeStatusBound}
 	_ = vols.Create(ctx, vol)
-	_ = repo.Create(ctx, &NotebookServer{Name: "nb-rst", Status: StatusFailed, VolumeID: "vol-rst", WorkDir: "/data/rst", RuntimeID: "w-old"})
+	before := time.Now().Add(-time.Hour)
+	_ = repo.Create(ctx, &NotebookServer{Name: "nb-rst", Status: StatusFailed, VolumeID: "vol-rst", WorkDir: "/data/rst", RuntimeID: "w-old", StartedAt: before})
 
 	if err := m.Restart(ctx, "project-a", "nb-rst"); err != nil {
 		t.Fatalf("Restart() error: %v", err)
 	}
 
-	history := repo.historySnapshot()
-	if len(history) != 1 {
-		t.Fatalf("history len = %d, want 1", len(history))
+	if history := repo.historySnapshot(); len(history) != 0 {
+		t.Fatalf("history = %+v, want none: a restart records nothing", history)
 	}
-	if history[0].Status != StatusFailed || history[0].RuntimeID != "w-old" {
-		t.Fatalf("archived history = %+v, want the pre-restart failed/w-old record", history[0])
+	nb, _ := repo.Get(ctx, "project-a", "nb-rst")
+	if !nb.StartedAt.After(before) {
+		t.Fatalf("StartedAt = %v, want the restart time", nb.StartedAt)
 	}
 }
 
@@ -860,13 +885,17 @@ func TestManager_Delete_NonRunningServerCallsStop(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatalf("driver.Stop not called for a %s notebook", status)
 			}
+			// A failed notebook's run was recorded when it failed; deleting
+			// it records nothing more. Any other run ends here, as stopped.
 			history := repo.historySnapshot()
-			want := StatusStopped
 			if status == StatusFailed {
-				want = StatusFailed
+				if len(history) != 0 {
+					t.Fatalf("history = %+v, want none for an already failed notebook", history)
+				}
+				return
 			}
-			if len(history) != 1 || history[0].Status != want {
-				t.Fatalf("archived status = %+v, want %q", history, want)
+			if len(history) != 1 || history[0].Status != StatusStopped {
+				t.Fatalf("archived status = %+v, want %q", history, StatusStopped)
 			}
 		})
 	}

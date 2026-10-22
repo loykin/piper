@@ -44,10 +44,7 @@ func TestNotebookRepo_ReasonRoundTrip(t *testing.T) {
 	if got, _ := repos.Notebook.Get(ctx, projectID, "nb"); got.Reason != "" {
 		t.Fatalf("reason = %q after restart, want empty", got.Reason)
 	}
-	if err := repos.Notebook.SetStatus(ctx, projectID, "nb", notebook.StatusFailed, reason); err != nil {
-		t.Fatal(err)
-	}
-	if err := repos.Notebook.Delete(ctx, projectID, "nb"); err != nil {
+	if _, err := repos.Notebook.FinishRun(ctx, projectID, "nb", notebook.StatusFailed, reason); err != nil {
 		t.Fatal(err)
 	}
 	hist, err := repos.Notebook.ListHistory(ctx, projectID, 0, 0)

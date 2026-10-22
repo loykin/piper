@@ -25,9 +25,9 @@ function NotebookHistoryPageInner() {
   const filteredHistory = useTextFilter(data?.items, nameFilter, h => h.name)
 
   return (
-    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Development', 'Notebook History']} />} />}
-      title="Notebook History"
-      description="Past notebook server runs."
+    <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Development', 'Server History']} />} />}
+      title="Server History"
+      description="Notebook server runs, from start until they stopped or failed."
     >
       <DataBodyTemplate.Body>
         <DataBodyTemplate.Resource

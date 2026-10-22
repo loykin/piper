@@ -108,6 +108,26 @@ which federates *management* across separate Piper installations — see
   (background propagation) takes the Pod and Service with it. Stop only
   scales to zero; the PVC is never owned by the workload and survives as a
   released volume.
+- Notebook history (`notebook_history`, "Server History" in the UI) holds
+  one row per finished run. `Repository.FinishRun` writes it in the same
+  transaction that moves the notebook from a live status to `stopped` or
+  `failed`, guarded by the current status, so an end reported twice (Delete's
+  stop racing the driver's own report) is recorded once. Every path that ends
+  a run goes through it: driver reports via `StatusSink` (which skips its
+  full-row `Update` for these, since that write could put a live status back
+  after a concurrent `FinishRun`), start failures in `Manager`, and Delete of
+  a live notebook. `StartRun` (restart) records nothing and stamps
+  `started_at`, which becomes the row's `deployed_at`; `Repository.Delete`
+  records nothing. A run has one row: when the runtime revives it on its own
+  (K8s restarting a crashed container, `failed` → `starting` → `failed`, no
+  `StartRun`), the next `FinishRun` updates the row with the same
+  `deployed_at` to the latest end instead of inserting another.
+  Serving history still archives on redeploy and delete only.
+- Notebook executions (`pkg/notebook/execution`, "MCP Executions" in the UI)
+  exist for AI clients: they are created only by the MCP tools
+  `piper_execute_notebook` / `piper_execute_cell`, which check the member
+  role themselves because the MCP endpoint admits viewers for its read
+  tools. REST has no create route — it lists, approves, denies and cancels.
 - `placement.worker` and `placement.label` are invalid for all three direct
   runtimes (enforced by the shared `pipelinedispatch.validateDirectPlacement`
   helper). `placement.runtime` may be empty or match the configured

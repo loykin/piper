@@ -499,12 +499,10 @@ func resultPathFor(id string) string {
 }
 
 // CreateExecution creates a new NotebookExecution (design doc §6.1/§6.2/§7.3).
+// Its caller is the MCP execute tools (pkg/notebook/execution/mcp).
 //
-// Approval gate: this phase has no MCP caller yet, but per the task's
-// instruction the design's approval-required gate is not MCP-specific — it
-// is enforced here for REST-originated requests too, using
-// notebook_execution.mcp_policy (project override, falling back to the
-// system default). "disabled" rejects the request outright;
+// Approval gate (notebook_execution.mcp_policy, project override falling
+// back to the system default): "disabled" rejects the request outright;
 // "approval_required" creates an awaiting_approval row for any actor,
 // including an admin caller (admin still has to call Approve, which keeps
 // a real audit trail of who approved what and when — see §13.2); "allowed"

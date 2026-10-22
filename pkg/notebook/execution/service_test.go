@@ -279,7 +279,10 @@ func (r *fakeNotebookRepo) Delete(_ context.Context, projectID, name string) err
 	delete(r.servers, nbKey(projectID, name))
 	return nil
 }
-func (r *fakeNotebookRepo) AppendHistory(context.Context, *notebook.NotebookServer) error { return nil }
+func (r *fakeNotebookRepo) StartRun(context.Context, string, string) error { return nil }
+func (r *fakeNotebookRepo) FinishRun(context.Context, string, string, string, string) (bool, error) {
+	return false, nil
+}
 func (r *fakeNotebookRepo) ListHistory(context.Context, string, int, int) ([]*notebook.NotebookHistory, error) {
 	return nil, nil
 }

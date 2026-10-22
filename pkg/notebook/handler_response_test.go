@@ -58,8 +58,9 @@ func (r *stubNotebookRepo) Delete(_ context.Context, _, name string) error {
 	delete(r.servers, name)
 	return nil
 }
-func (r *stubNotebookRepo) AppendHistory(_ context.Context, _ *NotebookServer) error {
-	return nil
+func (r *stubNotebookRepo) StartRun(context.Context, string, string) error { return nil }
+func (r *stubNotebookRepo) FinishRun(context.Context, string, string, string, string) (bool, error) {
+	return false, nil
 }
 func (r *stubNotebookRepo) ListHistory(_ context.Context, _ string, _, _ int) ([]*NotebookHistory, error) {
 	return nil, nil

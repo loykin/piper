@@ -34,6 +34,9 @@ type NotebookServer struct {
 	YAML      string    `json:"yaml"       db:"yaml"`
 	CreatedBy string    `json:"created_by,omitempty" db:"created_by"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	// StartedAt is when the current run began (create or restart); the
+	// history row written when that run ends uses it as deployed_at.
+	StartedAt time.Time `json:"started_at" db:"started_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
@@ -116,9 +119,9 @@ func NewNotebookServerResponses(nbs []*NotebookServer) []*NotebookServerResponse
 	return out
 }
 
-// NotebookHistory is an immutable record of a past notebook lifecycle
-// (a prior run before a restart, or the final state before delete). Token is
-// deliberately omitted — it is a live connection secret, not history.
+// NotebookHistory is an immutable record of one finished notebook run: from
+// create or restart (DeployedAt) until it stopped or failed (StoppedAt).
+// Token is deliberately omitted — it is a live connection secret, not history.
 type NotebookHistory struct {
 	ID        int    `json:"id"          db:"id"`
 	ProjectID string `json:"project_id"  db:"project_id"`

@@ -81,12 +81,12 @@ export function NotebookDetailPanel({ name, projectId }: { name: string; project
         </dl>
       </PanelTemplate.Section>
 
-      <PanelTemplate.Section title="Execution">
+      <PanelTemplate.Section title="MCP Executions">
         <Link
           to={`/projects/${projectId}/notebook-executions?notebook=${encodeURIComponent(notebook.name)}`}
           className="text-sm text-primary hover:underline"
         >
-          View execution history and approvals
+          View MCP executions and approvals
         </Link>
       </PanelTemplate.Section>
 

@@ -10,6 +10,7 @@ import (
 	piperMCP "github.com/loykin/piper/pkg/mcp"
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/notebook/execution"
+	"github.com/loykin/piper/pkg/security"
 )
 
 // toolDeps holds the two dependencies every Phase 2 tool/resource needs —
@@ -106,6 +107,49 @@ func (d toolDeps) tools() map[string]piperMCP.Tool {
 			},
 			Handler: d.listExecutions,
 		},
+		"piper_execute_notebook": {
+			Definition: piperMCP.ToolDefinition{
+				Name:        "piper_execute_notebook",
+				Title:       "Execute a notebook",
+				Description: "Run every cell of a notebook on the running notebook server's kernel. Returns an execution id at once; poll piper_get_execution for progress and the result. The project's execution policy may hold it for admin approval first.",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Notebook server name"},"path":{"type":"string","description":"Notebook path relative to the work directory"},"timeout_seconds":{"type":"integer","minimum":1},"idempotency_key":{"type":"string","maxLength":128,"description":"Repeat a call with the same key to get the same execution instead of a new one"}},"required":["name","path"],"additionalProperties":false}`),
+				Annotations: executeAnnotations("Execute a notebook"),
+			},
+			Handler: d.executeNotebook,
+		},
+		"piper_execute_cell": {
+			Definition: piperMCP.ToolDefinition{
+				Name:        "piper_execute_cell",
+				Title:       "Execute a cell",
+				Description: "Append a code cell to a notebook (or replace an existing one) and run it on the running notebook server's kernel. Returns an execution id at once; poll piper_get_execution for the output. The project's execution policy may hold it for admin approval first.",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Notebook server name"},"path":{"type":"string","description":"Notebook path relative to the work directory"},"code":{"type":"string","description":"Cell source"},"mode":{"type":"string","enum":["append","replace"],"default":"append"},"cell_id":{"type":"string","description":"Cell to replace (mode=replace)"},"create_if_missing":{"type":"boolean","description":"Create the notebook if it does not exist"},"timeout_seconds":{"type":"integer","minimum":1},"idempotency_key":{"type":"string","maxLength":128}},"required":["name","path","code"],"additionalProperties":false}`),
+				Annotations: executeAnnotations("Execute a cell"),
+			},
+			Handler: d.executeCell,
+		},
+		"piper_cancel_execution": {
+			Definition: piperMCP.ToolDefinition{
+				Name:        "piper_cancel_execution",
+				Title:       "Cancel an execution",
+				Description: "Cancel a queued, awaiting-approval, or running execution. Members can cancel their own executions; admins can cancel any.",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"execution_id":{"type":"string"}},"required":["execution_id"],"additionalProperties":false}`),
+				Annotations: piperMCP.ToolAnnotations{Title: "Cancel an execution", DestructiveHint: boolPtr(true), OpenWorldHint: false},
+			},
+			Handler: d.cancelExecution,
+		},
+	}
+}
+
+// executeAnnotations is the annotation set for tools that run code (design
+// doc §8.2): not read-only, destructive, and not idempotent — the
+// idempotency_key argument, not the hint, is what makes a retry safe.
+func executeAnnotations(title string) piperMCP.ToolAnnotations {
+	return piperMCP.ToolAnnotations{
+		Title:           title,
+		ReadOnlyHint:    false,
+		DestructiveHint: boolPtr(true),
+		IdempotentHint:  false,
+		OpenWorldHint:   false,
 	}
 }
 
@@ -276,4 +320,119 @@ func (d toolDeps) listExecutions(ctx context.Context, args json.RawMessage) (*pi
 // contract), so it's safe to surface verbatim.
 func domainErrorResult(err error) (*piperMCP.ToolCallResult, error) {
 	return &piperMCP.ToolCallResult{IsError: true, Content: []piperMCP.ContentBlock{{Type: "text", Text: err.Error()}}}, nil
+}
+
+// requireMember enforces design doc §9.1: running code needs member or
+// above. The MCP endpoint itself admits viewers (for the read tools), so the
+// role floor for code-running tools is checked here.
+func requireMember(ctx context.Context, tool string) (*piperMCP.ToolCallResult, bool) {
+	if actorFromCtx(ctx).Role >= security.ProjectRoleMember {
+		return nil, true
+	}
+	audit(ctx, tool, nil, true)
+	return &piperMCP.ToolCallResult{IsError: true, Content: []piperMCP.ContentBlock{{Type: "text", Text: tool + " requires the member role or above"}}}, false
+}
+
+// executionCreated reports a new (or idempotently replayed) execution.
+func executionCreated(projectID string, exec *execution.NotebookExecution, replayed bool) (*piperMCP.ToolCallResult, error) {
+	text := "execution " + exec.ID + " is " + exec.Status
+	if exec.Status == execution.StatusAwaitingApproval {
+		text += "; a project admin must approve it before it runs"
+	}
+	if replayed {
+		text += " (existing execution for this idempotency_key)"
+	}
+	return piperMCP.TextResult(text, map[string]any{
+		"execution":    execution.NewNotebookExecutionResponse(exec),
+		"resource_uri": executionURI(projectID, exec.ID),
+	})
+}
+
+type executeNotebookArgs struct {
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (d toolDeps) executeNotebook(ctx context.Context, args json.RawMessage) (*piperMCP.ToolCallResult, error) {
+	var a executeNotebookArgs
+	if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.Name) == "" || strings.TrimSpace(a.Path) == "" {
+		return nil, invalidParams("name and path are required")
+	}
+	if denied, ok := requireMember(ctx, "piper_execute_notebook"); !ok {
+		return denied, nil
+	}
+	projectID := projectIDFrom(ctx)
+	exec, replayed, err := d.Executions.CreateExecution(ctx, actorFromCtx(ctx), projectID, a.Name, execution.CreateExecutionRequest{
+		Kind:           execution.KindNotebook,
+		Path:           a.Path,
+		TimeoutSeconds: a.TimeoutSeconds,
+	}, a.IdempotencyKey)
+	audit(ctx, "piper_execute_notebook", err, false)
+	if err != nil {
+		return domainErrorResult(err)
+	}
+	return executionCreated(projectID, exec, replayed)
+}
+
+type executeCellArgs struct {
+	Name            string `json:"name"`
+	Path            string `json:"path"`
+	Code            string `json:"code"`
+	Mode            string `json:"mode"`
+	CellID          string `json:"cell_id"`
+	CreateIfMissing bool   `json:"create_if_missing"`
+	TimeoutSeconds  int    `json:"timeout_seconds"`
+	IdempotencyKey  string `json:"idempotency_key"`
+}
+
+func (d toolDeps) executeCell(ctx context.Context, args json.RawMessage) (*piperMCP.ToolCallResult, error) {
+	var a executeCellArgs
+	if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.Name) == "" || strings.TrimSpace(a.Path) == "" || strings.TrimSpace(a.Code) == "" {
+		return nil, invalidParams("name, path and code are required")
+	}
+	if a.Mode == "" {
+		a.Mode = execution.CellEditAppend
+	}
+	if denied, ok := requireMember(ctx, "piper_execute_cell"); !ok {
+		return denied, nil
+	}
+	projectID := projectIDFrom(ctx)
+	exec, replayed, err := d.Executions.CreateExecution(ctx, actorFromCtx(ctx), projectID, a.Name, execution.CreateExecutionRequest{
+		Kind:            execution.KindCell,
+		Path:            a.Path,
+		Edit:            &execution.CellEdit{Mode: a.Mode, Code: a.Code, CellID: a.CellID},
+		CreateIfMissing: a.CreateIfMissing,
+		TimeoutSeconds:  a.TimeoutSeconds,
+	}, a.IdempotencyKey)
+	audit(ctx, "piper_execute_cell", err, false)
+	if err != nil {
+		return domainErrorResult(err)
+	}
+	return executionCreated(projectID, exec, replayed)
+}
+
+type cancelExecutionArgs struct {
+	ExecutionID string `json:"execution_id"`
+}
+
+func (d toolDeps) cancelExecution(ctx context.Context, args json.RawMessage) (*piperMCP.ToolCallResult, error) {
+	var a cancelExecutionArgs
+	if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.ExecutionID) == "" {
+		return nil, invalidParams("execution_id is required")
+	}
+	if denied, ok := requireMember(ctx, "piper_cancel_execution"); !ok {
+		return denied, nil
+	}
+	projectID := projectIDFrom(ctx)
+	exec, err := d.Executions.GetExecution(ctx, projectID, a.ExecutionID)
+	if err == nil {
+		err = d.Executions.CancelExecution(ctx, actorFromCtx(ctx), projectID, exec.NotebookName, a.ExecutionID)
+	}
+	audit(ctx, "piper_cancel_execution", err, false)
+	if err != nil {
+		return domainErrorResult(err)
+	}
+	return piperMCP.TextResult("cancellation requested for execution "+a.ExecutionID, map[string]any{"execution_id": a.ExecutionID})
 }

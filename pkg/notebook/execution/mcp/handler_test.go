@@ -217,8 +217,7 @@ func TestFullMCPFlow(t *testing.T) {
 		t.Errorf("expected empty body for a notification, got %q", notifyW.Body.String())
 	}
 
-	// tools/list — assert exactly the 6 Phase 2 tools, and none of the
-	// Phase 3 execution tools the task explicitly forbids implementing.
+	// tools/list — the read tools plus the code-running execute/cancel tools.
 	var allBodies [][]byte
 	w, resp := doCall(t, r, opts, rpcReq{ID: 2, Method: "tools/list"})
 	allBodies = append(allBodies, w.Body.Bytes())
@@ -231,7 +230,7 @@ func TestFullMCPFlow(t *testing.T) {
 	if err := json.Unmarshal(resp.Result, &toolsOut); err != nil {
 		t.Fatal(err)
 	}
-	wantTools := map[string]bool{
+	readTools := map[string]bool{
 		"piper_list_notebook_servers": false,
 		"piper_get_notebook_server":   false,
 		"piper_list_notebook_files":   false,
@@ -239,37 +238,46 @@ func TestFullMCPFlow(t *testing.T) {
 		"piper_get_execution":         false,
 		"piper_list_executions":       false,
 	}
-	phase3Tools := []string{
-		"piper_start_notebook_server", "piper_create_kernel_session",
-		"piper_execute_notebook", "piper_execute_cell",
-		"piper_cancel_execution", "piper_close_kernel_session",
+	execTools := map[string]bool{
+		"piper_execute_notebook": false,
+		"piper_execute_cell":     false,
+		"piper_cancel_execution": false,
 	}
+	notImplemented := []string{"piper_start_notebook_server", "piper_create_kernel_session", "piper_close_kernel_session"}
 	for _, td := range toolsOut.Tools {
-		if _, known := wantTools[td.Name]; known {
-			wantTools[td.Name] = true
-		}
-		for _, forbidden := range phase3Tools {
-			if td.Name == forbidden {
-				t.Errorf("Phase 3 tool %q must not be implemented in Phase 2", td.Name)
+		for _, missing := range notImplemented {
+			if td.Name == missing {
+				t.Errorf("tool %q is not part of this release", td.Name)
 			}
 		}
-		if !td.Annotations.ReadOnlyHint {
-			t.Errorf("tool %q: expected readOnlyHint=true", td.Name)
+		if _, ok := readTools[td.Name]; ok {
+			readTools[td.Name] = true
+			if !td.Annotations.ReadOnlyHint {
+				t.Errorf("tool %q: expected readOnlyHint=true", td.Name)
+			}
+		}
+		if _, ok := execTools[td.Name]; ok {
+			execTools[td.Name] = true
+			if td.Annotations.ReadOnlyHint || td.Annotations.DestructiveHint == nil || !*td.Annotations.DestructiveHint {
+				t.Errorf("tool %q: expected readOnlyHint=false, destructiveHint=true", td.Name)
+			}
 		}
 		if td.Annotations.OpenWorldHint {
 			t.Errorf("tool %q: expected openWorldHint=false", td.Name)
 		}
 	}
-	if len(toolsOut.Tools) != 6 {
-		t.Errorf("expected exactly 6 tools, got %d", len(toolsOut.Tools))
+	if len(toolsOut.Tools) != len(readTools)+len(execTools) {
+		t.Errorf("expected exactly %d tools, got %d", len(readTools)+len(execTools), len(toolsOut.Tools))
 	}
-	for name, found := range wantTools {
-		if !found {
-			t.Errorf("expected tool %q to be present", name)
+	for _, set := range []map[string]bool{readTools, execTools} {
+		for name, found := range set {
+			if !found {
+				t.Errorf("expected tool %q to be present", name)
+			}
 		}
 	}
 
-	// tools/call for each of the 6 tools.
+	// tools/call for each read tool (the execute tools: TestExecuteTools).
 	toolCalls := []struct {
 		name string
 		args map[string]any
@@ -567,5 +575,86 @@ func TestGetNotebookServerNotFoundIsModelVisible(t *testing.T) {
 	}
 	if !result.IsError {
 		t.Error("expected isError:true for a not-found notebook server")
+	}
+}
+
+func callTool(t *testing.T, r *gin.Engine, opts callOpts, id int, name string, args map[string]any) piperMCP.ToolCallResult {
+	t.Helper()
+	_, resp := doCall(t, r, opts, rpcReq{ID: id, Method: "tools/call", Params: map[string]any{"name": name, "arguments": args}})
+	if resp.Error != nil {
+		t.Fatalf("tools/call %s protocol error: %+v", name, resp.Error)
+	}
+	var result piperMCP.ToolCallResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func createdExecution(t *testing.T, result piperMCP.ToolCallResult) execution.NotebookExecutionResponse {
+	t.Helper()
+	if result.IsError {
+		t.Fatalf("unexpected isError result: %+v", result.Content)
+	}
+	var out struct {
+		Execution execution.NotebookExecutionResponse `json:"execution"`
+	}
+	if err := json.Unmarshal(result.StructuredContent, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Execution
+}
+
+// Executions are created only through MCP, by a member or above, and land
+// under the project's execution policy (approval_required by default).
+func TestExecuteTools(t *testing.T) {
+	fx := newTestFixture(t)
+	member := newTestRouter(fx.handler, security.ProjectRoleMember)
+	sessionID, _ := mustInitialize(t, member, "proj-1")
+	opts := callOpts{projectID: "proj-1", sessionID: sessionID, protocolVersion: piperMCP.ProtocolVersion20251125}
+
+	args := map[string]any{"name": "nb1", "path": "analysis.ipynb", "idempotency_key": "k1"}
+	first := createdExecution(t, callTool(t, member, opts, 1, "piper_execute_notebook", args))
+	if first.Kind != execution.KindNotebook || first.Status != execution.StatusAwaitingApproval || first.ClientID != "test-client" {
+		t.Fatalf("execution = %+v, want an awaiting_approval notebook execution from test-client", first)
+	}
+	if again := createdExecution(t, callTool(t, member, opts, 2, "piper_execute_notebook", args)); again.ID != first.ID {
+		t.Fatalf("idempotent retry created %q, want %q", again.ID, first.ID)
+	}
+
+	cell := createdExecution(t, callTool(t, member, opts, 3, "piper_execute_cell", map[string]any{"name": "nb1", "path": "analysis.ipynb", "code": "print(1)"}))
+	if cell.Kind != execution.KindCell {
+		t.Fatalf("cell execution = %+v", cell)
+	}
+
+	if res := callTool(t, member, opts, 4, "piper_cancel_execution", map[string]any{"execution_id": first.ID}); res.IsError {
+		t.Fatalf("cancel own execution: %+v", res.Content)
+	}
+	got, err := fx.service.GetExecution(context.Background(), "proj-1", first.ID)
+	if err != nil || got.Status != execution.StatusCancelled {
+		t.Fatalf("after cancel = %+v, %v; want cancelled", got, err)
+	}
+}
+
+func TestExecuteToolsRequireMember(t *testing.T) {
+	fx := newTestFixture(t)
+	sessionID, _ := mustInitialize(t, fx.router, "proj-1") // viewer
+	opts := callOpts{projectID: "proj-1", sessionID: sessionID, protocolVersion: piperMCP.ProtocolVersion20251125}
+
+	for i, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"piper_execute_notebook", map[string]any{"name": "nb1", "path": "analysis.ipynb"}},
+		{"piper_execute_cell", map[string]any{"name": "nb1", "path": "analysis.ipynb", "code": "print(1)"}},
+		{"piper_cancel_execution", map[string]any{"execution_id": "exec-1"}},
+	} {
+		if res := callTool(t, fx.router, opts, i+1, tc.tool, tc.args); !res.IsError {
+			t.Errorf("%s as viewer: want isError", tc.tool)
+		}
+	}
+	list, total, err := fx.service.ListExecutions(context.Background(), "proj-1", "nb1", 0, 0)
+	if err != nil || total != 1 || len(list) != 1 {
+		t.Fatalf("executions = %d (%v), want only the seeded one", total, err)
 	}
 }

@@ -970,39 +970,6 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/NotebookExecution" }
-  /api/projects/{project_id}/notebooks/{name}/executions:
-    parameters:
-      - $ref: "#/components/parameters/ProjectID"
-      - name: name
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema: { type: string, maxLength: 128 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/NotebookExecutionRequest" }
-      responses:
-        "201":
-          description: Execution created (queued or awaiting_approval, per notebook_execution.mcp_policy).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NotebookExecution" }
-        "200":
-          description: Idempotency-Key replay — the existing execution for the same request is returned.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NotebookExecution" }
-        "409":
-          description: Idempotency-Key reused with a different request payload, or a genuine content conflict.
-        "429":
-          description: notebook_execution concurrency limit reached (max_queued_per_project).
   /api/projects/{project_id}/notebook-executions/{id}:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -2453,16 +2420,6 @@ components:
         mode: { type: string, enum: [append, replace] }
         code: { type: string }
         cell_id: { type: string, description: "Required when mode is replace." }
-    NotebookExecutionRequest:
-      type: object
-      required: [kind, path]
-      properties:
-        kind: { type: string, enum: [notebook, cell] }
-        path: { type: string, description: "Target .ipynb path." }
-        kernel_session_id: { type: string, description: "Reuse an existing Piper kernel session; a new one is created when omitted." }
-        edit: { $ref: "#/components/schemas/NotebookExecutionEdit" }
-        create_if_missing: { type: boolean, description: "cell kind only — create path if it doesn't exist yet." }
-        timeout_seconds: { type: integer }
     NotebookExecution:
       type: object
       description: >-

@@ -228,7 +228,7 @@ func (h *Handler) buildServer(projectID string) *piperMCP.Server {
 	d := toolDeps{Notebooks: h.deps.Notebooks, Executions: h.deps.Executions}
 	return &piperMCP.Server{
 		Info:              piperMCP.ServerInfo{Name: ServerName, Version: ServerVersion},
-		Instructions:      "Read-only access to Piper-managed Jupyter notebooks and their execution history for project " + projectID + ".",
+		Instructions:      "Piper-managed Jupyter notebooks for project " + projectID + ": read notebooks and files, run notebooks or cells on a running notebook server (subject to the project's execution policy, which may require admin approval), and follow or cancel those executions.",
 		Tools:             d.tools(),
 		ResourceTemplates: resourceTemplates(),
 		ReadResource:      d.readResource,
@@ -238,4 +238,5 @@ func (h *Handler) buildServer(projectID string) *piperMCP.Server {
 // projectIDFrom/actorFromCtx are small accessors tools.go/resources.go use
 // instead of importing gin — keeps those two files transport-agnostic, only
 // this file and context.go know about *gin.Context / requestScope's plumbing.
-func projectIDFrom(ctx context.Context) string { return requestScopeFrom(ctx).ProjectID }
+func projectIDFrom(ctx context.Context) string         { return requestScopeFrom(ctx).ProjectID }
+func actorFromCtx(ctx context.Context) execution.Actor { return requestScopeFrom(ctx).Actor }

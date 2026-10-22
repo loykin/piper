@@ -54,6 +54,22 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name stri
 	if runtimeID != "" && nb.RuntimeID != "" && nb.RuntimeID != runtimeID {
 		return fmt.Errorf("notebook %q owned by runtime %q, update from %q rejected", name, nb.RuntimeID, runtimeID)
 	}
+	// A stopped/failed report ends the run: FinishRun alone writes it (status,
+	// reason, cleared connection fields) and records the run in history once.
+	// The full-row Update below is skipped for it — written after a
+	// concurrent FinishRun (Delete's stop), it would put the old status back
+	// and let the run be recorded twice. The only other field such a report
+	// carries, the work dir, was stored when the run started.
+	if r.Status == StatusStopped || r.Status == StatusFailed {
+		finished, err := s.repo.FinishRun(ctx, projectID, name, r.Status, r.Reason)
+		if err != nil {
+			return fmt.Errorf("notebook: finish run: %w", err)
+		}
+		if finished {
+			s.publish(projectID, name, r)
+		}
+		return nil
+	}
 	previousStatus := nb.Status
 	if r.Status != "" {
 		nb.Status = r.Status
@@ -74,11 +90,6 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name stri
 	if r.Env != "" {
 		nb.Env = r.Env
 	}
-	if r.Status == StatusStopped || r.Status == StatusFailed {
-		nb.Endpoint = ""
-		nb.PID = 0
-		nb.Token = ""
-	}
 	if r.WorkDir != "" && nb.VolumeID != "" {
 		if vol, err := s.vols.Get(ctx, nb.VolumeID); err == nil && vol != nil && vol.WorkDir != r.WorkDir {
 			vol.WorkDir = r.WorkDir
@@ -91,6 +102,11 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name stri
 	if r.Status == "" || r.Status == previousStatus {
 		return nil
 	}
+	s.publish(projectID, name, r)
+	return nil
+}
+
+func (s *StatusSink) publish(projectID, name string, r StatusReport) {
 	eventType := "notebook.status"
 	fields := map[string]any{"name": name, "status": r.Status}
 	switch r.Status {
@@ -110,5 +126,4 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name stri
 	if publisher != nil {
 		publisher.Publish(event.New(projectID, eventType, fields))
 	}
-	return nil
 }

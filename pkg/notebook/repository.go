@@ -19,14 +19,21 @@ type Repository interface {
 	// Count returns the total number of notebooks for projectID, ignoring
 	// limit/offset.
 	Count(ctx context.Context, projectID string) (int, error)
+	// Delete removes the notebook row. It records no history: the notebook's
+	// last run was recorded when it ended (FinishRun).
 	Delete(ctx context.Context, projectID, name string) error
-	// AppendHistory records nb as a past notebook lifecycle state in
-	// notebook_history, stamped with the current time as its stopped/replaced
-	// moment. Called both when a notebook is deleted and, before Restart
-	// overwrites the current row, whenever a restart replaces an
-	// already-running server — so no prior run of a notebook is silently
-	// lost with no trace.
-	AppendHistory(ctx context.Context, nb *NotebookServer) error
+	// StartRun marks the notebook starting and stamps started_at with the
+	// current time: a new run begins (restart).
+	StartRun(ctx context.Context, projectID, name string) error
+	// FinishRun ends the current run: it sets status (stopped or failed) and
+	// reason, clears the live connection fields, and records the run in
+	// notebook_history — all in one transaction, and only if the notebook
+	// was not already stopped or failed. A run has one history row: if the
+	// runtime revived it on its own (K8s restarting a crashed container)
+	// and it ends again, its row is updated to the latest end. finished reports whether this call
+	// ended the run, so a run reported ended twice (Delete's stop racing the
+	// driver's own report) is recorded once.
+	FinishRun(ctx context.Context, projectID, name, status, reason string) (finished bool, err error)
 	// ListHistory returns notebook history for projectID, most recently
 	// stopped first. limit 0 means no limit; offset is only meaningful when
 	// limit > 0.

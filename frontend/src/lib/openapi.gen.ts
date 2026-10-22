@@ -2326,76 +2326,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/projects/{project_id}/notebooks/{name}/executions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: components["parameters"]["ProjectID"];
-                name: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: {
-            parameters: {
-                query?: never;
-                header?: {
-                    "Idempotency-Key"?: string;
-                };
-                path: {
-                    project_id: components["parameters"]["ProjectID"];
-                    name: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["NotebookExecutionRequest"];
-                };
-            };
-            responses: {
-                /** @description Idempotency-Key replay — the existing execution for the same request is returned. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["NotebookExecution"];
-                    };
-                };
-                /** @description Execution created (queued or awaiting_approval, per notebook_execution.mcp_policy). */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["NotebookExecution"];
-                    };
-                };
-                /** @description Idempotency-Key reused with a different request payload, or a genuine content conflict. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-                /** @description notebook_execution concurrency limit reached (max_queued_per_project). */
-                429: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/projects/{project_id}/notebook-executions/{id}": {
         parameters: {
             query?: never;
@@ -5329,18 +5259,6 @@ export interface components {
             code: string;
             /** @description Required when mode is replace. */
             cell_id?: string;
-        };
-        NotebookExecutionRequest: {
-            /** @enum {string} */
-            kind: "notebook" | "cell";
-            /** @description Target .ipynb path. */
-            path: string;
-            /** @description Reuse an existing Piper kernel session; a new one is created when omitted. */
-            kernel_session_id?: string;
-            edit?: components["schemas"]["NotebookExecutionEdit"];
-            /** @description cell kind only — create path if it doesn't exist yet. */
-            create_if_missing?: boolean;
-            timeout_seconds?: number;
         };
         /** @description See docs/jupyter-mcp-execution.md §5.2 for the full status state machine and §11.3 for the stable error_code values. */
         NotebookExecution: {

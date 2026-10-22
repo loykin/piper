@@ -160,6 +160,17 @@ func TestNotebookExecutionRepo_Postgres(t *testing.T) {
 // A project whose MLflow integration has outbox events must still be
 // deletable: migration 00048 makes the outbox FK cascade. Run against real
 // Postgres because the migration relies on the implicit constraint name.
+func TestNotebookRepoRuns_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+
+	const projectID = "notebook-run"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.NotebookRunSuite(t, repos.Notebook, projectID)
+}
+
 func TestProjectDeleteWithOutboxEvents_Postgres(t *testing.T) {
 	ctx := context.Background()
 	repos := openPostgresRepos(t, ctx)

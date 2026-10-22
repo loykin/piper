@@ -6,7 +6,7 @@ const backend = 'http://127.0.0.1:18080'
 
 test('notebook executions page exposes empty state and persisted policy', async ({ page }) => {
   await page.goto(`${uiBase}/notebook-executions`)
-  await expect(page.getByRole('heading', { name: 'Notebook Executions' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'MCP Executions' })).toBeVisible()
   await expect(page.getByText('No notebook executions yet.')).toBeVisible()
 
   const policy = page.getByText('Execution policy').locator('..').locator('[role="combobox"]')

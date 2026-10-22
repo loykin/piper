@@ -105,8 +105,8 @@ function navItems(projectId: string): { label: string; items: NavItem[] }[] {
       items: [
         { id: 'notebooks',        label: 'Notebooks', icon: BookOpen,  to: `${base}/notebooks` },
         { id: 'notebook-volumes', label: 'Volumes',   icon: HardDrive, to: `${base}/notebook-volumes` },
-        { id: 'notebook-executions', label: 'Executions', icon: ListChecks, to: `${base}/notebook-executions` },
-        { id: 'notebook-history', label: 'Notebook History', icon: History, to: `${base}/notebooks/history`, exact: true },
+        { id: 'notebook-executions', label: 'MCP Executions', icon: ListChecks, to: `${base}/notebook-executions` },
+        { id: 'notebook-history', label: 'Server History', icon: History, to: `${base}/notebooks/history`, exact: true },
       ],
     },
     {

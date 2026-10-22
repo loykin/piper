@@ -2,6 +2,11 @@
 
 > 상태: 제안(Proposed) — 구현 전 리뷰 필요
 >
+> 2026-10-22 결정: 실행 기능은 AI(MCP) 전용이다. 실행은 MCP 도구
+> (`piper_execute_notebook`, `piper_execute_cell`)로만 생성하고, REST의
+> `POST /notebooks/{name}/executions`는 제거했다. REST와 UI("MCP Executions")는
+> 조회·승인·거부·취소만 한다. 사람이 notebook을 실행하는 경로는 파이프라인이다.
+>
 > 작성일: 2026-08-28
 >
 > 대상: Piper의 기존 Notebook 기능을 사람이 Jupyter UI로 사용하면서,
@@ -380,12 +385,14 @@ cell index만으로 replace하지 않는다. 사람이 cell을 삽입하면 inde
 
 | Method | Path | 최소 역할 | 결과 |
 |---|---|---:|---|
-| `POST` | `/notebooks/{name}/executions` | member | `201 NotebookExecution` |
 | `GET` | `/notebook-executions?notebook={name}&limit=&offset=` | viewer | 실행 이력 + `X-Total-Count` |
 | `GET` | `/notebook-executions/{id}` | viewer | 상태/진행률/요약 |
 | `POST` | `/notebook-executions/{id}/cancel` | owner/admin | `204` |
 | `POST` | `/notebook-executions/{id}/approve` | admin | `204` |
 | `POST` | `/notebook-executions/{id}/deny` | admin | `204` |
+
+생성은 MCP 도구로만 한다(2026-10-22 결정, 문서 머리말 참고). 아래는 도구가
+`CreateExecution`에 넘기는 요청의 모양이다.
 
 생성 요청 예시:
 

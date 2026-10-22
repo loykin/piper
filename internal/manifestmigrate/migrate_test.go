@@ -118,9 +118,10 @@ func (r *fakeNotebookRepo) SetStatus(context.Context, string, string, string, st
 func (r *fakeNotebookRepo) List(_ context.Context, projectID string, _, _ int) ([]*notebook.NotebookServer, error) {
 	return r.byProject[projectID], nil
 }
-func (r *fakeNotebookRepo) Delete(context.Context, string, string) error { return nil }
-func (r *fakeNotebookRepo) AppendHistory(context.Context, *notebook.NotebookServer) error {
-	return nil
+func (r *fakeNotebookRepo) Delete(context.Context, string, string) error   { return nil }
+func (r *fakeNotebookRepo) StartRun(context.Context, string, string) error { return nil }
+func (r *fakeNotebookRepo) FinishRun(context.Context, string, string, string, string) (bool, error) {
+	return false, nil
 }
 func (r *fakeNotebookRepo) ListHistory(context.Context, string, int, int) ([]*notebook.NotebookHistory, error) {
 	return nil, nil

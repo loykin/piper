@@ -20,18 +20,19 @@ func NewNotebookRepo(exec *dbstore.Executor[*sqlx.DB], source string) notebook.R
 	return &notebookRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
-const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, reason, yaml, created_by, created_at, updated_at`
+const notebookCols = `project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, reason, yaml, created_by, created_at, started_at, updated_at`
 
 func (r *notebookRepo) Create(ctx context.Context, nb *notebook.NotebookServer) error {
 	now := time.Now()
 	nb.CreatedAt = now
+	nb.StartedAt = now
 	nb.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, reason, yaml, created_by, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO notebook_servers (project_id, name, status, env, endpoint, pid, work_dir, token, runtime_id, volume_id, reason, yaml, created_by, created_at, started_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.Token, nb.RuntimeID, nb.VolumeID, nb.Reason, nb.YAML,
-			nb.CreatedBy, nb.CreatedAt, nb.UpdatedAt)
+			nb.CreatedBy, nb.CreatedAt, nb.StartedAt, nb.UpdatedAt)
 		return err
 	})
 }
@@ -109,46 +110,74 @@ func (r *notebookRepo) GetByVolumeID(ctx context.Context, projectID, volumeID st
 	return &nb, nil
 }
 
-// Delete archives the current row into notebook_history and removes it from
-// notebook_servers in a single transaction. Both writes must succeed
-// together — a history-insert failure used to be silently swallowed while
-// the live row was deleted anyway, permanently losing the notebook's
-// lifecycle record with no trace and no error surfaced to the caller.
+// Delete removes the notebook row. History is not written here: the
+// notebook's last run was recorded when it ended (FinishRun).
 func (r *notebookRepo) Delete(ctx context.Context, projectID, name string) error {
-	return r.RunTx(ctx, func(ctx context.Context, tx *sqlx.Tx) error {
-		var nb notebook.NotebookServer
-		err := tx.GetContext(ctx, &nb,
-			`SELECT `+notebookCols+` FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			// Nothing to archive; still remove the (already-absent) row below
-			// so Delete stays idempotent, matching the prior behavior.
-		case err != nil:
-			return err
-		default:
-			if err := appendNotebookHistory(ctx, tx, &nb); err != nil {
-				return fmt.Errorf("append history: %w", err)
-			}
-		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		_, err := db.ExecContext(ctx, `DELETE FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name)
 		return err
 	})
 }
 
-// appendNotebookHistory is shared by AppendHistory (its own transaction) and
-// Delete (inside Delete's transaction) so both go through identical SQL.
-func appendNotebookHistory(ctx context.Context, execer sqlx.ExecerContext, nb *notebook.NotebookServer) error {
-	_, err := execer.ExecContext(ctx,
-		`INSERT INTO notebook_history (project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, reason, yaml, created_by, deployed_at, stopped_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.RuntimeID, nb.VolumeID, nb.Reason, nb.YAML, nb.CreatedBy, nb.CreatedAt, time.Now())
-	return err
+func (r *notebookRepo) StartRun(ctx context.Context, projectID, name string) error {
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		now := time.Now()
+		_, err := db.ExecContext(ctx,
+			`UPDATE notebook_servers SET status=?, reason='', started_at=?, updated_at=? WHERE project_id=? AND name=?`,
+			notebook.StatusStarting, now, now, projectID, name)
+		return err
+	})
 }
 
-func (r *notebookRepo) AppendHistory(ctx context.Context, nb *notebook.NotebookServer) error {
-	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		return appendNotebookHistory(ctx, db, nb)
+// FinishRun ends the current run and records it in notebook_history in one
+// transaction. The status guard makes the transition happen once: a second
+// report of the same end (Delete's stop racing the driver's) updates no row
+// and records nothing.
+func (r *notebookRepo) FinishRun(ctx context.Context, projectID, name, status, reason string) (bool, error) {
+	finished := false
+	err := r.RunTx(ctx, func(ctx context.Context, tx *sqlx.Tx) error {
+		now := time.Now()
+		res, err := tx.ExecContext(ctx,
+			`UPDATE notebook_servers SET status=?, reason=?, endpoint='', pid=0, token='', updated_at=?
+			 WHERE project_id=? AND name=? AND status NOT IN (?, ?)`,
+			status, reason, now, projectID, name, notebook.StatusStopped, notebook.StatusFailed)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return err
+		}
+		var nb notebook.NotebookServer
+		if err := tx.GetContext(ctx, &nb,
+			`SELECT `+notebookCols+` FROM notebook_servers WHERE project_id=? AND name=?`, projectID, name); err != nil {
+			return err
+		}
+		// One row per run: a run the runtime revived on its own (K8s
+		// restarting a crashed container) and that ended again updates its
+		// row to the latest end instead of adding another.
+		res, err = tx.ExecContext(ctx,
+			`UPDATE notebook_history SET status=?, reason=?, stopped_at=? WHERE project_id=? AND name=? AND deployed_at=?`,
+			nb.Status, nb.Reason, now, projectID, name, nb.StartedAt)
+		if err != nil {
+			return fmt.Errorf("update history: %w", err)
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO notebook_history (project_id, name, status, env, endpoint, pid, work_dir, runtime_id, volume_id, reason, yaml, created_by, deployed_at, stopped_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				nb.ProjectID, nb.Name, nb.Status, nb.Env, nb.Endpoint, nb.PID, nb.WorkDir, nb.RuntimeID, nb.VolumeID, nb.Reason, nb.YAML, nb.CreatedBy, nb.StartedAt, now); err != nil {
+				return fmt.Errorf("append history: %w", err)
+			}
+		}
+		finished = true
+		return nil
 	})
+	if err != nil {
+		finished = false
+	}
+	return finished, err
 }
 
 func (r *notebookRepo) ListHistory(ctx context.Context, projectID string, limit, offset int) ([]*notebook.NotebookHistory, error) {

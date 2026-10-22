@@ -8,7 +8,6 @@ import (
 	"github.com/loykin/piper/internal/store/sqlite"
 	"github.com/loykin/piper/pkg/auth"
 	"github.com/loykin/piper/pkg/credential"
-	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/security"
 	"github.com/loykin/piper/pkg/serving"
@@ -98,9 +97,7 @@ func TestProjectDeleteDoesNotCascadeToHistory(t *testing.T) {
 	if err := repos.Project.Create(ctx, proj); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if err := repos.Notebook.AppendHistory(ctx, &notebook.NotebookServer{ProjectID: proj.ID, Name: "nb", Status: "stopped", CreatedAt: time.Now().UTC()}); err != nil {
-		t.Fatalf("append notebook history: %v", err)
-	}
+	recordNotebookRun(t, repos, proj.ID, "nb")
 	if err := repos.Serving.AppendHistory(ctx, &serving.Service{ProjectID: proj.ID, Name: "svc", Status: "stopped", CreatedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("append service history: %v", err)
 	}

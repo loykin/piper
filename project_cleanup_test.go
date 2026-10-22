@@ -107,8 +107,9 @@ func (r *cleanupTestNotebookRepo) Delete(_ context.Context, projectID, name stri
 	delete(r.servers, r.key(projectID, name))
 	return nil
 }
-func (r *cleanupTestNotebookRepo) AppendHistory(context.Context, *notebook.NotebookServer) error {
-	return nil
+func (r *cleanupTestNotebookRepo) StartRun(context.Context, string, string) error { return nil }
+func (r *cleanupTestNotebookRepo) FinishRun(context.Context, string, string, string, string) (bool, error) {
+	return false, nil
 }
 func (r *cleanupTestNotebookRepo) ListHistory(context.Context, string, int, int) ([]*notebook.NotebookHistory, error) {
 	return nil, nil

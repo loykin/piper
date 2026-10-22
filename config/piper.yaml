@@ -128,9 +128,9 @@ notebook:
   notebooks_root: ./notebooks
   port_range: 8888-9900
 
-# Jupyter execution policy and resource bounds. Project admins may override
-# mcp_policy from the Notebook Executions UI; these values are the instance
-# defaults and hard limits.
+# Jupyter execution policy and resource bounds for code AI clients run through
+# MCP. Project admins may override mcp_policy from the MCP Executions UI; these
+# values are the instance defaults and hard limits.
 notebook_execution:
   mcp_policy: approval_required # disabled | approval_required | allowed
   max_running_per_notebook: 1
@@ -157,7 +157,8 @@ integrations:
     allowed_hosts: []
     allowed_cidrs: []
 
-# Read-only notebook MCP transport. Enabling it requires an explicit browser
+# Notebook MCP transport: read notebooks, and run notebooks or cells under
+# notebook_execution.mcp_policy. Enabling it requires an explicit browser
 # Origin allowlist; non-browser clients without Origin remain supported.
 mcp:
   enabled: false

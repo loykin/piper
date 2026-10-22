@@ -195,6 +195,7 @@ func (r *fakeServiceRepo) SetStatusEndpoint(_ context.Context, projectID, name, 
 	}
 	return nil
 }
+func (r *fakeServiceRepo) SetRuntime(context.Context, *serving.Service) error { return nil }
 func (r *fakeServiceRepo) List(_ context.Context, projectID string, _, _ int) ([]*serving.Service, error) {
 	r.listCalled = true
 	var out []*serving.Service

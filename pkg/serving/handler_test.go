@@ -58,6 +58,15 @@ func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, _, name, status, 
 	}
 	return nil
 }
+func (r *stubServingRepo) SetRuntime(_ context.Context, svc *Service) error {
+	if s, ok := r.services[svc.Name]; ok {
+		if s.Status != StatusStopped && s.Status != StatusFailed {
+			s.Endpoint, s.PID = svc.Endpoint, svc.PID
+		}
+		s.Namespace, s.RuntimeID = svc.Namespace, svc.RuntimeID
+	}
+	return nil
+}
 func (r *stubServingRepo) List(_ context.Context, _ string, _, _ int) ([]*Service, error) {
 	out := make([]*Service, 0, len(r.services))
 	for _, s := range r.services {

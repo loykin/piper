@@ -171,6 +171,17 @@ func TestNotebookRepoRuns_Postgres(t *testing.T) {
 	repotest.NotebookRunSuite(t, repos.Notebook, projectID)
 }
 
+func TestServingRepoRuntime_Postgres(t *testing.T) {
+	ctx := context.Background()
+	repos := openPostgresRepos(t, ctx)
+
+	const projectID = "serving-runtime"
+	if err := repos.Project.Create(ctx, &project.Project{ID: projectID, Name: projectID}); err != nil {
+		t.Fatal(err)
+	}
+	repotest.ServingRuntimeSuite(t, repos.Serving, projectID)
+}
+
 func TestProjectDeleteWithOutboxEvents_Postgres(t *testing.T) {
 	ctx := context.Background()
 	repos := openPostgresRepos(t, ctx)

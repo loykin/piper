@@ -52,6 +52,15 @@ func (r *stateTestRepo) SetStatusEndpoint(_ context.Context, _, name, status, en
 	}
 	return nil
 }
+func (r *stateTestRepo) SetRuntime(_ context.Context, svc *Service) error {
+	if r.service != nil && r.service.Name == svc.Name {
+		if r.service.Status != StatusStopped && r.service.Status != StatusFailed {
+			r.service.Endpoint, r.service.PID = svc.Endpoint, svc.PID
+		}
+		r.service.Namespace, r.service.RuntimeID = svc.Namespace, svc.RuntimeID
+	}
+	return nil
+}
 func (r *stateTestRepo) List(context.Context, string, int, int) ([]*Service, error) {
 	if r.service == nil {
 		return nil, nil

@@ -105,6 +105,21 @@ func (r *servingRepo) SetStatusEndpoint(ctx context.Context, projectID, name, st
 	})
 }
 
+func (r *servingRepo) SetRuntime(ctx context.Context, svc *serving.Service) error {
+	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
+		q := db.Rebind(`UPDATE services
+			SET endpoint=CASE WHEN status IN (?, ?) THEN '' ELSE ? END,
+			    pid=CASE WHEN status IN (?, ?) THEN 0 ELSE ? END,
+			    namespace=?, runtime_id=?, updated_at=?
+			WHERE project_id=? AND name=?`)
+		_, err := db.ExecContext(ctx, q,
+			serving.StatusStopped, serving.StatusFailed, svc.Endpoint,
+			serving.StatusStopped, serving.StatusFailed, svc.PID,
+			svc.Namespace, svc.RuntimeID, time.Now(), svc.ProjectID, svc.Name)
+		return err
+	})
+}
+
 func (r *servingRepo) List(ctx context.Context, projectID string, limit, offset int) ([]*serving.Service, error) {
 	query := `SELECT ` + serviceSelectCols + ` FROM services WHERE project_id=? ORDER BY created_at DESC`
 	args := []any{projectID}

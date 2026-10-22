@@ -67,26 +67,14 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 		artifactLabel = svc.Spec.Model.FromURI
 	}
 
-	finish, err := m.status.beginDeploy(ctx, projectID, name)
-	if err != nil {
-		return err
+	rec := &Service{
+		ProjectID: projectID,
+		Name:      name,
+		RunID:     art.RunID,
+		Artifact:  artifactLabel,
+		Status:    StatusStarting,
+		YAML:      yamlStr,
 	}
-	defer finish()
-	rec, err := m.driver.Deploy(ctx, svc, art, yamlStr)
-	if err != nil {
-		return err
-	}
-
-	// Merge driver-returned record with known metadata.
-	if rec.Artifact == "" {
-		rec.Artifact = artifactLabel
-	}
-	if rec.Name == "" {
-		rec.Name = name
-	}
-	rec.RunID = art.RunID
-	rec.ProjectID = projectID
-	rec.YAML = yamlStr
 	if identity, ok := security.IdentityFromContext(ctx); ok {
 		rec.CreatedBy = identity.ID
 	}
@@ -100,7 +88,22 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 		}
 	}
 
+	// The row exists before the runtime does: a runtime can report status
+	// before Driver.Deploy returns (a process that exits at once, a k8s
+	// Deployment the observer already lists), and that report needs a row.
 	if err := m.repo.Upsert(ctx, rec); err != nil {
+		return err
+	}
+	deployed, err := m.driver.Deploy(ctx, svc, art, yamlStr)
+	if err != nil {
+		if setErr := m.repo.SetStatus(ctx, projectID, name, StatusFailed); setErr != nil {
+			return fmt.Errorf("%w; mark failed: %v", err, setErr)
+		}
+		return err
+	}
+	deployed.ProjectID = projectID
+	deployed.Name = name
+	if err := m.repo.SetRuntime(ctx, deployed); err != nil {
 		return err
 	}
 	m.emit(projectID, "service.deployed", map[string]any{"name": name, "artifact": artifactLabel})

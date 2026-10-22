@@ -13,6 +13,11 @@ type Repository interface {
 	Upsert(ctx context.Context, svc *Service) error
 	SetStatus(ctx context.Context, projectID, name, status string) error
 	SetStatusEndpoint(ctx context.Context, projectID, name, status, endpoint string) error
+	// SetRuntime records what Driver.Deploy assigned (endpoint, namespace,
+	// pid, runtime_id) on the row Manager wrote before deploying. It never
+	// touches status, which the runtime may already have reported; endpoint
+	// and pid stay cleared when that report was stopped or failed.
+	SetRuntime(ctx context.Context, svc *Service) error
 	// List returns services for projectID, newest first. limit 0 means no
 	// limit (return everything); offset is only meaningful when limit > 0.
 	List(ctx context.Context, projectID string, limit, offset int) ([]*Service, error)

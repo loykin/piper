@@ -93,9 +93,7 @@ type Driver struct {
 	storageURL   string
 	storageToken string
 
-	// orphans deduplicates repeated status reports and remembers
-	// "projectID:name" workloads whose DB row is gone (diagnosed once and
-	// ignored until restart).
+	// orphans deduplicates repeated status reports per "projectID:name".
 	orphans *orphantrack.Tracker
 
 	logMu      sync.Mutex
@@ -154,10 +152,9 @@ func (d *Driver) ArtifactTarget() artifact.Target { return artifact.TargetRemote
 
 // Deploy creates (or updates) the service's Deployment and Service, and —
 // when the model comes from a stored artifact — an artifact-fetcher Secret
-// and init container. Returns immediately with status=starting;
-// serving.Manager.Deploy is fully synchronous and trusts this returned
-// Status as-is (unlike notebook.Manager), so the real "running" transition
-// is only ever reported later, asynchronously, by Observe.
+// and init container. Returns immediately with status=starting; the real
+// "running" transition is only ever reported later, asynchronously, by
+// Observe.
 func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
 	projectID := spec.Metadata.ProjectID
 	name := spec.Metadata.Name
@@ -404,9 +401,6 @@ func (d *Driver) observeOnce(ctx context.Context) {
 			name := deployment.Annotations[k8smanifest.AnnotationWorkloadID]
 			projectID := deployment.Annotations[k8smanifest.AnnotationProjectID]
 			key := servingKey(projectID, name)
-			if d.isOrphaned(key) {
-				continue
-			}
 			status := observedDeploymentStatus(deployment)
 			if status == serving.StatusStarting && d.podsCrashLooping(ctx, deployment) {
 				status = serving.StatusFailed
@@ -416,8 +410,10 @@ func (d *Driver) observeOnce(ctx context.Context) {
 			}
 			if err := d.cfg.ReportStatus(projectID, name, status, ""); err != nil {
 				if errors.Is(err, serving.ErrNotFound) {
-					d.markOrphaned(key)
-					slog.Warn("k8sdriver: orphan serving workload ignored", "project_id", projectID, "name", name, "namespace", ns, "deployment", deployment.Name)
+					// No row this tick; report again next tick in case one
+					// appears (a delete and redeploy reuses the name).
+					d.orphans.Forget(key)
+					slog.Debug("k8sdriver: serving workload has no service row", "project_id", projectID, "name", name, "namespace", ns, "deployment", deployment.Name)
 					continue
 				}
 				slog.Warn("k8sdriver: report status failed", "name", name, "status", status, "err", err)
@@ -436,10 +432,6 @@ func (d *Driver) observeOnce(ctx context.Context) {
 		}
 	}
 }
-
-func (d *Driver) isOrphaned(key string) bool { return d.orphans.IsOrphaned(key) }
-
-func (d *Driver) markOrphaned(key string) { d.orphans.MarkOrphaned(key) }
 
 func (d *Driver) statusChanged(key, status string) bool { return d.orphans.StatusChanged(key, status) }
 

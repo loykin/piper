@@ -174,9 +174,13 @@ which federates *management* across separate Piper installations — see
 - Serving has the same `docker`/`baremetal` direct-runtime treatment:
   `pkg/serving/dispatch/localdriver.Driver` implements `serving.Driver`
   directly against `pkg/serving/servingdriver`'s docker/process backends,
-  selected the same way in `piper.go`. Unlike Notebook, `serving.Manager.Deploy`
-  is fully synchronous and *does* trust `Driver.Deploy`'s returned
-  `*serving.Service.Status` immediately (it upserts it as-is) — so
+  selected the same way in `piper.go`. `serving.Manager.Deploy` is fully
+  synchronous: it writes the row as `starting` *before* `Driver.Deploy`, so a
+  status the runtime reports while Deploy is still running (a process that
+  exits at once, a K8s Deployment the observer already lists) has a row to
+  land on, then records only the runtime fields Deploy returned
+  (`Repository.SetRuntime` — endpoint, namespace, pid, runtime_id, never
+  status); a `Driver.Deploy` error marks the row `failed`. So
   `localdriver.Driver.Deploy` itself must return fast with `status=starting`
   and only report `running`/`failed` asynchronously once a background health
   check (`process.WaitReady` against `spec.run.health_path`) resolves, with a
@@ -256,11 +260,13 @@ which federates *management* across separate Piper installations — see
   `Endpoint` is a plain `http://<name>.<ns>.svc.cluster.local:<port>` URL;
   `pkg/serving/proxy.go` reverse-proxies directly to whatever URL is stored,
   so no scheme-branching was ever needed on the serving side.
-  `serving.Manager.Deploy` is fully synchronous and trusts the returned
-  `*serving.Service.Status` as-is, same constraint the docker/baremetal
-  serving driver has — `Deploy` returns fast with `status=starting`, and the
-  real `running`/`failed` transition is detected by the same kind of
-  long-running `Observe` background goroutine notebook's K8s driver uses.
+  Same constraint the docker/baremetal serving driver has — `Deploy` returns
+  fast with `status=starting`, and the real `running`/`failed` transition is
+  detected by the same kind of long-running `Observe` background goroutine
+  notebook's K8s driver uses. A Deployment whose row is missing is skipped
+  for that tick only (its last status is forgotten so the next tick reports
+  again), never remembered as an orphan: a delete and redeploy reuses the
+  name.
 
 ## State Ownership — Master Is Authoritative
 

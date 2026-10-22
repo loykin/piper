@@ -34,6 +34,14 @@ func (t *Tracker) MarkOrphaned(key string) {
 	t.orphaned[key] = true
 }
 
+// Forget drops the last status recorded for key, so the next StatusChanged
+// call for it reports again.
+func (t *Tracker) Forget(key string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.lastStatus, key)
+}
+
 // StatusChanged reports whether status differs from the last status recorded
 // for key, and records status as the new last-known value either way. A key
 // with no prior recorded status has an implicit last status of "" — so the

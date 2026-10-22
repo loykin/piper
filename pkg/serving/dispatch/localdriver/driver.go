@@ -122,11 +122,9 @@ func runtimeName(projectID, name string) string {
 func (d *Driver) ArtifactTarget() artifact.Target { return artifact.TargetLocal }
 
 // Deploy reserves the service slot and starts the runtime, then launches a
-// background health check — Manager.Deploy is fully synchronous and trusts
-// the returned *serving.Service.Status immediately (unlike Notebook's
-// Manager, which never trusts Driver.Start's return value), so the fast
-// path here must itself return status=starting and only report "running"
-// asynchronously once the health check passes.
+// background health check — Manager.Deploy is fully synchronous, so the
+// fast path here must itself return status=starting and only report
+// "running" asynchronously once the health check passes.
 func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art artifact.Resolved, yamlStr string) (*serving.Service, error) {
 	projectID := spec.Metadata.ProjectID
 	name := spec.Metadata.Name

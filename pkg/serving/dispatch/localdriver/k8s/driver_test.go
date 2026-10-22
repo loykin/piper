@@ -325,7 +325,7 @@ func TestObservedDeploymentStatus(t *testing.T) {
 	}
 }
 
-func TestObserveQuarantinesMissingDBService(t *testing.T) {
+func TestObserveRetriesMissingDBService(t *testing.T) {
 	one := int32(1)
 	client := fake.NewSimpleClientset(&appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan-deployment", Namespace: "svc-ns", Labels: map[string]string{
@@ -333,17 +333,22 @@ func TestObserveQuarantinesMissingDBService(t *testing.T) {
 		}, Annotations: map[string]string{"piper.io/project-id": "lost", "piper.io/workload-id": "orphan"}},
 		Spec: appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "orphan"}}},
 	})
-	calls := 0
+	calls, rowExists := 0, false
 	d, err := New(Config{RuntimeID: "runtime", Namespaces: []string{"svc-ns"}, Client: client, ReportStatus: func(string, string, string, string) error {
 		calls++
-		return serving.ErrNotFound
+		if !rowExists {
+			return serving.ErrNotFound
+		}
+		return nil
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.observeOnce(context.Background())
+	rowExists = true
 	d.observeOnce(context.Background())
-	if calls != 1 {
-		t.Fatalf("status reports = %d, want one orphan diagnosis", calls)
+	d.observeOnce(context.Background())
+	if calls != 2 {
+		t.Fatalf("status reports = %d, want a retry once the row exists and no repeat after", calls)
 	}
 }

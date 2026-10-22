@@ -226,6 +226,7 @@ func (r *cleanupTestServiceRepo) SetStatusEndpoint(_ context.Context, projectID,
 	}
 	return nil
 }
+func (r *cleanupTestServiceRepo) SetRuntime(context.Context, *serving.Service) error { return nil }
 func (r *cleanupTestServiceRepo) List(_ context.Context, projectID string, _, _ int) ([]*serving.Service, error) {
 	r.listCalled = true
 	var out []*serving.Service

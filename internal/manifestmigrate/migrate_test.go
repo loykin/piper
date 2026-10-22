@@ -169,6 +169,7 @@ func (r *fakeServingRepo) SetStatus(context.Context, string, string, string) err
 func (r *fakeServingRepo) SetStatusEndpoint(context.Context, string, string, string, string) error {
 	return nil
 }
+func (r *fakeServingRepo) SetRuntime(context.Context, *serving.Service) error { return nil }
 func (r *fakeServingRepo) List(_ context.Context, projectID string, _, _ int) ([]*serving.Service, error) {
 	return r.byProject[projectID], nil
 }

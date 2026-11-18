@@ -213,13 +213,13 @@ func (r *cleanupTestServiceRepo) Upsert(_ context.Context, svc *serving.Service)
 	r.services[r.key(svc.ProjectID, svc.Name)] = svc
 	return nil
 }
-func (r *cleanupTestServiceRepo) SetStatus(_ context.Context, projectID, name, status string) error {
+func (r *cleanupTestServiceRepo) SetStatus(_ context.Context, projectID, name, status, _ string) error {
 	if s, ok := r.services[r.key(projectID, name)]; ok {
 		s.Status = status
 	}
 	return nil
 }
-func (r *cleanupTestServiceRepo) SetStatusEndpoint(_ context.Context, projectID, name, status, endpoint string) error {
+func (r *cleanupTestServiceRepo) SetStatusEndpoint(_ context.Context, projectID, name, status, _, endpoint string) error {
 	if s, ok := r.services[r.key(projectID, name)]; ok {
 		s.Status = status
 		s.Endpoint = endpoint

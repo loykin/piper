@@ -54,6 +54,9 @@ func (p *Pipeline) Validate() error {
 				return fmt.Errorf("step %q prepare[%d] command is empty", s.Name, i)
 			}
 		}
+		if err := validateScriptPathUse(s); err != nil {
+			return err
+		}
 		for field, value := range map[string]string{
 			"run.path": s.Run.Path, "run.dir": s.Run.Dir,
 		} {
@@ -312,4 +315,31 @@ func mergeDockerDriverSpec(base, override *manifest.DriverDockerSpec) *manifest.
 		out.Image = base.Image
 	}
 	return &out
+}
+
+// validateScriptPathUse rejects a step whose command or prepare uses
+// $PIPER_SCRIPT_PATH while nothing sets it: the executor exports it only for
+// a step with run.path or a fetched (non-local) source. Without this check
+// the step ran with the variable empty and failed at runtime — a Python task
+// added from the editor palette without a script did exactly that.
+func validateScriptPathUse(s Step) error {
+	if s.Run.Path != "" || (s.Run.Source != "" && s.Run.Source != "local") {
+		return nil
+	}
+	uses := func(argv []string) bool {
+		for _, arg := range argv {
+			if strings.Contains(arg, "PIPER_SCRIPT_PATH") {
+				return true
+			}
+		}
+		return false
+	}
+	used := uses(s.Run.Command)
+	for _, command := range s.Run.Prepare {
+		used = used || uses(command)
+	}
+	if used {
+		return fmt.Errorf("step %q uses $PIPER_SCRIPT_PATH but has no run.path (or fetched source) to set it", s.Name)
+	}
+	return nil
 }

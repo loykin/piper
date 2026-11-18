@@ -3,7 +3,6 @@ import { Badge } from '@/components/ui/badge'
 import type { StorageSettingsView } from '@/features/storage/api'
 import { QueryErrorNotice } from '@/shared/components/QueryErrorNotice'
 import StatusBadge from '@/shared/components/StatusBadge'
-import { warningNotice } from '@/shared/status'
 import { BACKEND_LABELS, parseStorageURL } from '@/features/storage/backendUrl'
 
 // This settings surface (backend + credentials) always edits the Piper
@@ -35,8 +34,8 @@ export function InstanceScopedBadge() {
 // resolution, and past run's artifact download that references the current
 // backend would go permanently unreachable the moment a live-edited backend
 // took effect, with no warning — so this section only ever shows what's
-// actually running and what's pending on disk, never an editable form.
-// Changing the backend requires editing storage.yaml directly and
+// actually configured and running, never an editable form. Changing the
+// backend requires editing the server config's storage: block and
 // restarting the server. This is the "top = what's actually running
 // (read-only)" half of the page; System Credentials below is the "bottom =
 // manage stored credential entries (editable)" half.
@@ -74,7 +73,7 @@ export function ArtifactStoreConfigSection({ storage, isLoading, loadError, onRe
     <DataBodyTemplate.Group
       layout="stacked"
       title={<>Artifact Store Config<InstanceScopedBadge /></>}
-      description="Read-only. Changing the artifact storage backend requires editing storage.yaml directly on this server and restarting it — the same as runtime.type or the database driver."
+      description="Read-only. Changing the artifact storage backend requires editing the storage: block of this server's config file and restarting it — the same as runtime.type or the database driver."
     >
       <DataBodyTemplate.Field label="Runtime Status" description="What's actually active right now.">
         <div className="space-y-1 text-sm">
@@ -84,16 +83,7 @@ export function ArtifactStoreConfigSection({ storage, isLoading, loadError, onRe
         </div>
       </DataBodyTemplate.Field>
 
-      <DataBodyTemplate.Field label="Config File" description="Read from this path on startup.">
-        <span className="break-all font-mono text-xs">{storage?.config_path || '—'}</span>
-      </DataBodyTemplate.Field>
-
-      <DataBodyTemplate.Field
-        label="Pending Config"
-        description={storage?.restart_required
-          ? 'storage.yaml differs from the running configuration — restart the server to apply it.'
-          : 'What storage.yaml currently holds. Matches the running configuration.'}
-      >
+      <DataBodyTemplate.Field label="Configuration" description="The server config's storage: block this server started with.">
         <div className="space-y-1 text-sm">
           <p><span className="text-muted-foreground">Enabled: </span>{cfg?.disabled ? 'No' : 'Yes'}</p>
           <p><span className="text-muted-foreground">Backend: </span>{BACKEND_LABELS[pending.backend]}</p>
@@ -118,9 +108,6 @@ export function ArtifactStoreConfigSection({ storage, isLoading, loadError, onRe
         </div>
       </DataBodyTemplate.Field>
 
-      {storage?.restart_required && (
-        <p className={`p-3 text-xs ${warningNotice}`}>Restart required to apply storage.yaml.</p>
-      )}
     </DataBodyTemplate.Group>
   )
 }

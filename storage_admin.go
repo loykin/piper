@@ -12,15 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/storage"
 )
 
 // StorageSettingsView is a read-only diagnostic: the storage configuration
-// currently on disk (or the compiled-in default when no override file
-// exists) together with the runtime's own effective capability state.
+// the server booted with (the server config's storage: block) together with
+// the runtime's own effective capability state.
 //
 // The artifact storage backend (bucket/endpoint/region/which-backend) used
 // to be live-editable through PUT /storage/settings, but that write path has
@@ -31,16 +29,16 @@ import (
 // run's artifact download that references the *old* backend would become
 // permanently unreachable the moment a restart picked up the new one — with
 // no warning or migration path. That makes it the same class of setting as
-// runtime.type or server.db.driver: deploy-time-only, edited directly in
-// storage.yaml and applied by restarting the server, never live through this
-// API. Only the named system credentials a backend's CredentialRef points at
+// runtime.type or server.db.driver: deploy-time-only, edited in the server
+// config's storage: block and applied by restarting the server, never live
+// through this API. There is one place it is configured: the removed write
+// path's <data_dir>/storage.yaml is no longer read (see
+// refuseLegacyStorageFile). Only the named system credentials a backend's CredentialRef points at
 // stay safely live-editable — same reasoning Airflow's own Connections
 // feature uses.
 type StorageSettingsView struct {
-	ConfigPath      string                `json:"config_path"`
-	Config          StorageConfig         `json:"config"`
-	Effective       ArtifactStoreSettings `json:"effective"`
-	RestartRequired bool                  `json:"restart_required"`
+	Config    StorageConfig         `json:"config"`
+	Effective ArtifactStoreSettings `json:"effective"`
 }
 
 // StorageTestResult reports whether a candidate storage configuration is
@@ -63,55 +61,36 @@ type StorageObjectInfo struct {
 	IsDir bool `json:"is_dir"`
 }
 
-type storageSettingsFile struct {
-	Storage StorageConfig `yaml:"storage"`
-}
+// legacyStorageFileName is the file the removed live-edit write path
+// (PUT /storage/settings) used to persist, and that startup used to let
+// override the server config's storage: block.
+const legacyStorageFileName = "storage.yaml"
 
-func loadStorageSettings(path string, fallback StorageConfig) (StorageConfig, bool, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fallback, false, nil
-		}
-		return StorageConfig{}, false, err
+// refuseLegacyStorageFile stops startup when the old override file is still
+// present. Silently ignoring it would switch the artifact backend under an
+// installation that relied on it, making every stored artifact, snapshot and
+// model unreachable; the operator moves its storage: block into the server
+// config once instead.
+func refuseLegacyStorageFile(outputDir string) error {
+	path := filepath.Join(outputDir, legacyStorageFileName)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s is no longer read: move its storage: block into the server config file and delete it", path)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("check %s: %w", path, err)
 	}
-	var file storageSettingsFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return StorageConfig{}, false, fmt.Errorf("parse %s: %w", path, err)
-	}
-	return file.Storage, true, nil
-}
-
-func (p *Piper) storageSettingsPath() string {
-	return filepath.Join(p.cfg.OutputDir, "storage.yaml")
-}
-
-func (p *Piper) readStorageSettings() (StorageConfig, bool, error) {
-	return loadStorageSettings(p.storageSettingsPath(), p.cfg.Storage)
+	return nil
 }
 
 // StorageSettings returns the read-only storage configuration diagnostic —
-// what's on disk (or the compiled-in default) plus the runtime's own
-// effective capability state. There is deliberately no corresponding
-// "write"/"update" method: see StorageSettingsView's doc comment for why the
-// backend-connection fields are no longer editable through this API.
+// the configured storage block plus the runtime's own effective capability
+// state. There is deliberately no corresponding "write"/"update" method: see
+// StorageSettingsView's doc comment for why the backend-connection fields
+// are no longer editable through this API.
 func (p *Piper) StorageSettings() (StorageSettingsView, error) {
-	cfg, exists, err := p.readStorageSettings()
-	if err != nil {
-		return StorageSettingsView{}, err
-	}
-	if !exists {
-		cfg = p.cfg.Storage
-	}
-	view := StorageSettingsView{
-		ConfigPath: p.storageSettingsPath(),
-		Config:     cfg,
-		Effective:  p.Settings().ArtifactStore,
-	}
-	if exists && cfg != p.cfg.Storage {
-		view.RestartRequired = true
-	}
-	return view, nil
+	return StorageSettingsView{
+		Config:    p.cfg.Storage,
+		Effective: p.Settings().ArtifactStore,
+	}, nil
 }
 
 // TestStorageSettings opens the given candidate configuration (without

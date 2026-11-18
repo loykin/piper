@@ -30,7 +30,8 @@ export default function RunDetailPage() {
   const run = runQuery.data ?? null
   const { data: steps = [] } = useRunSteps(id!)
 
-  const { data: allArtifacts = [] } = useStepArtifacts(id!, selectedStep)
+  const runLive = run?.status === 'running' || run?.status === 'scheduled'
+  const { data: allArtifacts = [] } = useStepArtifacts(id!, selectedStep, runLive)
 
   const { mutateAsync: cancelRun, isPending: cancellingRun } = useCancelRun()
   const rerun = useRerunRun()

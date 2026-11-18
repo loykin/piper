@@ -35,9 +35,11 @@ func (p *Piper) deployService(ctx context.Context, projectID string, yamlBytes [
 		return nil, err
 	}
 
+	// Manager owns failure marking: it records a runtime start error on the
+	// row it wrote, and a rejected spec writes nothing (and leaves any
+	// running version alone).
 	rec, err := p.serving.manager.Replace(ctx, projectID, *svc, resolved, string(yamlBytes))
 	if err != nil {
-		_ = p.repos.Serving.SetStatus(ctx, projectID, svc.Metadata.Name, serving.StatusFailed)
 		return nil, fmt.Errorf("deploy service: %w", err)
 	}
 	return rec, nil

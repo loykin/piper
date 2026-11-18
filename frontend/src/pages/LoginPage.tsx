@@ -26,6 +26,7 @@ export default function LoginPage() {
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
@@ -74,6 +75,12 @@ export default function LoginPage() {
     setSubmitError('')
     try {
       if (needsBootstrap) {
+        // Same minimum the server enforces for every new account; sign-in
+        // itself keeps accepting whatever password an account already has.
+        if (values.password.length < 8) {
+          setError('password', { message: 'Password must be at least 8 characters.' })
+          return
+        }
         await bootstrap(values)
         // Bootstrap only creates the account; sign in with the same
         // credentials to establish a session, same as any other login.

@@ -18,6 +18,7 @@ import (
 	"github.com/loykin/piper/pkg/notebook"
 	"github.com/loykin/piper/pkg/notebook/execution"
 	"github.com/loykin/piper/pkg/pipeline"
+	"github.com/loykin/piper/pkg/pipeline/run"
 	"github.com/loykin/piper/pkg/project"
 	"github.com/loykin/piper/pkg/schedule"
 	"github.com/loykin/piper/pkg/security"
@@ -53,6 +54,14 @@ func (p *Piper) newMemberProjectRouter() http.Handler {
 	viewerMgr.RegisterDriver(viewerhtml.New())
 	handlers := p.registerMemberProjectRoutes(projectAPI, viewerMgr, func(ctx context.Context, yaml string, params map[string]any, vars BuiltinVars, experiment string) (string, error) {
 		return p.runs.StartRunFromAPI(ctx, yaml, params, vars, experiment)
+	}, func(ctx context.Context, yaml, experiment string, trials []map[string]any) ([]string, error) {
+		projectContext, _ := project.FromContext(ctx)
+		runs := make([]run.SweepTrial, 0, len(trials))
+		for _, params := range trials {
+			runs = append(runs, run.SweepTrial{Params: params})
+		}
+		resp, err := p.runs.StartSweep(ctx, projectContext.ID, run.SweepRequest{YAML: yaml, Experiment: experiment, Runs: runs})
+		return resp.RunIDs, err
 	})
 	p.registerMemberStorageRoutes(projectAPI)
 	handlers.serving.RegisterProxyRoutes(projectAPI)
@@ -79,7 +88,7 @@ type memberProjectHandlers struct {
 // this group uses. Storage object payloads are unbounded blobs; the rest of
 // this group is small JSON that benefits from relayRemoteProject's
 // Idempotency-Key replay/conflict protection.
-func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerMgr *viewer.Manager, startRun func(context.Context, string, map[string]any, BuiltinVars, string) (string, error)) memberProjectHandlers {
+func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerMgr *viewer.Manager, startRun func(context.Context, string, map[string]any, BuiltinVars, string) (string, error), startSweep func(context.Context, string, string, []map[string]any) ([]string, error)) memberProjectHandlers {
 	credential.NewHandler(p.credentials).RegisterRoutes(projectAPI)
 	if p.alerts != nil {
 		alerting.NewHandler(p.alerts).RegisterRoutes(projectAPI)
@@ -164,9 +173,10 @@ func (p *Piper) registerMemberProjectRoutes(projectAPI *gin.RouterGroup, viewerM
 		Parse: func(yaml []byte) (*pipeline.Pipeline, error) {
 			return p.Parse(yaml)
 		},
-		StartRun: startRun,
-		NextTime: runlifecycle.NextScheduleTime,
-		GenID:    runlifecycle.GenScheduleID,
+		StartRun:   startRun,
+		StartSweep: startSweep,
+		NextTime:   runlifecycle.NextScheduleTime,
+		GenID:      runlifecycle.GenScheduleID,
 	}).RegisterRoutes(projectAPI)
 
 	return memberProjectHandlers{serving: servingHandler, notebook: notebookHandler, viewer: viewerHandler}

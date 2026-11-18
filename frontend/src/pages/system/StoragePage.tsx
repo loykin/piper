@@ -15,7 +15,7 @@ import { PageCrumbs } from '@/shared/components/PageCrumbs'
 // ── route component ─────────────────────────────────────────────────────────
 // Owns only the page template, breadcrumb/title, and the state genuinely
 // shared across the two Configuration-tab sections: which backend is
-// pending in storage.yaml and which credential it names. Both are derived
+// configured in the server config's storage: block and which credential it names. Both are derived
 // read-only from the settings query now — Artifact Store Config no longer
 // has editable state to own, and System Credentials only reads this to
 // filter its list and label the "in use" credential.
@@ -45,7 +45,6 @@ function StoragePageInner() {
   const backendCredentials = systemCredentials.filter(c => c.kind === activeCredentialKind && (!c.disabled || c.name === credentialRef))
 
   const status = storage?.effective.status ?? 'disabled'
-  const restartRequired = storage?.restart_required ?? false
 
   return (
     <DataBodyTemplate topBar={<PageTopBar left={<PageCrumbs items={['Infrastructure', 'Storage']} />} />}
@@ -56,7 +55,6 @@ function StoragePageInner() {
         settingsQuery.isSuccess && (
           <>
             <Badge variant={statusVariant(status)}>{status}</Badge>
-            {restartRequired && <Badge variant="outline">Restart required</Badge>}
           </>
         )
       }

@@ -77,7 +77,7 @@ type Config struct {
 	// ReportStatus mirrors pkg/serving/dispatch/localdriver.Config.ReportStatus's
 	// signature exactly so piper.go can wire the same servingMgr.UpdateStatus
 	// closure shape for every runtime.type.
-	ReportStatus func(projectID, name, status, endpoint string) error
+	ReportStatus func(projectID, name, status, reason, endpoint string) error
 }
 
 // Driver implements serving.Driver directly against a Kubernetes cluster.
@@ -402,13 +402,18 @@ func (d *Driver) observeOnce(ctx context.Context) {
 			projectID := deployment.Annotations[k8smanifest.AnnotationProjectID]
 			key := servingKey(projectID, name)
 			status := observedDeploymentStatus(deployment)
-			if status == serving.StatusStarting && d.podsCrashLooping(ctx, deployment) {
-				status = serving.StatusFailed
+			reason := ""
+			if status == serving.StatusStarting {
+				if why := d.podsCrashLooping(ctx, deployment); why != "" {
+					status, reason = serving.StatusFailed, why
+				}
+			} else if status == serving.StatusFailed {
+				reason = replicaFailureReason(deployment)
 			}
 			if projectID == "" || name == "" || status == "" || !d.statusChanged(key, status) {
 				continue
 			}
-			if err := d.cfg.ReportStatus(projectID, name, status, ""); err != nil {
+			if err := d.cfg.ReportStatus(projectID, name, status, reason, ""); err != nil {
 				if errors.Is(err, serving.ErrNotFound) {
 					// No row this tick; report again next tick in case one
 					// appears (a delete and redeploy reuses the name).
@@ -459,24 +464,51 @@ func observedDeploymentStatus(deployment *appsv1.Deployment) string {
 // (ImagePullBackOff/ErrImagePull) — signals ReadyReplicas/Conditions never
 // surface, since ReadyReplicas simply stays below desired indefinitely in
 // both cases and observedDeploymentStatus falls back to StatusStarting.
-func (d *Driver) podsCrashLooping(ctx context.Context, deployment *appsv1.Deployment) bool {
+//
+// It returns the failure's explanation ("container serve: CrashLoopBackOff:
+// back-off restarting failed container…"), or "" when nothing is failing.
+func (d *Driver) podsCrashLooping(ctx context.Context, deployment *appsv1.Deployment) string {
 	selector := metav1.FormatLabelSelector(deployment.Spec.Selector)
 	pods, err := d.cfg.Client.CoreV1().Pods(deployment.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return false
+		return ""
 	}
 	for _, pod := range pods.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
+		statuses := append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)
+		for _, cs := range statuses {
 			if cs.State.Waiting == nil {
 				continue
 			}
 			switch cs.State.Waiting.Reason {
 			case "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull":
-				return true
+				reason := fmt.Sprintf("container %s: %s", cs.Name, cs.State.Waiting.Reason)
+				if cs.State.Waiting.Message != "" {
+					reason += ": " + cs.State.Waiting.Message
+				}
+				if t := cs.LastTerminationState.Terminated; t != nil {
+					reason += fmt.Sprintf(" (last exit code %d", t.ExitCode)
+					if t.Reason != "" {
+						reason += ", " + t.Reason
+					}
+					reason += ")"
+					if t.Message != "" {
+						reason += ": " + t.Message
+					}
+				}
+				return reason
 			}
 		}
 	}
-	return false
+	return ""
+}
+
+func replicaFailureReason(deployment *appsv1.Deployment) string {
+	for _, condition := range deployment.Status.Conditions {
+		if condition.Type == appsv1.DeploymentReplicaFailure && condition.Status == corev1.ConditionTrue {
+			return condition.Message
+		}
+	}
+	return ""
 }
 
 // ensureServingLogStream starts a PodLogs stream for the first running pod

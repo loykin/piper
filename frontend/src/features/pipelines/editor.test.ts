@@ -43,6 +43,15 @@ describe('draftProblems', () => {
     expect(problems).toContain('Task "fit" depends on unknown task "missing"')
   })
 
+  // Adversarial QA 2026-11-18 F6: a Python task without a script reads back
+  // from YAML as a command step; it must still be flagged.
+  it('flags $PIPER_SCRIPT_PATH with no source file after a YAML round trip', () => {
+    const draft = sampleDraft()
+    draft.steps[1].sourcePath = ''
+    const reparsed = parsePipelineDraftYaml(buildPipelineDraftYaml(draft))
+    expect(draftProblems(reparsed, 'baremetal').join('\n')).toContain('uses $PIPER_SCRIPT_PATH but has no source file')
+  })
+
   it('puts a runtime placement mismatch first', () => {
     const draft = sampleDraft()
     draft.defaults.placementRuntime = 'k8s'

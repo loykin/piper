@@ -94,8 +94,10 @@ export interface SweepTrial {
   params: Record<string, unknown>
 }
 
+// A sweep always starts from a saved template version: the server rewrites
+// the template's local sources to its snapshot, as it does for a single Run.
 export interface SweepRequest {
-  yaml: string
+  templateId: string
   experiment: string
   runs: SweepTrial[]
 }

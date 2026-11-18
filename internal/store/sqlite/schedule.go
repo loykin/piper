@@ -205,8 +205,8 @@ func (r *scheduleRepo) ClaimOneShotRun(ctx context.Context, projectID, id string
 	var affected int64
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		res, err := db.ExecContext(ctx,
-			`UPDATE schedules SET enabled=0, last_run_at=?, next_run_at=?, updated_at=? WHERE project_id=? AND id=? AND enabled=1 AND next_run_at=?`,
-			lastRunAt, lastRunAt, time.Now().UTC(), projectID, id, expectedAt)
+			`UPDATE schedules SET enabled=0, last_run_at=?, updated_at=? WHERE project_id=? AND id=? AND enabled=1 AND next_run_at=?`,
+			lastRunAt, time.Now().UTC(), projectID, id, expectedAt)
 		if err != nil {
 			return err
 		}

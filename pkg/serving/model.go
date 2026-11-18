@@ -16,11 +16,14 @@ const (
 
 // Service represents a deployed ModelService record in the database.
 type Service struct {
-	ProjectID string    `json:"project_id"          db:"project_id"`
-	Name      string    `json:"name"                db:"name"`
-	RunID     string    `json:"run_id"              db:"run_id"`
-	Artifact  string    `json:"artifact"            db:"artifact"`
-	Status    string    `json:"status"              db:"status"`
+	ProjectID string `json:"project_id"          db:"project_id"`
+	Name      string `json:"name"                db:"name"`
+	RunID     string `json:"run_id"              db:"run_id"`
+	Artifact  string `json:"artifact"            db:"artifact"`
+	Status    string `json:"status"              db:"status"`
+	// Reason explains the current status (a failure's cause); replaced by
+	// every status write, empty while healthy.
+	Reason    string    `json:"reason"              db:"reason"`
 	Endpoint  string    `json:"endpoint"            db:"endpoint"`
 	Namespace string    `json:"namespace,omitempty" db:"namespace"`
 	PID       int       `json:"pid"                 db:"pid"`
@@ -57,6 +60,7 @@ type ServiceHistory struct {
 	RunID      string    `json:"run_id"      db:"run_id"`
 	Artifact   string    `json:"artifact"    db:"artifact"`
 	Status     string    `json:"status"      db:"status"`
+	Reason     string    `json:"reason"      db:"reason"`
 	Endpoint   string    `json:"endpoint"    db:"endpoint"`
 	Namespace  string    `json:"namespace,omitempty" db:"namespace"`
 	PID        int       `json:"pid"         db:"pid"`

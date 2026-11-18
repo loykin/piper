@@ -11,8 +11,10 @@ type Repository interface {
 	Get(ctx context.Context, projectID, name string) (*Service, error)
 	Update(ctx context.Context, svc *Service) error
 	Upsert(ctx context.Context, svc *Service) error
-	SetStatus(ctx context.Context, projectID, name, status string) error
-	SetStatusEndpoint(ctx context.Context, projectID, name, status, endpoint string) error
+	// SetStatus and SetStatusEndpoint always write reason alongside status:
+	// a status's explanation never outlives the status it explains.
+	SetStatus(ctx context.Context, projectID, name, status, reason string) error
+	SetStatusEndpoint(ctx context.Context, projectID, name, status, reason, endpoint string) error
 	// SetRuntime records what Driver.Deploy assigned (endpoint, namespace,
 	// pid, runtime_id) on the row Manager wrote before deploying. It never
 	// touches status, which the runtime may already have reported; endpoint

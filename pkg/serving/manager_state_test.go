@@ -34,15 +34,17 @@ func (r *stateTestRepo) Upsert(_ context.Context, svc *Service) error {
 	r.service = cloneService(svc)
 	return nil
 }
-func (r *stateTestRepo) SetStatus(_ context.Context, _, name, status string) error {
+func (r *stateTestRepo) SetStatus(_ context.Context, _, name, status, reason string) error {
 	if r.service != nil && r.service.Name == name {
 		r.service.Status = status
+		r.service.Reason = reason
 	}
 	return nil
 }
-func (r *stateTestRepo) SetStatusEndpoint(_ context.Context, _, name, status, endpoint string) error {
+func (r *stateTestRepo) SetStatusEndpoint(_ context.Context, _, name, status, reason, endpoint string) error {
 	if r.service != nil && r.service.Name == name {
 		r.service.Status = status
+		r.service.Reason = reason
 		if status == StatusStopped || status == StatusFailed {
 			r.service.Endpoint = ""
 			r.service.PID = 0
@@ -140,7 +142,7 @@ func TestManagerUpdateStatusRejectsDifferentRuntime(t *testing.T) {
 	repo := &stateTestRepo{service: &Service{Name: "demo", Status: StatusRunning, RuntimeID: "worker-a"}}
 	m := New(repo, &stateTestDriver{})
 
-	if err := m.UpdateStatus(context.Background(), "project-a", "worker-b", "demo", StatusStopped, ""); err == nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-b", "demo", StatusStopped, "", ""); err == nil {
 		t.Fatal("UpdateStatus accepted non-owner")
 	}
 	if repo.service.Status != StatusRunning {
@@ -229,7 +231,7 @@ func TestManagerUpdateStatusPreservesDeploymentMetadata(t *testing.T) {
 	}}
 	m := New(repo, &stateTestDriver{})
 
-	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusStopped, ""); err != nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusStopped, "", ""); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 	if repo.service.RunID != "run-1" || repo.service.YAML != "service-yaml" {
@@ -249,7 +251,7 @@ func TestManagerStatusOnlySyncPreservesEndpoint(t *testing.T) {
 	}}
 	m := New(repo, &stateTestDriver{})
 
-	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusRunning, ""); err != nil {
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusRunning, "", ""); err != nil {
 		t.Fatalf("UpdateStatus() error: %v", err)
 	}
 	if repo.service.Endpoint != "http://worker:8080" {
@@ -354,4 +356,70 @@ func cloneService(svc *Service) *Service {
 	}
 	cp := *svc
 	return &cp
+}
+
+// Regression test for adversarial QA 2026-11-18 F13: stopping (and then
+// deleting) a service that already failed must not rewrite it as "stopped",
+// or its history row reads like an ordinary stop.
+func TestManagerStopKeepsFailedStatusAndReason(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{ProjectID: "project-a", Name: "demo", Status: StatusFailed, Reason: "exited; last output: command not found"}}
+	m := New(repo, &stateTestDriver{})
+	if err := m.Stop(context.Background(), "project-a", "demo"); err != nil {
+		t.Fatalf("Stop() error: %v", err)
+	}
+	if repo.service.Status != StatusFailed || repo.service.Reason != "exited; last output: command not found" {
+		t.Fatalf("after Stop: status=%q reason=%q, want failed with its reason", repo.service.Status, repo.service.Reason)
+	}
+}
+
+// F12: a runtime report's reason is stored with the status it explains and
+// cleared by the next status.
+func TestManagerUpdateStatusStoresReason(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{ProjectID: "project-a", Name: "demo", Status: StatusStarting, RuntimeID: "worker-a"}}
+	m := New(repo, &stateTestDriver{})
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusFailed, "health check / did not succeed within 30s", ""); err != nil {
+		t.Fatal(err)
+	}
+	if repo.service.Reason != "health check / did not succeed within 30s" {
+		t.Fatalf("reason = %q", repo.service.Reason)
+	}
+	if err := m.UpdateStatus(context.Background(), "project-a", "worker-a", "demo", StatusRunning, "", "http://x"); err != nil {
+		t.Fatal(err)
+	}
+	if repo.service.Reason != "" {
+		t.Fatalf("reason after running = %q, want cleared", repo.service.Reason)
+	}
+}
+
+// Adversarial QA 2026-11-18 F23: a spec the installation's runtime cannot
+// start (docker without an image) is rejected before any record is written,
+// and a rejected redeploy leaves the running version alone.
+func TestManagerReplaceRejectsSpecBeforeTouchingRunningService(t *testing.T) {
+	repo := &stateTestRepo{service: &Service{ProjectID: "project-a", Name: "demo", Status: StatusRunning, Endpoint: "http://x"}}
+	m := New(repo, &stateTestDriver{stopErr: errors.New("stop must not be called")})
+	m.SetRuntime("docker")
+	spec := ModelService{
+		TypeMeta: manifest.TypeMeta{APIVersion: "piper/v1", Kind: "ModelService"},
+		Metadata: manifest.ObjectMeta{Name: "demo"},
+		Spec: ModelServiceSpec{
+			Model: ModelRef{FromURI: "s3://bucket/model"},
+			Run:   ModelServiceRun{Command: []string{"serve"}, Port: 8000},
+		},
+	}
+	if _, err := m.Replace(context.Background(), "project-a", spec, artifact.Resolved{}, ""); err == nil {
+		t.Fatal("Replace accepted a docker spec without an image")
+	}
+	if repo.service.Status != StatusRunning || repo.service.Endpoint != "http://x" {
+		t.Fatalf("running service changed by a rejected redeploy: %+v", repo.service)
+	}
+
+	empty := &stateTestRepo{}
+	m = New(empty, &stateTestDriver{})
+	m.SetRuntime("docker")
+	if _, err := m.Replace(context.Background(), "project-a", spec, artifact.Resolved{}, ""); err == nil {
+		t.Fatal("Replace accepted a docker spec without an image")
+	}
+	if empty.service != nil {
+		t.Fatalf("a rejected spec left a record: %+v", empty.service)
+	}
 }

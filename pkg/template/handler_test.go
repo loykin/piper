@@ -350,3 +350,58 @@ spec:
 		t.Fatalf("stored yaml:\n%s\nwant:\n%s", repo.created.YAML, want)
 	}
 }
+
+// Regression test for adversarial QA 2026-11-18 F11: a sweep of a
+// notebook-volume template must start runs from the snapshot-rewritten YAML,
+// as /run does. The UI used to post the stored YAML to the generic sweep API,
+// and every trial failed with the notebook file missing.
+func TestSweepStartsTrialsFromSnapshotRewrittenYAML(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tpl := &Template{ProjectID: "proj-1", ID: "tpl-1", Name: "nbpipe", Version: 1, SnapshotID: "snap-1",
+		YAML: "apiVersion: piper/v1\nkind: Pipeline\nmetadata:\n  name: nbpipe\nspec:\n  steps:\n    - name: train\n      run:\n        path: train.ipynb\n        command: [sh, -c, 'papermill \"$PIPER_SCRIPT_PATH\" out.ipynb']\n"}
+	var gotYAML, gotExperiment string
+	var gotTrials []map[string]any
+	handler := NewHandler(HandlerDeps{
+		Templates: &stubTemplateRepo{templates: map[string]*Template{"tpl-1": tpl}},
+		Parse:     pipeline.Parse,
+		StartSweep: func(_ context.Context, yaml, experiment string, trials []map[string]any) ([]string, error) {
+			gotYAML, gotExperiment, gotTrials = yaml, experiment, trials
+			return []string{"r1", "r2"}, nil
+		},
+	})
+	router := gin.New()
+	handler.RegisterRoutes(router.Group("/projects/:project_id", func(c *gin.Context) {
+		ctx := project.WithContext(c.Request.Context(), project.Context{ID: "proj-1", Role: security.ProjectRoleMember})
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/pipeline-templates/tpl-1/sweep",
+		strings.NewReader(`{"experiment":" lr ","runs":[{"params":{"lr":0.1}},{"params":{"lr":0.01}}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	pl, err := pipeline.Parse([]byte(gotYAML))
+	if err != nil {
+		t.Fatalf("parse swept yaml: %v", err)
+	}
+	if got := pl.Spec.Steps[0].Run.SnapshotPrefix; got != "snapshots/snap-1/" {
+		t.Fatalf("snapshot prefix = %q, want snapshots/snap-1/", got)
+	}
+	if gotExperiment != "lr" || len(gotTrials) != 2 || gotTrials[1]["lr"] != 0.01 {
+		t.Fatalf("experiment = %q, trials = %v", gotExperiment, gotTrials)
+	}
+
+	for _, body := range []string{`{"experiment":"","runs":[{}]}`, `{"experiment":"x","runs":[]}`} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/pipeline-templates/tpl-1/sweep", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400", body, rec.Code)
+		}
+	}
+}

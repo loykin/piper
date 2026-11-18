@@ -221,7 +221,7 @@ export function StorageCredentialsSection({
         verb="Delete"
         noun="system credential"
         description={<>&quot;{deleteTarget.target}&quot; will be permanently deleted.
-{credentialRef === deleteTarget.target && ' It is currently referenced by storage.credentialRef — deleting it will make the artifact store unavailable after the next restart until storage.yaml is updated.'}</>}
+{credentialRef === deleteTarget.target && ' It is currently referenced by storage.credentialRef — deleting it will make the artifact store unavailable after the next restart until the storage: block of the server config is updated.'}</>}
         error={deleteTarget.error}
         pending={deleteSystemCredential.isPending}
         onConfirm={() => void deleteTarget.confirm(name => deleteSystemCredential.mutateAsync(name))}

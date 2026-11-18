@@ -8,14 +8,12 @@ export interface StorageConfig {
 }
 
 export interface StorageSettingsView {
-  config_path: string
   config: StorageConfig
   effective: {
     status: 'enabled' | 'disabled' | 'unavailable'
     backend?: string
     reason?: string
   }
-  restart_required: boolean
 }
 
 export interface StorageObjectInfo {

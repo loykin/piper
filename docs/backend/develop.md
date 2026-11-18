@@ -122,7 +122,10 @@ which federates *management* across separate Piper installations — see
   (K8s restarting a crashed container, `failed` → `starting` → `failed`, no
   `StartRun`), the next `FinishRun` updates the row with the same
   `deployed_at` to the latest end instead of inserting another.
-  Serving history still archives on redeploy and delete only.
+  Serving history still archives on redeploy and delete only. Stopping a
+  service that is already `failed` cleans up the runtime object but keeps
+  `failed` and its reason, so the history row Delete archives is the real
+  outcome, not an ordinary stop.
 - Notebook executions (`pkg/notebook/execution`, "MCP Executions" in the UI)
   exist for AI clients: they are created only by the MCP tools
   `piper_execute_notebook` / `piper_execute_cell`, which check the member
@@ -171,6 +174,39 @@ which federates *management* across separate Piper installations — see
   Manager creates any record, so the API answers 400 instead of leaving a
   failed notebook; the settings API exposes `runtime.namespaces` so forms
   default to the server's value.
+- Serving status writes carry a reason the same way
+  (`Repository.SetStatus/SetStatusEndpoint(…, status, reason, …)`,
+  `services.reason` / `service_history.reason`): a deploy error, the local
+  driver's health-check timeout or the last output line before the process or
+  container exited (`localdriver.tailSink`), and on K8s the crash-looping
+  container's waiting reason plus last termination message.
+- Notebook and ModelService names are validated, never sanitized, with
+  `manifest.ValidateWorkloadName` (an RFC 1123 DNS label): they become
+  container, StatefulSet and Deployment names and the proxy base URL, and
+  sanitizing mapped distinct names onto one runtime object.
+- The browser proxy group (`serve.go` `proxyAPI`) only guarantees
+  ProjectRoleViewer. The notebook proxy requires ProjectRoleMember on its own
+  route — JupyterLab kernels and terminals execute code — so check the role a
+  proxied workload actually needs when adding one there.
+- `serving.Manager` validates a ModelService (manifest, placement, and the
+  effective runtime's image/namespace rules via `ValidateForRuntime`) before
+  writing any row or stopping the running version, so a rejected redeploy
+  answers 400 and leaves the current service untouched. Manager alone marks
+  a deployment failed; callers must not.
+- Artifact storage is configured in exactly one place, the server config's
+  `storage:` block. The removed live-edit path's `<data_dir>/storage.yaml` is
+  not read; if one is present, startup fails with a message to move it
+  (`refuseLegacyStorageFile`), because ignoring it silently would switch the
+  backend under an installation that relied on it.
+- A step using `$PIPER_SCRIPT_PATH` needs `run.path` or a fetched source
+  (`validateScriptPathUse`); the executor exports it only then.
+- `ClaimOneShotRun` disables a once/immediate schedule and stamps
+  `last_run_at`; `next_run_at` keeps the requested time ("Scheduled At").
+- Template-based execution — Run, Deploy and Sweep — goes through
+  `pkg/template`'s endpoints, which apply `rewriteLocalSources` (snapshot
+  sources) and the storage-backend check. Never send a template's stored
+  `yaml` to the generic run/sweep APIs; it still names the editor's local
+  workspace and every step fails to find its files.
 - Serving has the same `docker`/`baremetal` direct-runtime treatment:
   `pkg/serving/dispatch/localdriver.Driver` implements `serving.Driver`
   directly against `pkg/serving/servingdriver`'s docker/process backends,

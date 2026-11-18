@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
@@ -18,7 +19,7 @@ import (
 )
 
 type statusReport struct {
-	projectID, name, status, endpoint string
+	projectID, name, status, reason, endpoint string
 }
 
 func newTestDriver(t *testing.T, client kubernetes.Interface, observeInterval time.Duration) (*Driver, chan statusReport) {
@@ -30,8 +31,8 @@ func newTestDriver(t *testing.T, client kubernetes.Interface, observeInterval ti
 		Client:               client,
 		ArtifactFetcherImage: "piper:test",
 		ObserveInterval:      observeInterval,
-		ReportStatus: func(projectID, name, status, endpoint string) error {
-			reports <- statusReport{projectID, name, status, endpoint}
+		ReportStatus: func(projectID, name, status, reason, endpoint string) error {
+			reports <- statusReport{projectID, name, status, reason, endpoint}
 			return nil
 		},
 	})
@@ -69,7 +70,7 @@ func TestNewRejectsMissingConfig(t *testing.T) {
 		RuntimeID:    "w",
 		Namespaces:   []string{"ns"},
 		Client:       fake.NewSimpleClientset(),
-		ReportStatus: func(string, string, string, string) error { return nil },
+		ReportStatus: func(string, string, string, string, string) error { return nil },
 	}
 	cases := []struct {
 		name string
@@ -187,7 +188,7 @@ func TestDeployRequiresArtifactFetcherImageForStoredArtifact(t *testing.T) {
 		RuntimeID:    "w",
 		Namespaces:   []string{"svc-ns"},
 		Client:       client,
-		ReportStatus: func(string, string, string, string) error { return nil },
+		ReportStatus: func(string, string, string, string, string) error { return nil },
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -334,7 +335,7 @@ func TestObserveRetriesMissingDBService(t *testing.T) {
 		Spec: appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "orphan"}}},
 	})
 	calls, rowExists := 0, false
-	d, err := New(Config{RuntimeID: "runtime", Namespaces: []string{"svc-ns"}, Client: client, ReportStatus: func(string, string, string, string) error {
+	d, err := New(Config{RuntimeID: "runtime", Namespaces: []string{"svc-ns"}, Client: client, ReportStatus: func(string, string, string, string, string) error {
 		calls++
 		if !rowExists {
 			return serving.ErrNotFound
@@ -350,5 +351,44 @@ func TestObserveRetriesMissingDBService(t *testing.T) {
 	d.observeOnce(context.Background())
 	if calls != 2 {
 		t.Fatalf("status reports = %d, want a retry once the row exists and no repeat after", calls)
+	}
+}
+
+// Adversarial QA 2026-11-18 F12: a crash-looping serving pod is reported
+// failed with the container's waiting reason and last termination message,
+// not a bare "failed".
+func TestObserveReportsCrashLoopReason(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	d, reports := newTestDriver(t, client, 30*time.Millisecond)
+	if _, err := d.Deploy(context.Background(), testSpec("proj", "svc"), artifact.Resolved{RemoteURI: "http://x"}, ""); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	dep, err := client.AppsV1().Deployments("svc-ns").Get(context.Background(), servingResourceName("proj", "svc"), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "svc-pod", Namespace: "svc-ns", Labels: dep.Spec.Selector.MatchLabels},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "serving",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "back-off 10s"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 128, Reason: "StartError", Message: `exec: "serve": executable file not found in $PATH`,
+			}},
+		}}},
+	}
+	if _, err := client.CoreV1().Pods("svc-ns").Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); d.Observe(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	r := awaitReport(t, reports)
+	want := `container serving: CrashLoopBackOff: back-off 10s (last exit code 128, StartError): exec: "serve": executable file not found in $PATH`
+	if r.status != serving.StatusFailed || r.reason != want {
+		t.Fatalf("report = %+v, want failed with %q", r, want)
 	}
 }

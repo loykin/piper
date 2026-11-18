@@ -19,7 +19,7 @@ func NewServingRepo(exec *dbstore.Executor[*sqlx.DB], source string) serving.Rep
 	return &servingRepo{Source: sqlxadapter.NewSource(source, exec)}
 }
 
-const serviceSelectCols = `project_id, name, run_id, artifact, status, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at`
+const serviceSelectCols = `project_id, name, run_id, artifact, status, reason, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at`
 
 func (r *servingRepo) Create(ctx context.Context, svc *serving.Service) error {
 	now := time.Now()
@@ -27,9 +27,9 @@ func (r *servingRepo) Create(ctx context.Context, svc *serving.Service) error {
 	svc.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO services (project_id, name, run_id, artifact, status, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, svc.CreatedAt, svc.UpdatedAt)
+			`INSERT INTO services (project_id, name, run_id, artifact, status, reason, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Reason, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, svc.CreatedAt, svc.UpdatedAt)
 		return err
 	})
 }
@@ -53,8 +53,8 @@ func (r *servingRepo) Update(ctx context.Context, svc *serving.Service) error {
 	svc.UpdatedAt = time.Now()
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`UPDATE services SET run_id=?, artifact=?, status=?, endpoint=?, namespace=?, pid=?, runtime_id=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`,
-			svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.UpdatedAt, svc.ProjectID, svc.Name)
+			`UPDATE services SET run_id=?, artifact=?, status=?, reason=?, endpoint=?, namespace=?, pid=?, runtime_id=?, yaml=?, updated_at=? WHERE project_id=? AND name=?`,
+			svc.RunID, svc.Artifact, svc.Status, svc.Reason, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.UpdatedAt, svc.ProjectID, svc.Name)
 		return err
 	})
 }
@@ -64,30 +64,30 @@ func (r *servingRepo) Upsert(ctx context.Context, svc *serving.Service) error {
 	svc.UpdatedAt = now
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`INSERT INTO services (project_id, name, run_id, artifact, status, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO services (project_id, name, run_id, artifact, status, reason, endpoint, namespace, pid, runtime_id, yaml, created_by, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(project_id, name) DO UPDATE SET
-			 	run_id=excluded.run_id, artifact=excluded.artifact, status=excluded.status,
+			 	run_id=excluded.run_id, artifact=excluded.artifact, status=excluded.status, reason=excluded.reason,
 				endpoint=excluded.endpoint, namespace=excluded.namespace, pid=excluded.pid, runtime_id=excluded.runtime_id, yaml=excluded.yaml,
 				created_by=excluded.created_by, updated_at=excluded.updated_at`,
-			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, now, now)
+			svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Reason, svc.Endpoint, svc.Namespace, svc.PID, svc.RuntimeID, svc.YAML, svc.CreatedBy, now, now)
 		return err
 	})
 }
 
-func (r *servingRepo) SetStatus(ctx context.Context, projectID, name, status string) error {
+func (r *servingRepo) SetStatus(ctx context.Context, projectID, name, status, reason string) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
-			`UPDATE services SET status=?, updated_at=? WHERE project_id=? AND name=?`, status, time.Now(), projectID, name)
+			`UPDATE services SET status=?, reason=?, updated_at=? WHERE project_id=? AND name=?`, status, reason, time.Now(), projectID, name)
 		return err
 	})
 }
 
-func (r *servingRepo) SetStatusEndpoint(ctx context.Context, projectID, name, status, endpoint string) error {
+func (r *servingRepo) SetStatusEndpoint(ctx context.Context, projectID, name, status, reason, endpoint string) error {
 	return r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
 		_, err := db.ExecContext(ctx,
 			`UPDATE services
-			 SET status=?,
+			 SET status=?, reason=?,
 			     endpoint=CASE
 			         WHEN ? IN (?, ?) THEN ''
 			         WHEN ? <> '' THEN ?
@@ -97,6 +97,7 @@ func (r *servingRepo) SetStatusEndpoint(ctx context.Context, projectID, name, st
 			     updated_at=?
 			 WHERE project_id=? AND name=?`,
 			status,
+			reason,
 			status, serving.StatusStopped, serving.StatusFailed,
 			endpoint, endpoint,
 			status, serving.StatusStopped, serving.StatusFailed,
@@ -174,9 +175,9 @@ func (r *servingRepo) Delete(ctx context.Context, projectID, name string) error 
 // Delete (inside Delete's transaction) so both go through identical SQL.
 func appendServiceHistory(ctx context.Context, execer sqlx.ExecerContext, svc *serving.Service) error {
 	_, err := execer.ExecContext(ctx,
-		`INSERT INTO service_history (project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.CreatedBy, svc.CreatedAt, time.Now())
+		`INSERT INTO service_history (project_id, name, run_id, artifact, status, reason, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		svc.ProjectID, svc.Name, svc.RunID, svc.Artifact, svc.Status, svc.Reason, svc.Endpoint, svc.Namespace, svc.PID, svc.YAML, svc.CreatedBy, svc.CreatedAt, time.Now())
 	return err
 }
 
@@ -187,7 +188,7 @@ func (r *servingRepo) AppendHistory(ctx context.Context, svc *serving.Service) e
 }
 
 func (r *servingRepo) ListHistory(ctx context.Context, projectID string, limit, offset int) ([]*serving.ServiceHistory, error) {
-	query := `SELECT id, project_id, name, run_id, artifact, status, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at
+	query := `SELECT id, project_id, name, run_id, artifact, status, reason, endpoint, namespace, pid, yaml, created_by, deployed_at, stopped_at
 		 FROM service_history WHERE project_id=? ORDER BY stopped_at DESC`
 	args := []any{projectID}
 	if limit > 0 {

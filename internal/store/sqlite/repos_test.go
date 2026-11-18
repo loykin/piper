@@ -456,8 +456,10 @@ func TestScheduleClaimOneShotRun(t *testing.T) {
 	if got.LastRunAt == nil || !got.LastRunAt.Equal(lastRunAt) {
 		t.Fatalf("LastRunAt = %v, want %v", got.LastRunAt, lastRunAt)
 	}
-	if !got.NextRunAt.Equal(lastRunAt) {
-		t.Fatalf("NextRunAt = %v, want %v", got.NextRunAt, lastRunAt)
+	// The requested run time stays recorded (it is what "Scheduled At"
+	// shows); LastRunAt says when it actually fired.
+	if !got.NextRunAt.Equal(expectedAt) {
+		t.Fatalf("NextRunAt = %v, want the requested %v", got.NextRunAt, expectedAt)
 	}
 
 	ok, err = repos.Schedule.ClaimOneShotRun(ctx, projectID, sc.ID, expectedAt, lastRunAt.Add(time.Minute))

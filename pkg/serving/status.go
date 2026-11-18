@@ -25,7 +25,7 @@ func (s *StatusSink) SetEventPublisher(p event.Publisher) {
 	s.mu.Unlock()
 }
 
-func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name, status, endpoint string) error {
+func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name, status, reason, endpoint string) error {
 	if projectID == "" {
 		return fmt.Errorf("serving: project ID is required")
 	}
@@ -43,7 +43,7 @@ func (s *StatusSink) Update(ctx context.Context, projectID, runtimeID, name, sta
 	if status == "" {
 		status = previousStatus
 	}
-	if err := s.repo.SetStatusEndpoint(ctx, projectID, name, status, endpoint); err != nil {
+	if err := s.repo.SetStatusEndpoint(ctx, projectID, name, status, reason, endpoint); err != nil {
 		return err
 	}
 	if status == previousStatus {

@@ -163,7 +163,7 @@ export function ScheduleForm({ initialYaml, onCreated, onCancel }: ScheduleFormP
       />
 
       {scheduleType === 'once' && (
-        <FormField label="Run At" htmlFor="schedule-run-at" error={errors.runAt?.message}>
+        <FormField label="Run At" htmlFor="schedule-run-at" error={errors.runAt?.message} helperText="Your local time. A time that has already passed runs as soon as the schedule is created.">
           <Input id="schedule-run-at" type="datetime-local" className="h-8 text-sm" aria-invalid={!!errors.runAt} {...register('runAt')} />
         </FormField>
       )}

@@ -1,6 +1,6 @@
 // runs feature hooks — React Query wrappers
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as api from './api'
 import type { LogLine, RunFilter, SweepRequest } from './types'
 import { useProjectId } from '@/features/projects/context'
@@ -84,13 +84,24 @@ export function useRunSteps(runId: string) {
   })
 }
 
-export function useStepArtifacts(runId: string, stepId: string | null) {
+// Artifacts are uploaded as each step finishes, so a live run is polled like
+// its status; the run reaching a terminal status triggers one final fetch so
+// the last step's outputs appear without a reload.
+export function useStepArtifacts(runId: string, stepId: string | null, live: boolean) {
   const projectId = useProjectId()
-  return useQuery({
+  const qc = useQueryClient()
+  const query = useQuery({
     queryKey: runKeys.artifacts(projectId, runId),
     queryFn: () => api.listArtifacts(projectId, runId),
     enabled: !!projectId && !!stepId,
+    ...(live ? backgroundPolling(5000) : backgroundPollingNotifications),
   })
+  const wasLive = useRef(live)
+  useEffect(() => {
+    if (wasLive.current && !live) void qc.invalidateQueries({ queryKey: runKeys.artifacts(projectId, runId) })
+    wasLive.current = live
+  }, [live, qc, projectId, runId])
+  return query
 }
 
 export function useRunMetrics(runId: string) {

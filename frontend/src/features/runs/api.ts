@@ -43,7 +43,8 @@ export async function createRun(projectId: string, yaml: string, params?: Record
 }
 
 export async function createSweep(projectId: string, req: SweepRequest): Promise<SweepResponse> {
-  return projectApi(projectId).post<SweepResponse>('/experiments', req)
+  const { templateId, ...body } = req
+  return projectApi(projectId).post<SweepResponse>(`/pipeline-templates/${encodeURIComponent(templateId)}/sweep`, body)
 }
 
 export async function listExperimentsPaged(projectId: string, name: string, limit: number, offset: number): Promise<Paged<ExperimentSummary>> {

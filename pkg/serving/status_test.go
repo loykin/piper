@@ -21,7 +21,7 @@ type reportingDeployDriver struct {
 func (d *reportingDeployDriver) ArtifactTarget() artifact.Target { return artifact.TargetLocal }
 func (d *reportingDeployDriver) Deploy(ctx context.Context, spec ModelService, _ artifact.Resolved, _ string) (*Service, error) {
 	if d.report != "" {
-		if err := d.sink.Update(ctx, spec.Metadata.ProjectID, "runtime", spec.Metadata.Name, d.report, "http://model:8000"); err != nil {
+		if err := d.sink.Update(ctx, spec.Metadata.ProjectID, "runtime", spec.Metadata.Name, d.report, "", "http://model:8000"); err != nil {
 			return nil, err
 		}
 	}

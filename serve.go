@@ -289,6 +289,22 @@ func (p *Piper) newRouterWithFederation(extra http.Handler, viewerMgr *viewer.Ma
 			IdempotencyKey: uuid.NewString(), YAML: yaml, Params: params, Experiment: experiment, Vars: vars,
 		})
 		return resp.RunID, err
+	}, func(ctx context.Context, yaml, experiment string, trials []map[string]any) ([]string, error) {
+		projectContext, _ := project.FromContext(ctx)
+		auth := memberclient.AuthContext{Role: projectContext.Role, IssuedAt: time.Now()}
+		if identity, ok := security.IdentityFromContext(ctx); ok && identity != nil {
+			auth.ActorID = identity.ID
+		}
+		ref := projectRef(projectContext.ID)
+		if projectContext.OwnerMemberID != "" {
+			ref.MemberID = projectContext.OwnerMemberID
+		}
+		runs := make([]memberclient.SweepTrial, 0, len(trials))
+		for _, params := range trials {
+			runs = append(runs, memberclient.SweepTrial{Params: params})
+		}
+		resp, err := member.SubmitSweep(ctx, auth, ref, memberclient.SubmitSweepRequest{YAML: yaml, Experiment: experiment, Runs: runs})
+		return resp.RunIDs, err
 	})
 	proxyAPI := r.Group("/projects/:project_id", p.authenticateUser(), project.Require(p.repos.Project, p.cfg.Auth.Authorizer, security.ProjectRoleViewer), relayRemoteProjectHTTP(projectMember, projectRef))
 	memberHandlers.serving.RegisterProxyRoutes(proxyAPI)

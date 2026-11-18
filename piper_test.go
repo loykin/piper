@@ -475,7 +475,7 @@ func TestHandlerExposesArtifactStoreSettings(t *testing.T) {
 // live edit here never took effect until a manual restart, while every
 // artifact reference pinned to the old backend would go permanently
 // unreachable the moment a restart picked up the new one, with no warning.
-// Changing the backend now requires editing storage.yaml on disk directly.
+// Changing the backend now requires editing the server config's storage: block.
 func TestStorageSettingsWriteRouteRemoved(t *testing.T) {
 	outputDir := t.TempDir()
 	p := newTestPiper(t, Config{OutputDir: outputDir})
@@ -512,8 +512,7 @@ func TestStorageSettingsGetIsReadOnlyDiagnostic(t *testing.T) {
 		t.Fatalf("GET status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		ConfigPath string `json:"config_path"`
-		Config     struct {
+		Config struct {
 			Disabled bool `json:"disabled"`
 		} `json:"config"`
 		Effective struct {
@@ -523,41 +522,23 @@ func TestStorageSettingsGetIsReadOnlyDiagnostic(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if out.ConfigPath == "" {
-		t.Fatal("config_path is empty, want the storage.yaml path")
-	}
 	if out.Effective.Status == "" {
 		t.Fatal("effective.status is empty, want the runtime's current artifact-store status")
 	}
 }
 
-func TestStorageSettingsOverrideLoadsOnStartup(t *testing.T) {
+// Adversarial QA 2026-11-18 F14: the server config's storage: block is the
+// only storage configuration. A leftover <data_dir>/storage.yaml from the
+// removed live-edit path stops startup instead of silently switching (or
+// silently ignoring) the artifact backend.
+func TestLegacyStorageFileRefusesStartup(t *testing.T) {
 	outputDir := t.TempDir()
-	path := filepath.Join(outputDir, "storage.yaml")
-	if err := os.WriteFile(path, []byte("storage:\n  disabled: true\n  url: s3://bucket?endpoint=http://localhost:9000\n  token: secret\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(outputDir, "storage.yaml"), []byte("storage:\n  disabled: true\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	p := newTestPiper(t, Config{OutputDir: outputDir})
-	if p.store != nil {
-		t.Fatal("storage should be disabled by persisted override")
-	}
-	router := p.Handler(nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/system/storage/settings", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	var out struct {
-		Config struct {
-			Disabled bool `json:"disabled"`
-		} `json:"config"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	if !out.Config.Disabled {
-		t.Fatal("persisted storage override was not loaded")
+	_, err := New(Config{OutputDir: outputDir, Runtime: RuntimeConfig{Type: RuntimeBaremetal}})
+	if err == nil || !strings.Contains(err.Error(), "storage.yaml is no longer read") {
+		t.Fatalf("New() error = %v, want the legacy storage.yaml refusal", err)
 	}
 }
 

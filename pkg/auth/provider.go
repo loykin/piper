@@ -229,6 +229,11 @@ func (p *Provider) Logout(ctx context.Context, refreshToken string) error {
 
 // ── User management ───────────────────────────────────────────────────────
 
+// MinPasswordLength is enforced for every account creation path — the
+// first-admin bootstrap screen, the admin Users page, and `piper user
+// create` — so the most privileged account is never the weakest one.
+const MinPasswordLength = 8
+
 // CreateUser creates a new user account.
 func (p *Provider) CreateUser(ctx context.Context, input security.CreateUserInput) (*security.User, error) {
 	username := strings.ToLower(strings.TrimSpace(input.Username))
@@ -240,6 +245,9 @@ func (p *Provider) CreateUser(ctx context.Context, input security.CreateUserInpu
 	}
 	if strings.ContainsAny(username, " \t\r\n") {
 		return nil, errors.New("username must not contain whitespace")
+	}
+	if len(input.Password) < MinPasswordLength {
+		return nil, fmt.Errorf("password must be at least %d characters", MinPasswordLength)
 	}
 	hash, err := hashPassword(input.Password)
 	if err != nil {

@@ -68,8 +68,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 // proxyNotebook can build the correct Jupyter base_url and redirect prefix.
 //
 // Expected group path: /projects/:project_id
+//
+// The proxy requires ProjectRoleMember: JupyterLab runs arbitrary code
+// (kernels, terminals) as the notebook server's user, which is operating a
+// workload, not inspecting one. The mounting group only guarantees Viewer.
 func (h *Handler) RegisterProxyRoutes(rg *gin.RouterGroup) {
-	rg.Any("/notebooks/:name/proxy/*path", h.proxyNotebook)
+	rg.Any("/notebooks/:name/proxy/*path", project.RequireRole(security.ProjectRoleMember), h.proxyNotebook)
 }
 
 // GET /notebooks

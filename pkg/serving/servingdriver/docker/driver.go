@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -170,8 +171,12 @@ func (d *Driver) Deploy(ctx context.Context, req servingdriver.DeployRequest) (e
 			ExposedPorts: network_.PortSet{exposedPort: struct{}{}},
 		},
 		HostConfig: &container.HostConfig{
-			NetworkMode:  container.NetworkMode(d.cfg.Network),
-			PortBindings: network_.PortMap{exposedPort: []network_.PortBinding{{HostPort: fmt.Sprintf("%d", req.Port)}}},
+			NetworkMode: container.NetworkMode(d.cfg.Network),
+			// Loopback only, like the notebook driver: the endpoint Piper
+			// records and proxies is http://localhost:<port>. Docker's default
+			// (no HostIP) publishes on every host interface, which exposes the
+			// model to the network without Piper's authentication.
+			PortBindings: network_.PortMap{exposedPort: []network_.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: fmt.Sprintf("%d", req.Port)}}},
 			Resources:    resources.Resources,
 			ShmSize:      resources.ShmSize,
 			Mounts:       mounts,

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import type { Row } from '@tanstack/react-table'
 import { useNavigate, useSearchParams } from '@/lib/router'
 import { useProjectId } from '@/features/projects/context'
-import { Search } from 'lucide-react'
+import { Search, X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { DataBodyTemplate, PageTopBar } from '@loykin/designkit'
 import { FilterInput } from '@loykin/filter-input'
 import { DataGrid, DataGridPaginationBar } from '@loykin/gridkit'
@@ -39,7 +40,7 @@ function PipelinesListPageInner() {
   const navigate = useNavigate()
   const projectId = useProjectId()
   const { open, close } = useSidePanel()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const filterName = searchParams.get('name') ?? ''
   const [pageIndex, setPageIndex] = useState(0)
 
@@ -123,6 +124,23 @@ function PipelinesListPageInner() {
         <DataBodyTemplate.Body>
           <DataBodyTemplate.Resource
             toolbarLeft={
+              <div className="flex items-center gap-2">
+              {/* The "jump back after submit" ?name= filter is server-side
+                  and exact; show it so the list is not silently partial. */}
+              {filterName && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPageIndex(0)
+                    const next = new URLSearchParams(searchParams)
+                    next.delete('name')
+                    setSearchParams(next, { replace: true })
+                  }}
+                >
+                  Only “{filterName}” <X size={14} className="ml-1.5" aria-label="Show All Templates" />
+                </Button>
+              )}
               <div className="w-48">
                 <FilterInput
                   config={{
@@ -134,6 +152,7 @@ function PipelinesListPageInner() {
                   value={searchFilter}
                   onChange={v => setSearchFilter(typeof v === 'string' ? v : '')}
                 />
+              </div>
               </div>
             }
             toolbarRight={<CreateButton noun="Template" to={`/projects/${projectId}/pipelines/editor`} />}

@@ -19,7 +19,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/loykin/piper/internal/logsink"
 	"github.com/loykin/piper/internal/proto"
+	"github.com/loykin/piper/internal/redact"
 	"github.com/loykin/piper/internal/srcfetch"
 	"github.com/loykin/piper/pkg/pipeline"
 	"github.com/loykin/piper/pkg/pipeline/executor"
@@ -113,7 +115,10 @@ func (r *Runner) Run(ctx context.Context, task *proto.Task) proto.TaskResult {
 		defer func() { _ = logFile.Close() }()
 	}
 
-	logger := newLineLogger(logFile)
+	// The local log file gets the same redaction the server applies to the
+	// streamed lines: credential values injected into the step's env must
+	// not land on disk in plain text.
+	logger := newLineLogger(logFile, logsink.ValuesFromEnv(task.Env))
 
 	// Execute the command. execDir is the directory the command's process
 	// actually ran in — for a git/s3/http-sourced step this is the fetch/
@@ -271,17 +276,20 @@ func (w *lineWriter) Close() {
 }
 
 type lineLogger struct {
-	mu   sync.Mutex
-	file *os.File
+	mu      sync.Mutex
+	file    *os.File
+	secrets []string
 }
 
-func newLineLogger(file *os.File) *lineLogger { return &lineLogger{file: file} }
+func newLineLogger(file *os.File, secrets []string) *lineLogger {
+	return &lineLogger{file: file, secrets: secrets}
+}
 
 func (l *lineLogger) append(stream, line string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file != nil {
-		_, _ = fmt.Fprintf(l.file, "[%s] %s\n", stream, line)
+		_, _ = fmt.Fprintf(l.file, "[%s] %s\n", stream, redact.Values(line, l.secrets))
 	}
 }
 

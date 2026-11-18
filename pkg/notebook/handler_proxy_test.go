@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/loykin/piper/pkg/project"
+	"github.com/loykin/piper/pkg/security"
 )
 
 type recordingWorkspaceReader struct {
@@ -190,5 +191,51 @@ func TestListVolumeFilesRejectsTraversalBeforeReader(t *testing.T) {
 	}
 	if workspace.listCalls != 0 {
 		t.Fatalf("workspace reader was called %d times", workspace.listCalls)
+	}
+}
+
+// TestProxyNotebookRequiresMemberRole is a regression test for adversarial QA
+// 2026-11-18 F17: the proxy group only guarantees ProjectRoleViewer, and a
+// viewer reaching JupyterLab could start kernels and terminals — arbitrary
+// code execution. The route itself must demand ProjectRoleMember.
+func TestProxyNotebookRequiresMemberRole(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	repo := newFakeRepo()
+	if err := repo.Create(context.Background(), &NotebookServer{
+		ProjectID: "proj", Name: "nb", Status: StatusRunning, Endpoint: upstream.URL, Token: "tok",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(HandlerDeps{Notebooks: repo})
+
+	for _, tc := range []struct {
+		role security.ProjectRole
+		want int
+	}{
+		{security.ProjectRoleViewer, http.StatusForbidden},
+		{security.ProjectRoleMember, http.StatusOK},
+	} {
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		group := router.Group("/projects/:project_id", func(c *gin.Context) {
+			ctx := project.WithContext(c.Request.Context(), project.Context{ID: c.Param("project_id"), Role: tc.role})
+			c.Request = c.Request.WithContext(ctx)
+		})
+		h.RegisterProxyRoutes(group)
+		srv := httptest.NewServer(router)
+
+		resp, err := http.Post(srv.URL+"/projects/proj/notebooks/nb/proxy/api/kernels", "application/json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		srv.Close()
+		if resp.StatusCode != tc.want {
+			t.Fatalf("role %v: status = %d, want %d", tc.role, resp.StatusCode, tc.want)
+		}
 	}
 }

@@ -1313,10 +1313,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  config_path: { type: string }
                   config: { $ref: "#/components/schemas/StorageConfig" }
                   effective: { $ref: "#/components/schemas/ArtifactStoreSettings" }
-                  restart_required: { type: boolean }
   /api/system/storage/settings/test:
     post:
       description: System admin only. Checks a candidate configuration without persisting it.
@@ -1693,6 +1691,47 @@ paths:
                 required: [id]
                 properties:
                   id: { type: string }
+  /api/projects/{project_id}/pipeline-templates/{id}/sweep:
+    parameters:
+      - $ref: "#/components/parameters/ProjectID"
+    post:
+      description: >-
+        Starts one run per trial of this template version under a shared
+        experiment name. Sources are rewritten to the template's snapshot
+        exactly as for /run.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [experiment, runs]
+              properties:
+                experiment: { type: string }
+                runs:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    properties:
+                      params: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Submitted runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  experiment: { type: string }
+                  run_ids:
+                    type: array
+                    items: { type: string }
   /api/projects/{project_id}/pipeline-templates/{id}/deploy:
     parameters:
       - $ref: "#/components/parameters/ProjectID"
@@ -2120,6 +2159,7 @@ components:
         run_id: { type: string }
         artifact: { type: string }
         status: { type: string }
+        reason: { type: string, description: Why the deployment reached its final status. }
         endpoint: { type: string }
         namespace: { type: string }
         pid: { type: integer }
@@ -2344,6 +2384,7 @@ components:
         run_id: { type: string }
         artifact: { type: string }
         status: { type: string, enum: [starting, running, stopping, stopped, failed] }
+        reason: { type: string, description: Why the service reached its current status; empty while healthy. }
         endpoint: { type: string }
         namespace: { type: string }
         pid: { type: integer }

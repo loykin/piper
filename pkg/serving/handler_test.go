@@ -43,13 +43,13 @@ func (r *stubServingRepo) Upsert(_ context.Context, svc *Service) error {
 	r.services[svc.Name] = svc
 	return nil
 }
-func (r *stubServingRepo) SetStatus(_ context.Context, _, name, status string) error {
+func (r *stubServingRepo) SetStatus(_ context.Context, _, name, status, _ string) error {
 	if s, ok := r.services[name]; ok {
 		s.Status = status
 	}
 	return nil
 }
-func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, _, name, status, endpoint string) error {
+func (r *stubServingRepo) SetStatusEndpoint(_ context.Context, _, name, status, _, endpoint string) error {
 	if s, ok := r.services[name]; ok {
 		s.Status = status
 		if endpoint != "" {

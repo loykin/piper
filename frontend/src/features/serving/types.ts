@@ -5,6 +5,8 @@ export interface Service {
   run_id: string
   artifact: string
   status: 'running' | 'stopped' | 'failed'
+  /** Why the service reached its current status; empty while healthy. */
+  reason: string
   endpoint: string
   namespace?: string
   pid: number
@@ -20,6 +22,7 @@ export interface ServiceHistory {
   run_id: string
   artifact: string
   status: string
+  reason: string
   endpoint: string
   namespace?: string
   pid: number

@@ -73,7 +73,7 @@ export default function ExperimentCreatePage() {
     try {
       const trials = JSON.parse(values.trials) as Record<string, unknown>[]
       await createSweep.mutateAsync({
-        yaml: pipeline.yaml,
+        templateId: pipeline.id,
         experiment: values.experiment.trim(),
         runs: trials.map(params => ({ params })),
       })

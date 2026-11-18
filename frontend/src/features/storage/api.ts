@@ -7,10 +7,10 @@ import { api, projectApi, type Paged } from '@/lib/api'
 
 // ── System-scoped (admin) ─────────────────────────────────────────────────────
 
-// Read-only diagnostic: the effective config plus what's pending on disk.
+// Read-only diagnostic: the configured storage block plus its effective state.
 // There is deliberately no save/update call here — the artifact storage
 // backend (bucket/endpoint/region/which-backend) is deploy-time-only
-// configuration, edited directly in storage.yaml and applied by restarting
+// configuration, edited in the server config's storage: block and applied by restarting
 // the server, the same as runtime.type or the database driver. See
 // storage_admin.go's StorageSettingsView doc comment on the Go side for the
 // full rationale (every artifact reference pinned to the old backend would

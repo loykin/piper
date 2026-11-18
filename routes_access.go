@@ -57,7 +57,7 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 	// configuration, the same class of setting as runtime.type or
 	// server.db.driver — see storage_admin.go's StorageSettingsView doc
 	// comment for the full rationale. There is deliberately no PUT here
-	// anymore; changing the backend requires editing storage.yaml directly
+	// anymore; changing the backend requires editing the server config's storage: block
 	// on disk and restarting the server.
 	admin.GET("/storage/settings", func(c *gin.Context) {
 		view, err := p.StorageSettings()
@@ -71,7 +71,7 @@ func (p *Piper) registerAdminRoutes(userAPI *gin.RouterGroup) *gin.RouterGroup {
 	// running store — it only opens a throwaway client against the given
 	// candidate config to confirm it's reachable. Unlike the removed PUT,
 	// this carries none of the live-backend-swap risk, so it stays as an
-	// ops/API tool for validating a storage.yaml edit before applying it
+	// ops/API tool for validating a storage: config edit before applying it
 	// (not wired to any frontend control since there's no longer an
 	// editable form to source a candidate config from).
 	admin.POST("/storage/settings/test", func(c *gin.Context) {

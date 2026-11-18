@@ -16,16 +16,17 @@ func ServingRuntimeSuite(t *testing.T, repo serving.Repository, projectID string
 
 	for _, tc := range []struct {
 		name, reported string
+		reason         string
 		wantEndpoint   string
 		wantPID        int
 	}{
-		{"svc-running", serving.StatusRunning, "http://deployed", 42},
-		{"svc-failed", serving.StatusFailed, "", 0},
+		{"svc-running", serving.StatusRunning, "", "http://deployed", 42},
+		{"svc-failed", serving.StatusFailed, "exited; last output: boom", "", 0},
 	} {
 		if err := repo.Upsert(ctx, &serving.Service{ProjectID: projectID, Name: tc.name, Status: serving.StatusStarting}); err != nil {
 			t.Fatal(err)
 		}
-		if err := repo.SetStatusEndpoint(ctx, projectID, tc.name, tc.reported, ""); err != nil {
+		if err := repo.SetStatusEndpoint(ctx, projectID, tc.name, tc.reported, tc.reason, ""); err != nil {
 			t.Fatal(err)
 		}
 		if err := repo.SetRuntime(ctx, &serving.Service{ProjectID: projectID, Name: tc.name, Status: serving.StatusStarting,
@@ -36,7 +37,7 @@ func ServingRuntimeSuite(t *testing.T, repo serving.Repository, projectID string
 		if err != nil || got == nil {
 			t.Fatalf("get %s: %+v, %v", tc.name, got, err)
 		}
-		if got.Status != tc.reported || got.Endpoint != tc.wantEndpoint || got.PID != tc.wantPID ||
+		if got.Status != tc.reported || got.Reason != tc.reason || got.Endpoint != tc.wantEndpoint || got.PID != tc.wantPID ||
 			got.Namespace != "ns" || got.RuntimeID != "runtime" {
 			t.Fatalf("%s after SetRuntime = %+v", tc.name, got)
 		}

@@ -36,6 +36,9 @@ func (n Notebook) validate(requireVolumeSize bool) error {
 	if strings.TrimSpace(n.Metadata.Name) == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
+	if err := manifest.ValidateWorkloadName(n.Metadata.Name); err != nil {
+		return err
+	}
 	if slices.Contains(reservedNotebookNames, n.Metadata.Name) {
 		return fmt.Errorf("metadata.name %q is reserved", n.Metadata.Name)
 	}

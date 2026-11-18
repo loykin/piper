@@ -76,7 +76,7 @@ func newTestDriver(t *testing.T, rt servingdriver.Driver, healthTimeout time.Dur
 			RuntimeID:          "test-worker",
 			Infrastructure:     "baremetal",
 			HealthCheckTimeout: healthTimeout,
-			ReportStatus: func(projectID, name, status, endpoint string) error {
+			ReportStatus: func(projectID, name, status, _, endpoint string) error {
 				reports <- statusReport{projectID, name, status, endpoint}
 				return nil
 			},

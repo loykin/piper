@@ -164,9 +164,11 @@ func (r *fakeServingRepo) Update(_ context.Context, svc *serving.Service) error 
 	}
 	return nil
 }
-func (r *fakeServingRepo) Upsert(context.Context, *serving.Service) error          { return nil }
-func (r *fakeServingRepo) SetStatus(context.Context, string, string, string) error { return nil }
-func (r *fakeServingRepo) SetStatusEndpoint(context.Context, string, string, string, string) error {
+func (r *fakeServingRepo) Upsert(context.Context, *serving.Service) error { return nil }
+func (r *fakeServingRepo) SetStatus(context.Context, string, string, string, string) error {
+	return nil
+}
+func (r *fakeServingRepo) SetStatusEndpoint(context.Context, string, string, string, string, string) error {
 	return nil
 }
 func (r *fakeServingRepo) SetRuntime(context.Context, *serving.Service) error { return nil }

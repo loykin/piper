@@ -169,8 +169,8 @@ func (r *scheduleRepo) AdvanceNextRun(ctx context.Context, projectID, id string,
 func (r *scheduleRepo) ClaimOneShotRun(ctx context.Context, projectID, id string, expectedAt, lastRunAt time.Time) (bool, error) {
 	var affected int64
 	err := r.Run(ctx, func(ctx context.Context, db *sqlx.DB) error {
-		q := db.Rebind(`UPDATE schedules SET enabled=?, last_run_at=?, next_run_at=?, updated_at=? WHERE project_id=? AND id=? AND enabled=? AND next_run_at=?`)
-		res, err := db.ExecContext(ctx, q, false, lastRunAt, lastRunAt, time.Now().UTC(), projectID, id, true, expectedAt)
+		q := db.Rebind(`UPDATE schedules SET enabled=?, last_run_at=?, updated_at=? WHERE project_id=? AND id=? AND enabled=? AND next_run_at=?`)
+		res, err := db.ExecContext(ctx, q, false, lastRunAt, time.Now().UTC(), projectID, id, true, expectedAt)
 		if err != nil {
 			return err
 		}

@@ -49,6 +49,10 @@ type HandlerDeps struct {
 
 	Parse    func(yaml []byte) (*pipeline.Pipeline, error)
 	StartRun func(ctx context.Context, yaml string, params map[string]any, vars proto.BuiltinVars, experiment string) (string, error)
+	// StartSweep starts one run per trial under a shared experiment name.
+	// It receives the same source-rewritten YAML as StartRun, so a sweep of a
+	// notebook-volume template fetches its snapshot like a single run does.
+	StartSweep func(ctx context.Context, yaml, experiment string, trials []map[string]any) ([]string, error)
 
 	NextTime func(expr string, from time.Time) (time.Time, error)
 	GenID    func() string // generates a schedule ID; may be nil
@@ -74,6 +78,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	member.DELETE("/pipeline-templates/:id", h.delete)
 	member.POST("/pipeline-templates/:id/run", h.triggerRun)
 	member.POST("/pipeline-templates/:id/deploy", h.deploy)
+	member.POST("/pipeline-templates/:id/sweep", h.sweep)
 }
 
 // GET /pipeline-templates/:id — get one pipeline template version
@@ -327,6 +332,62 @@ func (h *Handler) triggerRun(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"id": runID})
+}
+
+// POST /pipeline-templates/:id/sweep — one run per trial of a template version
+// under a shared experiment name. Goes through the same rewriteLocalSources
+// and storage-backend check as triggerRun: a template's stored YAML still
+// names the editor's local workspace, and only the rewritten YAML points the
+// agent at the template's snapshot.
+func (h *Handler) sweep(c *gin.Context) {
+	projectContext, _ := project.FromContext(c.Request.Context())
+	t, err := h.deps.Templates.Get(c.Request.Context(), projectContext.ID, c.Param("id"))
+	if httpx.LookupFailed(c, err, t != nil, "pipeline template not found") {
+		return
+	}
+	if storedYAMLInvalid(c, t) {
+		return
+	}
+
+	var req struct {
+		Experiment string `json:"experiment"`
+		Runs       []struct {
+			Params map[string]any `json:"params"`
+		} `json:"runs"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	req.Experiment = strings.TrimSpace(req.Experiment)
+	if req.Experiment == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "experiment is required"})
+		return
+	}
+	if len(req.Runs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "runs must not be empty"})
+		return
+	}
+
+	rewrittenYAML := rewriteLocalSources(t.YAML, t.SnapshotID, t.Name)
+	if h.storageBackendMismatch(t, rewrittenYAML) {
+		c.JSON(http.StatusNotFound, gin.H{"error": memberclient.ErrStorageBackendMismatch.Error(), "code": memberclient.ErrorCodeStorageBackendMismatch, "retryable": false})
+		return
+	}
+
+	trials := make([]map[string]any, 0, len(req.Runs))
+	for _, r := range req.Runs {
+		trials = append(trials, r.Params)
+	}
+	runIDs, err := h.deps.StartSweep(c.Request.Context(), rewrittenYAML, req.Experiment, trials)
+	if err != nil {
+		if errors.Is(err, memberclient.ErrMemberUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
+		httpx.InternalError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"experiment": req.Experiment, "run_ids": runIDs})
 }
 
 // storedYAMLInvalid answers 400 when a stored template no longer parses

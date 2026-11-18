@@ -169,10 +169,8 @@ func New(cfg Config) (*Piper, error) {
 		ttl := defaultK8sJobTTLAfterFinishedSeconds
 		cfg.Runtime.K8s.TTLAfterFinished = &ttl
 	}
-	if persistedStorage, ok, err := loadStorageSettings(filepath.Join(cfg.OutputDir, "storage.yaml"), cfg.Storage); err != nil {
-		return nil, fmt.Errorf("load storage settings: %w", err)
-	} else if ok {
-		cfg.Storage = persistedStorage
+	if err := refuseLegacyStorageFile(cfg.OutputDir); err != nil {
+		return nil, err
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -343,21 +341,15 @@ func New(cfg Config) (*Piper, error) {
 	// Registered here (as opposed to inline in pkg/credential) so the
 	// generic credential package stays free of any specific consumer's
 	// knowledge — this closure is Piper's own storage-config awareness.
-	// Checked against both the live (booted) CredentialRef and whatever is
-	// currently *pending* in storage.yaml (UpdateStorageSettings may have
-	// saved a not-yet-applied change that references this credential, even
-	// if the running process itself booted with a different one) — deleting
-	// either would break the credential resolution the next restart, or the
-	// current one, depends on. See ErrInUse's doc comment.
+	// Checked against the configured (booted) CredentialRef — deleting it
+	// would break credential resolution for the running store and the next
+	// restart alike. See ErrInUse's doc comment.
 	credentialStore.AddInUseChecker(func(_ context.Context, projectID, name string) (string, bool) {
 		if projectID != project.SystemID {
 			return "", false
 		}
 		if strings.TrimSpace(p.cfg.Storage.CredentialRef) == name {
 			return "referenced by the running server's storage.credentialRef", true
-		}
-		if pending, exists, err := p.readStorageSettings(); err == nil && exists && strings.TrimSpace(pending.CredentialRef) == name {
-			return "referenced by a pending (not yet applied) storage config change", true
 		}
 		return "", false
 	})

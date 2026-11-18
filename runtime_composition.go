@@ -49,8 +49,8 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 			Docker:         servingdocker.Config{Network: cfg.Runtime.Docker.Network},
 			LogClient:      localLogPushClient{store: repos.Log, metrics: repos.Metric},
 			EnvResolver:    credentials.ResolveEnv,
-			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return statusSink.Update(context.Background(), projectID, servingLocalRuntimeID, name, status, endpoint)
+			ReportStatus: func(projectID, name, status, reason, endpoint string) error {
+				return statusSink.Update(context.Background(), projectID, servingLocalRuntimeID, name, status, reason, endpoint)
 			},
 		})
 		if err != nil {
@@ -72,8 +72,8 @@ func composeServingRuntime(cfg Config, repos *storemod.Repos, credentials *crede
 			WorkloadURL:          cfg.Runtime.K8s.WorkloadURL,
 			WorkloadToken:        cfg.Server.WorkloadToken,
 			LogClient:            localLogPushClient{store: repos.Log, metrics: repos.Metric},
-			ReportStatus: func(projectID, name, status, endpoint string) error {
-				return statusSink.Update(context.Background(), projectID, servingK8sLocalRuntimeID, name, status, endpoint)
+			ReportStatus: func(projectID, name, status, reason, endpoint string) error {
+				return statusSink.Update(context.Background(), projectID, servingK8sLocalRuntimeID, name, status, reason, endpoint)
 			},
 		})
 		if err != nil {

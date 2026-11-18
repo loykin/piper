@@ -48,11 +48,8 @@ func (m *Manager) ArtifactTarget() artifact.Target { return m.driver.ArtifactTar
 
 // Deploy starts a ModelService. Artifact resolution must happen before calling Deploy.
 func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) error {
-	if err := svc.Validate(); err != nil {
-		return fmt.Errorf("serving: %w", err)
-	}
-	if err := ValidateDirectPlacement(svc, m.runtime); err != nil {
-		return fmt.Errorf("serving: %w", err)
+	if err := m.validate(svc); err != nil {
+		return err
 	}
 	if projectID == "" {
 		return fmt.Errorf("serving: project ID is required")
@@ -96,7 +93,7 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 	}
 	deployed, err := m.driver.Deploy(ctx, svc, art, yamlStr)
 	if err != nil {
-		if setErr := m.repo.SetStatus(ctx, projectID, name, StatusFailed); setErr != nil {
+		if setErr := m.repo.SetStatus(ctx, projectID, name, StatusFailed, err.Error()); setErr != nil {
 			return fmt.Errorf("%w; mark failed: %v", err, setErr)
 		}
 		return err
@@ -114,6 +111,11 @@ func (m *Manager) Deploy(ctx context.Context, projectID string, svc ModelService
 // single record persisted by Deploy. It is the application-level redeploy
 // boundary; callers must resolve the artifact before entering it.
 func (m *Manager) Replace(ctx context.Context, projectID string, svc ModelService, art artifact.Resolved, yamlStr string) (*Service, error) {
+	// Validate before touching the running version: a redeploy the runtime
+	// would reject must not stop the service it was meant to replace.
+	if err := m.validate(svc); err != nil {
+		return nil, err
+	}
 	existing, err := m.repo.Get(ctx, projectID, svc.Metadata.Name)
 	if err != nil {
 		return nil, fmt.Errorf("get existing service: %w", err)
@@ -136,6 +138,22 @@ func (m *Manager) Replace(ctx context.Context, projectID string, svc ModelServic
 	return rec, nil
 }
 
+// validate rejects a spec before any record or runtime object is touched:
+// manifest rules, placement against this installation, and the effective
+// runtime's own requirements (image, namespace).
+func (m *Manager) validate(svc ModelService) error {
+	if err := svc.Validate(); err != nil {
+		return fmt.Errorf("serving: %w", err)
+	}
+	if err := ValidateDirectPlacement(svc, m.runtime); err != nil {
+		return fmt.Errorf("serving: %w", err)
+	}
+	if err := svc.ValidateForRuntime(m.runtime); err != nil {
+		return fmt.Errorf("serving: %w", err)
+	}
+	return nil
+}
+
 // Stop terminates a running service.
 func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	if projectID == "" {
@@ -152,11 +170,21 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	if svc.Status == StatusStopped || svc.Status == StatusStopping {
 		return nil
 	}
-	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopping); err != nil {
+	// A failed service is already terminal: clean up whatever runtime object
+	// is left, but keep "failed" and its reason. Overwriting them with
+	// "stopped" made Delete archive a deployment that never came up as an
+	// ordinary stop (adversarial QA 2026-11-18 F13).
+	if svc.Status == StatusFailed {
+		if err := m.driver.Stop(ctx, svc); err != nil {
+			return fmt.Errorf("stop service: %w", err)
+		}
+		return nil
+	}
+	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopping, ""); err != nil {
 		return fmt.Errorf("set service stopping: %w", err)
 	}
 	if err := m.driver.Stop(ctx, svc); err != nil {
-		if restoreErr := m.repo.SetStatus(ctx, projectID, name, svc.Status); restoreErr != nil {
+		if restoreErr := m.repo.SetStatus(ctx, projectID, name, svc.Status, svc.Reason); restoreErr != nil {
 			return fmt.Errorf("stop service: %v; restore status: %w", err, restoreErr)
 		}
 		return fmt.Errorf("stop service: %w", err)
@@ -165,7 +193,7 @@ func (m *Manager) Stop(ctx context.Context, projectID, name string) error {
 	// that immediately deletes the service right after Stop (the UI's
 	// delete flow) would archive "stopping" as the history's Final
 	// Status forever — never actually terminal.
-	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped); err != nil {
+	if err := m.repo.SetStatus(ctx, projectID, name, StatusStopped, ""); err != nil {
 		return fmt.Errorf("stop service: mark stopped: %w", err)
 	}
 	return nil
@@ -218,8 +246,8 @@ func (m *Manager) SetYAML(ctx context.Context, projectID, name, yaml string) err
 }
 
 // UpdateStatus applies backend-observed state through the shared runtime sink.
-func (m *Manager) UpdateStatus(ctx context.Context, projectID, runtimeID, name, status, endpoint string) error {
-	return m.status.Update(ctx, projectID, runtimeID, name, status, endpoint)
+func (m *Manager) UpdateStatus(ctx context.Context, projectID, runtimeID, name, status, reason, endpoint string) error {
+	return m.status.Update(ctx, projectID, runtimeID, name, status, reason, endpoint)
 }
 
 func (m *Manager) emit(projectID, eventType string, fields map[string]any) {

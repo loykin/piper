@@ -3275,10 +3275,8 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            config_path?: string;
                             config?: components["schemas"]["StorageConfig"];
                             effective?: components["schemas"]["ArtifactStoreSettings"];
-                            restart_required?: boolean;
                         };
                     };
                 };
@@ -4214,6 +4212,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/pipeline-templates/{id}/sweep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: components["parameters"]["ProjectID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Starts one run per trial of this template version under a shared experiment name. Sources are rewritten to the template's snapshot exactly as for /run. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    project_id: components["parameters"]["ProjectID"];
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        experiment: string;
+                        runs: {
+                            params?: {
+                                [key: string]: unknown;
+                            };
+                        }[];
+                    };
+                };
+            };
+            responses: {
+                /** @description Submitted runs. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            experiment?: string;
+                            run_ids?: string[];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/pipeline-templates/{id}/deploy": {
         parameters: {
             query?: never;
@@ -4913,6 +4966,8 @@ export interface components {
             run_id?: string;
             artifact?: string;
             status?: string;
+            /** @description Why the deployment reached its final status. */
+            reason?: string;
             endpoint?: string;
             namespace?: string;
             pid?: number;
@@ -5172,6 +5227,8 @@ export interface components {
             artifact?: string;
             /** @enum {string} */
             status?: "starting" | "running" | "stopping" | "stopped" | "failed";
+            /** @description Why the service reached its current status; empty while healthy. */
+            reason?: string;
             endpoint?: string;
             namespace?: string;
             pid?: number;

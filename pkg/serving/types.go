@@ -27,6 +27,9 @@ func (s ModelService) Validate() error {
 	if strings.TrimSpace(s.Metadata.Name) == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
+	if err := manifest.ValidateWorkloadName(s.Metadata.Name); err != nil {
+		return err
+	}
 	if slices.Contains(reservedServiceNames, s.Metadata.Name) {
 		return fmt.Errorf("metadata.name %q is reserved", s.Metadata.Name)
 	}
@@ -39,7 +42,24 @@ func (s ModelService) Validate() error {
 	if s.Spec.Run.Port < 1 || s.Spec.Run.Port > 65535 {
 		return fmt.Errorf("run.port must be between 1 and 65535")
 	}
-	switch s.Spec.Driver.Placement.Runtime {
+	return s.validateRuntimeSpec(s.Spec.Driver.Placement.Runtime)
+}
+
+// ValidateForRuntime applies the runtime-specific rules (image, namespace)
+// for the runtime this spec will actually run on: its placement.runtime, or
+// the installation's runtime when placement is left empty. Manager calls it
+// before writing any record, so a spec the runtime cannot start is answered
+// with 400 instead of leaving a failed service behind.
+func (s ModelService) ValidateForRuntime(installationRuntime string) error {
+	runtime := s.Spec.Driver.Placement.Runtime
+	if runtime == "" {
+		runtime = installationRuntime
+	}
+	return s.validateRuntimeSpec(runtime)
+}
+
+func (s ModelService) validateRuntimeSpec(runtime string) error {
+	switch runtime {
 	case "", "baremetal":
 	case "docker":
 		if s.Spec.Driver.Docker == nil || s.Spec.Driver.Docker.Image == "" {
@@ -53,7 +73,7 @@ func (s ModelService) Validate() error {
 			return fmt.Errorf("driver.k8s.namespace is required")
 		}
 	default:
-		return fmt.Errorf("unsupported driver.placement.runtime %q", s.Spec.Driver.Placement.Runtime)
+		return fmt.Errorf("unsupported driver.placement.runtime %q", runtime)
 	}
 	return nil
 }

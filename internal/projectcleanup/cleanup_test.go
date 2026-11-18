@@ -182,13 +182,13 @@ func (r *fakeServiceRepo) Upsert(_ context.Context, svc *serving.Service) error 
 	r.services[r.key(svc.ProjectID, svc.Name)] = svc
 	return nil
 }
-func (r *fakeServiceRepo) SetStatus(_ context.Context, projectID, name, status string) error {
+func (r *fakeServiceRepo) SetStatus(_ context.Context, projectID, name, status, _ string) error {
 	if s, ok := r.services[r.key(projectID, name)]; ok {
 		s.Status = status
 	}
 	return nil
 }
-func (r *fakeServiceRepo) SetStatusEndpoint(_ context.Context, projectID, name, status, endpoint string) error {
+func (r *fakeServiceRepo) SetStatusEndpoint(_ context.Context, projectID, name, status, _, endpoint string) error {
 	if s, ok := r.services[r.key(projectID, name)]; ok {
 		s.Status = status
 		s.Endpoint = endpoint

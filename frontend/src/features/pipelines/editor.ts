@@ -509,6 +509,10 @@ export function validatePipelineDraft(draft: PipelineDraft): string[] {
     seen.add(step.name)
     if ((step.type === 'notebook' || step.type === 'python') && !step.sourcePath.trim()) {
       messages.push(`Task "${step.name}" needs a source file.`)
+    } else if (!draft.source && !step.sourcePath.trim() && [...step.command, ...step.prepare].some(arg => arg.includes('PIPER_SCRIPT_PATH'))) {
+      // A task read back from YAML has no palette type, only a path. The
+      // server rejects $PIPER_SCRIPT_PATH without one; say so before submit.
+      messages.push(`Task "${step.name}" uses $PIPER_SCRIPT_PATH but has no source file.`)
     }
     if (step.command.every(arg => !arg.trim())) {
       messages.push(`Task "${step.name}" needs a command.`)

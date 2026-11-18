@@ -53,13 +53,14 @@ type Config struct {
 	// ReportStatus delivers an async status update once a backgrounded
 	// health check actually completes or fails, called in-process instead of
 	// over a tunnel. Required.
-	ReportStatus func(projectID, name, status, endpoint string) error
+	ReportStatus func(projectID, name, status, reason, endpoint string) error
 }
 
 type activeService struct {
 	projectID, name string
 	gen             uint64 // distinguishes stale OnExit callbacks from a superseded deploy
 	exitAs          string // overrides the exit status OnExit reports (see failDeploy)
+	exitReason      string // reason reported with exitAs (see failDeploy)
 }
 
 // Driver implements serving.Driver directly against a local
@@ -192,9 +193,14 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 	}
 
 	rn := runtimeName(projectID, name)
-	var sink logsink.LogSink
+	var buffered logsink.LogSink
 	if d.cfg.LogClient != nil {
-		sink = logsink.NewRedactingSink(logsink.NewBufferedLogSink(projectID, d.cfg.LogClient), logsink.ValuesFromEnv(resolvedEnv))
+		buffered = logsink.NewBufferedLogSink(projectID, d.cfg.LogClient)
+	}
+	tail := newTailSink(buffered)
+	var sink logsink.LogSink = tail
+	if values := logsink.ValuesFromEnv(resolvedEnv); len(values) > 0 {
+		sink = logsink.NewRedactingSink(tail, values)
 	}
 
 	endpoint, err := d.driver.Deploy(ctx, servingdriver.DeployRequest{
@@ -214,15 +220,19 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 			d.mu.Lock()
 			svc := d.services[key]
 			current := svc != nil && svc.gen == gen
+			reason := ""
 			if current {
 				if svc.exitAs != "" {
-					status = svc.exitAs
+					status, reason = svc.exitAs, svc.exitReason
 				}
 				delete(d.services, key)
 			}
 			d.mu.Unlock()
 			if current {
-				d.report(projectID, name, status, "")
+				if status == serving.StatusFailed && reason == "" {
+					reason = exitReason(tail.lastLine())
+				}
+				d.report(projectID, name, status, reason, "")
 			}
 		},
 	})
@@ -242,10 +252,14 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 	go func() {
 		if err := iprocess.WaitReady(context.Background(), endpoint+healthPath, healthTimeout); err != nil {
 			slog.Warn("localdriver: serving health check timed out", "name", name, "endpoint", endpoint)
-			if d.failDeploy(key, gen) {
+			reason := fmt.Sprintf("health check %s did not succeed within %s", healthPath, healthTimeout)
+			if last := tail.lastLine(); last != "" {
+				reason += "; last output: " + last
+			}
+			if d.failDeploy(key, gen, reason) {
 				if stopErr := d.driver.Stop(context.Background(), rn); stopErr != nil {
 					slog.Warn("localdriver: serving stop after health failure failed", "name", name, "err", stopErr)
-					d.report(projectID, name, serving.StatusFailed, "")
+					d.report(projectID, name, serving.StatusFailed, reason, "")
 				}
 				// If Stop succeeds, the runtime's own OnExit callback fires
 				// and reports "failed" via the exitAs override set by
@@ -254,7 +268,7 @@ func (d *Driver) Deploy(ctx context.Context, spec serving.ModelService, art arti
 			return
 		}
 		if d.updateEndpoint(key, gen) {
-			d.report(projectID, name, serving.StatusRunning, endpoint)
+			d.report(projectID, name, serving.StatusRunning, "", endpoint)
 		}
 	}()
 
@@ -301,7 +315,7 @@ func (d *Driver) Recover(ctx context.Context) error {
 		gen := d.nextGen
 		d.services[key] = &activeService{projectID: rec.ProjectID, name: rec.Name, gen: gen}
 		d.mu.Unlock()
-		d.report(rec.ProjectID, rec.Name, serving.StatusRunning, endpoint)
+		d.report(rec.ProjectID, rec.Name, serving.StatusRunning, "", endpoint)
 
 		return func(status string) {
 			d.mu.Lock()
@@ -312,7 +326,7 @@ func (d *Driver) Recover(ctx context.Context) error {
 			}
 			d.mu.Unlock()
 			if current {
-				d.report(rec.ProjectID, rec.Name, status, "")
+				d.report(rec.ProjectID, rec.Name, status, recoveredExitReason(status), "")
 			}
 		}
 	}
@@ -322,7 +336,7 @@ func (d *Driver) Recover(ctx context.Context) error {
 		_, active := d.services[key]
 		d.mu.Unlock()
 		if !active {
-			d.report(rec.ProjectID, rec.Name, status, "")
+			d.report(rec.ProjectID, rec.Name, status, recoveredExitReason(status), "")
 		}
 	}
 	return recoverable.Recover(ctx, onRecovered, onTerminal)
@@ -349,7 +363,7 @@ func (d *Driver) updateEndpoint(key string, gen uint64) bool {
 // failDeploy marks the active service's next OnExit report as "failed"
 // (instead of whatever the runtime's natural exit status would be) and
 // confirms gen is still current.
-func (d *Driver) failDeploy(key string, gen uint64) bool {
+func (d *Driver) failDeploy(key string, gen uint64, reason string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	svc := d.services[key]
@@ -357,11 +371,31 @@ func (d *Driver) failDeploy(key string, gen uint64) bool {
 		return false
 	}
 	svc.exitAs = serving.StatusFailed
+	svc.exitReason = reason
 	return true
 }
 
-func (d *Driver) report(projectID, name, status, endpoint string) {
-	if err := d.cfg.ReportStatus(projectID, name, status, endpoint); err != nil {
+// exitReason explains a service that exited on its own, before or after it
+// became healthy.
+func exitReason(lastLine string) string {
+	if lastLine == "" {
+		return "exited without output"
+	}
+	return "exited; last output: " + lastLine
+}
+
+// recoveredExitReason explains a terminal status found for a service whose
+// output was not captured by this server process (it ended while Piper was
+// down, or before Piper reattached to it).
+func recoveredExitReason(status string) string {
+	if status == serving.StatusFailed {
+		return "exited while the server was not attached; see the service's log"
+	}
+	return ""
+}
+
+func (d *Driver) report(projectID, name, status, reason, endpoint string) {
+	if err := d.cfg.ReportStatus(projectID, name, status, reason, endpoint); err != nil {
 		slog.Warn("localdriver: report status failed", "name", name, "status", status, "err", err)
 	}
 }
